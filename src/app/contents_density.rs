@@ -6,6 +6,7 @@ impl Reader {
     pub(super) fn contents_settings_items(&self) -> Vec<Item> {
         let mut items = Vec::from(self.list_density_items(Scope::Contents));
         items.extend(self.contents_metadata_settings_items());
+        items.extend(self.alternative_contents_setting());
         items
     }
 }

@@ -1,4 +1,5 @@
 //! The daily reader interface and foreground lifecycle.
+mod alternative_contents;
 mod annotation_search;
 mod bar_icons;
 pub(crate) const NOTE_MARK_ICON: primitive_ui::Icon = bar_icons::HIGHLIGHT;
@@ -596,6 +597,8 @@ enum Action {
     TogglePublisherFooter,
     TogglePublisherMargins,
     ShowGeneratedContents,
+    ToggleAlternativeContents,
+    AlternativeContentsEntry(OutlineTarget),
     Custom(CustomAction),
     GeneratedEntry(usize),
     Bookmark(usize),
@@ -862,6 +865,7 @@ pub struct Reader {
     staged_frame_orientation: Option<ReadingOrientation>,
     flow_popup: Option<hidden_flows::FlowPopup>,
     outline: Option<OutlineScan>,
+    alternative_contents: alternative_contents::AlternativeContents,
     numbering_scan: Option<character_page_settings::Scan>,
     numbering_directory: PathBuf,
     chapter_draft: Option<custom_contents::Draft>,
@@ -1097,6 +1101,7 @@ impl Reader {
             staged_frame_orientation: None,
             flow_popup: None,
             outline: None,
+            alternative_contents: Default::default(),
             numbering_scan: None,
             numbering_directory: data.join("character-pages"),
             chapter_draft: None,
@@ -1871,6 +1876,9 @@ impl Reader {
         if screen != Screen::GeneratedContents {
             self.outline = None;
         }
+        if screen != Screen::ContentsSettings {
+            self.alternative_contents.confirm = None;
+        }
         if screen == Screen::Find && self.screen != Screen::Matches {
             self.editor = Editor::new(crate::search::MAX_QUERY_BYTES);
         }
@@ -2096,6 +2104,7 @@ impl Reader {
         }
         self.link_popup = None;
         self.screen = screen;
+        self.sync_alternative_contents();
         self.prepare_content_dpi_editor();
         self.prepare_logical_font_editor();
         self.prepare_line_spacing_editor();
@@ -4016,6 +4025,13 @@ impl Reader {
             Action::CharacterPage(row) => self.follow_character_page(row)?,
             Action::TogglePublisherFooter => self.toggle_publisher_labels(false)?,
             Action::TogglePublisherMargins => self.toggle_publisher_labels(true)?,
+            Action::ToggleAlternativeContents => {
+                if self.active.is_some() && !self.custom_contents_enabled() {
+                    self.alternative_contents.confirm = Some(!self.uses_alternative_contents());
+                    self.notice = None;
+                }
+            }
+            Action::AlternativeContentsEntry(target) => self.follow_outline_target(target)?,
             Action::ShowGeneratedContents => self.start_generated_contents()?,
             Action::GeneratedEntry(index) => self.follow_generated_entry(index)?,
             Action::ReturnToLocation => {
@@ -4982,6 +4998,10 @@ impl Reader {
             .ok_or("That outline entry is unavailable")?
             .target
             .clone();
+        self.follow_outline_target(target)
+    }
+
+    fn follow_outline_target(&mut self, target: OutlineTarget) -> Result<()> {
         let active = self.active.as_mut().ok_or("No open book")?;
         let previous = position(&active.reading);
         match target {
@@ -7635,6 +7655,7 @@ impl Reader {
             return;
         }
         let title = match (self.screen, self.book_list.as_ref()) {
+            (Screen::Contents, _) if self.uses_alternative_contents() => "Alternative contents",
             (Screen::BookList, Some(BookList::Favorites)) => "Favorites",
             (Screen::BookList, Some(BookList::Recent)) => "Recently read",
             (Screen::BookList, Some(BookList::Authors)) => "Authors",
@@ -8503,6 +8524,7 @@ impl App for Reader {
         self.draw_history_duration_limits(canvas);
         self.draw_dictionary_preset_picker(canvas);
         self.draw_dictionary_font_size(canvas);
+        self.draw_alternative_contents_confirmation(canvas);
         self.draw_logical_recovery(canvas);
         self.draw_opening_delay(canvas);
         self.draw_opening_ask(canvas);
@@ -8537,6 +8559,9 @@ impl App for Reader {
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
         if let Some(change) = self.closing_profile_input(input) {
+            return change;
+        }
+        if let Some(change) = self.alternative_contents_confirmation(input) {
             return change;
         }
         if let Some(change) = self.dictionary_font_size_input(input) {
@@ -8758,6 +8783,9 @@ impl App for Reader {
 
     fn input(&mut self, input: Input) -> Change {
         if let Some(change) = self.closing_profile_input(input) {
+            return change;
+        }
+        if let Some(change) = self.alternative_contents_confirmation(input) {
             return change;
         }
         if let Some(change) = self.dictionary_font_size_input(input) {
@@ -9454,6 +9482,7 @@ impl App for Reader {
             .chain(self.spelling_lookup.as_ref().map(|job| job.deadline))
             .chain(self.cjk_selection_lookup.as_ref().map(|job| job.deadline))
             .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
+            .chain(self.alternative_contents_deadline())
             .chain(self.numbering_scan.as_ref().map(|scan| scan.deadline))
             .chain(
                 self.annotation_import
@@ -9622,6 +9651,9 @@ impl App for Reader {
                 }
             }
         }
+        if let Some(change) = self.poll_alternative_contents(now) {
+            return change;
+        }
         if self.nearby.deadline().is_some_and(|at| at <= now) {
             return match self.poll_nearby(now) {
                 Ok(change) => change,
@@ -9708,6 +9740,12 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.alternative_contents = Default::default();
+        self.sync_alternative_contents();
+        if self.screen.is_contents() {
+            self.prepare_contents(true);
+            self.list_page = self.current_contents_row.unwrap_or_default() / self.contents_rows();
+        }
         self.close_dictionary_font_size();
         if matches!(self.screen, Screen::DictionaryButtons(_)) {
             self.show(Screen::Dictionaries);

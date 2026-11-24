@@ -31,6 +31,10 @@ impl ContentsDepths {
         !self.bind_navigation || self.includes(depth)
     }
 
+    pub(crate) fn clear_ignored(&mut self) {
+        self.ignored.clear();
+    }
+
     pub(crate) fn toggle(&mut self, depth: usize) {
         if !self.ignored.remove(&depth) {
             self.ignored.insert(depth);

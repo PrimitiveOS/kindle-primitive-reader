@@ -5,6 +5,7 @@ use super::contents_view::{ContentsEntry, Target};
 use super::{ActiveBook, Reader};
 use crate::Anchor;
 use crate::epub::Destination;
+use crate::generated_contents::OutlineTarget;
 
 type Position = (usize, usize);
 
@@ -147,6 +148,15 @@ impl Reader {
                         };
                         (chapter, target.fragment.is_none(), anchor, Some(target))
                     }
+                    Target::Alternative(OutlineTarget::Chapter(chapter)) => {
+                        (*chapter, true, None, None)
+                    }
+                    Target::Alternative(OutlineTarget::Heading(chapter, anchor)) => (
+                        *chapter,
+                        false,
+                        (*chapter == reading.chapter).then(|| anchor.clone()),
+                        None,
+                    ),
                     Target::Custom(_) => {
                         let target = custom?;
                         (
@@ -164,7 +174,9 @@ impl Reader {
                     let page = anchor
                         .as_ref()
                         .and_then(|anchor| reading.probe.page_for(anchor));
-                    if destination.is_some() && page.is_none() {
+                    if (destination.is_some() || matches!(entry.target, Target::Alternative(_)))
+                        && page.is_none()
+                    {
                         return None;
                     }
                     page.or_else(|| {

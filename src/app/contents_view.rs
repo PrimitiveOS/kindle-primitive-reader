@@ -9,6 +9,7 @@ use super::{
     LIST_X, Press, Reader, Rect, Screen, keyboard_key,
 };
 use crate::epub::Destination;
+use crate::generated_contents::OutlineTarget;
 
 mod row_metadata;
 #[cfg(test)]
@@ -29,6 +30,7 @@ const COLLAPSE: Icon = Icon {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Target {
     Reflow(Destination),
+    Alternative(OutlineTarget),
     Fixed(usize),
     Custom(usize),
     None,
@@ -142,6 +144,16 @@ impl Reader {
                 })
                 .collect();
         }
+        if let Some(entries) = self.alternative_entries(book) {
+            return entries
+                .iter()
+                .map(|entry| ContentsEntry {
+                    title: entry.title.clone(),
+                    depth: entry.depth,
+                    target: Target::Alternative(entry.target.clone()),
+                })
+                .collect();
+        }
         let Some(active) = &self.active else {
             return Vec::new();
         };
@@ -177,7 +189,15 @@ impl Reader {
     fn contents_controls(&self) -> Vec<Item> {
         let mut controls = Vec::new();
         let custom = self.custom_contents_enabled();
-        if !custom
+        if self.pending_alternative_contents() {
+            controls.push(Item::new("Building contents…", Action::Heading));
+        } else if self.failed_alternative_contents() {
+            controls.push(
+                Item::new("Showing publisher contents", Action::Heading)
+                    .detail("The alternative contents could not be built"),
+            );
+        } else if !custom
+            && !self.uses_alternative_contents()
             && self
                 .active
                 .as_ref()
@@ -239,6 +259,9 @@ impl Reader {
                     let entry = &view.entries[heading.source_index];
                     let action = match &entry.target {
                         Target::Reflow(target) => Action::Jump(target.clone()),
+                        Target::Alternative(target) => {
+                            Action::AlternativeContentsEntry(target.clone())
+                        }
                         Target::Fixed(page) => Action::FixedPage(*page),
                         Target::Custom(index) => Action::Custom(CustomAction::Open(*index)),
                         Target::None => Action::Heading,

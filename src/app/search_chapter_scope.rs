@@ -8,6 +8,7 @@ use super::contents_view::Target;
 use super::{Reader, ReadingPosition, Result};
 use crate::book_style::BookStyle;
 use crate::epub::Book;
+use crate::generated_contents::OutlineTarget;
 use crate::session::Reading;
 
 type Offset = (usize, usize);
@@ -84,7 +85,8 @@ impl Reader {
             // KOReader applies an empty title to every result when there is
             // no outline. The Contents screen's generated spine labels are
             // navigation fallbacks, not publisher or custom boundaries.
-            let has_contents = !reading.probe.toc.is_empty()
+            let has_contents = self.uses_alternative_contents()
+                || !reading.probe.toc.is_empty()
                 || state.is_some_and(|state| state.custom_contents.enabled);
             let entries = has_contents
                 .then(|| self.contents_entries(book_id))
@@ -100,6 +102,12 @@ impl Reader {
                     Target::Reflow(target) => chapters.get(target.path.as_str()).map(|&chapter| {
                         (chapter, Destination::Publisher(target.fragment.as_deref()))
                     }),
+                    Target::Alternative(OutlineTarget::Chapter(chapter)) => {
+                        Some((*chapter, Destination::Publisher(None)))
+                    }
+                    Target::Alternative(OutlineTarget::Heading(chapter, anchor)) => {
+                        Some((*chapter, Destination::Alternative(anchor)))
+                    }
                     Target::Custom(index) => {
                         custom.and_then(|entries| entries.get(*index)).map(|entry| {
                             (entry.position.chapter, Destination::Custom(&entry.position))
@@ -175,12 +183,14 @@ fn fixed_range(current: usize, count: usize, mut headings: Vec<usize>) -> Range<
 enum Destination<'a> {
     Publisher(Option<&'a str>),
     Custom(&'a ReadingPosition),
+    Alternative(&'a crate::Anchor),
 }
 
 fn local_position(reading: &Reading, destination: Destination<'_>) -> Option<(usize, Offset)> {
     let anchor = match destination {
         Destination::Publisher(None) => return Some((0, (0, 0))),
         Destination::Publisher(Some(fragment)) => reading.probe.fragment(fragment)?,
+        Destination::Alternative(anchor) => anchor.clone(),
         Destination::Custom(position) => match &position.anchor {
             Some(anchor) => anchor.clone(),
             None if position.page == 0 => return Some((0, (0, 0))),
@@ -238,8 +248,10 @@ fn source_offsets(
     entries: &[Destination<'_>],
 ) -> io::Result<impl Iterator<Item = Offset>> {
     let needs_source = entries.iter().any(|entry| {
-        matches!(entry, Destination::Publisher(Some(_)))
-            || matches!(entry, Destination::Custom(position) if position.anchor.is_some())
+        matches!(
+            entry,
+            Destination::Publisher(Some(_)) | Destination::Alternative(_)
+        ) || matches!(entry, Destination::Custom(position) if position.anchor.is_some())
     });
     // The same font-free cascade as the full-text worker excludes hidden
     // fragment owners. This never registers fonts or paginates the chapter.
@@ -280,6 +292,17 @@ fn source_offsets(
                     return None;
                 }
                 source.fragments.get(*fragment).copied()
+            }
+            Destination::Alternative(anchor) => {
+                let (source, styles) = source.as_ref()?;
+                let block = source
+                    .blocks
+                    .iter()
+                    .find(|block| block.key == anchor.block)?;
+                (anchor.book == publication.revision()
+                    && anchor.revision == source.revision
+                    && !styles.get(block.element)?.flow.suppressed)
+                    .then_some((anchor.block, anchor.offset))
             }
             Destination::Custom(position) => match &position.anchor {
                 Some(anchor) => {

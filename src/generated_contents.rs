@@ -8,7 +8,7 @@ const MAX_CHAPTER_HEADINGS: usize = 64;
 const MAX_LABEL_CHARS: usize = 96;
 const MAX_ANCHOR_PATH_BYTES: usize = 4096;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum OutlineTarget {
     Chapter(usize),
     Heading(usize, Anchor),
@@ -24,12 +24,21 @@ pub(crate) struct OutlineEntry {
 pub(crate) struct GeneratedContents {
     publication: Option<(u64, usize)>,
     next_chapter: usize,
+    alternative: bool,
+    fragments: Vec<usize>,
     pub(crate) entries: Vec<OutlineEntry>,
     pub(crate) skipped: usize,
     pub(crate) truncated: bool,
 }
 
 impl GeneratedContents {
+    pub(crate) fn alternative() -> Self {
+        Self {
+            alternative: true,
+            ..Self::default()
+        }
+    }
+
     /// Read at most one bounded XHTML spine item. Only anchors and labels survive the step.
     pub(crate) fn step(&mut self, book: &mut Book) -> Result<bool> {
         let publication = (book.revision(), book.chapters.len());
@@ -39,10 +48,13 @@ impl GeneratedContents {
         let chapter = self.next_chapter;
         self.next_chapter += 1;
         if let Some(href) = book.chapters.get(chapter).map(|entry| entry.href.clone()) {
-            match book
-                .chapter(chapter)
-                .and_then(|xhtml| Source::parse(&xhtml))
-            {
+            match book.chapter(chapter).and_then(|xhtml| {
+                if self.alternative {
+                    book.chapter_source(&href, &xhtml)
+                } else {
+                    Source::parse(&xhtml)
+                }
+            }) {
                 Ok(source) => self.add_chapter(chapter, publication.0, &href, &source),
                 Err(_) => self.skipped += 1,
             }
@@ -50,7 +62,19 @@ impl GeneratedContents {
         let chapters_remain = self.next_chapter < publication.1;
         let reached_limit = self.next_chapter >= MAX_CHAPTERS || self.entries.len() >= MAX_ENTRIES;
         self.truncated |= reached_limit && chapters_remain;
-        Ok(!chapters_remain || reached_limit)
+        let done = !chapters_remain || reached_limit;
+        if done && self.alternative {
+            if self.entries.is_empty() {
+                self.entries
+                    .extend(self.fragments.drain(..).map(|chapter| OutlineEntry {
+                        title: "–".into(),
+                        depth: 0,
+                        target: OutlineTarget::Chapter(chapter),
+                    }));
+            }
+            self.fragments.clear();
+        }
+        Ok(done)
     }
 
     fn add_chapter(&mut self, chapter: usize, book: u64, href: &str, source: &Source) {
@@ -70,8 +94,50 @@ impl GeneratedContents {
                     _ => return None,
                 };
                 let title = outline_label(&block.text);
-                (!title.is_empty()).then_some((depth, title, block.key))
+                (!title.is_empty() || self.alternative).then_some((depth, title, block.key))
             });
+        if self.alternative {
+            if self.entries.is_empty() {
+                self.fragments.push(chapter);
+            }
+            let mut available = available;
+            for (depth, title, block) in headings {
+                let target = OutlineTarget::Heading(
+                    chapter,
+                    Anchor {
+                        illustration: None,
+                        book,
+                        chapter: href.to_owned(),
+                        revision: source.revision,
+                        block,
+                        offset: 0,
+                    },
+                );
+                let first_depth = self
+                    .entries
+                    .last()
+                    .map_or(0, |row| row.depth + 1)
+                    .min(depth);
+                for level in first_depth..=depth {
+                    if available == 0 {
+                        self.truncated = true;
+                        return;
+                    }
+                    available -= 1;
+                    let title = if level == depth && !title.is_empty() {
+                        title.clone()
+                    } else {
+                        "–".into()
+                    };
+                    self.entries.push(OutlineEntry {
+                        title,
+                        depth: level,
+                        target: target.clone(),
+                    });
+                }
+            }
+            return;
+        }
         let previous = self.entries.len();
         self.entries.extend(
             headings
@@ -110,7 +176,7 @@ fn outline_label(text: &str) -> String {
     for character in text
         .trim()
         .chars()
-        .filter(|c| !c.is_control() || c.is_whitespace())
+        .filter(|c| *c != '\u{00ad}' && (!c.is_control() || c.is_whitespace()))
         .take(MAX_LABEL_CHARS)
     {
         if character.is_whitespace() {

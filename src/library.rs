@@ -1252,6 +1252,8 @@ pub struct BookState {
         skip_serializing_if = "custom_contents::CustomContents::is_default"
     )]
     pub(crate) custom_contents: custom_contents::CustomContents,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) alternative_toc: bool,
     #[serde(
         default,
         skip_serializing_if = "contents_depths::ContentsDepths::is_default"
@@ -1321,6 +1323,7 @@ impl BookState {
             menus: Default::default(),
             bookmarks: Vec::new(),
             custom_contents: Default::default(),
+            alternative_toc: false,
             contents_depths: Default::default(),
             highlights: Vec::new(),
             pdf_highlights: Vec::new(),
@@ -2314,6 +2317,25 @@ impl Library {
                 self.recent.remove(0);
                 return Err(error);
             }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn set_alternative_contents(&mut self, id: u64, enabled: bool) -> io::Result<()> {
+        let index = self
+            .recent
+            .iter()
+            .position(|state| state.id == id && !state.custom_contents.enabled)
+            .ok_or_else(|| invalid_state("Disable custom contents before switching"))?;
+        let state = &mut self.recent[index];
+        let previous = (state.alternative_toc, state.contents_depths.clone());
+        state.alternative_toc = enabled;
+        state.contents_depths.clear_ignored();
+        if let Err(error) = self.persist() {
+            let state = &mut self.recent[index];
+            (state.alternative_toc, state.contents_depths) = previous;
+            return Err(error);
         }
         Ok(())
     }

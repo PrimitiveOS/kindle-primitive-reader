@@ -6,6 +6,7 @@ use std::ops::Range;
 use super::contents_view::{ContentsEntry, Target};
 use super::{Action, Item, Reader, Screen, position};
 use crate::fixed_session::FixedReading;
+use crate::generated_contents::OutlineTarget;
 use crate::library::Bookmark;
 use crate::session::Reading;
 use crate::{Anchor, Probe, Result};
@@ -242,6 +243,7 @@ enum AnchorTarget<'a> {
     Start,
     Fragment(String),
     Custom(&'a Anchor),
+    Alternative(Anchor),
 }
 
 impl AnchorTarget<'_> {
@@ -250,6 +252,7 @@ impl AnchorTarget<'_> {
             Self::Start => Some(0),
             Self::Fragment(fragment) => probe.page_for(&probe.fragment(fragment)?),
             Self::Custom(anchor) => probe.page_for(anchor),
+            Self::Alternative(anchor) => probe.page_for(anchor),
         }
     }
 }
@@ -282,6 +285,10 @@ fn reflow_page(
                     .fragment
                     .map_or(AnchorTarget::Start, AnchorTarget::Fragment);
                 (chapter, target)
+            }
+            Target::Alternative(OutlineTarget::Chapter(chapter)) => (chapter, AnchorTarget::Start),
+            Target::Alternative(OutlineTarget::Heading(chapter, anchor)) => {
+                (chapter, AnchorTarget::Alternative(anchor))
             }
             Target::Custom(index) => {
                 let Some(position) = custom.get(index).map(|mark| &mark.position) else {
