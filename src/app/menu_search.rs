@@ -158,6 +158,7 @@ fn child_menu(action: &Action) -> Option<Screen> {
             | Screen::MetadataSaveSettings
             | Screen::LinkSettings
             | Screen::StyleTweaks
+            | Screen::FootnoteTweaks
             | Screen::InPageFootnoteSize(_)
             | Screen::TypographyRules
             | Screen::TypographyLanguages(_)

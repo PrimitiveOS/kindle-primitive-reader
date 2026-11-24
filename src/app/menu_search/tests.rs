@@ -128,6 +128,40 @@ fn menu_search_matches_only_available_fixed_controls_and_supports_direct_jump() 
 }
 
 #[test]
+fn menu_search_reveals_a_nested_footnote_option_without_applying_it() {
+    let fixture = Fixture::new();
+    let mut app = open(&fixture);
+    app.open_path(&fixture.book).unwrap();
+    let position = app.current_history_location();
+    start(&mut app);
+    enter(&mut app, "Regularize footnote");
+    let index = app
+        .menu_search
+        .hits
+        .iter()
+        .position(|hit| {
+            hit.breadcrumb
+                .ends_with("More footnote options › Regularize footnote text")
+        })
+        .unwrap();
+    let (x, y) = at(app.list_geometry().row(index));
+    assert_eq!(app.input(Input::LongTap(x, y)), Change::Partial);
+    assert_eq!(app.screen, Screen::FootnoteTweaks);
+    let focused = app
+        .menu_search
+        .focused_list(Screen::FootnoteTweaks)
+        .unwrap();
+    assert_eq!(app.items()[focused].title, "Regularize footnote text");
+    let book = app.open_book_id().unwrap();
+    assert!(
+        !app.style_store
+            .data
+            .enabled(book, crate::user_styles::NOTE_INLINE_SIZING)
+    );
+    assert_eq!(app.current_history_location(), position);
+}
+
+#[test]
 fn menu_search_keeps_literal_punctuation_and_restores_the_origin_on_cancel() {
     let fixture = Fixture::new();
     let mut app = open(&fixture);
