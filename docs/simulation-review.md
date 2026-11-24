@@ -2,6 +2,51 @@
 
 ## Current Mac simulator checkpoint
 
+The experimental EPUB layout combines explicit and constrained widths
+with signed side margins. The pinned Mac runtime covers eight measured
+boxes across all four stock modes. Reader matches Web's visible paint
+bands and can recover complete quotes and link targets from clipped text.
+[Signed width comparison and captures](render-modes.md#width-constraints-with-negative-side-margins)
+
+Opening profiles can use the seven custom properties in an adjacent
+KOReader `.sdr` folder. The pinned stock writer generated the fixture
+used by the Reader tests. The checked EPUB and PDF openings preserve the
+reading position and fall back to publisher values for missing fields or
+an invalid sidecar. The Current book shortcut uses the effective value.
+[Custom metadata comparison and capture](reading-profiles.md#apply-a-profile-on-book-opening)
+
+Opening profiles can ask for confirmation and run promptly, on the next
+app tick, or after a custom delay. The pinned tests check that a custom
+countdown starts when the reader accepts. The Mac simulations verify the
+accepted-turn boundary, no settings change before consent, preserved EPUB
+and PDF positions, sleep and wake, and cancellation on reopening or USB.
+[Opening confirmation, delay, and captures](reading-profiles.md#confirm-or-delay-an-opening-profile)
+
+The Page Browser can use one to six rows and columns. The simulator checks
+per-book persistence, the last chosen fallback, preview strides, and the
+same EPUB source location or PDF page after resizing or returning to Book
+Map. Reader keeps its adaptive four-thumbnail grid before the first choice.
+[Thumbnail grid and captures](reading-orientation-contract.md#thumbnail-grid)
+
+The four-thread Mac suite passed 1,409 library tests, one Kindle entry
+test, 14 EPUB package tests, and four layout tests. Sixty-seven opt-in
+tests were skipped in the main run. The normal picker opened original
+EPUB, PDF, AZW3 and MOBI files, turned a page, and resumed with identical
+central page pixels, the same saved positions and unchanged source hashes.
+The separate original-file reading statistics and positive margin checks
+passed. Seven confirmation, delay and grid captures from the combined
+binary matched the reviewed files byte for byte.
+
+The Mac ARMHF release build produced a stripped, statically linked
+37,501,924-byte executable with SHA-256
+`cfd045f0ea2f177574ec53872db5c7629bcff86da560aec225f200b9ac67d0c6`.
+The local hard-float stage assembled 28 files totaling 47,075,773 bytes
+uncompressed and verified the SQLite notices, embedded Launcher icon,
+and OCR model. Kindle foreground acceptance and the Store release remain
+open.
+
+## Clock, folder shortcuts, Book Map and constrained widths checkpoint
+
 Opening profiles can use a local clock window and folder shortcuts in
 saved paths. The pinned profile callbacks cover every minute of daytime,
 overnight and equal-endpoint windows and verify that time gates both

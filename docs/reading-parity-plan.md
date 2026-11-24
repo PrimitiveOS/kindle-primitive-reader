@@ -118,6 +118,14 @@ and provides its own recording and clearing controls.
 [One-query preset](shared-dictionaries.md#searching-with-a-preset-once) ·
 [Dictionary history](shared-dictionaries.md#dictionary-history)
 
+Opening profiles use adjacent KOReader custom metadata with publisher
+fallback. They can ask before execution or use a prompt, next-tick, or
+explicit delay. Page Browser grids can use one to six rows and columns. The
+Reader simulator checks ebook source focus and PDF page focus through grid
+changes and viewport turns. [Adjacent metadata](reading-profiles.md#apply-a-profile-on-book-opening) ·
+[Opening confirmation and delay](reading-profiles.md#confirm-or-delay-an-opening-profile) ·
+[Page Browser grid](reading-orientation-contract.md#thumbnail-grid)
+
 The experimental Parley policies match the pinned KOReader Web mode's
 width and horizontal placement for two authored paragraphs and a
 centered container around ordinary paragraphs. They also match
@@ -128,6 +136,8 @@ margins, Web mode's signed sides with physical screen clipping inside
 ordinary wrappers, and explicit opening breaks inside keep groups and
 beside a sibling keep. The measured Web constraint policy also resolves
 ordinary paragraph widths, minimum and maximum sizes, and side alignment.
+The combined constraint and signed-margin policies preserve unclipped text
+positions when a wide publisher box extends beyond the physical screen.
 Full Render Mode
 behavior and its user-facing choices remain open. [Publisher comparisons](render-modes.md)
 
