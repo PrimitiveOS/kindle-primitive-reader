@@ -55,6 +55,12 @@ PDF crop bounds for edge specks, rotated pages, shaded paper and sparse ink
 with the pinned KOReader detector. Retest the existing default reading footer.
 [Thumbnail bookmarks](bookmark-browser.md) · [Publisher illustrations](publisher-image-maxima.md) · [Scan crop sample](scan-margin-specks.md)
 
+The Mac suite passed 1,143 checks. The Oasis passed 1,128 Reader library
+tests, 14 EPUB package tests and four layout probes. Both skipped 65 opt-in
+cases. All seven native frames matched the Mac simulator, including the
+publisher illustration in both orientations. Foreground touch and physical
+refresh behavior have separate checks.
+
 ## Reader 0.1.39 verification plan
 
 Cycle enabled custom footer items through the hidden step in EPUB and PDF.
