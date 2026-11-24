@@ -66,3 +66,11 @@ the disabled boundaries and the armed highlight across the result changes.
 [KOReader buttons](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/dictquicklookup.lua#L799-L838) ·
 [Comparison script](../scripts/compare-dictionary-result-navigation.py) ·
 [Last result with the highlight armed](screenshots/landscape-dictionary-last-result.png)
+
+
+The Oasis build `d6e61c3` opened a local lookup with three authored
+StarDict results. Held Next and Previous reached results 3 and 1.
+The framebuffer showed that **Unhighlight** stayed active at both
+ends. Closing the last result saved one highlight for the original
+word and returned to the reading page. The test used injected contacts
+through the Oasis touch input. [Last result on the Oasis](screenshots/oasis-dictionary-last-armed.png)

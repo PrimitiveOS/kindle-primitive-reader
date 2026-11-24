@@ -843,7 +843,8 @@ impl ParleyChapter {
                 if float.is_none()
                     && contour.is_none()
                     && height_candidates.get(block.element) == Some(&TextBoxCandidate::Simple)
-                    && let Some(height) = declared_box_height(style, outer_width, settings.font_size)
+                    && let Some(height) =
+                        declared_box_height(style, outer_width, settings.font_size)
                 {
                     // Follow the solid background's pixel origin, retain all of the
                     // natural lines, and limit trailing fill to a reading page.

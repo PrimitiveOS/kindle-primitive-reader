@@ -89,9 +89,10 @@ for fixed profiles, plus saved font size and content zoom. Dictionary result
 arrows now support held jumps to the first and last definition and preserve
 an armed highlight while switching sources. [Dictionary result navigation](dictionary-popup-display.md#first-and-last-results)
 
-The initial publisher-width implementation matches the
-pinned KOReader Web mode's box width and horizontal placement for two authored
-paragraph cases. Full Render Mode behavior and its user-facing choices remain
+The experimental Parley policies match the pinned KOReader Web mode's
+width and horizontal placement for two authored paragraphs. They also match
+the measured definite box heights and preserve text and source positions when
+a box's background fills across a page break. Full Render Mode behavior and its user-facing choices remain
 open. [Saved reading profiles](reading-profiles.md) · [Publisher widths](render-modes.md)
 
 

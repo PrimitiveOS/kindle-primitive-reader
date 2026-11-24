@@ -1,5 +1,24 @@
 # Reader workflow simulation review
 
+## Current Mac simulator checkpoint
+
+The desktop example opened an authored EPUB and PDF in separate simulator
+profiles. It rendered the ordinary Reader surfaces, top and bottom toolbars,
+Contents and footer at the Kindle's 1264 × 1680 resolution. The EPUB preview
+used the Mac's Japanese fallback for the mixed-script fixture. Functional
+captures separately exercise landscape dictionary result navigation and
+editing saved font size and content zoom. The renderer comparison uses
+authored text-box fixtures against pinned KOReader Web mode.
+
+The integrated Mac run passed 1,299 library tests, one Kindle entry test,
+14 EPUB package tests and four layout checks. Sixty-six opt-in cases were
+skipped. The latest integration reproduced the reviewed dictionary result,
+profile font size and fixed overlap frames byte for byte.
+
+[Dictionary navigation](dictionary-popup-display.md#first-and-last-results) ·
+[Saved profile values](reading-profiles.md#editing-saved-values) ·
+[Publisher geometry](render-modes.md)
+
 The 22 November 2026 Mac review covers the combined bookmark browser and publisher metadata, mark creation dates, library highlight exports, publisher and custom hidden flows, vertical table padding, highlight opacity and line height, numeric font controls, contextual vocabulary review, character-reference compatibility and the corrected document-resume checker. It also covers daily reading calendars, named highlight colors and bulk edits, Japanese lookup and shared UI font fallback, catalog acquisition, opt-in progress sync and the lower toolbar label adjustment. Kindle execution and release publication of this combined candidate remain pending.
 
 This record describes an earlier candidate. Catalog acquisition and remote progress sync are excluded from the active local-reading goal and have been removed from the current source candidate; their former checks are historical only.
