@@ -19,7 +19,10 @@ impl Reader {
     }
 
     fn opening_path_buttons(&self) -> Option<(Rect, Rect)> {
-        if !matches!(self.screen, Screen::ProfileName(Name::OpeningPath(_))) {
+        if !matches!(
+            self.screen,
+            Screen::ProfileName(Name::OpeningPath(_) | Name::ClosingPath(_))
+        ) {
             return None;
         }
         let x = self

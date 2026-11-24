@@ -298,7 +298,7 @@ enum Screen {
     ReadingProfileBookRendering(usize),
     ReadingProfileChoice(usize, reading_profiles::Field),
     ReadingProfileOpening(usize, profile_panel::opening_rules::Page),
-    ReadingProfileClosing(usize),
+    ReadingProfileClosing(usize, profile_panel::opening_rules::Page),
     ConfirmProfile(usize, profile_panel::Confirm),
     Find,
     Matches,
@@ -468,8 +468,15 @@ impl Screen {
             Self::StyleEditor => "Book CSS",
             Self::StyleClear => "Clear book CSS?",
             Self::ProfileName(profile_panel::Name::OpeningPath(_)) => "Opening file path",
-            Self::ProfileName(profile_panel::Name::OpeningMetadata(_, field)) => field.label(),
-            Self::ProfileName(profile_panel::Name::OpeningTime(.., part)) => part.title(),
+            Self::ProfileName(profile_panel::Name::ClosingPath(_)) => "Closing file path",
+            Self::ProfileName(
+                profile_panel::Name::OpeningMetadata(_, field)
+                | profile_panel::Name::ClosingMetadata(_, field),
+            ) => field.label(),
+            Self::ProfileName(
+                profile_panel::Name::OpeningTime(.., part)
+                | profile_panel::Name::ClosingTime(.., part),
+            ) => part.title(),
             Self::ProfileName(_) => "Name reading profile",
             Self::ReadingProfile(_) | Self::ConfirmProfile(_, _) => "Reading profile",
             Self::ReadingProfileFields(_) => "Included settings",
@@ -478,8 +485,12 @@ impl Screen {
             Self::ReadingProfileFontRendering(_) => "Saved font rendering",
             Self::ReadingProfileBookRendering(_) => "Saved book rendering",
             Self::ReadingProfileChoice(_, field) => field.label(),
-            Self::ReadingProfileOpening(_, page) => page.title(),
-            Self::ReadingProfileClosing(_) => "Apply on book closing",
+            Self::ReadingProfileOpening(_, page) => {
+                page.title(profile_panel::opening_rules::Event::Opening)
+            }
+            Self::ReadingProfileClosing(_, page) => {
+                page.title(profile_panel::opening_rules::Event::Closing)
+            }
             Self::Find => "Find in book",
             Self::Matches => "Search results",
             Self::SearchSettings => "Search settings",
@@ -624,6 +635,7 @@ enum Action {
     SetReadingProfileFields(bool),
     SetClosingProfile(usize, Option<reading_profiles::OnClose>),
     OpeningProfileRule(usize, profile_panel::opening_rules::Command),
+    ClosingProfileRule(usize, profile_panel::opening_rules::Command),
     SetProfileRendering(usize, profile_panel::rendering_choices::Value),
     ToggleProfileMarginLink(usize),
     UpdateFooterPreset(usize),
@@ -2016,7 +2028,22 @@ impl Reader {
             profile_panel::opening_rules::Page::TimeEdit(endpoint),
         ) = screen
         {
-            self.prepare_opening_time(index, endpoint);
+            self.prepare_profile_time(
+                profile_panel::opening_rules::Event::Opening,
+                index,
+                endpoint,
+            );
+        }
+        if let Screen::ReadingProfileClosing(
+            index,
+            profile_panel::opening_rules::Page::TimeEdit(endpoint),
+        ) = screen
+        {
+            self.prepare_profile_time(
+                profile_panel::opening_rules::Event::Closing,
+                index,
+                endpoint,
+            );
         }
         if let Screen::ReadingProfileOpening(
             index,
@@ -2332,7 +2359,7 @@ impl Reader {
                 | Screen::ReadingProfileBookRendering(_)
                 | Screen::ReadingProfileChoice(_, _)
                 | Screen::ReadingProfileOpening(_, _)
-                | Screen::ReadingProfileClosing(_)
+                | Screen::ReadingProfileClosing(..)
                 | Screen::ConfirmProfile(_, _)
         ) {
             return self.reading_profile_items();
@@ -4300,6 +4327,11 @@ impl Reader {
             Action::OpeningProfileRule(index, command) => {
                 self.change_opening_rule(index, command)?
             }
+            Action::ClosingProfileRule(index, command) => self.change_profile_rule(
+                profile_panel::opening_rules::Event::Closing,
+                index,
+                command,
+            )?,
             Action::SetProfileRendering(index, value) => {
                 self.save_profile_rendering_choice(index, value)?
             }
@@ -4683,7 +4715,10 @@ impl Reader {
             return change;
         }
         let layout = navigation.keyboard();
-        let setting_time = matches!(profile, Some(profile_panel::Name::OpeningTime(..)));
+        let setting_time = matches!(
+            profile,
+            Some(profile_panel::Name::OpeningTime(..) | profile_panel::Name::ClosingTime(..))
+        );
         let action = if setting_time { "Set" } else { "Save" };
         let Some(key) = keyboard_key(&layout, &self.editor, action, x, y) else {
             return Change::None;
@@ -7687,15 +7722,17 @@ impl Reader {
                 Screen::DictionaryEntry => ("Word or phrase", "Look up"),
                 Screen::BookmarkFind => ("Bookmark, highlighted text, or note", "Find"),
                 Screen::CollectionName => ("Collection name", "Save"),
-                Screen::ProfileName(profile_panel::Name::OpeningPath(_)) => {
-                    ("Path text, separated by commas", "Save")
-                }
-                Screen::ProfileName(profile_panel::Name::OpeningMetadata(..)) => {
-                    ("Phrases separated by commas", "Save")
-                }
-                Screen::ProfileName(profile_panel::Name::OpeningTime(.., part)) => {
-                    (part.range_label(), "Set")
-                }
+                Screen::ProfileName(
+                    profile_panel::Name::OpeningPath(_) | profile_panel::Name::ClosingPath(_),
+                ) => ("Path text, separated by commas", "Save"),
+                Screen::ProfileName(
+                    profile_panel::Name::OpeningMetadata(..)
+                    | profile_panel::Name::ClosingMetadata(..),
+                ) => ("Phrases separated by commas", "Save"),
+                Screen::ProfileName(
+                    profile_panel::Name::OpeningTime(.., part)
+                    | profile_panel::Name::ClosingTime(.., part),
+                ) => (part.range_label(), "Set"),
                 Screen::ProfileName(_) => ("Profile name", "Save"),
                 Screen::FooterPresetName(_) => ("Status bar preset name", "Save"),
                 Screen::DictionaryPresets(dictionary_presets::Page::Name(_)) => {
@@ -7925,7 +7962,18 @@ impl Reader {
                         }
                         Action::SetReadingProfileFields(_) => RowAccessory::None,
                         Action::OpeningProfileRule(index, command) => self
-                            .opening_rule_checked(*index, command)
+                            .profile_rule_checked(
+                                profile_panel::opening_rules::Event::Opening,
+                                *index,
+                                command,
+                            )
+                            .map_or(RowAccessory::None, RowAccessory::Toggle),
+                        Action::ClosingProfileRule(index, command) => self
+                            .profile_rule_checked(
+                                profile_panel::opening_rules::Event::Closing,
+                                *index,
+                                command,
+                            )
                             .map_or(RowAccessory::None, RowAccessory::Toggle),
                         Action::SetProfileRendering(_, _) => RowAccessory::None,
                         Action::ToggleProfileMarginLink(index) => RowAccessory::Toggle(
@@ -9200,10 +9248,10 @@ impl App for Reader {
                         self.show(profile_panel::rendering_choices::parent(index, field));
                     }
                     Screen::ReadingProfileOpening(index, page) => {
-                        self.show(page.back(index));
+                        self.show(page.back(profile_panel::opening_rules::Event::Opening, index));
                     }
-                    Screen::ReadingProfileClosing(index) => {
-                        self.show(Screen::ReadingProfile(index))
+                    Screen::ReadingProfileClosing(index, page) => {
+                        self.show(page.back(profile_panel::opening_rules::Event::Closing, index));
                     }
                     Screen::BookDetails => {
                         if self

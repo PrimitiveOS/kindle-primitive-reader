@@ -1,10 +1,11 @@
 //! Apply reading profiles while the book being closed still owns its source.
+use super::opening_rules::{Event, Page};
 use super::{
     Action, Canvas, Change, FileBrowser, Input, Item, LibraryBook, Profile, Reader, Rect, Result,
     Screen, Sheet, SheetAction,
 };
 use crate::app::bookmark_browser::MarkKey;
-use crate::reading_profiles::OnClose;
+use crate::reading_profiles::{OnClose, opening::Book};
 use primitive_app::App;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -62,12 +63,20 @@ impl Closing {
     }
 }
 
-pub(super) fn summary(policy: Option<OnClose>) -> &'static str {
+fn policy_label(policy: Option<OnClose>, limited: bool) -> &'static str {
     match policy {
         None => "Off",
+        Some(OnClose::Apply) if limited => "Apply when matched",
         Some(OnClose::Apply) => "Always apply",
         Some(OnClose::Ask) => "Ask to execute",
     }
+}
+
+pub(super) fn summary(profile: &Profile) -> &'static str {
+    policy_label(
+        profile.apply_on_close(),
+        profile.closing_options().is_some(),
+    )
 }
 
 impl Reader {
@@ -75,18 +84,44 @@ impl Reader {
         let Some(profile) = self.profiles.get(index) else {
             return Vec::new();
         };
-        [None, Some(OnClose::Apply), Some(OnClose::Ask)]
+        let options = profile.closing_options();
+        let mut items: Vec<_> = [None, Some(OnClose::Apply), Some(OnClose::Ask)]
             .into_iter()
             .map(|policy| {
-                Item::new(summary(policy), Action::SetClosingProfile(index, policy)).detail(
-                    if policy == profile.apply_on_close() {
-                        "Selected"
-                    } else {
-                        ""
-                    },
+                Item::new(
+                    policy_label(policy, options.is_some()),
+                    Action::SetClosingProfile(index, policy),
                 )
+                .detail(if policy == profile.apply_on_close() {
+                    "Selected"
+                } else {
+                    ""
+                })
             })
-            .collect()
+            .collect();
+        items.extend([
+            Item::new(
+                "Closing conditions",
+                Action::Show(Event::Closing.screen(index, Page::Conditions)),
+            )
+            .detail(
+                if options.is_some_and(|options| options.conditions.has_matchers()) {
+                    "Match any selected condition"
+                } else {
+                    "Any book"
+                },
+            ),
+            Item::new(
+                "Only within time window",
+                Action::Show(Event::Closing.screen(index, Page::TimeWindow)),
+            )
+            .detail(
+                options
+                    .and_then(|options| options.time)
+                    .map_or_else(|| "Any time".into(), super::opening_time::window_label),
+            ),
+        ]);
+        items
     }
 
     pub(in crate::app) fn set_closing_profile(
@@ -109,7 +144,6 @@ impl Reader {
             return Ok(Change::None);
         }
         self.closing_before_switch = None;
-        let supported = self.open_book_id();
         if let AfterClose::Open { entry, .. } = &next
             && self
                 .current_document()
@@ -117,19 +151,20 @@ impl Reader {
         {
             return self.finish_close_route(next, false);
         }
+        let Some(book) = self.open_book_id() else {
+            return self.finish_close_route(next, false);
+        };
         let mut choices: Vec<_> = self
-            .profiles
-            .iter()
-            .filter(|profile| supported.is_some() && self.profile_supported(profile))
-            .filter_map(|profile| {
-                let policy = profile.apply_on_close()?;
+            .matching_closing_profiles(self.automatic_profile_minute(Event::Closing))
+            .into_iter()
+            .map(|(profile, policy)| {
                 let detail = (policy == OnClose::Ask)
                     .then(|| format!("{}\nCancel skips this profile.", profile.name()));
-                Some(Choice {
+                Choice {
                     profile: profile.clone(),
                     accepted: policy == OnClose::Apply,
                     detail,
-                })
+                }
             })
             .collect();
         if choices.is_empty() {
@@ -139,7 +174,7 @@ impl Reader {
         self.opening_execution = None;
         self.settle_pending_opening();
         let request = Closing {
-            book: supported.unwrap(),
+            book,
             epoch: self.opening_profile_epoch,
             next,
             choices,
@@ -158,6 +193,52 @@ impl Reader {
         } else {
             self.complete_closing_profiles(request)
         }
+    }
+
+    fn matching_closing_profiles(&self, minute: Option<u16>) -> Vec<(&Profile, OnClose)> {
+        let Some((entry, id)) = self.current_document() else {
+            return Vec::new();
+        };
+        let eligible = |profile: &&Profile| {
+            profile.apply_on_close().is_some() && self.profile_supported(profile)
+        };
+        let metadata = self
+            .profiles
+            .iter()
+            .filter(eligible)
+            .any(|profile| {
+                profile
+                    .closing_options()
+                    .is_some_and(|options| !options.conditions.metadata.is_empty())
+            })
+            .then(|| self.current_opening_metadata())
+            .flatten();
+        let orientation = self
+            .accepted_viewport
+            .and_then(|accepted| {
+                super::on_open::TURNS
+                    .iter()
+                    .find_map(|&(turn, orientation)| (accepted.turn == turn).then_some(orientation))
+            })
+            .unwrap_or_else(|| match self.reading_orientation() {
+                super::ReadingOrientation::FollowLauncher => super::ReadingOrientation::Upright,
+                orientation => orientation,
+            });
+        let context = Book {
+            id,
+            path: entry.library_path(),
+            library: &self.library,
+            orientation,
+            is_new: false,
+            metadata: metadata.as_ref(),
+            local_minute: minute,
+            download_folder: self.browser.directory(),
+        };
+        self.profiles
+            .iter()
+            .filter(eligible)
+            .filter_map(|profile| Some((profile, profile.matches_closing(&context)?)))
+            .collect()
     }
 
     fn complete_closing_profiles(&mut self, request: Closing) -> Result<Change> {

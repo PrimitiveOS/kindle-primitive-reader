@@ -940,6 +940,7 @@ fn saved_scan_values_follow_the_fixed_provider_and_keep_djvu_adaptive() {
             opening_time: None,
             opening_execution: None,
             apply_on_close: None,
+            closing: None,
         };
         let numeric_gamma = provider != FixedProvider::Djvu;
         let crop_margin = provider == FixedProvider::Pdf;
@@ -967,6 +968,7 @@ fn saved_scan_values_follow_the_fixed_provider_and_keep_djvu_adaptive() {
                     opening_time: None,
                     opening_execution: None,
                     apply_on_close: None,
+                    closing: None,
                 }
             );
         }

@@ -18,7 +18,7 @@ fn app(fixture: &Fixture) -> Reader {
 }
 
 fn schedule(app: &mut Reader, start: u16, end: u16) {
-    app.save_opening_time(0, Some(TimeWindow { start, end }))
+    app.save_profile_time(Event::Opening, 0, Some(TimeWindow { start, end }))
         .unwrap();
 }
 

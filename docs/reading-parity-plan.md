@@ -125,14 +125,17 @@ Opening profiles read adjacent, centralized path and fingerprint KOReader
 custom metadata in the saved preference order, with publisher fallback.
 They can ask before execution or use a prompt, next-tick, or explicit
 delay. A separate closing profile can apply automatically or ask while the
-outgoing book is still open. Switching to an encrypted PDF keeps that book
-available until the new password is accepted. Page Browser grids can use one
+outgoing book is still open. Close rules match any configured orientation,
+metadata, path or collection and can require a local time window. Switching
+to an encrypted PDF keeps the outgoing book available until the new
+password is accepted. Page Browser grids can use one
 to six rows and columns. A horizontal
 swipe along the top changes columns and a vertical swipe along the left
 changes rows. The Reader simulator checks ebook source focus and PDF page
 focus through grid changes and viewport turns. Blank space in the left or
 right half of the grid moves by one full grid while preserving the reading
 position. [Metadata sources](reading-profiles.md#apply-a-profile-on-book-opening) ·
+[Conditional closing](reading-profiles.md#apply-a-profile-on-book-closing) ·
 [Opening confirmation and delay](reading-profiles.md#confirm-or-delay-an-opening-profile) ·
 [Closing profiles](reading-profiles.md#apply-a-profile-on-book-closing) ·
 [Page Browser grid](reading-orientation-contract.md#thumbnail-grid)

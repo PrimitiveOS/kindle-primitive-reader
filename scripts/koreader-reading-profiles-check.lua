@@ -725,8 +725,8 @@ local close_menu = profiles:genAutoExecDocConditionalMenuItem("on book closing",
 local always_close = close_menu.sub_item_table_func()[1]
 always_close.callback()
 assert(close_menu.checked_func())
-local function close_book()
-    profile_ui.instance = {rolling = true}
+local function close_book(fixed)
+    profile_ui.instance = fixed and {paging = true} or {rolling = true}
     events, next_tick, after_next_tick, scheduled, visible = {}, {}, {}, {}, nil
     profiles:onCloseDocument()
 end
@@ -768,6 +768,69 @@ always_close.callback()
 assert(not close_menu.checked_func())
 delay.hold_callback(menu)
 
+-- The shared close menu has four alternatives and omits opening's new-book gate.
+local close_rules = close_menu.sub_item_table_func()
+assert(#close_rules == 5 and close_rules[6] == nil and rules[6] ~= nil)
+local pdf_close = profiles:genAutoExecDocConditionalMenuItem("on book closing", "CloseDocumentAll", "Scanned pages")
+local pdf_close_rules = pdf_close.sub_item_table_func()
+local function closing_path(section, pattern)
+    section[4].callback(menu)
+    visible.input = pattern
+    choose(visible.buttons[#visible.buttons], "Save").callback()
+end
+delays[1].callback()
+profiles:genAutoExecMenu("Scanned pages", profiles.data["Scanned pages"])[2].sub_item_table_func()[1].callback()
+close_rules[2].sub_item_table_func()[2].callback()
+close_rules[5].callback(menu)
+close_rules[3].sub_item_table_func()[1].callback(menu)
+visible.input = "coastal ledger"
+choose(visible.buttons[#visible.buttons], "Save").callback()
+closing_path(close_rules, "missing, %H%/Reports")
+closing_path(pdf_close_rules, "%H%/Reports")
+profiles.ui.doc_props.display_title = "Ordinary reading"
+local function close_text_at(file, turn, expected, title)
+    profiles.document.file, profiles.document.is_new = file, false
+    profiles.ui.doc_props.display_title = title or "Ordinary reading"
+    rotation = turn
+    close_book(false)
+    local changes = 0
+    for _, event in ipairs(events) do
+        if event.name == "ConfigChange" and event.args[1] == "font_size" then changes = changes + 1 end
+    end
+    assert(sent_setting("font_size") == (expected and 31.5 or nil))
+    assert(changes == (expected and 1 or 0))
+end
+close_text_at("/documents/ordinary.epub", 0, false)
+close_text_at("/documents/ordinary.epub", 1, true)
+close_text_at("/documents/Reports/Log.epub", 0, true)
+close_text_at("/documents/enrolled.epub", 0, true)
+close_text_at("/documents/ordinary.epub", 0, true, "Coastal Ledger")
+close_text_at("/documents/Reports/Log.epub", 1, true, "Coastal Ledger")
+assert(sent_setting("zoom_overlap_v") == nil)
+for _, file in ipairs({"/documents/Reports/Scan.pdf", "/documents/ordinary.pdf"}) do
+    profiles.document.file = file
+    rotation = 0
+    close_book(true)
+    assert(sent_setting("zoom_overlap_v") == (file:find("/Reports/", 1, true) and 57 or nil))
+    assert(sent_setting("render_dpi") == nil)
+end
+
+profiles.data.Text.settings.auto_exec_time_interval = {"22:00", "06:30"}
+os.date = function(format, ...) return format == "%H:%M" and now or real_date(format, ...) end
+now = "21:59"
+close_text_at("/documents/Reports/Log.epub", 1, false)
+now = "22:00"
+close_text_at("/documents/Reports/Log.epub", 1, true)
+now = "06:30"
+close_text_at("/documents/Reports/Log.epub", 1, true)
+now = "06:31"
+close_text_at("/documents/Reports/Log.epub", 1, false)
+os.date = real_date
+profiles.data.Text.settings.auto_exec_time_interval = nil
+close_menu.hold_callback(menu)
+pdf_close.hold_callback(menu)
+assert(not close_menu.checked_func() and not pdf_close.checked_func())
+
 for _, item in ipairs(profiles:getSubMenuItems()) do
     if item.name == "PDF copy" then commands = item.sub_item_table; break end
 end
@@ -791,3 +854,4 @@ print("Stock metadata opening: seven fields, effective title, Current book, OR/o
 print("Stock opening time: endpoint editor, every minute of daytime, overnight and equal-endpoint windows, conditional gating and clearing.")
 print("Stock opening execution: confirmation before scheduling, Cancel, Prompt, next-tick Default and 1–10 second Custom.")
 print("Stock closing execution: Always, reload guard, Prompt dispatch for active reader, and deferred/late confirmation format gating.")
+print("Stock conditional closing: four OR alternatives, no new-book row, format gates and overnight time endpoints.")

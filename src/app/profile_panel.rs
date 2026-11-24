@@ -4,6 +4,7 @@ use primitive_ui::{Sheet, SheetAction};
 use super::{navigation_layout::NavigationLayout, *};
 use crate::reading_profiles::opening::MetadataField;
 use crate::reading_profiles::{Field, FixedProfile};
+use opening_rules::{Event, Page};
 
 pub(super) mod on_close;
 pub(super) mod on_open;
@@ -22,6 +23,9 @@ pub(super) enum Name {
     OpeningPath(usize),
     OpeningMetadata(usize, MetadataField),
     OpeningTime(usize, opening_time::Endpoint, opening_time::Part),
+    ClosingPath(usize),
+    ClosingMetadata(usize, MetadataField),
+    ClosingTime(usize, opening_time::Endpoint, opening_time::Part),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,18 +35,27 @@ pub(super) enum Confirm {
 }
 
 impl Name {
+    fn rule_event(self) -> Event {
+        match self {
+            Self::ClosingPath(_) | Self::ClosingMetadata(..) | Self::ClosingTime(..) => {
+                Event::Closing
+            }
+            _ => Event::Opening,
+        }
+    }
+
     pub(super) fn back(self) -> Screen {
+        let event = self.rule_event();
         match self {
             Self::Create => Screen::ReadingProfiles,
             Self::Rename(index) | Self::Duplicate(index) => Screen::ReadingProfile(index),
-            Self::OpeningPath(index) => {
-                Screen::ReadingProfileOpening(index, opening_rules::Page::Overview)
+            Self::OpeningPath(index) => event.screen(index, Page::Overview),
+            Self::ClosingPath(index) => event.screen(index, Page::Conditions),
+            Self::OpeningMetadata(index, _) | Self::ClosingMetadata(index, _) => {
+                event.screen(index, Page::Metadata)
             }
-            Self::OpeningMetadata(index, _) => {
-                Screen::ReadingProfileOpening(index, opening_rules::Page::Metadata)
-            }
-            Self::OpeningTime(index, endpoint, _) => {
-                Screen::ReadingProfileOpening(index, opening_rules::Page::TimeEdit(endpoint))
+            Self::OpeningTime(index, endpoint, _) | Self::ClosingTime(index, endpoint, _) => {
+                event.screen(index, Page::TimeEdit(endpoint))
             }
         }
     }
@@ -106,10 +119,10 @@ impl Reader {
             return self.profile_rendering_choices(index, field);
         }
         if let Screen::ReadingProfileOpening(index, page) = self.screen {
-            return self.opening_rule_items(index, page);
+            return self.profile_rule_items(Event::Opening, index, page);
         }
-        if let Screen::ReadingProfileClosing(index) = self.screen {
-            return self.close_profile_items(index);
+        if let Screen::ReadingProfileClosing(index, page) = self.screen {
+            return self.profile_rule_items(Event::Closing, index, page);
         }
         if let Screen::ReadingProfileFields(index) = self.screen {
             return self.profile_field_items(index);
@@ -156,9 +169,9 @@ impl Reader {
             .detail(opening_rules::summary(profile)),
             Item::new(
                 "Apply on book closing",
-                Action::Show(Screen::ReadingProfileClosing(index)),
+                Action::Show(Event::Closing.screen(index, Page::Overview)),
             )
-            .detail(on_close::summary(profile.apply_on_close())),
+            .detail(on_close::summary(profile)),
             Item::new(
                 "Rename",
                 Action::Show(Screen::ProfileName(Name::Rename(index))),
@@ -282,6 +295,7 @@ impl Reader {
                 opening_time: None,
                 opening_execution: None,
                 apply_on_close: None,
+                closing: None,
             });
         }
         Ok(Profile::Text {
@@ -293,6 +307,7 @@ impl Reader {
             opening_time: None,
             opening_execution: None,
             apply_on_close: None,
+            closing: None,
         })
     }
 
@@ -312,13 +327,18 @@ impl Reader {
     }
 
     pub(super) fn edit_reading_profile_name(&mut self, mode: Name, name: &str) -> Result<()> {
+        let event = mode.rule_event();
         let index = match mode {
             Name::Create => return self.save_reading_profile(name),
-            Name::OpeningPath(index) => return self.save_opening_path(index, name),
-            Name::OpeningMetadata(index, field) => {
-                return self.save_opening_metadata(index, field, name);
+            Name::OpeningPath(index) | Name::ClosingPath(index) => {
+                return self.save_profile_path(event, index, name);
             }
-            Name::OpeningTime(.., part) => return self.set_opening_time_value(mode, part, name),
+            Name::OpeningMetadata(index, field) | Name::ClosingMetadata(index, field) => {
+                return self.save_profile_metadata(event, index, field, name);
+            }
+            Name::OpeningTime(.., part) | Name::ClosingTime(.., part) => {
+                return self.set_opening_time_value(mode, part, name);
+            }
             Name::Rename(index) | Name::Duplicate(index) => index,
         };
         let mut profiles = self.profiles.clone();
@@ -332,12 +352,16 @@ impl Reader {
                 copy.set_name(name);
                 copy.set_opening_conditions(Default::default());
                 copy.set_apply_on_close(None);
+                copy.set_closing_options(Default::default());
                 profiles.push(copy);
             }
             Name::Create
             | Name::OpeningPath(_)
             | Name::OpeningMetadata(..)
-            | Name::OpeningTime(..) => unreachable!(),
+            | Name::OpeningTime(..)
+            | Name::ClosingPath(_)
+            | Name::ClosingMetadata(..)
+            | Name::ClosingTime(..) => unreachable!(),
         }
         self.commit_profiles(profiles)?;
         self.show(match mode {

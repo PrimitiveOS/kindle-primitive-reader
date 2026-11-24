@@ -28,6 +28,14 @@ pub(crate) enum OnClose {
     Ask,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct ClosingOptions {
+    pub(crate) conditions: opening::Conditions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) time: Option<opening::TimeWindow>,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub(crate) enum Profile {
@@ -46,6 +54,8 @@ pub(crate) enum Profile {
         opening_execution: Option<opening::Execution>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         apply_on_close: Option<OnClose>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        closing: Option<ClosingOptions>,
     },
     Fixed {
         name: String,
@@ -62,6 +72,8 @@ pub(crate) enum Profile {
         opening_execution: Option<opening::Execution>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         apply_on_close: Option<OnClose>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        closing: Option<ClosingOptions>,
     },
 }
 
@@ -80,6 +92,33 @@ impl Profile {
                 *apply_on_close = policy
             }
         }
+    }
+
+    pub(crate) fn closing_options(&self) -> Option<&ClosingOptions> {
+        match self {
+            Self::Text { closing, .. } | Self::Fixed { closing, .. } => closing.as_ref(),
+        }
+    }
+
+    pub(crate) fn set_closing_options(&mut self, options: ClosingOptions) {
+        let value =
+            (options.conditions.has_matchers() || options.time.is_some()).then_some(options);
+        match self {
+            Self::Text { closing, .. } | Self::Fixed { closing, .. } => *closing = value,
+        }
+    }
+
+    pub(crate) fn matches_closing(&self, context: &opening::Book<'_>) -> Option<OnClose> {
+        let mode = self.apply_on_close()?;
+        self.closing_options()
+            .is_none_or(|options| {
+                options.time.is_none_or(|window| {
+                    context
+                        .local_minute
+                        .is_some_and(|minute| window.includes(minute))
+                }) && (!options.conditions.has_matchers() || options.conditions.matches(context))
+            })
+            .then_some(mode)
     }
 
     pub(crate) fn opening_execution(&self) -> Option<opening::Execution> {
@@ -479,6 +518,15 @@ fn validate(profiles: &[Profile]) -> io::Result<()> {
             .opening_conditions()
             .is_some_and(|conditions| profile.applies_on_open() || !conditions.valid())
             || profile.opening_time().is_some_and(|time| !time.valid())
+            || profile.closing_options().is_some_and(|options| {
+                !options.conditions.valid()
+                    || options.conditions.new_only
+                    || options
+                        .conditions
+                        .orientations
+                        .contains(&crate::reading_controls::ReadingOrientation::FollowLauncher)
+                    || options.time.is_some_and(|time| !time.valid())
+            })
             || profile
                 .opening_execution()
                 .is_some_and(|options| !options.timing.valid())

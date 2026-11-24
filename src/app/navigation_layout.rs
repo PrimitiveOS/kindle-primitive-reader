@@ -134,7 +134,7 @@ impl Screen {
                 | Self::ReadingProfileBookRendering(_)
                 | Self::ReadingProfileChoice(_, _)
                 | Self::ReadingProfileOpening(_, _)
-                | Self::ReadingProfileClosing(_)
+                | Self::ReadingProfileClosing(..)
                 | Self::ConfirmProfile(_, _)
                 | Self::ReadingHistory(
                     super::reading_history::Page::ImportKoReader

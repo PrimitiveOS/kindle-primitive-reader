@@ -9,7 +9,7 @@ use crate::session::ReadingViewport;
 use primitive_app::viewport::{LogicalTurn, ViewportRequest};
 use std::path::Path;
 
-const TURNS: [(LogicalTurn, ReadingOrientation); 4] = [
+pub(super) const TURNS: [(LogicalTurn, ReadingOrientation); 4] = [
     (LogicalTurn::Upright, ReadingOrientation::Upright),
     (LogicalTurn::UpsideDown, ReadingOrientation::UpsideDown),
     (

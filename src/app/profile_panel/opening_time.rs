@@ -1,5 +1,5 @@
-//! Local-time gate and clock editor for automatic opening profiles.
-use super::opening_rules::{Command, Page};
+//! Local-time gate and clock editor for automatic reading profiles.
+use super::opening_rules::{Command, Event, Page};
 use super::{Action, CAPTION, Canvas, Change, Input, Item, Name, Reader, Rect, Result, Screen};
 use crate::reading_profiles::opening::TimeWindow;
 use primitive_ui::TextStyle;
@@ -120,41 +120,47 @@ const STEPS: [(Part, i32, Rect); 4] = [
 
 impl Reader {
     pub(in crate::app) fn profile_opening_minute(&self) -> Option<u16> {
+        self.automatic_profile_minute(Event::Opening)
+    }
+
+    pub(super) fn automatic_profile_minute(&self, event: Event) -> Option<u16> {
         self.profiles
             .iter()
-            .any(|profile| profile.opening_time().is_some())
+            .any(|profile| event.time(profile).is_some())
             .then(current_minute)
             .flatten()
     }
 
-    pub(in crate::app) fn prepare_opening_time(&mut self, index: usize, endpoint: Endpoint) {
-        if matches!(self.screen, Screen::ProfileName(Name::OpeningTime(i, bound, _)) if i == index && bound == endpoint)
+    pub(in crate::app) fn prepare_profile_time(
+        &mut self,
+        event: Event,
+        index: usize,
+        endpoint: Endpoint,
+    ) {
+        if matches!(self.screen, Screen::ProfileName(mode @ (Name::OpeningTime(i, bound, _) | Name::ClosingTime(i, bound, _))) if i == index && bound == endpoint && mode.rule_event() == event)
         {
             return;
         }
         self.profile_opening_time_draft = self
             .profiles
             .get(index)
-            .and_then(|profile| profile.opening_time())
+            .and_then(|profile| event.time(profile))
             .map(|time| endpoint.select(time))
             .or_else(current_minute)
             .unwrap_or(0);
     }
 
-    pub(super) fn opening_time_items(&self, index: usize) -> Vec<Item> {
+    pub(super) fn profile_time_items(&self, event: Event, index: usize) -> Vec<Item> {
         let time = self
             .profiles
             .get(index)
-            .and_then(|profile| profile.opening_time());
+            .and_then(|profile| event.time(profile));
         let mut items: Vec<_> = [Endpoint::Start, Endpoint::End]
             .into_iter()
             .map(|endpoint| {
                 Item::new(
                     endpoint.label(),
-                    Action::Show(Screen::ReadingProfileOpening(
-                        index,
-                        Page::TimeEdit(endpoint),
-                    )),
+                    Action::Show(event.screen(index, Page::TimeEdit(endpoint))),
                 )
                 .detail(time.map_or_else(|| "Unset".into(), |time| clock(endpoint.select(time))))
             })
@@ -162,22 +168,23 @@ impl Reader {
         if time.is_some() {
             items.push(Item::new(
                 "Clear time window",
-                Action::OpeningProfileRule(index, Command::ClearTimeWindow),
+                event.action(index, Command::ClearTimeWindow),
             ));
         }
         items
     }
 
-    pub(super) fn save_opening_time(
+    pub(super) fn save_profile_time(
         &mut self,
+        event: Event,
         index: usize,
         time: Option<TimeWindow>,
     ) -> Result<()> {
         let mut profiles = self.profiles.clone();
-        profiles
+        let profile = profiles
             .get_mut(index)
-            .ok_or("That profile is unavailable")?
-            .set_opening_time(time);
+            .ok_or("That profile is unavailable")?;
+        event.set_time(profile, time);
         self.commit_profiles(profiles)?;
         self.notice = None;
         Ok(())
@@ -200,7 +207,9 @@ impl Reader {
     }
 
     pub(in crate::app) fn draw_opening_time(&self, canvas: &mut Canvas) {
-        let Screen::ReadingProfileOpening(_, Page::TimeEdit(endpoint)) = self.screen else {
+        let (Screen::ReadingProfileOpening(_, Page::TimeEdit(endpoint))
+        | Screen::ReadingProfileClosing(_, Page::TimeEdit(endpoint))) = self.screen
+        else {
             return;
         };
         let layout = self.navigation_layout();
@@ -245,14 +254,20 @@ impl Reader {
     }
 
     pub(in crate::app) fn opening_time_input(&mut self, input: Input) -> Option<Change> {
-        let Screen::ReadingProfileOpening(index, Page::TimeEdit(endpoint)) = self.screen else {
-            return None;
+        let (event, index, endpoint) = match self.screen {
+            Screen::ReadingProfileOpening(index, Page::TimeEdit(endpoint)) => {
+                (Event::Opening, index, endpoint)
+            }
+            Screen::ReadingProfileClosing(index, Page::TimeEdit(endpoint)) => {
+                (Event::Closing, index, endpoint)
+            }
+            _ => return None,
         };
         if matches!(input, Input::Sleep | Input::Wake) {
             return None;
         }
         let layout = self.navigation_layout();
-        let back = Screen::ReadingProfileOpening(index, Page::TimeWindow);
+        let back = event.screen(index, Page::TimeWindow);
         if input == Input::PageBack {
             self.show(back);
             return Some(Change::Partial);
@@ -271,13 +286,13 @@ impl Reader {
             let mut window = self
                 .profiles
                 .get(index)
-                .and_then(|profile| profile.opening_time())
+                .and_then(|profile| event.time(profile))
                 .unwrap_or(TimeWindow {
                     start: minute,
                     end: minute,
                 });
             endpoint.replace(&mut window, minute);
-            if let Err(error) = self.save_opening_time(index, Some(window)) {
+            if let Err(error) = self.save_profile_time(event, index, Some(window)) {
                 return Some(self.report(error));
             }
             self.show(back);
@@ -288,9 +303,10 @@ impl Reader {
                     .contains(x, y)
             })
         {
-            self.show(Screen::ProfileName(Name::OpeningTime(
-                index, endpoint, *part,
-            )));
+            self.show(Screen::ProfileName(match event {
+                Event::Opening => Name::OpeningTime(index, endpoint, *part),
+                Event::Closing => Name::ClosingTime(index, endpoint, *part),
+            }));
         } else if let Some((part, direction, _)) = STEPS
             .iter()
             .find(|(_, _, rect)| layout.centered(*rect).contains(x, y))

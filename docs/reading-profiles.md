@@ -237,9 +237,30 @@ PDF, including rejected turns, cancellation, due-time ordering, and resume.
 
 Open a profile and choose **Apply on book closing**. **Off** is the default.
 **Always apply** saves the included settings to the outgoing book when it
-closes. **Ask to execute** presents each profile over the current page.
-**Apply** approves it. **Cancel**, the physical back button, or a tap
-outside skips that profile and continues closing the book.
+closes. After adding conditions or a time window, this choice becomes
+**Apply when matched**. **Ask to execute** shows the matched profile over
+the current page. **Apply** approves it. **Cancel**, the physical back
+button, or a tap outside skips that profile and continues closing the book.
+Turning the profile Off keeps its configured conditions available.
+
+**Closing conditions** offers screen orientation, book metadata, file
+path and collection membership. Any one match qualifies the book, and
+several matches run the same profile once. Reader checks the outgoing
+book's accepted screen orientation. On a legacy display it uses the
+effective saved orientation and treats Follow Launcher as upright.
+The metadata and path editors use the same sources, folder shortcuts,
+case-insensitive substring matching and comma-separated phrases as the
+opening editors. **Current book** inserts an available value. Close
+conditions apply to new and resumed books. **Clear conditions** removes
+all four kinds of book criteria.
+
+**Only within time window** further gates a close even if a book condition
+matches. Both clock endpoints are included. A later start than end crosses
+midnight, and equal endpoints cover the whole day. The window uses the
+device's local time. Reader checks these facts once when closing starts.
+An accepted prompt for a matched profile keeps that decision while the
+next PDF waits for its password. Closing and opening have separate saved
+windows, so enabling a closing rule keeps existing opening preferences.
 
 Closing through the reading Library controls, switching to another title
 and tapping **Exit** use this policy. Reader applies accepted profiles in
@@ -253,18 +274,26 @@ Renaming retains the policy. A duplicate starts Off. Archiving and
 deleting use their own file transactions.
 
 The pinned KOReader Profiles callback runs before its ReaderUI closes the
-document. In the native reference replay, **Prompt** dispatches book settings
-at that point. KOReader's **Default** and **Custom** callbacks run later and
-lose document actions when ReaderUI is gone. Reader keeps the outgoing book
-open until its prompt is resolved, so approval applies to the intended book.
-Closing currently supports unconditional, immediate application and per-profile
-approval. KOReader also offers conditions on close and general timed actions.
+document. Its opening and closing menus share the four book conditions.
+The new-book row belongs to opening. The native reference replay checks
+each close condition, duplicate matches, the EPUB and PDF action gates
+and both endpoints of an overnight window. KOReader shares its profile
+window across opening and closing. In **Prompt** mode it dispatches book
+settings while ReaderUI is active. **Default** and **Custom** run after
+ReaderUI has closed, when the replay confirms document actions are
+unavailable. Reader keeps the outgoing book open until approval is resolved,
+then applies its reading settings while the source is active.
+[Stock condition menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L880-L1149) ·
+[Stock condition matching](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L1287-L1336) ·
 [Stock close lifecycle](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/readerui.lua#L874-L902) ·
 [Stock profile dispatch](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L1224-L1284) ·
 [Stock format gates](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L1372-L1385) ·
 [Native callback replay](../scripts/koreader-reading-profiles-check.lua) ·
 [Mac close workflows](../src/app/profile_panel/on_close/tests.rs) ·
 [Closing settings](screenshots/profile-book-closing-settings-portrait.png) ·
+[Closing conditions](screenshots/profile-closing-conditions-portrait.png) ·
+[Closing orientations](screenshots/profile-closing-orientation-landscape.png) ·
+[Closing time window](screenshots/profile-closing-time-landscape.png) ·
 [Portrait confirmation](screenshots/profile-book-closing-ask-portrait.png) ·
 [Landscape confirmation](screenshots/profile-book-closing-ask-landscape.png)
 
