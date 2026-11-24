@@ -1213,10 +1213,13 @@ impl Reader {
                     self.controls.footer_pages_left_include_current,
                 );
                 let unit = if pages_left == 1 { "page" } else { "pages" };
-                Some(format!(
-                    "{}{separator}{pages_left} {unit} left",
-                    p.section_name
-                ))
+                Some(match self.bound_footer_chapter_title() {
+                    Some("") => format!("{pages_left} {unit} left"),
+                    title => format!(
+                        "{}{separator}{pages_left} {unit} left",
+                        title.unwrap_or(p.section_name)
+                    ),
+                })
             }
             _ => None,
         }
@@ -1289,6 +1292,13 @@ impl Reader {
             });
         let book_time_left = time_left_for(self.pace.rate(id), progress.book_pages_left);
         let chapter_time_left = time_left_for(self.pace.rate(id), progress.screen_pages_left());
+        let chapter_title = std::cell::OnceCell::new();
+        let chapter_title = || {
+            *chapter_title.get_or_init(|| {
+                self.bound_footer_chapter_title()
+                    .unwrap_or(progress.section_name)
+            })
+        };
         let battery = std::cell::OnceCell::new();
         let battery = || battery.get_or_init(primitive_device::battery_status);
         let clock = std::cell::OnceCell::new();
@@ -1314,7 +1324,7 @@ impl Reader {
                 'l' => Some(left_in_chapter.to_string()),
                 'p' => Some((progress.book_fraction * 100.0).round().to_string()),
                 'H' => Some(book_time_left.clone()),
-                'C' => Some(progress.section_name.to_owned()),
+                'C' => Some(chapter_title().to_owned()),
                 'P' => Some(
                     (progress.section_page as f64 * 100.0 / progress.section_len.max(1) as f64)
                         .round()
@@ -1379,7 +1389,7 @@ impl Reader {
             let text = match item {
                 FooterItem::CurrentPage => current_page(),
                 FooterItem::ChapterTitle => {
-                    let title = progress.section_name.trim();
+                    let title = chapter_title().trim();
                     (!title.is_empty()).then(|| title.to_owned())
                 }
                 FooterItem::BookProgress => Some(percentage.clone()),

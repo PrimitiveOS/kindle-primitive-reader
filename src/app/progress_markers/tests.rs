@@ -1,9 +1,12 @@
 use super::*;
 use crate::app::chapter_navigation::LevelSetting;
 use crate::app::tests::{Fixture, capture_test_screen};
-use crate::app::{Action, HEIGHT, ReadingPosition, WIDTH};
+use crate::app::{Action, HEIGHT, ReadingPosition, Screen, WIDTH};
 use crate::epub::{Destination, TocEntry};
-use crate::reading_controls::{FooterTrackPosition, ProgressScope, StatusBar};
+use crate::reading_controls::{
+    FooterItem, FooterSymbolStyle, FooterTrackPosition, ProgressScope, StatusBar,
+};
+use primitive_app::App;
 use primitive_ui::Canvas;
 use std::{fs, io::Write, path::Path};
 
@@ -43,14 +46,105 @@ fn write_pdf(path: &Path) {
         "<< /Type /Catalog /Pages 2 0 R /Outlines 9 0 R >>",
         "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R 7 0 R 8 0 R] /Count 6 /Resources << /Font << /F1 14 0 R >> >> >>",
         page, page, page, page, page, page,
-        "<< /Type /Outlines /First 10 0 R /Last 13 0 R /Count 4 >>",
-        "<< /Title (Western tide) /Dest [4 0 R /Fit] /Parent 9 0 R /Next 13 0 R /First 11 0 R /Last 12 0 R /Count 2 >>",
-        "<< /Title (Harbor route) /Dest [4 0 R /Fit] /Parent 10 0 R /Next 12 0 R >>",
-        "<< /Title (Salt marsh) /Dest [6 0 R /Fit] /Parent 10 0 R /Prev 11 0 R >>",
+        "<< /Type /Outlines /First 10 0 R /Last 13 0 R /Count 5 >>",
+        "<< /Title (Western tide) /Dest [4 0 R /Fit] /Parent 9 0 R /Next 13 0 R /First 11 0 R /Last 12 0 R /Count 3 >>",
+        "<< /Title (Harbor route) /Dest [4 0 R /Fit] /Parent 10 0 R /Next 16 0 R >>",
+        "<< /Title (Salt marsh) /Dest [6 0 R /Fit] /Parent 10 0 R /Prev 16 0 R >>",
         "<< /Title (Final approach) /Dest [7 0 R /Fit] /Parent 9 0 R /Prev 10 0 R >>",
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         &stream,
+        "<< /Title (Harbor lookout) /Dest [4 0 R /Fit] /Parent 10 0 R /Prev 11 0 R /Next 12 0 R >>",
     ])).unwrap();
+}
+
+#[test]
+fn chapter_title_ties_keep_current_first_and_previous_last_in_source_order() {
+    let headings = [(6, "End"), (2, "First"), (2, "Second"), (8, "Appendix")];
+    assert_eq!(chapter_title_at(headings.into_iter(), 1), None);
+    assert_eq!(chapter_title_at(headings.into_iter(), 2), Some("First"));
+    assert_eq!(chapter_title_at(headings.into_iter(), 5), Some("Second"));
+    assert_eq!(chapter_title_at(headings.into_iter(), 7), Some("End"));
+}
+
+#[test]
+fn pdf_footer_title_binding_is_independent_and_keeps_saved_bookmarks() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Field guide to the coast.pdf");
+    write_pdf(&path);
+    let mut app = open(&fixture, &path);
+    app.follow_fixed(1, None).unwrap();
+    app.activate(Action::AddBookmark).unwrap();
+    app.show(Screen::Fixed);
+    let original_bookmark = state_mut(&mut app).bookmarks[0].label.clone();
+    let original_metrics = (
+        app.alarm_progress('l'),
+        app.alarm_progress('h'),
+        app.alarm_progress('P'),
+    );
+    app.controls.status_bar = StatusBar::Chapter;
+    let numeric_caption = app.status_caption();
+    let original_track = app.footer_track_rect(0);
+    app.controls.status_bar = StatusBar::Custom;
+    app.controls.footer_items = FooterItem::ChapterTitle.bit();
+    app.controls.footer_symbol_style = FooterSymbolStyle::Icons;
+    assert_eq!(app.status_caption().as_deref(), Some("Western tide"));
+
+    let title_switch = |app: &Reader| {
+        app.chapter_level_items()
+            .into_iter()
+            .find(|item| item.title == "Footer chapter title")
+            .unwrap()
+            .action
+    };
+    assert!(matches!(title_switch(&app), Action::Heading));
+    app.set_chapter_level(LevelSetting::BindTitle).unwrap();
+    assert!(!state_mut(&mut app).contents_depths.bind_title);
+    app.set_chapter_level(LevelSetting::ToggleLevel(0)).unwrap();
+    assert_eq!(app.status_caption().as_deref(), Some("Western tide"));
+    app.controls.status_bar = StatusBar::Chapter;
+    let numeric_frame = frame(&app);
+    app.controls.status_bar = StatusBar::Custom;
+    assert!(matches!(
+        title_switch(&app),
+        Action::ChapterLevel(LevelSetting::BindTitle)
+    ));
+    app.activate(title_switch(&app)).unwrap();
+    assert!(app.chapter_level_checked(&LevelSetting::BindTitle));
+    assert!(!app.chapter_level_checked(&LevelSetting::BindNavigation));
+    assert_eq!(app.status_caption().as_deref(), Some("Harbor route"));
+    assert_eq!(app.alarm_progress('C').as_deref(), Some("Western tide"));
+    assert_eq!(
+        (
+            app.alarm_progress('l'),
+            app.alarm_progress('h'),
+            app.alarm_progress('P')
+        ),
+        original_metrics
+    );
+    capture_test_screen(&app, &app.fonts, "READER_FOOTER_TITLE_LEVELS_FRAME", false);
+
+    app.controls.status_bar = StatusBar::Chapter;
+    assert_eq!(app.status_caption(), numeric_caption);
+    assert_eq!(app.footer_track_rect(0), original_track);
+    assert_eq!(frame(&app), numeric_frame);
+    app.follow_fixed(2, None).unwrap();
+    app.controls.status_bar = StatusBar::Custom;
+    app.controls.footer_items = FooterItem::CustomText.bit();
+    app.footer_custom_text.set_text("%C").unwrap();
+    assert_eq!(app.status_caption().as_deref(), Some("Harbor lookout"));
+    assert_eq!(state_mut(&mut app).bookmarks[0].label, original_bookmark);
+    app.follow_fixed(0, None).unwrap();
+    assert_eq!(app.status_caption().as_deref(), Some(""));
+
+    app.follow_fixed(1, None).unwrap();
+    app.set_chapter_level(LevelSetting::ToggleLevel(1)).unwrap();
+    app.controls.status_bar = StatusBar::Remaining;
+    app.controls.footer_pages_left_include_current = false;
+    assert_eq!(app.status_caption().as_deref(), Some("1 page left"));
+    app.save().unwrap();
+    let reopened = open(&fixture, &path);
+    assert_eq!(reopened.bound_footer_chapter_title(), Some(""));
+    assert!(reopened.chapter_level_checked(&LevelSetting::BindTitle));
 }
 
 #[test]
@@ -172,7 +266,7 @@ fn write_epub(path: &Path, extra_spine: bool) {
     let package = format!(
         r#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Field notes for the coast</dc:title></metadata><manifest><item id="text" href="text.xhtml" media-type="application/xhtml+xml"/><item id="after" href="after.xhtml" media-type="application/xhtml+xml"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/></manifest><spine><itemref idref="text"/>{extra_reference}</spine></package>"#
     );
-    let nav = r##"<html xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="text.xhtml#path">Western approach</a><ol><li><a href="text.xhtml#path">Harbor route</a></li><li><a href="text.xhtml#marsh">Salt marsh</a></li></ol></li><li><a href="text.xhtml#end">Headland</a></li></ol></nav></body></html>"##;
+    let nav = r##"<html xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="text.xhtml#path">Western approach</a><ol><li><a href="text.xhtml#path">Harbor route</a></li><li><a href="text.xhtml#missing">Missing heading</a></li><li><a href="text.xhtml#marsh">Salt marsh</a></li></ol></li><li><a href="text.xhtml#end">Headland</a></li></ol></nav></body></html>"##;
     let prose = "The coastal path follows the ridge from the harbor to the salt marsh. ".repeat(56);
     let text = format!(
         "<html><body><p>{prose}</p><h1 id='path'>Western approach</h1><p>{prose}</p><h2 id='marsh'>Salt marsh</h2><p>{prose}</p><h1 id='end'>Headland</h1></body></html>"
@@ -230,6 +324,58 @@ fn reflow_progress_markers_reuse_local_layout_and_custom_source_anchors() {
 }
 
 #[test]
+fn single_section_footer_titles_resolve_publisher_and_custom_anchors() {
+    let fixture = Fixture::new();
+    write_epub(&fixture.book, false);
+    let mut app = open(&fixture, &fixture.book);
+    let probe = &app.active.as_ref().unwrap().reading.probe;
+    let [path, marsh, end] = ["path", "marsh", "end"]
+        .map(|fragment| probe.page_for(&probe.fragment(fragment).unwrap()).unwrap());
+    let anchor = probe.fragment("marsh").unwrap();
+
+    let assert_title = |app: &mut Reader, page, expected| {
+        app.follow_reflow_page(0, page).unwrap();
+        assert_eq!(app.bound_footer_chapter_title(), expected);
+    };
+    app.set_chapter_level(LevelSetting::ToggleLevel(0)).unwrap();
+    app.set_chapter_level(LevelSetting::BindTitle).unwrap();
+    assert_title(&mut app, 0, Some(""));
+    assert_title(&mut app, path, Some("Harbor route"));
+    assert_title(&mut app, end, Some("Salt marsh"));
+
+    let custom = &mut state_mut(&mut app).custom_contents;
+    custom
+        .save(
+            ReadingPosition {
+                chapter: 0,
+                page: 0,
+                anchor: None,
+            },
+            "Unknown position",
+        )
+        .unwrap();
+    custom
+        .save(
+            ReadingPosition {
+                chapter: 0,
+                page: marsh + 10,
+                anchor: Some(anchor),
+            },
+            "My marsh notes",
+        )
+        .unwrap();
+    custom.enabled = true;
+    assert_title(&mut app, marsh, Some(""));
+    app.set_chapter_level(LevelSetting::ToggleLevel(0)).unwrap();
+    assert!(app.bound_footer_chapter_title().is_none());
+    app.set_chapter_level(LevelSetting::ToggleLevel(1)).unwrap();
+    assert_title(&mut app, 0, Some(""));
+    assert_title(&mut app, marsh, Some("My marsh notes"));
+    app.set_chapter_level(LevelSetting::BindTitle).unwrap();
+    assert!(app.bound_footer_chapter_title().is_none());
+}
+
+#[test]
 fn single_section_chapter_metrics_bind_screen_pages_and_keep_edition_label_mode() {
     let fixture = Fixture::new();
     write_epub(&fixture.book, false);
@@ -278,6 +424,15 @@ fn multispine_books_only_filter_the_existing_local_header_marks() {
     let counters = (app.alarm_progress('l'), app.alarm_progress('h'));
     state_mut(&mut app).contents_depths.toggle(0);
     app.set_chapter_level(LevelSetting::BindNavigation).unwrap();
+    assert!(
+        app.chapter_level_items()
+            .iter()
+            .all(|item| item.title != "Footer chapter title")
+    );
+    app.set_chapter_level(LevelSetting::BindTitle).unwrap();
+    assert!(!state_mut(&mut app).contents_depths.bind_title);
+    state_mut(&mut app).contents_depths.bind_title = true;
+    assert!(app.bound_footer_chapter_title().is_none());
     assert_eq!((app.alarm_progress('l'), app.alarm_progress('h')), counters);
     assert!(app.whole_book_marker_pages(false).is_none());
     let active = app.active.as_ref().unwrap();
