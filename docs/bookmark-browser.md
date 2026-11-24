@@ -18,6 +18,30 @@ Hold a direct source row to save it as the default. For a collection or book sel
 
 Book headings open information with the source path and available publisher metadata. **Read description** opens a paged text view with physical-button and swipe navigation. **View cover** previews a declared EPUB cover or the first page of a fixed document. Closing a cover returns to the same book information. Cached descriptions remain available for archived records. Metadata loads one book per event-loop step and is retained by the existing edition identity. [Metadata and format coverage](bookmark-metadata.md)
 
+## Bookmark from Page browser
+
+Open **Pages** while reading, then hold a thumbnail to add or remove that
+page's bookmark. A bookmark icon appears on the marked thumbnail. When PDF
+custom chapters or hidden-flow editing are active, choose **Bookmark page**
+or **Remove page bookmark** from the held page's actions. Cancel closes the
+actions and returns to the same thumbnails.
+
+Reader saves the physical page for a PDF and the thumbnail's source anchor
+for an EPUB, including when previewing another chapter. The current reading
+position and navigation history stay in place. Saved bookmarks open their
+page from **Bookmarks** as usual.
+
+<img src="screenshots/fixed-thumbnail-bookmark.png" width="300" alt="PDF Page browser with a bookmark icon on page six"> <img src="screenshots/epub-thumbnail-bookmark.png" width="300" alt="A bookmarked EPUB thumbnail in another chapter">
+
+The Mac workflow toggled a PDF bookmark on page six while page two remained
+current and separately bookmarked. It reopened the exact PDF page, compared
+the source bytes, and tested menu cancellation and coexistence with custom
+chapters and flows. The EPUB test opened the saved anchor after repagination
+and toggled it off in the new layout. A separate Lua check ran the pinned
+thumbnail callback and bookmark methods with stubbed providers. Fixed
+add and remove, menu selection and dismissal, and reflow anchor matching
+after a page change all passed. [KOReader hold callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1718-L1739) · [KOReader source-page matching](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L384-L462) · [Reader workflow tests](../src/app/overview_bookmarks.rs)
+
 ## KOReader comparison
 
 The comparison uses the installed KOReader v2026.07.1 bookmark browser and its source. Its source chooser, grouped results, type and style filters, literal search, date sorting, preview navigation, archived records and jump history provide the reference behavior. The test harness loads KOReader's actual data and preview methods with presentation dependencies replaced in memory. It performs 20 checks without displaying a KOReader screen or changing its saved data. [KOReader browser](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/ui/widget/bookmarkbrowser.lua) · [Comparison harness](../scripts/koreader-bookmark-browser.lua)

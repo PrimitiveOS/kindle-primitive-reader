@@ -14,7 +14,7 @@ pub(super) enum FlowAction {
 }
 
 pub(super) enum FlowPopup {
-    FixedPage(super::custom_contents::FixedPageActions),
+    Overview(super::overview_bookmarks::PageActions),
     Mark {
         position: ReadingPosition,
         existing: Option<usize>,
@@ -278,7 +278,7 @@ impl Reader {
             return;
         };
         let (title, detail, action) = match popup {
-            FlowPopup::FixedPage(actions) => return actions.draw(canvas),
+            FlowPopup::Overview(actions) => return actions.draw(canvas),
             FlowPopup::ClearInactive => (
                 "Clear inactive markers?",
                 "Remove boundaries that currently have no effect. Other boundaries and your source book stay intact.",
@@ -318,7 +318,7 @@ impl Reader {
 
     pub(super) fn flow_popup_input(&mut self, input: Input) -> Change {
         let popup = self.flow_popup.take().unwrap();
-        if let FlowPopup::FixedPage(actions) = popup {
+        if let FlowPopup::Overview(actions) = popup {
             return actions.input(self, input);
         }
         let Input::Tap(x, y) = input else {
@@ -338,7 +338,7 @@ impl Reader {
             return self.report("Open a book first");
         };
         let result = match popup {
-            FlowPopup::FixedPage(_) => unreachable!("page actions handled above"),
+            FlowPopup::Overview(_) => unreachable!("page actions handled above"),
             FlowPopup::Clear => {
                 data.clear();
                 Ok(())

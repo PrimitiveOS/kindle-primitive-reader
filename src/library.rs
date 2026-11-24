@@ -237,6 +237,8 @@ pub(crate) enum FolderSort {
     NaturalName,
     FileName,
     FileType,
+    LastRead,
+    ReadingProgress,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -249,6 +251,17 @@ pub(crate) struct FolderOrder {
 impl FolderOrder {
     pub(crate) fn is_default(&self) -> bool {
         *self == Self::default()
+    }
+
+    pub(crate) fn uses_reading_data(self) -> bool {
+        matches!(
+            self.sort,
+            FolderSort::LastRead | FolderSort::ReadingProgress
+        )
+    }
+
+    pub(crate) fn supports_adjacent_files(self) -> bool {
+        self.sort != FolderSort::LastRead
     }
 }
 
@@ -265,8 +278,48 @@ enum BrowseGroup {
     File,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct FolderReading {
+    pub(crate) last_read: Option<usize>,
+    pub(crate) progress: FolderProgress,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FolderProgress {
+    Started(Option<u8>),
+    OnHold,
+    #[default]
+    Unopened,
+    Finished,
+    LastPage,
+}
+
+impl FolderProgress {
+    fn new(state: &BookState) -> Self {
+        match state.status() {
+            ReadingStatus::Finished => Self::Finished,
+            ReadingStatus::OnHold => Self::OnHold,
+            ReadingStatus::Reading if state.position.is_some() => match state.reading_percent {
+                Some(100) => Self::LastPage,
+                percent => Self::Started(percent),
+            },
+            _ => Self::Unopened,
+        }
+    }
+
+    fn key(self) -> (u8, std::cmp::Reverse<Option<u8>>) {
+        let (group, percent) = match self {
+            Self::Started(percent) => (0, percent),
+            Self::OnHold => (1, None),
+            Self::Unopened => (2, None),
+            Self::Finished | Self::LastPage => (3, None),
+        };
+        (group, std::cmp::Reverse(percent))
+    }
+}
+
 impl BrowseList {
-    pub(crate) fn sort(&mut self, order: FolderOrder) {
+    pub(crate) fn sort(&mut self, order: FolderOrder, recents: &[BookState]) {
         match order.sort {
             FolderSort::NaturalName => self.entries.sort_by(|left, right| {
                 left.group()
@@ -291,6 +344,9 @@ impl BrowseList {
                     )
                 });
             }
+            FolderSort::LastRead | FolderSort::ReadingProgress => {
+                self.sort_by_reading(order.sort, recents);
+            }
         }
         if order.reverse {
             for group in self
@@ -301,6 +357,46 @@ impl BrowseList {
             }
         }
     }
+
+    fn sort_by_reading(&mut self, sort: FolderSort, recents: &[BookState]) {
+        let states: HashMap<_, _> = recents
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(rank, state)| (state.path.as_path(), (rank, state)))
+            .collect();
+        for entry in &mut self.entries {
+            entry.reading = match &entry.kind {
+                BrowseKind::Readable(book) => states
+                    .get(entry.path.as_path())
+                    .filter(|(_, state)| state.size == book.size && !state.file_deleted)
+                    .map_or_else(FolderReading::default, |(rank, state)| FolderReading {
+                        last_read: state.position.as_ref().map(|_| *rank),
+                        progress: FolderProgress::new(state),
+                    }),
+                _ => FolderReading::default(),
+            };
+        }
+        self.entries.sort_by(|left, right| {
+            left.group()
+                .cmp(&right.group())
+                .then_with(|| {
+                    if sort == FolderSort::LastRead {
+                        left.reading
+                            .last_read
+                            .unwrap_or(usize::MAX)
+                            .cmp(&right.reading.last_read.unwrap_or(usize::MAX))
+                    } else {
+                        left.reading
+                            .progress
+                            .key()
+                            .cmp(&right.reading.progress.key())
+                    }
+                })
+                .then_with(|| natural_cmp(&left.name, &right.name))
+                .then_with(|| left.path.cmp(&right.path))
+        });
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -308,6 +404,7 @@ pub struct BrowseEntry {
     pub path: PathBuf,
     pub name: String,
     pub kind: BrowseKind,
+    pub(crate) reading: FolderReading,
 }
 
 impl BrowseEntry {
@@ -613,6 +710,15 @@ pub struct FixedPreferences {
     pub crop: Option<PdfTextRect>,
     #[serde(skip_serializing_if = "is_false")]
     pub semi_auto_crop: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub continuous_crop: Option<ContinuousCrop>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContinuousCrop {
+    Manual,
+    Auto,
 }
 
 impl FixedPreferences {
@@ -649,7 +755,7 @@ impl FixedPreferences {
             turns: self.turns % 4,
             width_fit,
             height_fit: self.height_fit && !width_fit && tile_zoom.is_none(),
-            continuous: self.continuous && tile_zoom.is_none() && !self.semi_auto_crop,
+            continuous: self.continuous && tile_zoom.is_none(),
             spread: self.spread && tile_zoom.is_none(),
             continuous_gap: self.continuous_gap.min(MAX_CONTINUOUS_GAP),
             straighten_limit: self.straighten_limit.min(MAX_STRAIGHTEN_DEGREES),
@@ -658,7 +764,15 @@ impl FixedPreferences {
             zoom_overlap_v: self.zoom_overlap_v.filter(|value| *value <= 90),
             offset_x: normalized_offset(f64::from(self.offset_x)),
             offset_y: normalized_offset(f64::from(self.offset_y)),
-            crop: self.crop.filter(valid_crop),
+            continuous_crop: self.continuous_crop.filter(|_| !self.semi_auto_crop),
+            crop: if self.continuous_crop.is_some()
+                && !self.semi_auto_crop
+                && !(width_fit && self.continuous)
+            {
+                None
+            } else {
+                self.crop.filter(valid_crop)
+            },
             ..self
         }
     }
@@ -725,6 +839,9 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                 .and_then(|value| serde_json::from_value(value.clone()).ok())
                 .filter(valid_crop),
             semi_auto_crop: switch("semi_auto_crop"),
+            continuous_crop: values
+                .get("continuous_crop")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
         }
         .normalized())
     }
@@ -908,6 +1025,14 @@ fn read_status<'de, D: serde::Deserializer<'de>>(
     Ok(value.and_then(|value| serde_json::from_value(value).ok()))
 }
 
+fn read_percent<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Option<u8>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(input)?;
+    Ok(value
+        .and_then(|value| value.as_u64())
+        .filter(|&number| number <= 100)
+        .map(|number| number as u8))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BookState {
     #[serde(default, skip_serializing_if = "hidden_flows::HiddenFlows::is_default")]
@@ -929,6 +1054,12 @@ pub struct BookState {
     #[serde(default)]
     size: u64,
     pub position: Option<ReadingPosition>,
+    #[serde(
+        default,
+        deserialize_with = "read_percent",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) reading_percent: Option<u8>,
     #[serde(default, skip_serializing_if = "is_false")]
     file_deleted: bool,
     #[serde(
@@ -1020,6 +1151,7 @@ impl BookState {
             author: entry.author.clone(),
             size: entry.size,
             position: None,
+            reading_percent: None,
             file_deleted: false,
             reading_status: None,
             favorite: false,
@@ -1327,10 +1459,11 @@ impl Library {
                 path,
                 name: display_filename(name),
                 kind,
+                reading: FolderReading::default(),
             });
         }
         let mut list = BrowseList { entries, truncated };
-        list.sort(order);
+        list.sort(order, &self.recent);
         Ok(list)
     }
 
@@ -1402,6 +1535,11 @@ impl Library {
         order: FolderOrder,
         skip_finished: bool,
     ) -> io::Result<Option<LibraryBook>> {
+        if !order.supports_adjacent_files() {
+            return Err(io::Error::other(
+                "Choose a folder order other than Last read to move between files",
+            ));
+        }
         let path = current.library_path();
         let folder = path.parent().unwrap_or_else(|| Path::new(""));
         let mut entries = self.browse_with_order(folder, order)?.entries;
@@ -2191,6 +2329,7 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
                 .is_some_and(|position| !valid_position(position))
             {
                 added.position = None;
+                added.reading_percent = None;
                 summary.skipped += 1;
             }
             let index = merged.len();
@@ -2541,6 +2680,30 @@ fn denied() -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_reading_percent_accepts_older_records_and_discards_invalid_values() {
+        let decode = |percent: Option<serde_json::Value>| {
+            let mut value = serde_json::json!({"id": 7, "path": "atlas.pdf", "title": "Atlas"});
+            if let Some(percent) = percent {
+                value["reading_percent"] = percent;
+            }
+            serde_json::from_value::<BookState>(value)
+                .unwrap()
+                .reading_percent
+        };
+        assert_eq!(decode(None), None);
+        for invalid in [
+            serde_json::json!(101),
+            serde_json::json!(-1),
+            serde_json::json!("73"),
+        ] {
+            assert_eq!(decode(Some(invalid)), None);
+        }
+        for percent in [0, 73, 100] {
+            assert_eq!(decode(Some(serde_json::json!(percent))), Some(percent));
+        }
+    }
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -3407,6 +3570,7 @@ mod tests {
                 epub_right_to_left: None,
                 crop: None,
                 semi_auto_crop: false,
+                continuous_crop: None,
             }
         );
         assert!(state.fixed_preferences.is_valid());

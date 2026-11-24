@@ -60,6 +60,7 @@ mod nearby_search;
 #[cfg(test)]
 mod nonlinear_tests;
 mod online_panel;
+mod overview_bookmarks;
 mod progress_markers;
 mod quick_display;
 mod read_alarm;
@@ -1177,6 +1178,9 @@ impl Reader {
             fixed_preferences,
             password,
             prepared_pdf,
+            self.library
+                .state(id)
+                .map(|state| state.pdf_crop_seeds.clone()),
         );
         let fixed = match fixed {
             Err(error)
@@ -1204,8 +1208,8 @@ impl Reader {
         self.search_result = None;
         self.result_selection = None;
         if let Some(mut reading) = fixed {
-            if let Some(state) = self.library.state(id) {
-                reading.load_crop_seeds(state.pdf_crop_seeds.clone())?;
+            if fixed_preferences.semi_auto_crop && !fixed_preferences.continuous {
+                fixed_preferences = reading.preferences();
             }
             let flows = self
                 .library
@@ -1696,6 +1700,7 @@ impl Reader {
         self.update_stats_activity(Instant::now());
         if screen == Screen::Library {
             self.reading_history.finish(Instant::now());
+            self.refresh_reading_order();
         }
         self.current_contents_row = None;
         if screen == Screen::PublisherPages {
@@ -1734,6 +1739,7 @@ impl Reader {
             return;
         }
         self.update_stats_activity(now);
+        let reading_percent = self.folder_reading_percent();
         let position_changed = if let Some(fixed) = &self.fixed {
             let saved = self
                 .library
@@ -1742,8 +1748,10 @@ impl Reader {
                 .highlight_color
                 .get_or_insert(self.controls.highlight_color);
             let position = fixed_position(&fixed.reading);
-            let changed = saved.position.as_ref() != Some(&position);
+            let changed = saved.position.as_ref() != Some(&position)
+                || saved.reading_percent != reading_percent;
             saved.position = Some(position);
+            saved.reading_percent = reading_percent;
             saved.fixed_preferences = fixed.reading.preferences();
             saved.ocr_language.clone_from(&fixed.reading.ocr_language);
             changed
@@ -1754,8 +1762,10 @@ impl Reader {
                 .highlight_color
                 .get_or_insert(self.controls.highlight_color);
             let position = position(&active.reading);
-            let changed = saved.position.as_ref() != Some(&position);
+            let changed = saved.position.as_ref() != Some(&position)
+                || saved.reading_percent != reading_percent;
             saved.position = Some(position);
+            saved.reading_percent = reading_percent;
             changed
         } else {
             return;
@@ -1813,7 +1823,8 @@ impl Reader {
                 .min(2);
             Some((id, page_key, visible_pages as u8))
         });
-        self.pace.set_page(page, now);
+        let pace_generation = book.map_or(0, |id| self.reading_history.pace_generation(id));
+        self.pace.set_page(page, now, pace_generation);
         if let Some(id) = book {
             let title = self
                 .active
@@ -3188,7 +3199,9 @@ impl Reader {
                         )
                     }));
                 }
-                let seconds = self.stats.seconds_read(book.id, Instant::now());
+                let seconds = self
+                    .reading_history
+                    .elapsed_since_reset(book.id, self.stats.seconds_read(book.id, Instant::now()));
                 items.push(
                     Item::new(
                         "Reading time",
@@ -3704,10 +3717,14 @@ impl Reader {
             }
             Action::CropPage => {
                 let fixed = self.fixed.as_mut().ok_or("No open document")?;
-                self.crop_dialog = Some((fixed.reading.start_crop()?, None));
-                self.show(Screen::FixedCrop);
+                if fixed.reading.is_continuous() {
+                    self.start_native_pdf_crop(true)?;
+                } else {
+                    self.crop_dialog = Some((fixed.reading.start_crop()?, None));
+                    self.show(Screen::FixedCrop);
+                }
             }
-            Action::SemiAutoCrop => self.start_semi_auto_crop()?,
+            Action::SemiAutoCrop => self.start_native_pdf_crop(false)?,
             Action::RecognizeText => self.start_ocr(None)?,
             Action::RecognizeLanguage(language) => self.start_ocr(Some(&language))?,
             Action::ReadFixedText => self.read_fixed_text(false)?,
@@ -4292,14 +4309,7 @@ impl Reader {
         };
         let state = self.library.remember(entry, id, title);
         if !already_bookmarked {
-            if state.bookmarks.len() >= 256 {
-                return Err("This book has reached its bookmark limit".into());
-            }
-            state.bookmarks.push(Bookmark {
-                created_at: crate::mark_time::now(),
-                label,
-                position,
-            });
+            overview_bookmarks::push_page_bookmark(state, position, label)?;
             self.mark_book_changed();
         }
         self.show(screen);
@@ -4328,22 +4338,20 @@ impl Reader {
     fn current_bookmark_index(&self) -> Option<usize> {
         let book = self.library.state(self.open_book_id()?)?;
         if let Some(fixed) = &self.fixed {
-            return book
-                .bookmarks
-                .iter()
-                .position(|mark| mark.position.page == fixed.reading.page());
+            return overview_bookmarks::bookmark_index_for_page(
+                book,
+                None,
+                fixed.reading.page(),
+                None,
+            );
         }
         let reading = &self.active.as_ref()?.reading;
-        book.bookmarks.iter().position(|mark| {
-            let position = &mark.position;
-            position.chapter == reading.chapter
-                && position
-                    .anchor
-                    .as_ref()
-                    .and_then(|anchor| reading.probe.page_for(anchor))
-                    .unwrap_or(position.page)
-                    == reading.page
-        })
+        overview_bookmarks::bookmark_index_for_page(
+            book,
+            Some(reading.chapter),
+            reading.page,
+            Some(&reading.probe),
+        )
     }
 
     fn toggle_bookmark(&mut self) -> Result<()> {
@@ -5283,6 +5291,7 @@ impl Reader {
                     CAPTION.center(),
                 );
             }
+            self.draw_overview_bookmark(canvas, rect, overview.chapter, page);
             canvas.button(
                 Rect::new(rect.x + 18, rect.y + rect.h - 84, rect.w - 36, 68),
                 &label,
@@ -5361,12 +5370,7 @@ impl Reader {
                 else {
                     return Change::None;
                 };
-                let page = overview.first + index;
-                let result = if overview.chapter.is_none() && self.custom_contents_enabled() {
-                    self.show_fixed_page_actions(page)
-                } else {
-                    self.show_flow_page_popup(overview.chapter, page)
-                };
+                let result = self.hold_overview_page(overview.chapter, overview.first + index);
                 return match result {
                     Ok(()) => Change::Partial,
                     Err(error) => self.report(error),
@@ -6127,6 +6131,7 @@ impl Reader {
                 FixedPreferences {
                     crop: None,
                     semi_auto_crop: false,
+                    continuous_crop: None,
                     offset_x: 0.0,
                     offset_y: 0.0,
                     ..original
@@ -6160,6 +6165,7 @@ impl Reader {
                     FixedPreferences {
                         crop: Some(region),
                         semi_auto_crop: false,
+                        continuous_crop: None,
                         offset_x: 0.0,
                         offset_y: 0.0,
                         ..original

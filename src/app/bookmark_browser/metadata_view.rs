@@ -91,6 +91,7 @@ impl Reader {
                 crate::library::FixedPreferences::default(),
                 None,
                 None,
+                None,
             )?
             .ok_or("The document has no supported cover")?
             .into_cover_view()?;

@@ -8,7 +8,7 @@ use super::{
     Reader, Rect, Result, Screen, WIDTH, library_book_item, with_storage,
 };
 use crate::library::{
-    BrowseEntry, BrowseKind, BrowseList, FolderDirection, FolderOrder, FolderSort,
+    BrowseEntry, BrowseKind, BrowseList, FolderDirection, FolderOrder, FolderProgress, FolderSort,
 };
 
 pub(super) const LIBRARY_LIST_Y: i32 = 306;
@@ -173,6 +173,24 @@ impl Reader {
                 "File type",
                 "Group files by extension",
             ),
+            (
+                FolderSort::LastRead,
+                "Last read",
+                if order.reverse {
+                    "Unopened, then oldest reads · Browse only"
+                } else {
+                    "Newest first · Browse only"
+                },
+            ),
+            (
+                FolderSort::ReadingProgress,
+                "Reading progress",
+                if order.reverse {
+                    "Finished first · Lowest active progress first"
+                } else {
+                    "Highest progress first · Finished last"
+                },
+            ),
         ]
         .into_iter()
         .map(|(sort, label, description)| {
@@ -203,12 +221,39 @@ impl Reader {
             controls.folder_order = order;
             controls.save(&self.controls_path)?;
             self.controls = controls;
-            self.browser.listing.sort(order);
+            self.browser.listing.sort(order, self.library.recents());
             if self.library_query.is_empty() {
                 self.browser.first_page();
             }
         }
         Ok(())
+    }
+
+    pub(super) fn refresh_reading_order(&mut self) {
+        let order = self.controls.folder_order;
+        if order.uses_reading_data() {
+            self.browser.listing.sort(order, self.library.recents());
+        }
+    }
+
+    pub(super) fn folder_reading_percent(&self) -> Option<u8> {
+        let fraction = if let Some(fixed) = &self.fixed {
+            (fixed.reading.page() + 1) as f64 / fixed.reading.count() as f64
+        } else {
+            let reading = &self.active.as_ref()?.reading;
+            let chapter = reading.chapter;
+            let within = (reading.page + 1) as f64 / reading.probe.page_count() as f64;
+            let weights = reading.progress_weights();
+            match (weights.get(chapter..=chapter + 1), weights.last()) {
+                (Some([start, end]), Some(&total)) if total > 0 => {
+                    (*start as f64 + within * end.saturating_sub(*start) as f64) / total as f64
+                }
+                _ => (chapter as f64 + within) / reading.probe.chapter_count() as f64,
+            }
+        };
+        fraction
+            .is_finite()
+            .then(|| (fraction.clamp(0., 1.) * 100.).round() as u8)
     }
 
     fn show_continue(&self) -> bool {
@@ -233,7 +278,7 @@ impl Reader {
             .then_some(&self.browser.listing.entries)
             .into_iter()
             .flatten()
-            .map(file_item);
+            .map(|entry| file_item(entry, self.controls.folder_order.sort));
         let search = searching
             .then(|| self.library.matching(&self.library_query))
             .into_iter()
@@ -436,12 +481,16 @@ fn file_row(slot: usize) -> Rect {
     )
 }
 
-fn file_item(entry: &BrowseEntry) -> Item {
+fn file_item(entry: &BrowseEntry, sort: FolderSort) -> Item {
     let (action, detail) = match &entry.kind {
         BrowseKind::Folder => (Action::Browse(entry.path.clone()), "Folder".into()),
         BrowseKind::Readable(book) => (
             Action::Open(book.clone()),
-            file_detail(&entry.path, book.size, None),
+            file_detail(
+                &entry.path,
+                book.size,
+                reading_detail(entry, sort).as_deref(),
+            ),
         ),
         BrowseKind::KindleProtected { size } => (
             Action::Heading,
@@ -479,6 +528,28 @@ fn file_item(entry: &BrowseEntry) -> Item {
     };
     item.folder = matches!(entry.kind, BrowseKind::Folder);
     item
+}
+
+fn reading_detail(entry: &BrowseEntry, sort: FolderSort) -> Option<String> {
+    let label = match sort {
+        FolderSort::LastRead => {
+            if entry.reading.last_read.is_some() {
+                "Opened"
+            } else {
+                "Unopened"
+            }
+        }
+        FolderSort::ReadingProgress => match entry.reading.progress {
+            FolderProgress::Started(Some(percent)) => return Some(format!("{percent}%")),
+            FolderProgress::Started(None) => "In progress",
+            FolderProgress::OnHold => "On hold",
+            FolderProgress::Unopened => "Unopened",
+            FolderProgress::Finished => "Finished",
+            FolderProgress::LastPage => "100%",
+        },
+        _ => return None,
+    };
+    Some(label.to_owned())
 }
 
 pub(super) fn file_type(path: &Path) -> String {
@@ -551,6 +622,7 @@ fn draw_file(canvas: &mut Canvas, row: Rect, item: &Item) {
 mod tests {
     use super::*;
     use crate::app::tests::{Fixture, capture_test_screen, tap_reading_control};
+    use crate::library::ReadingStatus;
     use primitive_app::{App, Lifecycle};
     use std::fs;
 
@@ -726,7 +798,7 @@ mod tests {
         assert_eq!(reader.input(Input::PageForward), Change::Partial);
         assert_eq!(reader.input(tap(sort_button())), Change::Partial);
         assert_eq!(
-            reader.input(tap(reader.list_geometry().row(3))),
+            reader.input(tap(reader.list_geometry().row(5))),
             Change::Partial
         );
         assert_eq!(reader.input(back), Change::Partial);
@@ -760,6 +832,220 @@ mod tests {
         assert_eq!(reader.controls.folder_order, FolderOrder::default());
         assert_eq!(library_titles(&reader), before);
         assert_eq!(app(&fixture).controls.folder_order, FolderOrder::default());
+    }
+
+    #[test]
+    fn folder_order_uses_saved_reading_history_and_progress_without_touching_books() {
+        let fixture = Fixture::new();
+        let shelf = Path::new("Field library");
+        let folder = fixture.root.join(shelf);
+        fs::create_dir(&folder).unwrap();
+        for name in ["Archives 2", "Archives 10"] {
+            fs::create_dir(folder.join(name)).unwrap();
+        }
+        let publications = [
+            ("Coast 10.pdf", 10, Some(4), None),
+            ("Coast 2.pdf", 8, Some(3), None),
+            ("Harbor survey.pdf", 4, Some(0), None),
+            ("Old notebook.pdf", 6, Some(0), None),
+            ("Supplement.pdf", 3, Some(1), Some(ReadingStatus::OnHold)),
+            (
+                "Finished survey.pdf",
+                7,
+                Some(0),
+                Some(ReadingStatus::Finished),
+            ),
+            ("Last chart.pdf", 5, Some(4), None),
+            ("Unopened field guide.pdf", 2, None, None),
+            ("Unopened reading list.pdf", 1, None, None),
+        ];
+        let originals: Vec<_> = publications
+            .iter()
+            .map(|(name, pages, _, _)| {
+                let path = folder.join(name);
+                let bytes = crate::fixed_session::tests::striped_pdf_bytes(*pages);
+                fs::write(&path, &bytes).unwrap();
+                let modified = fs::metadata(&path).unwrap().modified().unwrap();
+                (path, bytes, modified)
+            })
+            .collect();
+        let mut reader = app(&fixture);
+        for (name, _, page, status) in publications {
+            let Some(page) = page else { continue };
+            reader.open_path(&folder.join(name)).unwrap();
+            reader.follow_fixed(page, None).unwrap();
+            let id = reader.open_book_id().unwrap();
+            let state = reader.library.state_mut(id).unwrap();
+            if let Some(status) = status {
+                state.set_status(status);
+            }
+            if name == "Old notebook.pdf" {
+                state.reading_percent = None;
+            }
+        }
+        let unread = reader
+            .library
+            .resolve(&shelf.join("Unopened reading list.pdf"))
+            .unwrap();
+        let unread_id = reader.library.identify(&unread).unwrap();
+        reader.library.track(&unread, unread_id).favorite = true;
+        reader.activate(Action::Show(Screen::Library)).unwrap();
+        reader.browse_to(shelf.to_owned()).unwrap();
+        assert_eq!(reader.input(tap(sort_button())), Change::Partial);
+        assert_eq!(
+            reader.input(tap(reader.list_geometry().row(3))),
+            Change::Partial
+        );
+        let back = tap(back_button(WIDTH as i32));
+        assert_eq!(reader.input(back), Change::Partial);
+        assert_eq!(
+            library_titles(&reader),
+            [
+                "Archives 2",
+                "Archives 10",
+                "Last chart.pdf",
+                "Finished survey.pdf",
+                "Supplement.pdf",
+                "Old notebook.pdf",
+                "Harbor survey.pdf",
+                "Coast 2.pdf",
+                "Coast 10.pdf",
+                "Unopened field guide.pdf",
+                "Unopened reading list.pdf"
+            ]
+        );
+        assert_eq!(reader.input(Input::PageForward), Change::Partial);
+        assert!(visible_file(
+            &reader,
+            &shelf.join("Unopened reading list.pdf")
+        ));
+        assert_eq!(reader.input(Input::PageBack), Change::Partial);
+        reader.open_path(&folder.join("Coast 10.pdf")).unwrap();
+        let origin = reader.current_position();
+        let previous = Action::OpenFolderFile(FolderDirection::Previous);
+        assert!(
+            reader
+                .activate(previous)
+                .unwrap_err()
+                .to_string()
+                .contains("Last read")
+        );
+        assert_eq!(reader.current_position(), origin);
+        reader.activate(Action::Show(Screen::Library)).unwrap();
+        assert_eq!(library_titles(&reader)[2], "Coast 10.pdf");
+
+        reader.library_query = "Coast".into();
+        let search = library_titles(&reader);
+        assert_eq!(search.len(), 2);
+        assert_eq!(reader.input(tap(sort_button())), Change::Partial);
+        assert_eq!(
+            reader.input(tap(reader.list_geometry().row(4))),
+            Change::Partial
+        );
+        capture_test_screen(&reader, &reader.fonts, "READER_READING_SORT_MENU", false);
+        assert_eq!(reader.input(back), Change::Partial);
+        assert_eq!(library_titles(&reader), search);
+        reader.activate(Action::ClearLibraryFilter).unwrap();
+        let expected = [
+            "Archives 2",
+            "Archives 10",
+            "Coast 2.pdf",
+            "Coast 10.pdf",
+            "Harbor survey.pdf",
+            "Old notebook.pdf",
+            "Supplement.pdf",
+            "Unopened field guide.pdf",
+            "Unopened reading list.pdf",
+            "Finished survey.pdf",
+            "Last chart.pdf",
+        ];
+        assert_eq!(library_titles(&reader), expected);
+        let details: Vec<_> = reader
+            .library_items()
+            .skip(2)
+            .map(|item| item.detail.unwrap())
+            .collect();
+        assert!(details[0].ends_with("50%"));
+        assert!(details[1].ends_with("50%"));
+        assert!(details[2].ends_with("25%"));
+        assert!(details[3].ends_with("In progress"));
+        assert!(details[4].ends_with("On hold"));
+        assert!(details[5].ends_with("Unopened"));
+        assert!(details[7].ends_with("Finished"));
+        assert!(details[8].ends_with("100%"));
+        capture_test_screen(&reader, &reader.fonts, "READER_READING_SORT_PICKER", false);
+
+        reader.open_path(&folder.join("Coast 2.pdf")).unwrap();
+        let origin = reader.current_position();
+        reader
+            .activate(Action::OpenFolderFile(FolderDirection::Next))
+            .unwrap();
+        assert_eq!(
+            reader.current_document().unwrap().0.path,
+            shelf.join("Coast 10.pdf")
+        );
+        reader
+            .activate(Action::OpenFolderFile(FolderDirection::Previous))
+            .unwrap();
+        assert_eq!(
+            reader.current_document().unwrap().0.path,
+            shelf.join("Coast 2.pdf")
+        );
+        assert_eq!(reader.current_position(), origin);
+        reader.save().unwrap();
+        let mut reopened = app(&fixture);
+        assert_eq!(
+            reopened.controls.folder_order.sort,
+            FolderSort::ReadingProgress
+        );
+        reopened.browse_to(shelf.to_owned()).unwrap();
+        assert_eq!(library_titles(&reopened), expected);
+        assert_eq!(reopened.input(tap(sort_button())), Change::Partial);
+        assert_eq!(
+            reopened.input(tap(reopened.list_geometry().row(5))),
+            Change::Partial
+        );
+        assert!(
+            reopened.folder_order_items()[4]
+                .detail
+                .as_deref()
+                .unwrap()
+                .contains("Finished first")
+        );
+        assert_eq!(reopened.input(back), Change::Partial);
+        assert_eq!(
+            &library_titles(&reopened)[..3],
+            ["Archives 10", "Archives 2", "Last chart.pdf"]
+        );
+        for (path, bytes, modified) in originals {
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            assert_eq!(fs::metadata(path).unwrap().modified().unwrap(), modified);
+        }
+    }
+
+    #[test]
+    fn folder_progress_is_saved_for_reflow_without_reopening_the_title_from_the_picker() {
+        let fixture = Fixture::new();
+        let mut reader = app(&fixture);
+        reader.open_path(&fixture.book).unwrap();
+        let id = reader.open_book_id().unwrap();
+        let opening = reader.library.state(id).unwrap().reading_percent.unwrap();
+        let reading = &reader.active.as_ref().unwrap().reading;
+        let last = reading.probe.chapter_count() - 1;
+        reader.follow_reflow_page(last, 0).unwrap();
+        let reading = &reader.active.as_ref().unwrap().reading;
+        reader
+            .follow_reflow_page(last, reading.probe.page_count() - 1)
+            .unwrap();
+        assert!(opening < 100);
+        assert_eq!(reader.library.state(id).unwrap().reading_percent, Some(100));
+        reader.save().unwrap();
+        let reopened = app(&fixture);
+        assert!(reopened.open_book_id().is_none());
+        assert_eq!(
+            reopened.library.state(id).unwrap().reading_percent,
+            Some(100)
+        );
     }
 
     #[test]
@@ -812,7 +1098,7 @@ mod tests {
         assert_eq!(library_titles(&reader), expected);
         assert_eq!(reader.input(tap(sort_button())), Change::Partial);
         assert_eq!(
-            reader.input(tap(reader.list_geometry().row(3))),
+            reader.input(tap(reader.list_geometry().row(5))),
             Change::Partial
         );
         assert_eq!(

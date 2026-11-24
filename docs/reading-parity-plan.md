@@ -49,8 +49,10 @@ device-system evidence. This count tracks plan milestones, not overall feature
 parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
-**Control evidence snapshot:** 201 of 536 in-scope reading-control rows have
-an implemented workflow, 237 are partial, 66 are gaps, and 32 need audit.
+**Control evidence snapshot:** 214 of 536 in-scope reading-control rows have
+an implemented workflow, 239 are partial, 58 are gaps, and 25 need audit. The
+[statistics reset comparison](reading-statistics.md#reset-statistics) updates
+seven rows with an executable stock check and Mac verification.
 Reader 0.1.32 adds [search from selection](selection-search.md),
 [results density and context](search-result-presentation.md),
 [temporary PDF fit](fixed-search-fit.md),
@@ -69,6 +71,9 @@ separate gates.
 - [x] Apply saved overlap and axis-order preferences to manual fixed-page turns. Physical buttons and page-turn tap zones pan through the zoomed page before advancing, matching KOReader's reading order. Fixed-page and app-level regressions pass on the Mac; the device comparison remains open.
 - [x] Add overlap-aware **Columns** and **Rows** zoom for PDF and DjVu scans. Presets, custom tenths, rotated-page scale, page traversal, and saved viewport position have desktop coverage. Kindle comparison remains open. [Workflow and simulator capture](fixed-tile-zoom.md)
 - [x] Add **Semi-auto crop** for paged PDFs, with original-coordinate seed priority, saved adjustments, preserved links and annotation geometry, and exact Cancel restoration. The authored four-page crop comparison runs against the pinned Mac provider. [Workflow and oracle](semi-auto-pdf-crop.md)
+- [x] Filter isolated margin specks from semi-auto PDF crops. Authored stock comparisons cover rotated pages, faint strokes, shaded paper and sparse notes. [Scan evidence](scan-margin-specks.md)
+- [x] Apply page-specific semi-auto crops in width-fit continuous PDF reading. Desktop checks cover a split scroll frame, original note and link coordinates, Cancel, Apply and reopen. [Scroll evidence](continuous-semi-auto-crop.md)
+- [x] Resolve manual and automatic crop per page while scrolling continuous width-fit PDFs. Desktop checks cover crop precedence, switching modes, native link geometry and page-specific scaling. [Scroll evidence](continuous-semi-auto-crop.md)
 - [x] Add KOReader's continuous-scroll page overlap: configurable 1–10 repeated lines, per-book and new-book settings, page-button and automatic-turn movement, and all five stock indicators. Focused desktop tests and a simulated reading-frame capture pass; compare line placement and E Ink refresh on Kindle. [Behavior and screenshot](scroll-page-overlap.md)
 - [x] Add KOReader's selection-dialog placement choices with the stock Center default and a selected-text placement option. Unit and integrated desktop tests cover geometry and persistence; capture the simulator frame.
 - [x] Add the nine KOReader default text-hold actions and default single-word dictionary behavior with a setting to disable it. Implement a dedicated Select mode with Highlight, Copy and Cancel, tap or long-hold extension, reflowable selection, and cross-page PDF selection with saved continuations. Copy uses Reader's in-process clipboard and supports pasting selected EPUB/PDF text into Reader fields. [Select-mode and Copy screenshots, plus remaining device checks](long-press-behavior.md)

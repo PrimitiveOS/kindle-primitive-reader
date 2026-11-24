@@ -45,6 +45,27 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.41 verification plan
+
+Scroll width-fit PDFs across pages with different crops in both directions.
+Compare Manual, Auto and Semi-auto against the pinned KOReader PDF runtime.
+Check original coordinates on links and annotations before and after Apply,
+Cancel, rotation, zoom and reopening. Sort folders by last read and progress,
+then verify persistent order, search, next-book behavior and legacy records.
+Reset authored statistics by current book, another book and strict duration
+cutoffs. Check confirmation, Cancel, failed writes, resume and pace.
+[Continuous crop](continuous-semi-auto-crop.md) · [Folder order](document-end.md) · [Statistics reset](reading-statistics.md#reset-statistics)
+
+## Reader 0.1.40 verification plan
+
+Add and remove bookmarks from PDF and EPUB thumbnails. Keep the reading
+location and jump history, including when an EPUB bookmark repaginates.
+Check publisher image maximum dimensions in portrait and landscape; follow
+an inline passage through the change and open the full illustration. Compare
+PDF crop bounds for edge specks, rotated pages, shaded paper and sparse ink
+with the pinned KOReader detector. Retest the existing default reading footer.
+[Thumbnail bookmarks](bookmark-browser.md) · [Publisher illustrations](publisher-image-maxima.md) · [Scan crop sample](scan-margin-specks.md)
+
 ## Reader 0.1.39 verification plan
 
 Cycle enabled custom footer items through the hidden step in EPUB and PDF.
@@ -59,10 +80,12 @@ same thumbnails and keep the current page, bookmark and jump history.
 
 ### Folder order
 
-Compare natural name, file name, file type and reverse order with the pinned
-KOReader file chooser. Test the saved choice after reopen, physical pagination,
-retained search result ranking and page, traversal between EPUB and PDF, and
-the existing next-file end action. [Folder order controls](document-end.md#choose-folder-order)
+Compare natural name, file name, file type, last read, progress and reverse
+order with the pinned KOReader file chooser. Test the saved choice after
+reopen, physical pagination, retained search ranking and page, and the folder
+traversal and end prompt under both saved reading orders. Use a mixed library
+of unopened, active, on-hold and finished titles, including older records
+with no saved percentage. [Folder order controls](document-end.md#choose-folder-order)
 
 The exact Mac candidate passed 1,134 checks. The ARMHF bundle passed
 1,119 Reader library tests, 14 EPUB package tests and four layout probes

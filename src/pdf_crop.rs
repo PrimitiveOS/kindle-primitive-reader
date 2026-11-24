@@ -8,6 +8,9 @@ use crate::fixed::{Pdf, RenderRequest};
 use crate::fixed_text::PdfTextRect;
 use crate::scan_deskew::FULL_PAGE;
 
+#[cfg(test)]
+pub(crate) mod source_margin_tests;
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Seed {
     x0: f32,
@@ -102,12 +105,59 @@ pub(crate) fn detect(
     let area = seed
         .and_then(|seed| seed.normalized(size))
         .unwrap_or(FULL_PAGE);
+    Ok(detect_ink(pdf, page, area, size, true)?
+        .and_then(|ink| padded_native_bounds(ink, size, screen_width))
+        .unwrap_or(area))
+}
+
+pub(crate) fn full_auto(
+    pdf: &Pdf,
+    page: usize,
+    seed: Option<Seed>,
+    screen_width: u32,
+) -> crate::Result<PdfTextRect> {
+    let size = pdf.page_size(page)?;
+    let detected = detect_ink(pdf, page, FULL_PAGE, size, true)?
+        .and_then(|ink| padded_native_bounds(ink, size, screen_width))
+        .filter(|crop| crop.x1 - crop.x0 > 0.1 || crop.y1 - crop.y0 > 0.1);
+    match detected {
+        Some(area) => Ok(area),
+        None => manual(pdf, page, seed),
+    }
+}
+
+pub(crate) fn manual(pdf: &Pdf, page: usize, seed: Option<Seed>) -> crate::Result<PdfTextRect> {
+    let size = pdf.page_size(page)?;
+    if let Some(area) = seed.and_then(|seed| seed.normalized(size)) {
+        return Ok(area);
+    }
+    // Estimate the native used bounds from the untrimmed raster when there is no saved box.
+    let area = detect_ink(pdf, page, FULL_PAGE, size, false)?.and_then(|ink| {
+        let points = Seed::from_normalized(ink, size);
+        Seed {
+            x0: points.x0.round(),
+            y0: points.y0.round(),
+            x1: points.x1.round(),
+            y1: points.y1.round(),
+        }
+        .normalized(size)
+    });
+    Ok(area.unwrap_or(FULL_PAGE))
+}
+
+fn detect_ink(
+    pdf: &Pdf,
+    page: usize,
+    area: PdfTextRect,
+    size: (f32, f32),
+    filter_specks: bool,
+) -> crate::Result<Option<PdfTextRect>> {
     let area_width = (area.x1 - area.x0) * size.0;
     let area_height = (area.y1 - area.y0) * size.1;
     let scale = 1536.0 / area_width.max(area_height);
     let width = (area_width * scale).ceil() as u32;
     let height = (area_height * scale).ceil() as u32;
-    let pixels = pdf.render(
+    let mut pixels = pdf.render(
         page,
         RenderRequest {
             width,
@@ -118,9 +168,75 @@ pub(crate) fn detect(
             turns: 0,
         },
     )?;
-    let crop = bounds(&pixels, width as usize, area)
-        .and_then(|ink| padded_native_bounds(ink, size, screen_width));
-    Ok(crop.unwrap_or(area))
+    if filter_specks {
+        discard_isolated_specks(&mut pixels, width as usize, scale);
+    }
+    Ok(bounds(&pixels, width as usize, area))
+}
+
+const INK_THRESHOLD: u8 = 192;
+
+fn discard_isolated_specks(pixels: &mut [u8], width: usize, scale: f32) {
+    // Native PDF points keep the speck cutoff consistent across raster sizes.
+    const MIN_SOURCE_EXTENT: f32 = 2.0;
+    let minimum = ((MIN_SOURCE_EXTENT * scale).ceil() as usize).clamp(1, 64);
+    if minimum == 1 {
+        return;
+    }
+    let height = pixels.len() / width;
+    const INK: u8 = 1;
+    const IN_QUEUE: u8 = 2;
+    const PRESERVE: u8 = 3;
+    for pixel in pixels.iter_mut() {
+        *pixel = u8::from(*pixel < INK_THRESHOLD);
+    }
+    let mut queue = Vec::new();
+    for start in 0..pixels.len() {
+        if pixels[start] != INK {
+            continue;
+        }
+        queue.clear();
+        queue.push(start);
+        pixels[start] = IN_QUEUE;
+        let (mut left, mut top) = (start % width, start / width);
+        let (mut right, mut bottom) = (left, top);
+        let mut next = 0;
+        let mut preserve = false;
+        'component: while let Some(&index) = queue.get(next) {
+            next += 1;
+            let (x, y) = (index % width, index / width);
+            for ny in y.saturating_sub(1)..=(y + 1).min(height - 1) {
+                for nx in x.saturating_sub(1)..=(x + 1).min(width - 1) {
+                    let neighbor = ny * width + nx;
+                    if pixels[neighbor] == PRESERVE {
+                        preserve = true;
+                        break 'component;
+                    }
+                    if pixels[neighbor] != INK {
+                        continue;
+                    }
+                    pixels[neighbor] = IN_QUEUE;
+                    queue.push(neighbor);
+                    left = left.min(nx);
+                    right = right.max(nx);
+                    top = top.min(ny);
+                    bottom = bottom.max(ny);
+                    // An established component needs no full-page flood fill.
+                    // Any remaining pixels will find a confirmed neighbor.
+                    if right - left + 1 >= minimum || bottom - top + 1 >= minimum {
+                        preserve = true;
+                        break 'component;
+                    }
+                }
+            }
+        }
+        for &index in &queue {
+            pixels[index] = if preserve { PRESERVE } else { 0 };
+        }
+    }
+    for pixel in pixels {
+        *pixel = if *pixel == PRESERVE { 0 } else { 255 };
+    }
 }
 
 fn bounds(pixels: &[u8], width: usize, area: PdfTextRect) -> Option<PdfTextRect> {
@@ -129,7 +245,7 @@ fn bounds(pixels: &[u8], width: usize, area: PdfTextRect) -> Option<PdfTextRect>
     let mut columns = vec![0; width];
     for (y, line) in pixels.chunks_exact(width).enumerate() {
         for (x, ink) in line.iter().enumerate() {
-            if *ink < 192 {
+            if *ink < INK_THRESHOLD {
                 rows[y] += 1;
                 columns[x] += 1;
             }
@@ -229,6 +345,45 @@ pub(crate) mod tests {
             x1: 530.0,
             y1: 745.0,
         }
+    }
+
+    #[test]
+    fn continuous_manual_and_auto_match_stock_native_bounds() {
+        let pdf = Pdf::open(fixture()).unwrap();
+        let mut seeds = Seeds::default();
+        seeds.record(0, odd_seed());
+        seeds.record(1, even_seed());
+        let check = |crop: PdfTextRect, expected: [f32; 4]| {
+            let points = Seed::from_normalized(crop, SIZE);
+            for (found, expected) in [points.x0, points.y0, points.x1, points.y1]
+                .into_iter()
+                .zip(expected)
+            {
+                assert!((found - expected).abs() < 0.002, "{found} != {expected}");
+            }
+        };
+        // Pinned KOReader's getPageBBox with fixed-page wrapping and deskew disabled.
+        check(
+            manual(&pdf, 0, seeds.get(0)).unwrap(),
+            [60.0, 70.0, 550.0, 740.0],
+        );
+        check(
+            manual(&pdf, 2, seeds.get(2)).unwrap(),
+            [60.0, 70.0, 550.0, 740.0],
+        );
+        check(
+            full_auto(&pdf, 0, seeds.get(0), 1264).unwrap(),
+            [9.199, 103.199, 413.801, 653.801],
+        );
+        check(
+            full_auto(&pdf, 1, seeds.get(1), 1264).unwrap(),
+            [114.299, 114.299, 594.701, 690.701],
+        );
+        check(
+            full_auto(&pdf, 3, seeds.get(3), 1264).unwrap(),
+            [80.0, 80.0, 530.0, 745.0],
+        );
+        check(manual(&pdf, 1, None).unwrap(), [120.0, 120.0, 590.0, 686.0]);
     }
 
     #[test]

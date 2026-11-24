@@ -38,6 +38,8 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
     let keys = match name {
         "display" => vec![40],
         "visibility" => vec![41],
+        "max-width" => vec![42],
+        "max-height" => vec![43],
         "font-family" => vec![0],
         "font-size" => vec![1],
         "line-height" => vec![2],
@@ -81,6 +83,8 @@ pub(super) fn apply_reset(
         // treats inherit like inline; initial/unset are inline as well.
         40 => style.display = Display::Inline,
         41 => style.visibility = value.visibility,
+        42 => style.image_max_width = value.image_max_width,
+        43 => style.image_max_height = value.image_max_height,
         0 => style.font_family = value.font_family.clone(),
         1 => style.size_scale = value.size_scale,
         2 => style.line_height = value.line_height,
@@ -142,9 +146,19 @@ impl<'i> DeclarationParser<'i> for StrictProperties {
         {
             return Err(error(input, format!("Unsupported user CSS: {name}")));
         }
-        Properties
+        let declaration = Properties
             .parse_value(name.clone(), input, state)
-            .map_err(|_| error(input, format!("Unsupported property or value: {name}")))
+            .map_err(|_| error(input, format!("Unsupported property or value: {name}")))?;
+        if matches!(
+            declaration.property,
+            Property::MaxHeight(ImageLength::Fraction(_))
+        ) {
+            return Err(error(
+                input,
+                "Percentage max-height needs a definite containing height",
+            ));
+        }
+        Ok(declaration)
     }
 }
 impl<'i> AtRuleParser<'i> for StrictProperties {

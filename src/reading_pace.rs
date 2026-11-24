@@ -1,7 +1,7 @@
 //! Per-book page dwell samples used by the reading-time footer.
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Read},
     path::{Path, PathBuf},
@@ -17,6 +17,8 @@ const MAX_BYTES: u64 = 512 * 1024;
 #[derive(Deserialize, Serialize)]
 struct Stored {
     version: u8,
+    #[serde(default)]
+    generation: u64,
     pages: BTreeMap<u64, u8>,
 }
 
@@ -37,6 +39,7 @@ pub(crate) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
 
 #[derive(Default)]
 struct Samples {
+    generation: u64,
     pages: BTreeMap<u64, u8>,
     total: u32,
     dirty: bool,
@@ -44,7 +47,7 @@ struct Samples {
 }
 
 impl Samples {
-    fn load(path: &Path) -> Self {
+    fn load(path: &Path, generation: u64) -> Self {
         let read = primitive_app::with_storage(|| {
             let meta = fs::symlink_metadata(path)?;
             if !meta.is_file() || meta.len() > MAX_BYTES {
@@ -67,16 +70,25 @@ impl Samples {
             {
                 return Err(io::Error::other("Unrecognized reading-pace data"));
             }
-            Ok(stored.pages)
+            Ok(if stored.generation == generation {
+                stored.pages
+            } else {
+                BTreeMap::new()
+            })
         });
         match read {
             Ok(pages) => Self {
+                generation,
                 total: pages.values().map(|&n| u32::from(n)).sum(),
                 pages,
                 ..Self::default()
             },
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Self::default(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Self {
+                generation,
+                ..Self::default()
+            },
             Err(_) => Self {
+                generation,
                 read_only: true,
                 ..Self::default()
             },
@@ -104,10 +116,12 @@ impl Samples {
             #[derive(Serialize)]
             struct Record<'a> {
                 version: u8,
+                generation: u64,
                 pages: &'a BTreeMap<u64, u8>,
             }
             let bytes = serde_json::to_vec(&Record {
                 version: 1,
+                generation: self.generation,
                 pages: &self.pages,
             })
             .map_err(io::Error::other)?;
@@ -168,7 +182,7 @@ impl ReadingPace {
             })
     }
 
-    pub fn set_page(&mut self, page: Option<(u64, u64, u8)>, now: Instant) {
+    pub fn set_page(&mut self, page: Option<(u64, u64, u8)>, now: Instant, generation: u64) {
         if let Some(visit) = self.visit.as_mut() {
             if page == Some((visit.book, visit.page, visit.visible_pages)) {
                 visit.since.get_or_insert(now);
@@ -198,7 +212,7 @@ impl ReadingPace {
                 return;
             }
             let file = Self::file(&self.directory, book);
-            self.books.insert(book, Samples::load(&file));
+            self.books.insert(book, Samples::load(&file, generation));
         }
         let baseline = self.books[&book].pages.get(&page).copied().unwrap_or(0);
         self.visit = Some(Visit {
@@ -223,6 +237,17 @@ impl ReadingPace {
         let current = self.visit.as_ref().map(|v| v.book);
         self.books.retain(|&book, _| Some(book) == current);
         Ok(())
+    }
+
+    pub fn discard_books(&mut self, books: &BTreeSet<u64>) {
+        self.books.retain(|book, _| !books.contains(book));
+        if self
+            .visit
+            .as_ref()
+            .is_some_and(|visit| books.contains(&visit.book))
+        {
+            self.visit = None;
+        }
     }
 
     pub fn storage_returned(&mut self) {
@@ -286,27 +311,27 @@ mod tests {
         let at = |s| start + Duration::from_secs(s);
         let mut p = ReadingPace::new(dir.clone());
         assert_eq!(p.rate(1), 60.);
-        p.set_page(Some((1, 10, 1)), at(0));
-        p.set_page(None, at(3));
-        p.set_page(Some((1, 10, 1)), at(603));
-        p.set_page(Some((1, 11, 1)), at(620)); // 20 seconds of reading and 600 paused.
+        p.set_page(Some((1, 10, 1)), at(0), 0);
+        p.set_page(None, at(3), 0);
+        p.set_page(Some((1, 10, 1)), at(603), 0);
+        p.set_page(Some((1, 11, 1)), at(620), 0); // 20 seconds of reading and 600 paused.
         assert_eq!(p.rate(1), 20.);
-        p.set_page(Some((1, 12, 1)), at(623)); // Three seconds is a skim.
+        p.set_page(Some((1, 12, 1)), at(623), 0); // Three seconds is a skim.
         p.checkpoint(at(683)).unwrap();
         p.checkpoint(at(698)).unwrap(); // Successive checkpoints update the original visit once.
-        p.set_page(Some((1, 10, 1)), at(873)); // A long uninterrupted visit counts 120.
-        p.set_page(Some((1, 13, 1)), at(888)); // Re-reading adds 15 to the first page.
-        p.set_page(Some((1, 14, 1)), at(893));
+        p.set_page(Some((1, 10, 1)), at(873), 0); // A long uninterrupted visit counts 120.
+        p.set_page(Some((1, 13, 1)), at(888), 0); // Re-reading adds 15 to the first page.
+        p.set_page(Some((1, 14, 1)), at(893), 0);
         assert!((p.rate(1) - 160. / 3.).abs() < 1e-10);
-        p.set_page(Some((2, 0, 2)), at(893));
+        p.set_page(Some((2, 0, 2)), at(893), 0);
         assert_eq!(p.rate(2), 60.);
-        p.set_page(None, at(953));
+        p.set_page(None, at(953), 0);
         assert_eq!(p.rate(2), 30.); // A minute on a two-page spread.
         p.checkpoint(at(953)).unwrap();
         let mut restored = ReadingPace::new(dir.clone());
-        restored.set_page(Some((1, 10, 1)), at(1000));
+        restored.set_page(Some((1, 10, 1)), at(1000), 0);
         assert!((restored.rate(1) - 160. / 3.).abs() < 1e-10);
-        restored.set_page(None, at(1400)); // Revisits cannot exceed 120 seconds for one page.
+        restored.set_page(None, at(1400), 0); // Revisits cannot exceed 120 seconds for one page.
         assert!((restored.rate(1) - 245. / 3.).abs() < 1e-10);
         fs::remove_dir_all(dir).unwrap();
     }
@@ -316,18 +341,18 @@ mod tests {
         let dir = temp("retry");
         let start = Instant::now();
         let mut p = ReadingPace::new(dir.clone());
-        p.set_page(Some((3, 1, 1)), start);
+        p.set_page(Some((3, 1, 1)), start, 0);
         fs::write(&dir, b"occupied").unwrap();
         let later = start + Duration::from_secs(19);
         assert!(p.checkpoint(later).is_err());
         fs::remove_file(&dir).unwrap();
         p.checkpoint(later).unwrap();
         let file = ReadingPace::file(&dir, 3);
-        assert_eq!(Samples::load(&file).total, 19);
+        assert_eq!(Samples::load(&file, 0).total, 19);
         let future = br#"{"version":4,"pages":{}}"#;
         fs::write(&file, future).unwrap();
         p.storage_returned();
-        p.set_page(Some((3, 2, 1)), later);
+        p.set_page(Some((3, 2, 1)), later, 0);
         p.checkpoint(later + Duration::from_secs(40)).unwrap();
         assert_eq!(fs::read(file).unwrap(), future);
         fs::remove_dir_all(dir).unwrap();

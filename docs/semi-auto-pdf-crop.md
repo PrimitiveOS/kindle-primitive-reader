@@ -1,6 +1,6 @@
 # Semi-auto PDF crop
 
-In a paged PDF, open **Scan → Semi-auto crop**. Reader shows the full
+In a PDF, open **Scan → Semi-auto crop**. Reader shows the full
 page. Tap near a corner or side handle to adjust the area Reader should
 search. **Apply** trims the margins inside that area. **Cancel** returns
 to the same page, zoom, pan and footer.
@@ -16,8 +16,8 @@ PDF. Cropped-out targets are outside the touchable area.
 The detector uses a bounded grayscale PDF raster and independently
 authored projection bounds with the stock default fitted page margin.
 The editor supports tap adjustment for the eight handles. Page, width,
-height and tile zoom settings persist when a crop is applied. To use
-continuous reading, remove the active crop with **Scan → Crop → Reset**.
+height and tile zoom settings persist when a crop is applied. Width-fit
+continuous reading uses each page's resolved crop. [Continuous view behavior](continuous-semi-auto-crop.md)
 
 On the authored four-page PDF, all 16 source edges agree within 0.001
 point with the pinned KOReader MuPDF and k2pdfopt runtime at 1,264 by

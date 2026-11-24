@@ -32,6 +32,27 @@ A recurring screen counts once per book within the selected period.
 Undated time remains visible in the main statistics summary. These reports
 query the existing journal. [Pinned KOReader time range menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L1280-L1359) · [Pinned grouping queries](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L1793-L1836) · [Pinned books-in-period query](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L2079-L2131)
 
+## Reset statistics
+
+Open **Reading statistics › Statistics settings › Reset statistics**. Reset
+its current book, choose another book from the recorded list, or clear books
+below 1, 5, 15, 30 or 60 minutes. Bulk reset protects the current book. The
+confirmation shows the selection or count. Cancel returns without applying it.
+
+Reader removes recorded visits and the earlier undated snapshot for the
+selected books. Book information starts its displayed timer at zero and the
+footer learns a fresh reading pace. Source files, bookmarks, notes and resume
+positions are preserved. The reset journal tracks a baseline for the earlier
+screen-time counter and invalidates previous pace samples. This keeps the
+reset durable in a single atomic save while reading data remains compatible
+with existing profiles.
+
+The pinned Lua comparison executes the reset menu and callbacks. It verifies
+the current-book and per-book actions, strict cutoffs and confirmation. Mac
+tests cover all three paths, exact threshold behavior, write failure, reopening,
+old pace samples and the unchanged source EPUB. Kindle verification is pending.
+[Reset menu](screenshots/reading-statistics-reset-menu.png) · [Confirmation](screenshots/reading-statistics-reset-confirm.png) · [Pinned KOReader callbacks](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L2338-L2534) · [Executable comparison](../scripts/koreader-statistics-reset-check.lua)
+
 ## Counting time
 
 New history defaults to the stock five-second minimum and 120-second maximum per visit. Quick skims do not count. Re-reading keeps a new visit. Reading time includes those rereads; capped page time sums at most the configured maximum for each distinct reading screen. These are separate values, as in KOReader's uncapped and capped book queries. Finished books continue recording by default, with an option to freeze them. [Stock defaults and total queries](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L29-L90) · [Page visit accounting](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2560-L2652)
@@ -56,7 +77,7 @@ Reflow uses source-position reading-screen identities, so page numbers
 and totals need separate layout-change comparisons with KOReader's
 rescaling view. Reader's pace estimator has its own sample policy.
 Rolling time ranges, additional day and week breakdowns, minute-level
-day-origin editing, configurable book-span labels, database import and
-sync, and history deletion remain separate work. Reader records the
+day-origin editing, configurable book-span labels, local database import
+and day- or period-specific reset remain separate work. Reader records the
 actual pre- and post-pause portions of each visit.
 [Stock layout rescaling](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L439-L441) · [Stock pause and resume timestamps](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2694-L2732)
