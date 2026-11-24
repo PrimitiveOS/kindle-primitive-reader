@@ -557,6 +557,50 @@ always_text.callback()
 assert(not require("util").tableGetValue(profiles.autoexec, "ReaderReadyAll", "Text"))
 always_text.callback()
 
+-- Drive the stock time editor and event at each minute through a full day.
+profiles.external_autoexec_triggers = {}
+local interval = profiles:genAutoExecMenu("Text", profiles.data.Text)[3]
+local endpoints = interval.sub_item_table_func()
+local real_date, now = os.date, "12:34"
+os.date = function(format, ...)
+    if format == "%H:%M" then return now end
+    return real_date(format, ...)
+end
+local function set_endpoint(index, hour, min)
+    endpoints[index].callback(menu)
+    assert(visible.ok_text == "Set time")
+    visible.callback({hour = hour, min = min})
+end
+assert(not interval.checked_func())
+endpoints[1].callback(menu)
+assert(visible.hour == 12 and visible.min == 34)
+set_endpoint(1, 6, 0)
+assert(interval.checked_func() and endpoints[2].text_func() == "end: 06:00")
+always_text.callback()
+local function check_day(expected)
+    for minute = 0, 1439 do
+        now = string.format("%02d:%02d", math.floor(minute / 60), minute % 60)
+        conditional_open("/documents/ordinary.epub", 0, false, expected(minute))
+    end
+end
+check_day(function() return true end) -- Equal start and end cover all day.
+set_endpoint(2, 12, 30)
+assert(interval.text_func() == "Only within time interval: 06:00 - 12:30")
+check_day(function(time) return time >= 360 and time <= 750 end)
+set_endpoint(1, 22, 0)
+set_endpoint(2, 6, 30)
+check_day(function(time) return time >= 1320 or time <= 390 end)
+always_text.callback()
+set_metadata(2, "Scout")
+now = "21:59"
+conditional_open("/documents/ordinary.epub", 0, true, false)
+now = "22:00"
+conditional_open("/documents/ordinary.epub", 0, true, true)
+metadata[2].hold_callback(menu)
+interval.hold_callback(menu)
+assert(not interval.checked_func() and endpoints[1].text_func() == "start: --:--")
+os.date = real_date
+
 for _, item in ipairs(profiles:getSubMenuItems()) do
     if item.name == "PDF copy" then commands = item.sub_item_table; break end
 end
@@ -576,3 +620,4 @@ print("Stock factory, action removal, rename/duplicate/delete, format gate and b
 print("Stock book opening: Always toggle, ReaderReady dispatch, format gates, reload guard and disable verified.")
 print("Stock conditional opening: orientation/path/collection alternatives, a separate new-book gate, and one execution per event.")
 print("Stock metadata opening: seven fields, effective title, Current book, OR/only-new, and save/clear.")
+print("Stock opening time: endpoint editor, every minute of daytime, overnight and equal-endpoint windows, conditional gating and clearing.")

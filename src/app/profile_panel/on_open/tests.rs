@@ -119,6 +119,7 @@ fn opening_metadata_uses_publisher_fields_unicode_and_preserves_the_open_book() 
         orientation: ReadingOrientation::Upright,
         is_new: true,
         metadata: Some(&metadata),
+        local_minute: None,
     };
     for (field, phrase) in [
         (Title, "waypoint, đặng [a+b]"),

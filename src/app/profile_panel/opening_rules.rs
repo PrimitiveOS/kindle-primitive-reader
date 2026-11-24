@@ -1,4 +1,5 @@
 //! Editing the conditions for applying a profile when a book opens.
+use super::opening_time::Endpoint;
 use super::{
     Action, Change, Editor, Item, LIST_X, LIST_Y, Name, Profile, Reader, ReadingOrientation, Rect,
     Result, Screen,
@@ -12,6 +13,8 @@ pub(in crate::app) enum Page {
     Orientation,
     Metadata,
     Collections,
+    TimeWindow,
+    TimeEdit(Endpoint),
 }
 
 impl Page {
@@ -21,12 +24,14 @@ impl Page {
             Self::Orientation => "Opening orientations",
             Self::Metadata => "Opening book metadata",
             Self::Collections => "Opening collections",
+            Self::TimeWindow | Self::TimeEdit(_) => "Opening time window",
         }
     }
 
     pub(in crate::app) fn back(self, index: usize) -> Screen {
         match self {
             Self::Overview => Screen::ReadingProfile(index),
+            Self::TimeEdit(_) => Screen::ReadingProfileOpening(index, Self::TimeWindow),
             _ => Screen::ReadingProfileOpening(index, Self::Overview),
         }
     }
@@ -39,6 +44,7 @@ pub(in crate::app) enum Command {
     Collection(String),
     NewOnly,
     Clear,
+    ClearTimeWindow,
 }
 
 const CURRENT_BOOK: Rect = Rect::new(LIST_X, LIST_Y + 248, 340, 100);
@@ -172,6 +178,17 @@ impl Reader {
                         items.push(action("Clear conditions", Command::Clear));
                     }
                 }
+                items.push(
+                    Item::new(
+                        "Only within time window",
+                        Action::Show(Screen::ReadingProfileOpening(index, Page::TimeWindow)),
+                    )
+                    .detail(
+                        profile
+                            .opening_time()
+                            .map_or_else(|| "Any time".into(), super::opening_time::window_label),
+                    ),
+                );
                 items
             }
             Page::Orientation => ORIENTATIONS
@@ -215,6 +232,7 @@ impl Reader {
                     })
                     .collect()
             }
+            Page::TimeWindow | Page::TimeEdit(_) => self.opening_time_items(index),
         }
     }
 
@@ -234,7 +252,7 @@ impl Reader {
                 rules.is_some_and(|rules| collection_index(rules, name).is_some())
             }
             Command::NewOnly => rules.is_some_and(|rules| rules.new_only),
-            Command::Clear => return None,
+            Command::Clear | Command::ClearTimeWindow => return None,
         })
     }
 
@@ -243,6 +261,9 @@ impl Reader {
         index: usize,
         command: Command,
     ) -> Result<()> {
+        if matches!(command, Command::ClearTimeWindow) {
+            return self.save_opening_time(index, None);
+        }
         let mut candidate = self.profiles.clone();
         let profile = candidate
             .get_mut(index)
@@ -274,7 +295,7 @@ impl Reader {
                 }
                 Command::NewOnly => rules.new_only = !rules.new_only,
                 Command::Clear => rules = Conditions::default(),
-                Command::Always => unreachable!(),
+                Command::Always | Command::ClearTimeWindow => unreachable!(),
             }
             profile.set_opening_conditions(rules);
         }

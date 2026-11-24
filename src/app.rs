@@ -876,6 +876,7 @@ pub struct Reader {
     font_chooser_return: Option<typeface::FontChooserReturn>,
     profiles: Vec<Profile>,
     profile_fields: Vec<reading_profiles::Field>,
+    profile_opening_time_draft: u16,
     profiles_path: PathBuf,
     footer_presets: Vec<FooterPreset>,
     footer_presets_path: PathBuf,
@@ -1106,6 +1107,7 @@ impl Reader {
             font_chooser_return: None,
             profiles,
             profile_fields: Vec::new(),
+            profile_opening_time_draft: 0,
             profiles_path,
             footer_presets,
             footer_presets_path,
@@ -1344,6 +1346,7 @@ impl Reader {
         self.cancel_search();
         self.search_result = None;
         self.result_selection = None;
+        let local_minute = self.profile_opening_minute();
         if let Some(mut reading) = fixed {
             if fixed_preferences.semi_auto_crop && !fixed_preferences.continuous {
                 fixed_preferences = reading.preferences();
@@ -1361,7 +1364,14 @@ impl Reader {
             let is_new = position.is_none();
             let metadata = self.opening_fixed_metadata(&reading, &absolute, is_new);
             let opening = reading.profile_provider().and_then(|provider| {
-                self.opening_profile_plan(id, &absolute, is_new, Some(provider), metadata.as_ref())
+                self.opening_profile_plan(
+                    id,
+                    &absolute,
+                    is_new,
+                    Some(provider),
+                    metadata.as_ref(),
+                    local_minute,
+                )
             });
             let profile_warning = if opening.is_some() {
                 let target = self.opening_display_viewport();
@@ -1377,6 +1387,7 @@ impl Reader {
                     &absolute,
                     is_new,
                     metadata.as_ref(),
+                    local_minute,
                 )
                 .err()
             };
@@ -1478,7 +1489,14 @@ impl Reader {
         let is_new = position.is_none();
         let metadata = self.opening_text_metadata(&config, is_new);
         let opening = self
-            .opening_profile_plan(id, &config.book, is_new, None, metadata.as_ref())
+            .opening_profile_plan(
+                id,
+                &config.book,
+                is_new,
+                None,
+                metadata.as_ref(),
+                local_minute,
+            )
             .map(|mut plan| {
                 plan.text = Some((saved_preferences.clone(), top_status_header));
                 plan
@@ -1493,6 +1511,7 @@ impl Reader {
                 top_status_header,
                 id,
                 metadata.as_ref(),
+                local_minute,
             ) {
                 Ok(prepared) => (prepared, None),
                 Err(error) => (None, Some(error)),
@@ -1921,6 +1940,13 @@ impl Reader {
         }
         if let Screen::ProfileName(mode) = screen {
             self.prepare_profile_name(mode);
+        }
+        if let Screen::ReadingProfileOpening(
+            index,
+            profile_panel::opening_rules::Page::TimeEdit(endpoint),
+        ) = screen
+        {
+            self.prepare_opening_time(index, endpoint);
         }
         if let Screen::DictionaryPresets(dictionary_presets::Page::Name(mode)) = screen {
             self.prepare_dictionary_preset_name(mode);
@@ -8284,6 +8310,7 @@ impl App for Reader {
         self.draw_flow_popup(canvas);
         self.draw_archive_confirmation(canvas);
         self.draw_profile_confirmation(canvas);
+        self.draw_opening_time(canvas);
         self.draw_profile_field_controls(canvas);
         self.draw_profile_values_button(canvas);
         self.draw_list_density_picker(canvas);
@@ -8319,6 +8346,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.opening_time_input(input) {
+            return change;
+        }
         if let Some(change) = self.dictionary_preset_picker_input(input) {
             return change;
         }
@@ -8525,6 +8555,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.opening_time_input(input) {
+            return change;
+        }
         if matches!(input, Input::HoldStart(..) | Input::LongTap(..)) {
             self.settle_pending_opening();
         }

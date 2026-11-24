@@ -90,7 +90,7 @@ documents. The Mac transaction tests check mixed metadata and screen-turn
 rules, byte-identical staged and accepted frames, and a PDF's position
 through a rejected turn. The legacy display path still uses the preferred
 orientation. Folder shortcut expansion, custom sidecar metadata,
-confirmation and scheduling remain open.
+execution confirmation and dispatch delay remain open.
 [Landscape simulator capture](screenshots/landscape-profile-apply-on-opening.png) ·
 [Opening conditions in the legacy display path](screenshots/landscape-profile-opening-conditions.png) ·
 [Current book path shortcut](screenshots/landscape-profile-current-book-path.png) ·
@@ -108,6 +108,30 @@ to use stock Unicode matching. Run the Reader `opening_metadata` tests with
 five authored documents. Pass that scratch directory, the path to the
 fixture Noto Sans Regular font, and an empty cache directory to
 `koreader-profile-metadata-providers.lua` from the same pinned runtime.
+
+### Limit opening profiles by time
+
+Choose **Only within time window** to set a start or end time. Reader
+uses the device's local clock when it matches a book opening. Both
+endpoints are included. A window such as **22:00–06:30** crosses
+midnight, and matching endpoints cover the whole day. The first value
+sets both endpoints until the second is edited.
+
+The clock editor moves either field by one on tap. Hold an hour or minute
+button to move by four hours or ten minutes. **Set time** saves
+the endpoint, and **Cancel** discards the draft. **Clear time window**
+restores unrestricted time. The time gate works with **Always apply**
+or with matching opening conditions. **Apply to this book** remains
+available outside the window.
+
+The pinned stock fixture exercises the editor callbacks and all 1,440
+minutes for daytime, overnight and equal-endpoint windows. The Mac
+tests use the same bounds, validate stored windows and show that retries
+of a display turn keep the rules matched for that opening event.
+[Time window](screenshots/landscape-profile-opening-time-window.png) ·
+[Start time editor](screenshots/landscape-profile-opening-start-time.png) ·
+[Pinned editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L645-L696) ·
+[Pinned clock gate](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L1237-L1252)
 
 ## Editing saved values
 

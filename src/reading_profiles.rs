@@ -33,6 +33,8 @@ pub(crate) enum Profile {
         apply_on_open: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         opening: Option<opening::Conditions>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opening_time: Option<opening::TimeWindow>,
     },
     Fixed {
         name: String,
@@ -43,10 +45,31 @@ pub(crate) enum Profile {
         apply_on_open: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         opening: Option<opening::Conditions>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        opening_time: Option<opening::TimeWindow>,
     },
 }
 
 impl Profile {
+    pub(crate) fn opening_time(&self) -> Option<opening::TimeWindow> {
+        match self {
+            Self::Text { opening_time, .. } | Self::Fixed { opening_time, .. } => *opening_time,
+        }
+    }
+
+    pub(crate) fn set_opening_time(&mut self, time: Option<opening::TimeWindow>) {
+        match self {
+            Self::Text { opening_time, .. } | Self::Fixed { opening_time, .. } => {
+                *opening_time = time
+            }
+        }
+    }
+
+    pub(crate) fn opening_time_matches(&self, minute: Option<u16>) -> bool {
+        self.opening_time()
+            .is_none_or(|window| minute.is_some_and(|minute| window.includes(minute)))
+    }
+
     pub(crate) fn applies_on_open(&self) -> bool {
         match self {
             Self::Text { apply_on_open, .. } | Self::Fixed { apply_on_open, .. } => *apply_on_open,
@@ -89,10 +112,11 @@ impl Profile {
     }
 
     pub(crate) fn matches_opening(&self, context: &opening::Book<'_>) -> bool {
-        self.applies_on_open()
-            || self
-                .opening_conditions()
-                .is_some_and(|rules| rules.matches(context))
+        self.opening_time_matches(context.local_minute)
+            && (self.applies_on_open()
+                || self
+                    .opening_conditions()
+                    .is_some_and(|rules| rules.matches(context)))
     }
 
     pub(crate) fn name(&self) -> &str {
@@ -396,6 +420,7 @@ fn validate(profiles: &[Profile]) -> io::Result<()> {
         if profile
             .opening_conditions()
             .is_some_and(|conditions| profile.applies_on_open() || !conditions.valid())
+            || profile.opening_time().is_some_and(|time| !time.valid())
         {
             return Err(invalid());
         }

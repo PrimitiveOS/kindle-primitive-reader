@@ -58,6 +58,7 @@ impl Reader {
         is_new: bool,
         fixed: Option<FixedProvider>,
         metadata: Option<&Metadata>,
+        local_minute: Option<u16>,
     ) -> Option<OpeningPlan> {
         let fits = |p: &Profile| match p {
             Profile::Text { .. } => fixed.is_none(),
@@ -66,6 +67,7 @@ impl Reader {
         if !self.negotiated_opening_profiles
             || !self.profiles.iter().any(|p| {
                 fits(p)
+                    && p.opening_time_matches(local_minute)
                     && p.opening_conditions().is_some_and(|rule| {
                         (!rule.new_only || is_new)
                             && rule
@@ -85,6 +87,7 @@ impl Reader {
             orientation,
             is_new,
             metadata,
+            local_minute,
         };
         let mut matching: Vec<_> = self
             .profiles
@@ -208,6 +211,7 @@ impl Reader {
         top_status_header: bool,
         id: u64,
         metadata: Option<&Metadata>,
+        local_minute: Option<u16>,
     ) -> Result<Option<(Reading, BookPreferences)>> {
         let orientation = self.opening_orientation(id, false);
         let book = Book {
@@ -217,6 +221,7 @@ impl Reader {
             orientation,
             is_new: position.is_none(),
             metadata,
+            local_minute,
         };
         let mut adjusted = preferences.clone();
         for profile in self.opening_profiles(&book) {
@@ -264,6 +269,7 @@ impl Reader {
         path: &Path,
         is_new: bool,
         metadata: Option<&Metadata>,
+        local_minute: Option<u16>,
     ) -> Result<()> {
         let Some(provider) = reading.profile_provider() else {
             return Ok(());
@@ -275,6 +281,7 @@ impl Reader {
             orientation: self.opening_orientation(id, true),
             is_new,
             metadata,
+            local_minute,
         };
         let profiles: Vec<_> = self
             .opening_profiles(&book)

@@ -122,6 +122,28 @@ pub(crate) struct Book<'a> {
     pub(crate) orientation: ReadingOrientation,
     pub(crate) is_new: bool,
     pub(crate) metadata: Option<&'a Metadata>,
+    pub(crate) local_minute: Option<u16>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TimeWindow {
+    pub(crate) start: u16,
+    pub(crate) end: u16,
+}
+
+impl TimeWindow {
+    pub(super) fn valid(self) -> bool {
+        self.start < 1440 && self.end < 1440
+    }
+
+    pub(crate) fn includes(self, minute: u16) -> bool {
+        if self.start < self.end {
+            (self.start..=self.end).contains(&minute)
+        } else {
+            minute < 1440 && (minute >= self.start || minute <= self.end)
+        }
+    }
 }
 
 pub(crate) fn valid_path(pattern: &str) -> bool {
