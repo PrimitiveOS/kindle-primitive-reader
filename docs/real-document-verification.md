@@ -241,6 +241,15 @@ These are software-rendered frames from the Kindle and scratch-profile
 workflow checks. Foreground touch and E Ink refresh have separate
 acceptance checks.
 
+The published ARMHF ZIP contains both licenses and matched SHA-256
+`42958296c1ec37393aa21d42bdc6b449bd31a0c7f43a646bc870770cde042a9b` (21,447,248 bytes).
+The Store transaction installed the released executable, SHA-256
+`f94b3d3883e072071c5e67b3db8bc89ba384bb42fcb9db6d7c341c2722f002dd` (33,986,248 bytes).
+The exact installed release opened, advanced and resumed an original EPUB,
+PDF, AZW3 and MOBI with a separate profile. First frames took 1,873, 23,056, 2,172, 2,292 ms,
+respectively. Each original file's checksum matched before and after.
+[Release workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45346531469) · [Release assets](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.36)
+
 ## Reader 0.1.35 release on the Oasis
 
 GitHub published the verified ARMHF package, including the code and
