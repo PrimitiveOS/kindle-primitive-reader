@@ -74,6 +74,33 @@ typed lookup, missing results and editing inside a dictionary result.
 [Pinned result editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/dictquicklookup.lua#L1841-L1939) ·
 [Reproducible callback check](../scripts/compare-dictionary-preset-lookup.py)
 
+## Dictionary history
+
+Open **Search › Dictionary history** to see recent local lookups, newest
+first. A heading identifies each run of lookups from the same book.
+Each recorded lookup shows the device's local date and time. Tap a word
+to look it up again while staying at your current reading location.
+Reader keeps up to 64 records, including repeated words. Older queries
+remain available with their original wording.
+[Portrait simulation](screenshots/dictionary-history-grouped-portrait.png) ·
+[Landscape simulation](screenshots/dictionary-history-grouped-landscape.png)
+
+Under **Dictionaries**, turn off **Record dictionary lookups** to stop
+adding new entries. Choose **Clear dictionary history** and confirm to
+remove existing entries. These controls apply to local dictionary history.
+Saved vocabulary and online lookups have their own controls. Local reading
+data backups retain the recorded titles, words, and timestamps.
+[Clear-history simulation](screenshots/dictionary-history-clear-landscape.png)
+
+The pinned KOReader callback groups consecutive titles and reopens a word
+through the current dictionary provider. Reader combines an unchanged
+fuzzy retry with its first attempt. The simulator uses an authored EPUB
+and PDF, and the stock check runs the logging, grouping, timestamp,
+repeat, and privacy callbacks in Lua 5.1.
+[Pinned history view](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L261-L290) ·
+[Pinned recorder](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1425-L1436) ·
+[Executable callback comparison](../scripts/compare-dictionary-history.py)
+
 ## What determines a match
 
 An exact headword and an alias may both resolve in one dictionary. Another dictionary may have a direct entry for the same selected word. Reader consults the optional synonym table before streaming the main index, so each dictionary needs one main-index pass. The result set retains distinct senses with identical spellings. Some bilingual indexes return legitimate alias headwords with a zero-byte definition. These appear as **Headword only**. Entries with definition text appear first within the same dictionary. Unicode case folding supplies a fallback. Each lookup has shared scan and decompression limits.
