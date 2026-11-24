@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <genre>nonf_education</genre>
+      <author><first-name>PrimitiveOS</first-name><last-name>Fixtures</last-name></author>
+      <book-title>Notes from the glass workshop</book-title>
+      <lang>en</lang>
+    </title-info>
+    <document-info>
+      <author><nickname>PrimitiveOS Fixtures</nickname></author>
+      <date value="2026-12-01">2026-12-01</date>
+      <id>urn:primitiveos:fixture:notes-from-the-glass-workshop</id>
+      <version>1.0</version>
+    </document-info>
+  </description>
+  <body name="notes">
+    <title><p>Workshop notes</p></title>
+    <section id="earlier-note">
+      <title><p>Measurements</p></title>
+      <p>The bronze gauge was stored under the workbench.</p>
+      <p id="earlier-detail">A second entry records the final measurement.</p>
+      <p><a l:href="#main-start">Return to the workshop.</a></p>
+    </section>
+    <section id="unrelated-note">
+      <p>Unrelated account about the western shelf.</p>
+    </section>
+  </body>
+  <body>
+    <section id="main-start">
+      <title><p>The glass workshop</p></title>
+      <p>On a cold morning the apprentice recorded the repairs. One entry described the workbench while another covered drying the panes.</p>
+      <p><a l:href="#earlier-note">Earlier workshop note</a></p>
+      <p>Read the <a l:href="#later-comment">Afterword commentary</a> before marking the drawing.</p>
+      <p><a l:href="#earlier-detail">Separate paragraph link</a></p>
+      <p><a l:href="#plain-target">Open the supply catalog</a></p>
+    </section>
+    <section id="plain-target">
+      <title><p>Supply catalog</p></title>
+      <p>The wooden crates were listed by weight.</p>
+    </section>
+  </body>
+  <body name="CoMmEnTs">
+    <title><p>Workshop commentary</p></title>
+    <section id="later-comment">
+      <title><p>Revised instructions</p></title>
+      <p>Keep the east shutters open during the afternoon.</p>
+      <p>The next entry explains how the panes dried.</p>
+    </section>
+  </body>
+</FictionBook>

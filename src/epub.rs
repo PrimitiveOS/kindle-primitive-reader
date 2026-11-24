@@ -109,6 +109,7 @@ enum Content {
         prior_mobi: BTreeMap<String, Vec<String>>,
         resources: BTreeMap<String, Vec<u8>>,
         fonts: Option<kf8::fonts::FontSource>,
+        fb2_note_sections: std::collections::BTreeSet<String>,
     },
     Chm(Box<Chm>),
 }
@@ -517,6 +518,16 @@ impl Book {
         }
     }
 
+    #[cfg(feature = "kindle")]
+    pub(crate) fn is_fb2_note_section(&self, target: &Destination) -> bool {
+        matches!(
+            &self.content,
+            Content::Loose { format: loose::Format::Fb2, fb2_note_sections, .. }
+                if target.path == loose::CHAPTER_PATH
+                    && target.fragment.as_ref().is_some_and(|id| fb2_note_sections.contains(id))
+        )
+    }
+
     pub(crate) fn publisher_metadata(&self) -> Option<&crate::publication_metadata::Metadata> {
         match &self.content {
             Content::Loose { metadata, .. } => Some(metadata),
@@ -533,6 +544,7 @@ impl Book {
                 author: None,
                 chapter_path: loose::CHAPTER_PATH.to_owned(),
                 xhtml: loose::text_as_xhtml(text)?,
+                fb2_note_sections: Default::default(),
                 toc: Vec::new(),
                 resources: BTreeMap::new(),
             },
@@ -566,6 +578,7 @@ impl Book {
                 xhtml: BTreeMap::from([(chapter_path, document.xhtml)]),
                 prior_mobi: BTreeMap::new(),
                 resources: document.resources,
+                fb2_note_sections: document.fb2_note_sections,
                 fonts: None,
             },
         }
@@ -686,6 +699,7 @@ impl Book {
                 xhtml,
                 prior_mobi,
                 resources: publication.resources,
+                fb2_note_sections: Default::default(),
                 fonts: (!publication.font_records.is_empty()).then_some(kf8::fonts::FontSource {
                     file: input,
                     records: publication.font_records,
@@ -1877,6 +1891,7 @@ mod tests {
                 xhtml: "<html><body><p>Read.</p></body></html>".into(),
                 toc: Vec::new(),
                 resources: BTreeMap::from([("shore.png".into(), image.clone())]),
+                fb2_note_sections: Default::default(),
             },
             loose::Format::Text,
         );

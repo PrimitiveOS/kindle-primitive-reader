@@ -711,3 +711,113 @@ fn footnote_justification_is_independent_and_keeps_rtl_and_source_selection() {
     let reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
     assert_eq!(reopened.controls.footnote_justify, Some(false));
 }
+
+#[test]
+fn fb2_named_note_sections_open_from_real_links_and_preserve_the_source() {
+    let fixture = Fixture::new();
+    let name = "Workshop notes.fb2";
+    let path = fixture.root.join(name);
+    let original = std::fs::read(crate::test_fixture("workshop-notes.fb2")).unwrap();
+    std::fs::write(&path, &original).unwrap();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.open_path(&path).unwrap();
+
+    let point = |reader: &mut Reader, label: &str| {
+        let reading = &mut reader.active.as_mut().unwrap().reading;
+        let anchor = reading.probe.matches(label).remove(0);
+        reading.jump_to_anchor(reading.chapter, &anchor).unwrap();
+        source_point(reader, label)
+    };
+
+    for (label, fragment, second_paragraph) in [
+        (
+            "Earlier workshop note",
+            "earlier-note",
+            "A second entry records the final measurement.",
+        ),
+        (
+            "Afterword commentary",
+            "later-comment",
+            "The next entry explains how the panes dried.",
+        ),
+    ] {
+        let (x, y) = point(&mut app, label);
+        let location = app.current_history_location();
+        let history = app.back.clone();
+        let reading = &mut app.active.as_mut().unwrap().reading;
+        let frame = reading.probe.capture(reading.page).unwrap();
+        assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+        assert_eq!(app.screen, Screen::Footnote, "{label}");
+        let note = app.footnote.as_ref().unwrap();
+        assert_eq!(note.target.fragment.as_deref(), Some(fragment));
+        assert_eq!(note.reference.as_ref().unwrap().text, label);
+        assert!(note.preview.matches(second_paragraph).len() == 1);
+        assert!(note.preview.matches("Unrelated account").is_empty());
+        assert!(note.preview.matches("wooden crates").is_empty());
+        assert_eq!(app.current_history_location(), location);
+        assert_eq!(app.back, history);
+        screenshot(&app, fragment, &fonts, &[false]);
+        let close = note.close_button();
+        app.input(Input::Tap(
+            (close.x + close.w / 2) as f32,
+            (close.y + close.h / 2) as f32,
+        ));
+        assert_eq!(app.screen, Screen::Book);
+        assert_eq!(app.current_history_location(), location);
+        assert_eq!(app.back, history);
+        let reading = &mut app.active.as_mut().unwrap().reading;
+        assert_eq!(reading.probe.capture(reading.page).unwrap(), frame);
+    }
+
+    let (x, y) = point(&mut app, "Earlier workshop note");
+    let workshop = app.current_history_location();
+    assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+    let note = app.footnote.as_ref().unwrap();
+    let start = note.preview.matches("Return to the workshop.").remove(0);
+    let mut end = start.clone();
+    end.offset += "Return to the workshop.".len();
+    let link = note.preview.select_range(&start, &end).unwrap();
+    let content = note.content();
+    let rect = note.preview.selection_rects(note.page, &link)[0];
+    assert_eq!(
+        app.input(Input::Tap(
+            (content.x + rect.x + rect.width / 2) as f32,
+            (content.y + rect.y + rect.height / 2) as f32,
+        )),
+        Change::Partial
+    );
+    assert_eq!(app.screen, Screen::Book);
+    assert_eq!(app.back.last(), workshop.as_ref());
+    let reading = &app.active.as_ref().unwrap().reading;
+    let main = reading.probe.fragment("main-start").unwrap();
+    assert_eq!(reading.probe.page_for(&main), Some(reading.page));
+    app.activate(Action::ReturnToLocation).unwrap();
+    assert_eq!(app.current_history_location(), workshop);
+
+    // Merely belonging to a named body does not make a paragraph a trusted
+    // FB2 section. The author's ordinary forward link still follows the target.
+    for label in ["Separate paragraph link", "Open the supply catalog"] {
+        let (x, y) = point(&mut app, label);
+        let before = app.back.len();
+        assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+        assert_eq!(app.screen, Screen::Book, "{label}");
+        assert!(app.footnote.is_none());
+        assert_eq!(app.back.len(), before + 1);
+        app.activate(Action::ReturnToLocation).unwrap();
+    }
+
+    // The original fictionbook bytes and canonical position survive a reopen.
+    point(&mut app, "Earlier workshop note");
+    app.record_position();
+    let saved = app.current_history_location();
+    app.save().unwrap();
+    drop(app);
+    let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    reopened.open_path(&path).unwrap();
+    assert_eq!(reopened.current_history_location(), saved);
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}

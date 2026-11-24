@@ -92,6 +92,7 @@ pub(crate) struct Document {
     pub(crate) xhtml: String,
     pub(crate) toc: Vec<TocEntry>,
     pub(crate) resources: BTreeMap<String, Vec<u8>>,
+    pub(crate) fb2_note_sections: BTreeSet<String>,
 }
 
 impl Document {
@@ -567,6 +568,7 @@ fn text_document(input: &str, title: &str) -> Result<Document> {
         xhtml: text_as_xhtml(&cleaned)?,
         toc: Vec::new(),
         resources: BTreeMap::new(),
+        fb2_note_sections: BTreeSet::new(),
     })
 }
 
@@ -696,6 +698,7 @@ fn html_document(input: &str, fallback_title: &str) -> Result<Document> {
         xhtml: xhtml.into_owned(),
         toc: Vec::new(),
         resources: BTreeMap::new(),
+        fb2_note_sections: BTreeSet::new(),
     })
 }
 
@@ -853,16 +856,38 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
     if bodies.peek().is_none() {
         return Err("The FictionBook has no reading body".into());
     }
+    let mut authored_ids = BTreeSet::new();
+    let mut note_sections = BTreeSet::new();
+    for item in root
+        .descendants()
+        .filter(|item| item.is_element() && item.tag_name().namespace() == Some(FB2_NS))
+    {
+        let Some(id) = item.attribute("id").filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        // A duplicate destination is ambiguous, even if only one occurrence
+        // belongs to a note. Leave ordinary link handling in charge.
+        if !authored_ids.insert(id) {
+            note_sections.remove(id);
+        } else if item.has_tag_name((FB2_NS, "section"))
+            && item
+                .ancestors()
+                .skip(1)
+                .find(|parent| parent.has_tag_name((FB2_NS, "body")))
+                .and_then(|body| body.attribute("name"))
+                .is_some_and(|name| {
+                    name.eq_ignore_ascii_case("notes") || name.eq_ignore_ascii_case("comments")
+                })
+        {
+            note_sections.insert(id);
+        }
+    }
     let mut output = Fb2Output {
         xhtml,
         toc: Vec::new(),
         images: fb2_images(root),
         image_placements: 0,
-        authored_ids: root
-            .descendants()
-            .filter(|item| item.is_element() && item.tag_name().namespace() == Some(FB2_NS))
-            .filter_map(|item| item.attribute("id"))
-            .collect(),
+        authored_ids,
         section_id: 0,
     };
     if let Some(cover) = info
@@ -885,6 +910,7 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
         chapter_path: CHAPTER_PATH.to_owned(),
         xhtml: output.xhtml,
         toc: output.toc,
+        fb2_note_sections: note_sections.into_iter().map(str::to_owned).collect(),
         resources: output
             .images
             .into_values()
@@ -1555,5 +1581,28 @@ mod exported_text_tests {
                 .contains("&lt;em&gt;")
         );
         assert!(text_document("An unsupported control: \x01", "Bad").is_err());
+    }
+
+    #[test]
+    fn fb2_note_section_index_rejects_ambiguous_and_non_section_targets() {
+        let input = r#"<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+            <body><section id="story"><p id="twice">Ordinary passage.</p></section></body>
+            <body name="NoTeS">
+                <section id="twice"><p>Duplicate location.</p></section>
+                <section id="workshop"><p id="note-text">Trusted section text.</p>
+                  <section id="nested"><p>Nested note entry.</p></section>
+                </section>
+                <section><p>Unaddressed section.</p></section>
+            </body>
+            <body name="COMMENTS"><section id="afterword"><p>Commentary.</p></section></body>
+        </FictionBook>"#;
+        let book = fb2_document(input, "Workshop").unwrap();
+        assert_eq!(
+            book.fb2_note_sections,
+            BTreeSet::from(["afterword".into(), "nested".into(), "workshop".into()])
+        );
+        assert!(book.xhtml.contains("id=\"primitiveos-fb2-section-1\""));
+        assert!(!book.xhtml.contains("NoTeS"));
+        assert!(!book.xhtml.contains("COMMENTS"));
     }
 }

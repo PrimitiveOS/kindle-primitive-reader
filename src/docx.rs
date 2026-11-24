@@ -88,6 +88,7 @@ pub(crate) fn open(
     };
     let output = convert_main(&main, &styles)?;
     Ok(Document {
+        fb2_note_sections: Default::default(),
         metadata,
         title: title.unwrap_or_else(|| fallback_title.into()),
         author,

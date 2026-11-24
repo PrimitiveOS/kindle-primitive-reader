@@ -236,7 +236,7 @@ impl Reader {
         let Some(index) = reading.probe.chapter_index(&target.path) else {
             return false;
         };
-        let (context, reference) = reading
+        let (mut context, reference) = reading
             .note_reference_at(x, y)
             .map(|(context, selected)| (context, Some(selected)))
             .unwrap_or_else(|| {
@@ -263,6 +263,9 @@ impl Reader {
             let mut book = Book::open(&reading.config.book).map_err(io::Error::other)?;
             if book.revision() != reading.probe.book {
                 return Ok(None);
+            }
+            if book.is_fb2_note_section(&target) {
+                context.kind = Reference::Explicit;
             }
             let xhtml = book.chapter(index).map_err(io::Error::other)?;
             let source = book
