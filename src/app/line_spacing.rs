@@ -92,7 +92,13 @@ impl Reader {
     }
 
     pub(super) fn apply_line_spacing_input(&mut self, owner: u64) -> Result<()> {
-        self.apply_line_spacing(owner, self.line_spacing_value()?)
+        let value = self.line_spacing_value()?;
+        self.apply_line_spacing(owner, value)?;
+        self.notify_reading(
+            super::reading_notifications::Source::More,
+            format!("Line spacing · {value}%"),
+        );
+        Ok(())
     }
 
     pub(super) fn apply_line_spacing(&mut self, owner: u64, value: u16) -> Result<()> {

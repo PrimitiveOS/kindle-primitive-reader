@@ -12,6 +12,7 @@ use primitive_ui::{CAPTION, Canvas, HAIRLINE, Icon, Input, Rect, TextStyle};
 
 use self::bottom_config::{ConfigRow, SINGLE_VIEW_SECTIONS, TEXT_SECTIONS, VIEW_SECTIONS};
 use super::bar_icons::{EXIT, action_icon, group_icon, panel_icon};
+use super::reading_notifications::Source;
 use super::top_config::TopGroup;
 use super::{Action, Item, Reader, Screen};
 #[cfg(test)]
@@ -37,7 +38,7 @@ impl BarPanel {
 
 enum Target {
     Invoke(Action),
-    Apply(Action),
+    Apply(Action, Option<(Source, String)>),
     Toggle(BarPanel),
     BottomSection(BarPanel),
     TopSection(TopGroup),
@@ -48,7 +49,7 @@ enum Target {
 impl Target {
     fn icon(&self) -> Option<Icon> {
         match self {
-            Self::Invoke(action) | Self::Apply(action) => Some(action_icon(action)),
+            Self::Invoke(action) | Self::Apply(action, _) => Some(action_icon(action)),
             Self::Toggle(panel) | Self::BottomSection(panel) => Some(panel_icon(*panel)),
             Self::TopSection(group) => Some(group_icon(*group)),
             Self::Exit => Some(EXIT),
@@ -235,7 +236,7 @@ impl Bars {
                     item.action,
                     Action::SetReadingControls(_) | Action::SetReadingOrientation(_)
                 ) {
-                    Target::Apply(item.action)
+                    Target::Apply(item.action, None)
                 } else {
                     Target::Invoke(item.action)
                 },
@@ -305,7 +306,7 @@ impl Bars {
                 let target = if choice.selected {
                     Target::Current(choice.action)
                 } else if choice.live {
-                    Target::Apply(choice.action)
+                    Target::Apply(choice.action, choice.feedback)
                 } else {
                     Target::Invoke(choice.action)
                 };
@@ -365,7 +366,7 @@ impl Reader {
             }
             match button.target {
                 Target::Invoke(Action::SetDisplayLevel(control, _))
-                | Target::Apply(Action::SetDisplayLevel(control, _)) => Some(control),
+                | Target::Apply(Action::SetDisplayLevel(control, _), _) => Some(control),
                 _ => None,
             }
         })?;
@@ -638,6 +639,7 @@ impl Reader {
                 None
             },
             visible,
+            passive_cover: self.reading_notification_cover(),
             header_height,
             inverted,
             highlight_appearance: self.controls.highlight_appearance,
@@ -780,6 +782,14 @@ impl Reader {
     }
 
     fn apply_overlay_action(&mut self, action: Action) -> Change {
+        self.apply_overlay_action_with_feedback(action, None)
+    }
+
+    fn apply_overlay_action_with_feedback(
+        &mut self,
+        action: Action,
+        feedback: Option<(Source, String)>,
+    ) -> Change {
         let (screen, top, bottom, panel, group) = (
             self.screen,
             self.reading_top,
@@ -798,6 +808,9 @@ impl Reader {
                     let now = Instant::now();
                     self.update_stats_activity(now);
                     self.sync_auto_turn(now);
+                }
+                if let Some((source, message)) = feedback {
+                    self.notify_reading(source, message);
                 }
                 self.applied_change()
             }
@@ -820,11 +833,11 @@ impl Reader {
                 match bars.button_at(x, y) {
                     Some(Target::Invoke(Action::ReadAlarm)) => self.read_alarm.stop(),
                     Some(
-                        Target::Apply(Action::TopStatusHeader(enabled))
+                        Target::Apply(Action::TopStatusHeader(enabled), _)
                         | Target::Current(Action::TopStatusHeader(enabled)),
                     ) => self.apply_overlay_action(Action::ConfirmTopStatusHeaderDefault(enabled)),
                     Some(
-                        Target::Apply(Action::SetReadingOrientation(orientation))
+                        Target::Apply(Action::SetReadingOrientation(orientation), _)
                         | Target::Current(Action::SetReadingOrientation(orientation)),
                     ) => self.apply_overlay_action(Action::ConfirmReadingOrientationDefault(
                         orientation,
@@ -857,14 +870,27 @@ impl Reader {
                         self.remember_bottom_panel(panel);
                         Change::Partial
                     }
-                    Some(Target::Apply(action)) => self.apply_overlay_action(action),
+                    Some(Target::Apply(action, feedback)) => {
+                        self.apply_overlay_action_with_feedback(action, feedback)
+                    }
                     Some(Target::Current(action @ Action::SetReadingOrientation(_))) => {
                         self.apply_overlay_action(action)
                     }
-                    Some(Target::Invoke(action)) => match self.activate(action) {
-                        Ok(()) => self.applied_change(),
-                        Err(error) => self.report(error),
-                    },
+                    Some(Target::Invoke(action)) => {
+                        let previous = matches!(action, Action::ReturnToLocation);
+                        match self.activate(action) {
+                            Ok(()) => {
+                                if previous {
+                                    self.notify_reading(
+                                        Source::Other,
+                                        "Returned to previous location",
+                                    );
+                                }
+                                self.applied_change()
+                            }
+                            Err(error) => self.report(error),
+                        }
+                    }
                     Some(Target::Current(_)) => Change::None,
                     None if !bars.contains(x, y) => {
                         let bottom_was_open = self.reading_panel.take().is_some();
@@ -1124,7 +1150,7 @@ mod tests {
                 .buttons
                 .into_iter()
                 .find(|button| match &button.target {
-                    Target::Apply(action) | Target::Current(action) => match action {
+                    Target::Apply(action, _) | Target::Current(action) => match action {
                         Action::TopStatusHeader(enabled) => !default && *enabled == requested,
                         Action::ConfirmTopStatusHeaderDefault(enabled) => {
                             default && *enabled == requested

@@ -23,6 +23,7 @@ mod logical_font;
 mod page_overlap_tests;
 pub(crate) mod publisher_pages;
 mod reading_history;
+mod reading_notifications;
 mod saved_marks_view;
 pub(crate) mod scrolling;
 mod search_presentation;
@@ -220,6 +221,8 @@ enum Screen {
     CollectionName,
     RemoveCollection,
     ReadingControls,
+    ReadingNotifications,
+    PastNotifications,
     NavigationSettings,
     PageTurns,
     PageTurnZones,
@@ -388,6 +391,8 @@ impl Screen {
             Self::CollectionName => "Collection name",
             Self::RemoveCollection => "Remove collection?",
             Self::ReadingControls => "Reading controls",
+            Self::ReadingNotifications => "Notifications",
+            Self::PastNotifications => "Past notifications",
             Self::NavigationSettings => "Navigation settings",
             Self::PageTurns => "Page turns",
             Self::PageTurnZones => "Tap zones",
@@ -609,6 +614,7 @@ enum Action {
     RemoveCollection,
     SetReadingControls(ReadingControls),
     PageTurnSetting(page_turn_settings::Command),
+    ToggleNotificationSource(reading_notifications::Source),
     SetReadingOrientation(ReadingOrientation),
     KeepReadingOrientation(bool),
     ConfirmReadingOrientationDefault(ReadingOrientation),
@@ -1040,6 +1046,7 @@ pub struct Reader {
     swipe_back_notice_pending: bool,
     back_navigation: back_navigation::State,
     notice: Option<String>,
+    notifications: reading_notifications::Notifications,
     dirty: bool,
     save_at: Option<Instant>,
     metadata_checkpoint: metadata_save::Checkpoint,
@@ -1285,6 +1292,7 @@ impl Reader {
             swipe_back_notice_pending: false,
             back_navigation: back_navigation::State::default(),
             notice: None,
+            notifications: Default::default(),
             dirty: false,
             save_at: None,
             metadata_checkpoint: metadata_save::Checkpoint::new(Instant::now()),
@@ -3096,6 +3104,9 @@ impl Reader {
             }
             return items;
         }
+        if let Some(items) = self.notification_items() {
+            return items;
+        }
         if self.screen == Screen::Links {
             return self.page_link_items();
         }
@@ -3901,6 +3912,7 @@ impl Reader {
 
     fn activate(&mut self, action: Action) -> Result<()> {
         match action {
+            Action::ToggleNotificationSource(source) => self.toggle_notification_source(source)?,
             Action::EditListDensity(scope, field) => self.open_list_density(scope, field),
             Action::EditSearchPresentation(field) => self.open_search_presentation(field),
             Action::BookmarkBrowser(command) => self.activate_bookmark_browser(command)?,
@@ -8345,6 +8357,9 @@ impl Reader {
                     RowAccessory::None
                 } else {
                     match &item.action {
+                        Action::ToggleNotificationSource(source) => {
+                            RowAccessory::Toggle(source.enabled(self.controls.notification_sources))
+                        }
                         Action::ToggleOnlineHistory => RowAccessory::Toggle(
                             !self.lookup_history.online_languages.forget_queries,
                         ),
@@ -8933,6 +8948,7 @@ impl App for Reader {
         self.draw_opening_delay(canvas);
         self.draw_opening_ask(canvas);
         self.draw_closing_profile(canvas);
+        self.draw_reading_notification(canvas);
         self.draw_annotation_exchange_confirmation(canvas);
     }
 
@@ -8969,6 +8985,7 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        self.notifications.handle_input(input);
         self.finish_interrupted_scroll();
         if let Some(change) = self.embedded_font_report_input(input) {
             return change;
@@ -9088,6 +9105,7 @@ impl App for Reader {
     }
 
     fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        self.notifications.dismiss();
         self.continuous_touch_pan(pan)
     }
 
@@ -9215,6 +9233,7 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        self.notifications.handle_input(input);
         self.finish_interrupted_scroll();
         if self.gestures.consume_assigned_corner_hold(input) {
             return Change::None;
@@ -9691,6 +9710,11 @@ impl App for Reader {
                             / self.list_geometry().rows;
                     }
                     Screen::Scrolling => self.show(Screen::Gestures),
+                    Screen::ReadingNotifications => self.show(Screen::ReadingControls),
+                    Screen::PastNotifications => {
+                        self.show(Screen::ReadingNotifications);
+                        self.restore_reading_list_ordinal(reading_notifications::HISTORY_ROW);
+                    }
                     Screen::Gestures | Screen::LinkSettings => self.show(Screen::ReadingControls),
                     Screen::BackOptions(_) => self.show(Screen::NavigationSettings),
                     Screen::PageTurnZones | Screen::PageTurnDefaults => {
@@ -9956,6 +9980,7 @@ impl App for Reader {
         page.into_iter()
             .chain(fixed_page)
             .chain(self.screen_page_worker.deadline(screen_pages))
+            .chain(self.notifications.deadline())
             .chain(self.eager_font_deadline())
             .chain(self.embedded_font_report_deadline())
             .chain(self.export_deadline())
@@ -10005,6 +10030,14 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if self.notifications.tick(now) {
+            // The notification deadline has been consumed. Let any due
+            // reading event run at this same instant before repainting.
+            return match self.tick(now) {
+                Change::None => Change::Partial,
+                change => change,
+            };
+        }
         if let Some(change) = self.poll_embedded_font_report(now) {
             return change;
         }

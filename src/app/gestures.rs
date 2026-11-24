@@ -482,7 +482,17 @@ impl Reader {
             Binding::NavigationBack => unreachable!("Back is handled before reading-only actions"),
         };
         Some(match self.activate(action) {
-            Ok(()) => self.applied_change(),
+            Ok(()) => {
+                let message = match binding {
+                    Binding::Back => Some("Returned to previous location"),
+                    Binding::Forward => Some("Returned to next location"),
+                    _ => None,
+                };
+                if let Some(message) = message {
+                    self.notify_reading(super::reading_notifications::Source::Dispatcher, message);
+                }
+                self.applied_change()
+            }
             Err(error) => self.report(error),
         })
     }

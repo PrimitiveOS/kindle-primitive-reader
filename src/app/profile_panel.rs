@@ -407,6 +407,7 @@ impl Reader {
         if !self.profile_supported(profile) {
             return Err("Open a book that matches this profile's format".into());
         }
+        let name = profile.name().to_owned();
         match profile {
             Profile::Text { .. } => {
                 let active = self.active.as_ref().ok_or("Open a book first")?;
@@ -423,7 +424,12 @@ impl Reader {
             Profile::Fixed { fixed, .. } => {
                 self.apply_fixed_profiles([(*fixed, profile.selection().as_slice())])
             }
-        }
+        }?;
+        self.notify_reading(
+            super::reading_notifications::Source::Dispatcher,
+            format!("Applied profile · {name}"),
+        );
+        Ok(())
     }
 
     fn apply_profile_batch(&mut self, profiles: &[Profile]) -> Result<()> {

@@ -1,4 +1,5 @@
 //! Screen orientation is independent of fixed-page rotation and reading position.
+use super::reading_notifications::Source;
 use super::{Canvas, Change, Input, Reader, ReadingControls, ReadingOrientation, Rect, Screen};
 use crate::Result;
 use primitive_app::viewport::{LogicalTurn, ViewportRequest};
@@ -93,7 +94,13 @@ impl Reader {
             return Ok(());
         }
         self.persist_reading_orientation(orientation)?;
-        self.refresh_display |= self.reading_orientation() != before;
+        if self.reading_orientation() != before {
+            self.refresh_display = true;
+            self.notify_reading(
+                Source::Icons,
+                format!("Screen orientation · {}", orientation.label()),
+            );
+        }
         Ok(())
     }
 
@@ -156,10 +163,20 @@ impl Reader {
     pub(super) fn accept_pending_orientation(&mut self, turn: LogicalTurn) {
         let selected = self.pending_orientation_for_turn(turn);
         self.pending_orientation = None;
-        if let Some(orientation) = selected
-            && let Err(error) = self.persist_reading_orientation(orientation)
-        {
-            self.notice = Some(error.to_string());
+        let before = self.reading_orientation();
+        if let Some(orientation) = selected {
+            match self.persist_reading_orientation(orientation) {
+                Ok(()) if orientation != before => {
+                    if self.notify_reading(
+                        Source::Icons,
+                        format!("Screen orientation · {}", orientation.label()),
+                    ) {
+                        self.notifications.repaint();
+                    }
+                }
+                Ok(()) => {}
+                Err(error) => self.notice = Some(error.to_string()),
+            }
         }
     }
 

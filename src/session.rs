@@ -99,6 +99,7 @@ pub(crate) struct PagePaint {
     pub highlight_appearance: crate::highlight_style::Appearance,
     pub note_marker: crate::highlight_style::NoteMarker,
     pub visible: Range<u32>,
+    pub passive_cover: Option<Rect>,
     // The status strip clips the bitmap without covering the regular footer.
     pub header_height: u32,
     pub inverted: bool,
@@ -112,6 +113,7 @@ impl PagePaint {
             highlight_appearance: Default::default(),
             note_marker: Default::default(),
             visible: 0..PAGE_HEIGHT,
+            passive_cover: None,
             header_height: 0,
             inverted,
         }
@@ -2050,6 +2052,7 @@ fn draw_page_around_footer_buttons(
     page: GrayImage,
     paint: PagePaint,
 ) {
+    let cover = paint.passive_cover;
     let (rect, mut page) = paint.apply(page);
     let status = viewport.show_status();
     let done = viewport.done();
@@ -2067,28 +2070,78 @@ fn draw_page_around_footer_buttons(
         Rect::new(0, bottom, width, rect.bottom() - bottom),
     ];
     for strip in strips {
-        let mut pixels = Vec::with_capacity((strip.w * strip.h) as usize);
-        for y in strip.y..strip.y + strip.h {
-            let start = ((y - rect.y) * width + strip.x) as usize;
-            pixels.extend_from_slice(&page.pixels[start..start + strip.w as usize]);
-        }
-        canvas.picture(
-            strip,
-            GrayImage {
-                width: strip.w as u32,
-                height: strip.h as u32,
-                pixels,
-            },
-        );
+        draw_picture_region(canvas, rect, &page, strip);
     }
     page.height = (status.y - rect.y) as u32;
     page.pixels.truncate((page.width * page.height) as usize);
-    canvas.picture(Rect::new(0, rect.y, width, page.height as i32), page);
+    draw_picture_around_cover(
+        canvas,
+        Rect::new(0, rect.y, width, page.height as i32),
+        page,
+        cover,
+    );
 }
 
 pub(crate) fn draw_page_picture(canvas: &mut Canvas, page: GrayImage, paint: PagePaint) {
+    let cover = paint.passive_cover;
     let (rect, page) = paint.apply(page);
-    canvas.picture(rect, page);
+    draw_picture_around_cover(canvas, rect, page, cover);
+}
+
+fn draw_picture_around_cover(
+    canvas: &mut Canvas,
+    rect: Rect,
+    mut page: GrayImage,
+    cover: Option<Rect>,
+) {
+    let Some(cover) = cover.filter(|cover| {
+        cover.x < rect.right()
+            && cover.right() > rect.x
+            && cover.y < rect.bottom()
+            && cover.bottom() > rect.y
+    }) else {
+        canvas.picture(rect, page);
+        return;
+    };
+    let left = cover.x.max(rect.x);
+    let right = cover.right().min(rect.right());
+    let top = cover.y.max(rect.y);
+    let bottom = cover.bottom().min(rect.bottom());
+    for strip in [
+        Rect::new(rect.x, rect.y, rect.w, top - rect.y),
+        Rect::new(rect.x, top, left - rect.x, bottom - top),
+        Rect::new(right, top, rect.right() - right, bottom - top),
+    ] {
+        draw_picture_region(canvas, rect, &page, strip);
+    }
+    // The lower rectangle keeps the same stride and can reuse the main image.
+    let len = ((rect.bottom() - bottom) * rect.w) as usize;
+    if len != 0 {
+        let first = ((bottom - rect.y) * rect.w) as usize;
+        page.pixels.copy_within(first..first + len, 0);
+        page.pixels.truncate(len);
+        page.height = (rect.bottom() - bottom) as u32;
+        canvas.picture(Rect::new(rect.x, bottom, rect.w, page.height as i32), page);
+    }
+}
+
+fn draw_picture_region(canvas: &mut Canvas, full: Rect, page: &GrayImage, strip: Rect) {
+    if strip.w <= 0 || strip.h <= 0 {
+        return;
+    }
+    let mut pixels = Vec::with_capacity((strip.w * strip.h) as usize);
+    for y in strip.y..strip.bottom() {
+        let start = ((y - full.y) * full.w + strip.x - full.x) as usize;
+        pixels.extend_from_slice(&page.pixels[start..start + strip.w as usize]);
+    }
+    canvas.picture(
+        strip,
+        GrayImage {
+            width: strip.w as u32,
+            height: strip.h as u32,
+            pixels,
+        },
+    );
 }
 
 impl App for Reading {
@@ -2105,6 +2158,7 @@ impl App for Reading {
             &[],
             &[],
             PagePaint {
+                passive_cover: None,
                 reading_guides: None,
                 selection_color: None,
                 highlight_appearance: Default::default(),

@@ -127,6 +127,8 @@ impl Screen {
                 | Self::PageTurnZones
                 | Self::PageTurnSizes(_)
                 | Self::PageTurnDefaults
+                | Self::ReadingNotifications
+                | Self::PastNotifications
                 | Self::Gestures
                 | Self::Scrolling
                 | Self::GestureBinding(_)

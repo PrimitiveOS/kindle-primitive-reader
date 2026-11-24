@@ -159,6 +159,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Show(
             Screen::Gestures
             | Screen::ReadingControls
+            | Screen::ReadingNotifications
             | Screen::ReadingData
             | Screen::ContentsSettings
             | Screen::ChapterNavigation

@@ -200,7 +200,17 @@ impl Reader {
         if !self.opening_execution_current() {
             return Err("The book changed before opening profile execution".into());
         }
-        self.apply_profile_batch(profiles)
+        self.apply_profile_batch(profiles)?;
+        let message = match profiles {
+            [] => return Ok(()),
+            [profile] => format!("Applied profile · {}", profile.name()),
+            profiles => format!("Applied {} reading profiles", profiles.len()),
+        };
+        self.notify_reading(
+            crate::app::reading_notifications::Source::Dispatcher,
+            message,
+        );
+        Ok(())
     }
 
     pub(in crate::app) fn opening_ask_visible(&self) -> bool {

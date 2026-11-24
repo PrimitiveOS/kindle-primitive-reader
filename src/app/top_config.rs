@@ -359,6 +359,7 @@ impl Reader {
                 Action::Show(Screen::NavigationSettings),
             )
             .detail("Back action, opening location and Skim position"),
+            self.reading_notifications_item(),
             Item::new("Links", Action::Show(Screen::LinkSettings))
                 .detail("Link taps and return gesture"),
             Item::new(

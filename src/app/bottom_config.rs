@@ -1,6 +1,7 @@
 //! Reading adjustments that can be applied without leaving the visible page.
 use super::{Action, BarPanel, Reader, Screen};
 use crate::app::NumberField;
+use crate::app::reading_notifications::Source;
 use crate::library::{FixedTileAxis, SCAN_GAMMA_DEFAULT, SCAN_GAMMA_MAX, SCAN_GAMMA_MIN};
 use crate::reading_controls::{ReadingOrientation, ScreenPalette};
 use crate::{BaseStylesheet, FontHinting, Settings, TextAlignment};
@@ -14,6 +15,7 @@ pub(super) struct Choice {
     pub(super) action: Action,
     pub(super) selected: bool,
     pub(super) live: bool,
+    pub(super) feedback: Option<(Source, String)>,
 }
 
 impl Choice {
@@ -23,6 +25,7 @@ impl Choice {
             action,
             selected: false,
             live: true,
+            feedback: None,
         }
     }
 
@@ -32,6 +35,7 @@ impl Choice {
             action,
             selected,
             live: true,
+            feedback: None,
         }
     }
 
@@ -41,7 +45,13 @@ impl Choice {
             action,
             selected: false,
             live: false,
+            feedback: None,
         }
+    }
+
+    fn with_feedback(mut self, source: Source, message: impl Into<String>) -> Self {
+        self.feedback = Some((source, message.into()));
+        self
     }
 }
 
@@ -349,6 +359,10 @@ impl Reader {
                                     Action::Text(settings.with_line_spacing_percent(percent)),
                                     spacing == percent,
                                 )
+                                .with_feedback(
+                                    Source::Progress,
+                                    format!("Line spacing · {percent}%"),
+                                )
                             })
                             .collect::<Vec<_>>()
                     };
@@ -362,20 +376,32 @@ impl Reader {
                     ));
                     let mut fine = Vec::with_capacity(3);
                     if spacing > 50 {
-                        fine.push(Choice::live(
-                            "-1%",
-                            Action::Text(settings.with_line_spacing_percent(spacing - 1)),
-                        ));
+                        fine.push(
+                            Choice::live(
+                                "-1%",
+                                Action::Text(settings.with_line_spacing_percent(spacing - 1)),
+                            )
+                            .with_feedback(
+                                Source::Fine,
+                                format!("Line spacing · {}%", spacing - 1),
+                            ),
+                        );
                     }
                     fine.push(Choice::link(
                         "Set value",
                         Action::Show(Screen::NumberingValue(NumberField::LineSpacing(active.id))),
                     ));
                     if spacing < 200 {
-                        fine.push(Choice::live(
-                            "+1%",
-                            Action::Text(settings.with_line_spacing_percent(spacing + 1)),
-                        ));
+                        fine.push(
+                            Choice::live(
+                                "+1%",
+                                Action::Text(settings.with_line_spacing_percent(spacing + 1)),
+                            )
+                            .with_feedback(
+                                Source::Fine,
+                                format!("Line spacing · {}%", spacing + 1),
+                            ),
+                        );
                     }
                     rows.push(ConfigRow::new(format!("Fine · {spacing}%"), fine));
                     if active.reading.config.scroll {
@@ -735,6 +761,7 @@ impl Reader {
                                     }),
                                     settings.effective_font_kerning_mode() == font_kerning_mode,
                                 )
+                                .with_feedback(Source::Toggles, format!("Font kerning · {title}"))
                             }),
                         ),
                         ConfigRow::new(
@@ -753,6 +780,7 @@ impl Reader {
                                     }),
                                     settings.font_hinting == font_hinting,
                                 )
+                                .with_feedback(Source::Toggles, format!("Font hinting · {title}"))
                             }),
                         ),
                     ];
@@ -944,9 +972,12 @@ impl Reader {
                                         && prefs.tile_zoom.is_none()
                                         && !prefs.width_fit
                                         && !prefs.height_fit,
-                                ),
-                                Choice::option("Fit width", Action::FitPage(true), prefs.width_fit),
-                                Choice::option("Fit height", Action::FitHeight, prefs.height_fit),
+                                )
+                                .with_feedback(Source::Toggles, "Fit page"),
+                                Choice::option("Fit width", Action::FitPage(true), prefs.width_fit)
+                                    .with_feedback(Source::Toggles, "Fit width"),
+                                Choice::option("Fit height", Action::FitHeight, prefs.height_fit)
+                                    .with_feedback(Source::Toggles, "Fit height"),
                             ],
                         ));
                         rows.push(ConfigRow::new(
@@ -1076,6 +1107,10 @@ impl Reader {
                                     Action::ScanGamma(tenths),
                                     !prefs.scan_contrast && gamma == tenths,
                                 )
+                                .with_feedback(
+                                    Source::Progress,
+                                    format!("Contrast · {}", format_scan_gamma(tenths)),
+                                )
                             }),
                         ));
                         let steps = [("-1.0", -10), ("-0.1", -1), ("+0.1", 1), ("+1.0", 10)]
@@ -1084,8 +1119,12 @@ impl Reader {
                                 let value = gamma
                                     .saturating_add_signed(delta)
                                     .clamp(SCAN_GAMMA_MIN, SCAN_GAMMA_MAX);
-                                (value != gamma)
-                                    .then(|| Choice::live(label, Action::ScanGamma(value)))
+                                (value != gamma).then(|| {
+                                    Choice::live(label, Action::ScanGamma(value)).with_feedback(
+                                        Source::Fine,
+                                        format!("Contrast · {}", format_scan_gamma(value)),
+                                    )
+                                })
                             });
                         let adaptive = Choice::option(
                             "Adaptive",
@@ -1238,8 +1277,10 @@ impl Reader {
 
 fn mode_choices(scroll: bool, action: impl Fn(bool) -> Action) -> [Choice; 2] {
     [
-        Choice::option("Page turns", action(false), !scroll),
-        Choice::option("Scroll", action(true), scroll),
+        Choice::option("Page turns", action(false), !scroll)
+            .with_feedback(Source::Toggles, "Reading mode · Page turns"),
+        Choice::option("Scroll", action(true), scroll)
+            .with_feedback(Source::Toggles, "Reading mode · Scroll"),
     ]
 }
 
