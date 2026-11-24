@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.30
+
+- Choose which Contents levels to use for chapter jumps and progress marks. Fixed-page and single-section books support the filtered marks in the footer and Skim.
+- Set the in-book bookmark list's row count and title font size.
+- Turn the top status header on or off per book and set a default for new books. The header preserves the reading position and right-side Exit control.
+
 ## 0.1.29
 
 - Choose how many entries appear on a Contents page and adjust their font size.

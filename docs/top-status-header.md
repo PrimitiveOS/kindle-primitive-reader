@@ -2,8 +2,10 @@
 
 KOReader's CRE reader can draw a configurable status line at the top of a
 reflowable document in page-turn mode. Reader now has the same reading
-information in a separate, optional header. It is off by default and is
-available from **Controls → Reading status bar**. The pinned implementation
+information in a separate, optional header. It is off by default. Enable it
+for the current book from the lower **Screen** panel.
+[Per-book controls and new-book default](per-book-top-status-header.md)
+The upper **Controls → Reading status bar** configures the shared presentation. The pinned implementation
 disables the header in continuous-scroll mode and refreshes it when the clock or
 battery can change. [KOReader source](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readercoptlistener.lua#L246-L319) · [Header options](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readercoptlistener.lua#L372-L552)
 
@@ -39,8 +41,8 @@ Kindle visual and battery acceptance remain open.
 
 Current and total page values come from the active reflow layout. In a book
 with several sections they can differ from KOReader's document-wide values
-or publisher labels. Reader uses a global show switch and a font-size cycle.
-Stock also offers a per-document show switch and a size picker with Reset.
+or publisher labels. Reader uses a font-size cycle. The stock size picker
+also offers Reset.
 Reader's 24-hour clock uses the Kindle time zone. [Clock details](device-local-time.md)
 
 The KOReader **About alt status bar** information dialog is still a checklist
