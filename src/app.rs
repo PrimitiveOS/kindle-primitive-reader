@@ -789,7 +789,7 @@ pub struct Reader {
     skim: Option<skim::Session>,
     staged_viewport: Option<(
         primitive_app::viewport::Viewport,
-        reading_viewport_stage::Stage,
+        Option<reading_viewport_stage::Stage>,
     )>,
     accepted_viewport: Option<primitive_app::viewport::Viewport>,
     pending_orientation: Option<reading_orientation::PendingOrientation>,
@@ -8157,7 +8157,7 @@ impl App for Reader {
     fn stage_viewport(&mut self, candidate: primitive_app::viewport::Viewport) -> io::Result<()> {
         use crate::session::ReadingViewport;
 
-        self.staged_viewport = None;
+        self.staged_viewport = Some((candidate, None));
         let target = match candidate.logical_size {
             (WIDTH, HEIGHT) => ReadingViewport::PORTRAIT,
             (HEIGHT, WIDTH) => ReadingViewport::LANDSCAPE,
@@ -8170,7 +8170,7 @@ impl App for Reader {
         let staged = self
             .prepare_reading_viewport(target)
             .map_err(io::Error::other)?;
-        self.staged_viewport = Some((candidate, staged));
+        self.staged_viewport = Some((candidate, Some(staged)));
         Ok(())
     }
 
@@ -8179,9 +8179,13 @@ impl App for Reader {
             .staged_viewport
             .take()
             .ok_or_else(|| io::Error::other("No prepared Reader viewport"))?;
-        let render = self
-            .draw_prepared_reading_viewport(&mut staged, canvas)
-            .map_err(io::Error::other);
+        let render = staged
+            .as_mut()
+            .ok_or_else(|| io::Error::other("No prepared Reader viewport"))
+            .and_then(|stage| {
+                self.draw_prepared_reading_viewport(stage, canvas)
+                    .map_err(io::Error::other)
+            });
         self.staged_viewport = Some((candidate, staged));
         render
     }
@@ -8191,14 +8195,17 @@ impl App for Reader {
         candidate: primitive_app::viewport::Viewport,
         decision: primitive_app::viewport::ViewportDecision,
     ) {
-        let staged = self.staged_viewport.take();
+        let Some((_, staged)) = self
+            .staged_viewport
+            .take_if(|(expected, _)| *expected == candidate)
+        else {
+            return;
+        };
         if decision != primitive_app::viewport::ViewportDecision::Commit {
             self.reject_pending_orientation();
             return;
         }
-        if let Some((expected, staged)) = staged
-            && expected == candidate
-        {
+        if let Some(staged) = staged {
             match self.commit_reading_viewport(staged) {
                 Ok(()) => {
                     self.accepted_viewport = Some(candidate);

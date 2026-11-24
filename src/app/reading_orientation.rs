@@ -417,6 +417,60 @@ mod tests {
     }
 
     #[test]
+    fn a_delayed_callback_cannot_discard_the_current_viewport_proposal() {
+        let fixture = Fixture::new();
+        let files = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, files).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        present(&mut app, 1, LogicalTurn::Upright, ViewportDecision::Commit);
+        choose(&mut app, ReadingOrientation::LandscapeRight);
+
+        let stale = Viewport {
+            generation: 2,
+            turn: LogicalTurn::Counterclockwise,
+            logical_size: (1680, 1264),
+        };
+        let proposed = Viewport {
+            generation: 3,
+            turn: LogicalTurn::Clockwise,
+            logical_size: (1680, 1264),
+        };
+        app.stage_viewport(proposed).unwrap();
+        app.finish_viewport(stale, ViewportDecision::Abort);
+        app.finish_viewport(stale, ViewportDecision::Commit);
+        assert!(app.has_pending_orientation());
+        assert_eq!(app.staged_viewport.as_ref().unwrap().0, proposed);
+        let paths: Vec<_> = app
+            .fonts
+            .iter()
+            .map(|font| font.display().to_string())
+            .collect();
+        let mut canvas = Canvas::new_viewport(1680, 1264, 1264, &paths).unwrap();
+        canvas.begin();
+        app.draw_staged_viewport(&mut canvas).unwrap();
+        app.finish_viewport(proposed, ViewportDecision::Commit);
+        assert_eq!(
+            app.reading_orientation(),
+            ReadingOrientation::LandscapeRight
+        );
+        assert_eq!(app.accepted_viewport, Some(proposed));
+
+        choose(&mut app, ReadingOrientation::UpsideDown);
+        let rejected = Viewport {
+            generation: 4,
+            logical_size: (640, 480),
+            ..proposed
+        };
+        assert!(app.stage_viewport(rejected).is_err());
+        app.finish_viewport(rejected, ViewportDecision::Abort);
+        assert!(!app.has_pending_orientation());
+        assert_eq!(
+            app.reading_orientation(),
+            ReadingOrientation::LandscapeRight
+        );
+    }
+
+    #[test]
     fn negotiated_rotation_accepts_a_vertical_epub() {
         let fixture = Fixture::new();
         let book = document(&fixture, "harbor-vertical-viewport.epub", "Harbor.epub");

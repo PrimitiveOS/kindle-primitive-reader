@@ -1157,7 +1157,6 @@ pub(crate) enum ReadingOrientation {
 
 impl ReadingOrientation {
     pub const ALL: [Self; 3] = [Self::FollowLauncher, Self::Upright, Self::UpsideDown];
-    pub const LANDSCAPE: [Self; 2] = [Self::LandscapeLeft, Self::LandscapeRight];
 
     pub fn is_landscape(self) -> bool {
         matches!(self, Self::LandscapeLeft | Self::LandscapeRight)
