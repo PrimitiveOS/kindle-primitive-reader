@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.46
+
+- Choose Top, Center or Bottom for the Skim preview and jump ten pages in either direction.
+- Optionally remember the opening position of each book in Location history.
+
 ## 0.1.45
 
 - Show optional reading guides with configurable thickness, margin, intensity, and movement.

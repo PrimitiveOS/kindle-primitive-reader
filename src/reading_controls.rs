@@ -22,6 +22,10 @@ pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct ReadingControls {
+    #[serde(skip_serializing_if = "is_false")]
+    pub remember_opening_location: bool,
+    #[serde(skip_serializing_if = "SkimPosition::is_default")]
+    pub skim_position: SkimPosition,
     #[serde(skip_serializing_if = "crate::app::reading_guides::Settings::is_default")]
     pub reading_guides: crate::app::reading_guides::Settings,
     #[serde(skip_serializing_if = "crate::library::FolderOrder::is_default")]
@@ -212,6 +216,31 @@ pub(crate) struct ReadingControls {
     pub finish_at_end: bool,
     #[serde(default = "legacy_metadata_save")]
     pub metadata_save: MetadataSave,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SkimPosition {
+    Top,
+    #[default]
+    Center,
+    Bottom,
+}
+
+impl SkimPosition {
+    pub(crate) const ALL: [Self; 3] = [Self::Top, Self::Center, Self::Bottom];
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Top => "Top",
+            Self::Center => "Center",
+            Self::Bottom => "Bottom",
+        }
+    }
 }
 
 /// KOReader keeps the list density separate from the document's layout.

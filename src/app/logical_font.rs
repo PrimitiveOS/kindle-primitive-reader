@@ -281,6 +281,7 @@ impl Reader {
         self.restore_reading_menus(recovery.id);
         self.show(Screen::Book);
         self.reset_footer_initial_position();
+        self.remember_opening_location();
         self.record_position();
         self.notice = Some("Text settings reset. Previous choices backed up.".into());
         Ok(())
