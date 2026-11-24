@@ -55,6 +55,16 @@ regions across exact, odd and even pages, verify the source coordinates of
 annotations and links, and compare an authored scan with pinned KOReader.
 [Chapter marks](whole-book-screen-pages.md) · [Footnote previews](footnote-export-roots.md) · [Folder navigation](document-end.md) · [Semi-automatic crop](semi-auto-pdf-crop.md)
 
+The ARMHF candidate passed 1,109 Reader library tests, 14 EPUB package tests
+and four layout probes on the Oasis 3. It skipped 65 opt-in cases. The top
+header, adjacent-file action grid and target, crop editor and book-font
+footnote matched their 1,264 × 1,680 Mac simulator frames pixel for pixel.
+An original 30-section EPUB produced 430 screen pages and 111 publisher
+marks. Its first frame was ready in 1,763 ms and the full index in 9,401 ms.
+The crop test detected content on page one of an original PDF. Both original
+checks verified source checksums in place. Foreground touch and E Ink timing
+have separate acceptance checks.
+
 ## Reader 0.1.37 verification plan
 
 Verify folder return for nested EPUBs and scans with saved reading data, and
