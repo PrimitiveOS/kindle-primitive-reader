@@ -58,3 +58,29 @@ fresh default; both now exercise explicit Off/On transitions through the menu.
 The exact logs, source/binary hashes and original SHA are retained privately in
 `build/parity-review/footnote-default-evidence/13ca6a2/proof.json`. Aggregate and
 native acceptance remain separate.
+
+## Font used in previews
+
+Open the reading **Settings › Links** and turn on **Use book font in popups** to
+use the configured reading font in footnote previews. The switch starts off,
+including on older profiles without a saved value. Off uses Reader's bundled
+Noto Sans and its device fallbacks. Reader also uses these fonts when the chosen
+book font becomes unavailable. The preference is available while footnote
+previews and at least one link-follow gesture are enabled. [KOReader preference](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L347-L358) · [KOReader popup font selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/footnotewidget.lua#L235-L266)
+
+The authored EPUB test selects Silkscreen for the book and uses the actual Links
+switch. It compares the note text and popup pixels in both modes, checks the
+stored preferences after reopening Reader, and compares the book's page pixels,
+location, and navigation history. [Default font](screenshots/footnote-font-default-light.png) · [Book font](screenshots/footnote-font-book-light.png) · [Book font in dark mode](screenshots/footnote-font-book-dark.png)
+
+The comparison script runs the pinned stock menu callbacks and font-selection
+Lua with test doubles for the settings store and font loader. It checks the
+toggle's default and availability, the configured-face lookup, deduplication
+of font variants, and the fallback when the selected face is unavailable.
+Run it with a Python environment providing `lupa` and a directory containing
+the pinned `readerlink.lua` and `footnotewidget.lua` files.
+
+```sh
+python3 scripts/compare-footnote-book-font.py /path/to/pinned/lua/files
+cargo test --locked --lib footnote_book_font_toggle
+```

@@ -292,10 +292,9 @@ impl Reader {
             ) else {
                 return Ok(None);
             };
-            let mut preview = Probe::from_book_with_rules(
+            let mut preview = Probe::from_book_with_font_loader(
                 book,
                 Engine::Parley,
-                &reading.config.fonts,
                 settings,
                 index,
                 Some(excerpt),
@@ -303,6 +302,15 @@ impl Reader {
                 // KOReader's extracted popup has a separate stylesheet context.
                 // Main-book tweaks must not hide or restyle the extracted note.
                 &crate::user_styles::Snapshot::default(),
+                || {
+                    if self.controls.footnote_book_font
+                        && reading.config.fonts != self.fonts
+                        && let Ok(fonts) = crate::font_context(&reading.config.fonts)
+                    {
+                        return Ok(fonts);
+                    }
+                    crate::font_context(&self.fonts)
+                },
             )
             .map_err(io::Error::other)?;
             let frame = Footnote::frame(&mut preview, 0).map_err(io::Error::other)?;
