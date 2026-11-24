@@ -155,11 +155,13 @@ pub(super) fn push_page_bookmark(
     book: &mut BookState,
     position: ReadingPosition,
     label: String,
+    chapter_title: Option<String>,
 ) -> Result<()> {
     if book.bookmarks.len() >= 256 {
         return Err("This book has reached its bookmark limit".into());
     }
     book.bookmarks.push(Bookmark {
+        chapter_title,
         created_at: crate::mark_time::now(),
         label,
         position,
@@ -251,6 +253,15 @@ impl Reader {
             };
             (position, fixed_page_label(&fixed.reading, page))
         };
+        let chapter_title = bookmark
+            .is_none()
+            .then(|| {
+                self.bookmark_chapter_title(
+                    &position,
+                    chapter.and_then(|chapter| self.overview_probe(chapter)),
+                )
+            })
+            .flatten();
         let id = self.open_book_id().ok_or("Open a book first")?;
         let book = self
             .library
@@ -259,7 +270,7 @@ impl Reader {
         if let Some(index) = bookmark {
             book.bookmarks.remove(index);
         } else {
-            push_page_bookmark(book, position, label)?;
+            push_page_bookmark(book, position, label, chapter_title)?;
         }
         self.mark_book_changed();
         self.notice = None;

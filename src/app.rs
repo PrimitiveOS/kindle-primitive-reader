@@ -66,6 +66,7 @@ mod library_export;
 mod library_view;
 mod link_taps;
 mod lookup_history;
+mod mark_chapters;
 mod metadata_save;
 mod navigation_layout;
 mod navigation_preferences;
@@ -3185,12 +3186,28 @@ impl Reader {
             } else {
                 Action::Highlight(self.highlight_index)
             };
-            let items = vec![
+            let mut items = vec![
                 Item::new("Read passage", passage),
                 Item::new("Extend highlight", Action::ExtendHighlight),
                 Item::new("Edit note", Action::EditNote),
                 Item::new("Remove highlight", Action::Show(Screen::RemoveHighlight)),
             ];
+            if let Some(state) = self.open_book_id().and_then(|id| self.library.state(id)) {
+                let chapter_title = if self.fixed.is_some() {
+                    state
+                        .pdf_highlights
+                        .get(self.highlight_index)
+                        .and_then(|mark| mark.chapter_title.as_deref())
+                } else {
+                    state
+                        .highlights
+                        .get(self.highlight_index)
+                        .and_then(|mark| mark.chapter_title.as_deref())
+                };
+                if let Some(title) = chapter_title {
+                    items.push(Item::new("Chapter", Action::Heading).detail(title));
+                }
+            }
             return items;
         }
         if self.screen == Screen::RemoveHighlight {
@@ -3350,10 +3367,12 @@ impl Reader {
                 } else {
                     (0, bookmark.position.page, 0, 0)
                 };
-                let caption = active.map_or_else(
-                    || format!("Page {}", location.1 + 1),
-                    |active| reflow_location_label(active, location),
-                );
+                let caption = match active {
+                    Some(active) if bookmark.chapter_title.is_none() => {
+                        reflow_location_label(active, location, None)
+                    }
+                    _ => format!("Page {}", location.1 + 1),
+                };
                 let detail = saved_mark_detail(
                     bookmark.created_at,
                     format!("Page bookmark · {caption}"),
@@ -3364,7 +3383,14 @@ impl Reader {
                     location,
                     kind: 0,
                     storage_index: index,
-                    item: Item::new(&bookmark.label, Action::Bookmark(index)).detail(detail),
+                    item: Item::new(
+                        bookmark
+                            .chapter_title
+                            .as_deref()
+                            .map_or_else(|| bookmark.label.clone(), |title| format!("In {title}")),
+                        Action::Bookmark(index),
+                    )
+                    .detail(detail),
                 });
             }
 
@@ -3377,7 +3403,8 @@ impl Reader {
                         Some(&mark.selection.start),
                         &mut chapter_layouts,
                     );
-                    let caption = reflow_location_label(active, location);
+                    let caption =
+                        reflow_location_label(active, location, mark.chapter_title.as_deref());
                     let note = mark.note.as_deref().filter(|note| !note.trim().is_empty());
                     let excerpt = bookmark_excerpt(&mark.selection.text, full_excerpt);
                     let title = match self.controls.annotation_list_text {
@@ -3437,7 +3464,10 @@ impl Reader {
                     };
                     let detail = saved_mark_detail(
                         mark.created_at,
-                        format!("{detail} · {caption}"),
+                        mark_chapters::location_caption(
+                            format!("{detail} · {caption}"),
+                            mark.chapter_title.as_deref(),
+                        ),
                         self.controls.bookmark_sort_by_date,
                     );
                     rows.push(SavedMarkRow {
@@ -4868,9 +4898,11 @@ impl Reader {
                 Screen::Book,
             )
         };
-        let state = self.library.remember(entry, id, title);
         if !already_bookmarked {
-            overview_bookmarks::push_page_bookmark(state, position, label)?;
+            let probe = self.active.as_ref().map(|active| &active.reading.probe);
+            let chapter_title = self.bookmark_chapter_title(&position, probe);
+            let state = self.library.remember(entry, id, title);
+            overview_bookmarks::push_page_bookmark(state, position, label, chapter_title)?;
             self.mark_book_changed();
         }
         if self.screen != Screen::Skim {
@@ -6805,6 +6837,7 @@ impl Reader {
                 if let Some(outcome) = resolver.step(&mut book).map_err(io::Error::other)? {
                     if let QuoteMatch::Unique(selection) = outcome {
                         import.matched.push(Highlight {
+                            chapter_title: None,
                             color: Default::default(),
                             created_at: entry.time,
                             style: entry.drawer,
@@ -6968,6 +7001,7 @@ impl Reader {
         }
         let chosen_color = self.pending_highlight_color;
         let chosen_style = self.pending_highlight_style;
+        let chapter_title = self.highlight_chapter_title(&selection.start);
         let state = self
             .library
             .remember(&active.entry, active.id, &active.reading.probe.title);
@@ -6987,6 +7021,7 @@ impl Reader {
                 return Err("This book has reached its highlight limit".into());
             }
             state.highlights.push(Highlight {
+                chapter_title,
                 color: chosen_color.unwrap_or_else(|| {
                     state
                         .highlight_color
@@ -7145,6 +7180,7 @@ impl Reader {
             .into_iter()
             .filter_map(|annotation| {
                 let mark = PdfHighlight {
+                    chapter_title: None,
                     color: annotation.color,
                     created_at: None,
                     style: annotation.style,
@@ -7264,6 +7300,7 @@ impl Reader {
                 .unwrap_or(self.controls.highlight_style)
         });
         candidate.created_at = crate::mark_time::now();
+        candidate.chapter_title = self.fixed_chapter_title(candidate.page);
         candidate.note = note.clone();
         let state = self
             .library
@@ -10212,13 +10249,21 @@ fn reflow_mark_location(
     })
 }
 
-fn reflow_location_label(active: &ActiveBook, location: (usize, usize, usize, usize)) -> String {
-    let chapter = active
-        .reading
-        .probe
-        .chapter_entries()
-        .get(location.0)
-        .map_or("Book".to_owned(), |chapter| chapter.label.clone());
+fn reflow_location_label(
+    active: &ActiveBook,
+    location: (usize, usize, usize, usize),
+    saved_title: Option<&str>,
+) -> String {
+    let chapter = saved_title
+        .or_else(|| {
+            active
+                .reading
+                .probe
+                .chapter_entries()
+                .get(location.0)
+                .map(|chapter| chapter.label.as_str())
+        })
+        .unwrap_or("Book");
     format!("{chapter} · Page {}", location.1 + 1)
 }
 
@@ -11958,6 +12003,7 @@ mod tests {
         assert_eq!(state.pdf_highlights.len(), 1);
         state
             .add_pdf_highlight(PdfHighlight {
+                chapter_title: None,
                 color: Default::default(),
                 created_at: None,
                 style: Default::default(),
@@ -12066,6 +12112,7 @@ mod tests {
         let state = app.library.remember(&entry, id, &title);
         state.bookmarks = vec![
             Bookmark {
+                chapter_title: None,
                 created_at: Some(10),
                 label: "Later chapter".into(),
                 position: ReadingPosition {
@@ -12075,6 +12122,7 @@ mod tests {
                 },
             },
             Bookmark {
+                chapter_title: None,
                 created_at: Some(20),
                 label: "Earlier chapter".into(),
                 position: ReadingPosition {
@@ -12118,6 +12166,7 @@ mod tests {
         let state = app.library.remember(&entry, id, &title);
         state.bookmarks = vec![
             Bookmark {
+                chapter_title: None,
                 created_at: Some(10),
                 label: "Later chapter".into(),
                 position: ReadingPosition {
@@ -12127,6 +12176,7 @@ mod tests {
                 },
             },
             Bookmark {
+                chapter_title: None,
                 created_at: Some(20),
                 label: "Earlier chapter".into(),
                 position: ReadingPosition {
@@ -12231,6 +12281,7 @@ mod tests {
         let active = app.active.as_ref().unwrap();
         let state = app.library.state_mut(active.id).unwrap();
         state.bookmarks.push(Bookmark {
+            chapter_title: None,
             created_at: Some(1_750_000_001),
             label: "Saved page".into(),
             position: ReadingPosition {
@@ -12337,6 +12388,7 @@ mod tests {
         };
         let state = app.library.remember(&entry, id, &title);
         state.bookmarks.push(Bookmark {
+            chapter_title: None,
             created_at: Some(1_750_000_001),
             label: "Page bookmark".into(),
             position: ReadingPosition {
@@ -12347,6 +12399,7 @@ mod tests {
         });
         state
             .add_pdf_highlight(PdfHighlight {
+                chapter_title: None,
                 color: Default::default(),
                 created_at: Some(1_750_000_002),
                 style: Default::default(),
@@ -15349,6 +15402,7 @@ mod tests {
             .remember(&fixed.entry, fixed.id, &fixed.entry.title);
         state
             .add_pdf_highlight(PdfHighlight {
+                chapter_title: None,
                 color: Default::default(),
                 created_at: None,
                 style: Default::default(),
@@ -18150,6 +18204,7 @@ mod tests {
         app.library
             .remember(&fixed.entry, fixed.id, "Signal chart")
             .add_pdf_highlight(PdfHighlight {
+                chapter_title: None,
                 color: Default::default(),
                 created_at: None,
                 style: Default::default(),

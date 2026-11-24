@@ -40,6 +40,7 @@ fn mount_marks(app: &mut Reader, fixture: &Fixture, pdf: &std::path::Path) -> (u
     state.author = Some("Zani Rivers".into());
     state.bookmarks[0].created_at = Some(1_740_777_900);
     state.highlights.push(Highlight {
+        chapter_title: None,
         color: Default::default(),
         selection,
         note: Some("Review the Ámber chart".into()),
@@ -55,6 +56,7 @@ fn mount_marks(app: &mut Reader, fixture: &Fixture, pdf: &std::path::Path) -> (u
     state.author = Some("Aria Coast".into());
     state
         .add_pdf_highlight(PdfHighlight {
+            chapter_title: None,
             color: Default::default(),
             style: HighlightStyle::Lighten,
             page: 1,
@@ -588,6 +590,7 @@ fn landscape_bookmark_browser_retains_a_result_and_exact_text_page_anchor() {
     state
         .bookmarks
         .extend((1..=25).map(|index| crate::library::Bookmark {
+            chapter_title: None,
             label: format!("Saved survey page {index:02}"),
             ..bookmark.clone()
         }));

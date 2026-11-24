@@ -327,6 +327,7 @@ impl PdfSelection {
         };
         Some(Self {
             mark: PdfHighlight {
+                chapter_title: None,
                 created_at: None,
                 style: crate::highlight_style::HighlightStyle::default(),
                 color: crate::highlight_style::HighlightColor::default(),
@@ -415,6 +416,7 @@ impl FixedReading {
             return Err("This selection exceeds the 64-page limit".into());
         }
         let mut mark = PdfHighlight {
+            chapter_title: None,
             created_at: None,
             style: crate::highlight_style::HighlightStyle::default(),
             color: crate::highlight_style::HighlightColor::default(),

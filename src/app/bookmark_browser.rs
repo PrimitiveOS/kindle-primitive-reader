@@ -3,7 +3,7 @@ mod metadata;
 mod metadata_view;
 use super::{
     Action, Book, Canvas, Change, Editor, Input, Item, Reader, Rect, Result, Screen,
-    navigation_layout::NavigationLayout, with_storage,
+    mark_chapters::location_caption, navigation_layout::NavigationLayout, with_storage,
 };
 use crate::highlight_style::{HighlightColor, HighlightStyle};
 use crate::library::{BookState, BrowseKind, DocumentFormat, Library, fold_search};
@@ -438,15 +438,18 @@ fn get_mark<'a>(
                 color: None,
                 created_at: mark.created_at,
                 location,
-                location_label: if fixed {
-                    format!("Page {}", position.page + 1)
-                } else {
-                    format!(
-                        "Chapter {} · Page {}",
-                        position.chapter + 1,
-                        position.page + 1
-                    )
-                },
+                location_label: location_caption(
+                    if fixed {
+                        format!("Page {}", position.page + 1)
+                    } else {
+                        format!(
+                            "Chapter {} · Page {}",
+                            position.chapter + 1,
+                            position.page + 1
+                        )
+                    },
+                    mark.chapter_title.as_deref(),
+                ),
             }
         }
         Locator::Reflow(index) => {
@@ -472,9 +475,12 @@ fn get_mark<'a>(
                     anchor.block as f64,
                     anchor.offset as f64,
                 ),
-                location_label: chapter.map_or_else(
-                    || "Saved text location".into(),
-                    |n| format!("Chapter {}", n + 1),
+                location_label: location_caption(
+                    chapter.map_or_else(
+                        || "Saved text location".into(),
+                        |n| format!("Chapter {}", n + 1),
+                    ),
+                    mark.chapter_title.as_deref(),
                 ),
             }
         }
@@ -491,7 +497,10 @@ fn get_mark<'a>(
                 color: Some(mark.color),
                 created_at: mark.created_at,
                 location: (mark.page, y, x),
-                location_label: format!("Page {}", mark.page + 1),
+                location_label: location_caption(
+                    format!("Page {}", mark.page + 1),
+                    mark.chapter_title.as_deref(),
+                ),
             }
         }
     })

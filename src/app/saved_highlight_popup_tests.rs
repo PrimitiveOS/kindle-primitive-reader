@@ -205,6 +205,7 @@ fn tap_saved_pdf_highlights_matches_zoomed_page_geometry_and_preserves_the_viewp
     for note in [Some("Sounding at the jetty".into()), None] {
         state
             .add_pdf_highlight(PdfHighlight {
+                chapter_title: None,
                 color: Default::default(),
                 created_at: None,
                 style: Default::default(),
@@ -349,6 +350,7 @@ fn multiple_boxes_hit_once_and_a_note_can_be_removed_without_removing_the_passag
     for index in 0..6 {
         state
             .add_pdf_highlight(PdfHighlight {
+                chapter_title: None,
                 color: Default::default(),
                 created_at: None,
                 style: Default::default(),
@@ -438,6 +440,7 @@ fn an_annotated_pdf_link_in_a_custom_gesture_corner_still_follows_the_destinatio
     app.library
         .remember(&fixed.entry, fixed.id, &fixed.entry.title)
         .add_pdf_highlight(PdfHighlight {
+            chapter_title: None,
             color: Default::default(),
             created_at: None,
             style: Default::default(),

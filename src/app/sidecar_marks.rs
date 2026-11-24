@@ -140,6 +140,7 @@ impl Reader {
                         .clone()
                 });
                 import.bookmarks.push(Bookmark {
+                    chapter_title: None,
                     created_at: *created_at,
                     label,
                     position: ReadingPosition {
@@ -168,6 +169,7 @@ impl Reader {
                     .filter(|quote| quote.text.split_whitespace().eq(text.split_whitespace()));
                 if let Some(selection) = selection {
                     import.highlights.push(Highlight {
+                        chapter_title: None,
                         color: *color,
                         created_at: *created_at,
                         style: *style,

@@ -112,6 +112,7 @@ impl FixedReading {
             return Ok(saved.clone());
         }
         let mut result = PdfHighlight {
+            chapter_title: None,
             color: saved.color,
             created_at: saved.created_at,
             style: saved.style,

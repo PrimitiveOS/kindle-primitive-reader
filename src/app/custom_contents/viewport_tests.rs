@@ -55,6 +55,7 @@ fn custom_contents_viewport_epub_bookmark_editor_and_hierarchy_keep_canonical_lo
                 .fragment(&format!("station-{number:03}"))
                 .unwrap();
             Bookmark {
+                chapter_title: None,
                 label: format!("Station {number:02}"),
                 position: ReadingPosition {
                     chapter: 0,

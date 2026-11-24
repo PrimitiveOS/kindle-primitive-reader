@@ -58,6 +58,7 @@ fn bookmark_density_resizes_the_saved_marks_list_and_preserves_date_order() {
     let state = app.library.state_mut(id).unwrap();
     state.highlights[0].created_at = Some(1_750_001_000);
     state.bookmarks.extend((1..=12).map(|index| Bookmark {
+        chapter_title: None,
         created_at: Some(1_750_000_000 + i64::from(index)),
         label: format!("Reading mark {index:02}"),
         position: ReadingPosition {
@@ -133,6 +134,7 @@ fn bookmark_density_keeps_fixed_page_highlight_holds_on_the_second_list_page() {
         let top = 0.1 + index as f32 * 0.032;
         state
             .add_pdf_highlight(PdfHighlight {
+                chapter_title: None,
                 color: Default::default(),
                 created_at: None,
                 style: Default::default(),

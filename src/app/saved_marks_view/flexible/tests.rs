@@ -71,6 +71,7 @@ fn flexible_bookmark_lines_persist_and_restore_the_previous_fixed_layout() {
     let id = app.open_book_id().unwrap();
     let state = app.library.state_mut(id).unwrap();
     state.bookmarks.extend((1..=15).map(|index| Bookmark {
+        chapter_title: None,
         created_at: None,
         label: format!("Reading mark {index:02}"),
         position: ReadingPosition {
@@ -189,6 +190,7 @@ fn flexible_fixed_page_rows_keep_oversized_notes_visible_and_target_the_painted_
         let y = 0.1 + index as f32 * 0.1;
         state
             .add_pdf_highlight(PdfHighlight {
+                chapter_title: None,
                 color: Default::default(),
                 created_at: Some(index),
                 style: Default::default(),

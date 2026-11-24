@@ -410,4 +410,4 @@ fn sorted_pages(pages: impl Iterator<Item = usize>) -> Vec<usize> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

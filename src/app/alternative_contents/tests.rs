@@ -323,7 +323,7 @@ fn alternative_markers_resolve_cross_spine_heading_pages_for_header_footer_and_s
     );
     reader.show(Screen::ChapterNavigation);
     tap_contents_item(&mut reader, "Contents level 2");
-    tap_contents_item(&mut reader, "Footer chapter title");
+    tap_contents_item(&mut reader, "Chapter titles from ticks only");
     assert_eq!(
         reader.active_alternative_chapter_title(),
         Some("East softhyphen quay")
@@ -367,12 +367,12 @@ fn alternative_markers_resolve_cross_spine_heading_pages_for_header_footer_and_s
         Some("East softhyphen quay")
     );
     reader.show(Screen::ChapterNavigation);
-    tap_contents_item(&mut reader, "Footer chapter title");
+    tap_contents_item(&mut reader, "Chapter titles from ticks only");
     assert_eq!(
         reader.active_alternative_chapter_title(),
         Some("East softhyphen quay")
     );
-    tap_contents_item(&mut reader, "Footer chapter title");
+    tap_contents_item(&mut reader, "Chapter titles from ticks only");
     tap_contents_item(&mut reader, "Use levels for chapter jumps");
     let reading = &mut reader.active.as_mut().unwrap().reading;
     reading.go_to_page(2, 0).unwrap();

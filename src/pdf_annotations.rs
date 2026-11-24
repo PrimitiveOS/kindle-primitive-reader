@@ -120,6 +120,7 @@ pub fn export_copy(
     for mark in highlights {
         for (page, bounds, text) in mark.parts() {
             by_page.entry(page).or_default().push(PdfHighlight {
+                chapter_title: None,
                 color: mark.color,
                 created_at: mark.created_at,
                 style: mark.style,
@@ -1061,6 +1062,7 @@ mod tests {
 
     fn mark() -> PdfHighlight {
         PdfHighlight {
+            chapter_title: None,
             color: Default::default(),
             created_at: None,
             style: Default::default(),
@@ -1256,6 +1258,7 @@ mod tests {
         let original = fixture(false);
         let existing = import_highlights(&original, geometry).unwrap().remove(0);
         let external = PdfHighlight {
+            chapter_title: None,
             color: Default::default(),
             created_at: None,
             style: Default::default(),

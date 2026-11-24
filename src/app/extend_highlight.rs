@@ -178,6 +178,15 @@ impl Reader {
             if !edit.draft.changed() {
                 return Err("Choose a word outside the saved highlight".into());
             }
+            let chapter_title = match &edit.draft {
+                Draft::Text { original, current } if original.start != current.start => {
+                    Some(self.highlight_chapter_title(&current.start))
+                }
+                Draft::Fixed { original, current } if original.page != current.page => {
+                    Some(self.fixed_chapter_title(current.page))
+                }
+                _ => None,
+            };
             let book = self.open_book_id().ok_or("The book is unavailable")?;
             let state = self
                 .library
@@ -191,6 +200,9 @@ impl Reader {
                         .filter(|mark| &mark.selection == original)
                         .ok_or("The original highlight changed")?;
                     mark.selection = current.clone();
+                    if let Some(chapter_title) = chapter_title {
+                        mark.chapter_title = chapter_title;
+                    }
                     Screen::Book
                 }
                 Draft::Fixed { original, current } => {
@@ -200,6 +212,9 @@ impl Reader {
                         .filter(|mark| &**mark == original)
                         .ok_or("The original highlight changed")?;
                     *mark = current.clone();
+                    if let Some(chapter_title) = chapter_title {
+                        mark.chapter_title = chapter_title;
+                    }
                     Screen::Fixed
                 }
             };

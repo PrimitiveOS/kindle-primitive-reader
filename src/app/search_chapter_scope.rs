@@ -180,7 +180,7 @@ fn fixed_range(current: usize, count: usize, mut headings: Vec<usize>) -> Range<
 }
 
 #[derive(Clone, Copy)]
-enum Destination<'a> {
+pub(super) enum Destination<'a> {
     Publisher(Option<&'a str>),
     Custom(&'a ReadingPosition),
     Alternative(&'a crate::Anchor),
@@ -218,8 +218,9 @@ fn remote_bounds(
         let mut publication = Book::open(&reading.config.book).map_err(io::Error::other)?;
         if start.is_none() {
             for (&chapter, entries) in before {
-                if let Some(offset) =
-                    source_offsets(reading, &mut publication, chapter, entries)?.max()
+                if let Some(offset) = source_offsets(reading, &mut publication, chapter, entries)?
+                    .map(|(_, offset)| offset)
+                    .max()
                 {
                     start = Some((chapter, offset));
                     break;
@@ -228,8 +229,9 @@ fn remote_bounds(
         }
         if end.is_none() {
             for (&chapter, entries) in after {
-                if let Some(offset) =
-                    source_offsets(reading, &mut publication, chapter, entries)?.min()
+                if let Some(offset) = source_offsets(reading, &mut publication, chapter, entries)?
+                    .map(|(_, offset)| offset)
+                    .min()
                 {
                     end = Some((chapter, offset));
                     break;
@@ -241,12 +243,12 @@ fn remote_bounds(
     .map_err(Into::into)
 }
 
-fn source_offsets(
+pub(super) fn source_offsets(
     reading: &Reading,
     publication: &mut Book,
     chapter: usize,
     entries: &[Destination<'_>],
-) -> io::Result<impl Iterator<Item = Offset>> {
+) -> io::Result<impl Iterator<Item = (usize, Offset)>> {
     let needs_source = entries.iter().any(|entry| {
         matches!(
             entry,
@@ -281,41 +283,43 @@ fn source_offsets(
     } else {
         None
     };
+    let offset = |entry: &Destination<'_>| match entry {
+        Destination::Publisher(None) => Some((0, 0)),
+        Destination::Publisher(Some(fragment)) => {
+            let (source, styles) = source.as_ref()?;
+            let owner = source.fragment_owner(fragment)?;
+            if styles.get(owner)?.flow.suppressed {
+                return None;
+            }
+            source.fragments.get(*fragment).copied()
+        }
+        Destination::Alternative(anchor) => {
+            let (source, styles) = source.as_ref()?;
+            let block = source
+                .blocks
+                .iter()
+                .find(|block| block.key == anchor.block)?;
+            (anchor.book == publication.revision()
+                && anchor.revision == source.revision
+                && !styles.get(block.element)?.flow.suppressed)
+                .then_some((anchor.block, anchor.offset))
+        }
+        Destination::Custom(position) => match &position.anchor {
+            Some(anchor) => {
+                let (source, _) = source.as_ref()?;
+                let valid = source.revision == anchor.revision
+                    && source.blocks.iter().any(|block| {
+                        block.key == anchor.block && block.text.is_char_boundary(anchor.offset)
+                    });
+                valid.then_some((anchor.block, anchor.offset))
+            }
+            None => (position.page == 0).then_some((0, 0)),
+        },
+    };
     let offsets: Vec<_> = entries
         .iter()
-        .filter_map(|entry| match entry {
-            Destination::Publisher(None) => Some((0, 0)),
-            Destination::Publisher(Some(fragment)) => {
-                let (source, styles) = source.as_ref()?;
-                let owner = source.fragment_owner(fragment)?;
-                if styles.get(owner)?.flow.suppressed {
-                    return None;
-                }
-                source.fragments.get(*fragment).copied()
-            }
-            Destination::Alternative(anchor) => {
-                let (source, styles) = source.as_ref()?;
-                let block = source
-                    .blocks
-                    .iter()
-                    .find(|block| block.key == anchor.block)?;
-                (anchor.book == publication.revision()
-                    && anchor.revision == source.revision
-                    && !styles.get(block.element)?.flow.suppressed)
-                    .then_some((anchor.block, anchor.offset))
-            }
-            Destination::Custom(position) => match &position.anchor {
-                Some(anchor) => {
-                    let (source, _) = source.as_ref()?;
-                    let valid = source.revision == anchor.revision
-                        && source.blocks.iter().any(|block| {
-                            block.key == anchor.block && block.text.is_char_boundary(anchor.offset)
-                        });
-                    valid.then_some((anchor.block, anchor.offset))
-                }
-                None => (position.page == 0).then_some((0, 0)),
-            },
-        })
+        .enumerate()
+        .filter_map(|(index, entry)| Some((index, offset(entry)?)))
         .collect();
     Ok(offsets.into_iter())
 }

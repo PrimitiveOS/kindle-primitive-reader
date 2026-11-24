@@ -40,6 +40,7 @@ fn save_reflow_mark(app: &mut Reader, path: &std::path::Path) -> u64 {
         .unwrap()
         .highlights
         .push(Highlight {
+            chapter_title: None,
             color: Default::default(),
             created_at: Some(1_740_777_900),
             style: HighlightStyle::Underline,
@@ -108,6 +109,7 @@ fn export_multi_color_and_style_filters_intersect_and_preserve_dates_text_and_or
         .unwrap()
         .highlights
         .push(Highlight {
+            chapter_title: None,
             selection,
             note: Some("Keep the blue note".into()),
             created_at: Some(1_730_777_900),
@@ -236,6 +238,7 @@ fn exports_history_collections_and_selected_books_through_normal_controls() {
         .state_mut(pdf_id)
         .unwrap()
         .add_pdf_highlight(PdfHighlight {
+            chapter_title: None,
             color: Default::default(),
             created_at: None,
             style: HighlightStyle::Lighten,
@@ -377,6 +380,7 @@ fn export_uses_reading_order_and_rejects_a_source_replaced_during_export() {
     state.highlights.insert(
         0,
         Highlight {
+            chapter_title: None,
             color: Default::default(),
             created_at: None,
             style: HighlightStyle::Lighten,
@@ -505,6 +509,7 @@ fn exports_original_document_marks_without_changing_sources_or_reading_position(
                 .state_mut(id)
                 .unwrap()
                 .add_pdf_highlight(PdfHighlight {
+                    chapter_title: None,
                     color: Default::default(),
                     created_at: None,
                     style: HighlightStyle::Lighten,
@@ -551,6 +556,7 @@ fn exports_original_document_marks_without_changing_sources_or_reading_position(
                 .unwrap()
                 .highlights
                 .push(Highlight {
+                    chapter_title: None,
                     color: Default::default(),
                     created_at: Some(1_740_777_900),
                     style: HighlightStyle::Underline,

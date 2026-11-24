@@ -496,6 +496,7 @@ fn zoomed_pdf_note_pencil_starts_at_the_first_visible_saved_line() {
         .state_mut(id)
         .unwrap()
         .add_pdf_highlight(PdfHighlight {
+            chapter_title: None,
             color: HighlightColor::Blue,
             created_at: None,
             style: HighlightStyle::Lighten,

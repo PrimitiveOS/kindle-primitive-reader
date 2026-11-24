@@ -222,6 +222,7 @@ fn highlight_styles_pdf_at_high_zoom_preserve_page_note_and_pixels() {
         .remember(&fixed.entry, fixed.id, &fixed.entry.title);
     state
         .add_pdf_highlight(PdfHighlight {
+            chapter_title: None,
             color: Default::default(),
             created_at: None,
             style: state.highlight_style.unwrap(),

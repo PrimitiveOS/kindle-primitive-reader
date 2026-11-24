@@ -57,6 +57,7 @@ impl CustomContents {
         self.entries.insert(
             index,
             Bookmark {
+                chapter_title: None,
                 created_at: None,
                 label: title.to_owned(),
                 position,

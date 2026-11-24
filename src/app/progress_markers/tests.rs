@@ -35,7 +35,7 @@ fn frame(app: &Reader) -> Vec<u8> {
     primitive_app::frame(app, &mut canvas, false)
 }
 
-fn write_pdf(path: &Path) {
+pub(in crate::app) fn write_pdf(path: &Path) {
     let page = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 390 550] /Contents 15 0 R >>";
     let content = "BT /F1 25 Tf 31 485 Td (Field guide to the coast) Tj /F1 12 Tf 0 -35 Td (The western tide arrives just before dusk.) Tj 0 -21 Td (Use the sheltered route past the salt marsh.) Tj 0 -21 Td (The lookout opens when the water recedes.) Tj ET";
     let stream = format!(
@@ -92,7 +92,7 @@ fn pdf_footer_title_binding_is_independent_and_keeps_saved_bookmarks() {
     let title_switch = |app: &Reader| {
         app.chapter_level_items()
             .into_iter()
-            .find(|item| item.title == "Footer chapter title")
+            .find(|item| item.title == "Chapter titles from ticks only")
             .unwrap()
             .action
     };
@@ -427,7 +427,7 @@ fn multispine_books_only_filter_the_existing_local_header_marks() {
     assert!(
         app.chapter_level_items()
             .iter()
-            .all(|item| item.title != "Footer chapter title")
+            .all(|item| item.title != "Chapter titles from ticks only")
     );
     app.set_chapter_level(LevelSetting::BindTitle).unwrap();
     assert!(!state_mut(&mut app).contents_depths.bind_title);

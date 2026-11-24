@@ -147,7 +147,7 @@ impl Reader {
         if self.has_chapter_title_levels() {
             rows.push(
                 Item::new(
-                    "Footer chapter title",
+                    "Chapter titles from ticks only",
                     if levels.has_ignored() {
                         Action::ChapterLevel(LevelSetting::BindTitle)
                     } else {
@@ -155,7 +155,7 @@ impl Reader {
                     },
                 )
                 .detail(if levels.has_ignored() {
-                    "Use titles from the included levels"
+                    "Use included levels for the footer and new saved marks"
                 } else {
                     "Turn off a level to enable this option"
                 }),

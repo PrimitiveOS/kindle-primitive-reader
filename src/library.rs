@@ -952,6 +952,12 @@ pub struct ReadingPosition {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bookmark {
+    #[serde(
+        default,
+        deserialize_with = "read_mark_chapter_title",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub chapter_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<i64>,
     pub label: String,
@@ -960,6 +966,12 @@ pub struct Bookmark {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Highlight {
+    #[serde(
+        default,
+        deserialize_with = "read_mark_chapter_title",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub chapter_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<i64>,
     #[serde(
@@ -987,6 +999,12 @@ pub struct HighlightPage {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PdfHighlight {
+    #[serde(
+        default,
+        deserialize_with = "read_mark_chapter_title",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub chapter_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<i64>,
     #[serde(
@@ -2631,6 +2649,7 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
                     && existing.continuation == mark.continuation
             }) {
                 merge_created_at(&mut existing.created_at, mark.created_at, &mut summary);
+                merge_chapter_title(&mut existing.chapter_title, mark.chapter_title.as_deref());
                 merge_note(&mut existing.note, &mark.note, &mut summary);
             } else if target.pdf_highlights.len() < MAX_PDF_HIGHLIGHTS {
                 target.pdf_highlights.push(mark.clone());
@@ -2660,9 +2679,17 @@ pub(crate) fn merge_text_marks(
             .find(|existing| same_position(&existing.position, &bookmark.position))
         {
             merge_created_at(&mut existing.created_at, bookmark.created_at, summary);
+            merge_chapter_title(
+                &mut existing.chapter_title,
+                bookmark.chapter_title.as_deref(),
+            );
             summary.duplicates += 1;
         } else if target.bookmarks.len() < MAX_IMPORTED_MARKS {
             target.bookmarks.push(Bookmark {
+                chapter_title: bookmark
+                    .chapter_title
+                    .as_deref()
+                    .and_then(clean_mark_chapter_title),
                 created_at: bookmark.created_at,
                 label,
                 position: bookmark.position.clone(),
@@ -2680,6 +2707,7 @@ pub(crate) fn merge_text_marks(
                 && existing.selection.end == mark.selection.end
         }) {
             merge_created_at(&mut existing.created_at, mark.created_at, summary);
+            merge_chapter_title(&mut existing.chapter_title, mark.chapter_title.as_deref());
             merge_note(&mut existing.note, &mark.note, summary);
         } else if target.highlights.len() < MAX_IMPORTED_MARKS {
             target.highlights.push(mark.clone());
@@ -2688,6 +2716,12 @@ pub(crate) fn merge_text_marks(
         } else {
             summary.skipped += 1;
         }
+    }
+}
+
+fn merge_chapter_title(current: &mut Option<String>, imported: Option<&str>) {
+    if current.is_none() {
+        *current = imported.and_then(clean_mark_chapter_title);
     }
 }
 
@@ -2914,6 +2948,25 @@ pub(crate) fn display_filename(value: &str) -> String {
         .chars()
         .map(|ch| if ch.is_control() { '�' } else { ch })
         .collect()
+}
+
+pub(crate) fn clean_mark_chapter_title(title: &str) -> Option<String> {
+    let title = title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|character| !character.is_control() && *character != '\u{ad}')
+        .take(256)
+        .collect::<String>();
+    (!title.is_empty()).then_some(title)
+}
+
+fn read_mark_chapter_title<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    let value = Option::<String>::deserialize(deserializer)?;
+    Ok(value.as_deref().and_then(clean_mark_chapter_title))
 }
 
 fn clean_metadata(value: &str) -> String {
@@ -3353,11 +3406,13 @@ mod tests {
         first_state.position = Some(position.clone());
         first_state.preferences.font_size = Some(54.0);
         first_state.bookmarks.push(Bookmark {
+            chapter_title: None,
             created_at: None,
             label: "Beginning".into(),
             position: position.clone(),
         });
         first_state.highlights.push(Highlight {
+            chapter_title: None,
             color: Default::default(),
             created_at: None,
             style: Default::default(),
@@ -3624,6 +3679,7 @@ mod tests {
             y1: 0.4,
         };
         let mark = PdfHighlight {
+            chapter_title: None,
             color: Default::default(),
             created_at: None,
             style: Default::default(),
@@ -3637,6 +3693,7 @@ mod tests {
         assert!(
             saved
                 .add_pdf_highlight(PdfHighlight {
+                    chapter_title: None,
                     color: Default::default(),
                     bounds: vec![PdfTextRect {
                         x0: f32::NAN,
@@ -3649,6 +3706,7 @@ mod tests {
         assert!(
             saved
                 .add_pdf_highlight(PdfHighlight {
+                    chapter_title: None,
                     color: Default::default(),
                     bounds: vec![bounds; MAX_PDF_HIGHLIGHT_BOUNDS + 1],
                     ..mark.clone()
@@ -3658,6 +3716,7 @@ mod tests {
         assert!(
             saved
                 .add_pdf_highlight(PdfHighlight {
+                    chapter_title: None,
                     color: Default::default(),
                     note: Some("x".repeat(MAX_NOTE_BYTES + 1)),
                     ..mark.clone()
@@ -3692,6 +3751,7 @@ mod tests {
             y1: 0.2,
         }];
         let mut single = PdfHighlight {
+            chapter_title: None,
             color: Default::default(),
             created_at: None,
             style: Default::default(),
@@ -3931,11 +3991,13 @@ mod tests {
             anchor: Some(anchor(offset)),
         };
         let bookmark = |page, offset| Bookmark {
+            chapter_title: None,
             created_at: None,
             label: "A bookmark".into(),
             position: position(page, offset),
         };
         let mark = |offset, note: Option<&str>| Highlight {
+            chapter_title: None,
             color: Default::default(),
             created_at: None,
             style: Default::default(),
@@ -3979,6 +4041,7 @@ mod tests {
         added.fixed_preferences.width_fit = true;
         added
             .add_pdf_highlight(PdfHighlight {
+                chapter_title: None,
                 color: Default::default(),
                 created_at: Some(15),
                 style: Default::default(),
