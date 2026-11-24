@@ -19,6 +19,22 @@ books with several spine items use source-byte weights. A source-byte offset or
 character-count edition page cannot establish the count of rendered leaves.
 [Chapter layout](../src/session.rs) · [Edition labels](../src/app/publisher_pages.rs) · [Reading status calculations](../src/app/reading_footer.rs)
 
+## Partial typography rendering comparison
+
+KOReader's **Enable partial renderings** is a per-book choice with a global
+default. CREngine offers it when it can repaginate the active fragment.
+Typography changes then return quickly to that chapter. A full render runs
+in the background and the document is reloaded after an idle period. With
+partial rendering off, typography changes take the full render path.
+
+Reader already lays out the active spine item first. Its background
+worker supplies verified whole-book numbering for the supported EPUB
+scope below, on demand from the header or Go to page. The setting and full
+render transaction following typography changes remain open. Acceptance
+needs a fixed edition and source anchor through both paths, an intentional
+edit while background layout is pending, and cancellation during sleep or
+USB handoff. [KOReader preference](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L445-L505) · [KOReader render and reload states](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L1740-L1880)
+
 ## Exact page count
 
 The optional header shows its chapter-local numbers while Reader gathers

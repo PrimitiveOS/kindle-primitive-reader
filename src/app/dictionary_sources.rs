@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::dictionary_panel::font_size;
 use crate::library::DictionaryFuzzySearch;
 
 const MAX_PREFERENCES_BYTES: usize = 64 * 1024;
@@ -29,6 +30,8 @@ pub(super) struct SourcePreferences {
     enable_fuzzy_search: Option<bool>,
     pub(super) large_window: bool,
     pub(super) justify_text: bool,
+    #[serde(skip_serializing_if = "font_size::is_default")]
+    pub(super) definition_font_size: i32,
 }
 
 impl Default for SourcePreferences {
@@ -43,6 +46,7 @@ impl Default for SourcePreferences {
             enable_fuzzy_search: None,
             large_window: false,
             justify_text: true,
+            definition_font_size: font_size::DEFAULT,
         }
     }
 }
@@ -79,6 +83,7 @@ impl SourcePreferences {
                 .chain(&settings.disabled)
                 .any(|path| !valid_dictionary_key(path))
             || !settings.presets.is_valid()
+            || !font_size::RANGE.contains(&settings.definition_font_size)
             || settings
                 .preset_cycle_after
                 .as_deref()
@@ -97,6 +102,9 @@ impl SourcePreferences {
             return Self::default();
         };
         if let Ok(mut settings) = serde_json::from_slice::<Self>(&bytes) {
+            if !font_size::RANGE.contains(&settings.definition_font_size) {
+                settings.definition_font_size = font_size::DEFAULT;
+            }
             if !settings.presets.is_valid() {
                 settings.presets = dictionary_presets::Settings::default();
             }
@@ -140,6 +148,7 @@ pub(super) enum SourceAction {
     ResetBookFuzzySearch,
     LargeWindow,
     JustifyText,
+    FontSize,
     DictionaryHistory,
 }
 
@@ -271,7 +280,10 @@ impl Reader {
 
     pub(super) fn save_source_preferences(&mut self, next: SourcePreferences) -> Result<()> {
         let bytes = serde_json::to_vec(&next)?;
-        if bytes.len() > MAX_PREFERENCES_BYTES || !next.presets.is_valid() {
+        if bytes.len() > MAX_PREFERENCES_BYTES
+            || !next.presets.is_valid()
+            || !font_size::RANGE.contains(&next.definition_font_size)
+        {
             return Err("Dictionary preferences exceed Reader's limits".into());
         }
         primitive_app::save(&self.dictionary_preference, &bytes)?;
@@ -307,6 +319,11 @@ impl Reader {
             } else {
                 "Off"
             }),
+            Item::new(
+                "Dictionary font size",
+                Action::DictionarySource(SourceAction::FontSize),
+            )
+            .detail(self.dictionary_settings.definition_font_size.to_string()),
         ];
         rows.extend(
             self.installed_dictionaries
@@ -512,6 +529,10 @@ impl Reader {
     }
 
     pub(super) fn change_source(&mut self, action: SourceAction) -> Result<()> {
+        if matches!(action, SourceAction::FontSize) {
+            self.open_dictionary_font_size();
+            return Ok(());
+        }
         if let SourceAction::Open(i) = action {
             if self.installed_dictionaries.get(i).is_none() {
                 return Err("Dictionary unavailable".into());
@@ -675,6 +696,7 @@ impl Reader {
                 | SourceAction::ResetBookFuzzySearch
                 | SourceAction::LargeWindow
                 | SourceAction::JustifyText
+                | SourceAction::FontSize
                 | SourceAction::DictionaryHistory => unreachable!(),
             }
             selected_key = Some(key);

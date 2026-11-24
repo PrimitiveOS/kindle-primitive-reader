@@ -5,10 +5,9 @@ use std::ops::Range;
 
 mod preset_lookup;
 use preset_lookup::PresetPicker;
+pub(super) mod font_size;
 
 const FONT_SIZE: i32 = 36;
-const DEFINITION_TEXT: primitive_ui::TextStyle =
-    primitive_ui::TextStyle::new(FONT_SIZE).break_long_words();
 const LINE: i32 = 47;
 const MAX_DEPTH: usize = 8;
 const EXAMPLE_INSET: i32 = 36;
@@ -61,6 +60,7 @@ pub(super) struct Navigation {
     view: View,
     online_return: Option<usize>,
     preset_picker: Option<PresetPicker>,
+    font_size_draft: Option<i32>,
 }
 struct Previous {
     word: String,
@@ -157,6 +157,24 @@ struct PlacedLine {
     runs: Vec<PlacedRun>,
     justified: bool,
     rtl: Option<bool>,
+    font: i32,
+}
+
+#[derive(Clone, Copy)]
+struct DefinitionTypography(i32);
+
+impl DefinitionTypography {
+    fn scale(self, base: i32) -> i32 {
+        (base * self.0 + font_size::DEFAULT / 2) / font_size::DEFAULT
+    }
+
+    fn line(self) -> i32 {
+        self.scale(LINE)
+    }
+
+    fn font(self) -> i32 {
+        self.scale(FONT_SIZE)
+    }
 }
 
 fn body(popup: Rect) -> Rect {
@@ -193,9 +211,18 @@ fn action_button(
     );
 }
 
-fn layout(canvas: &mut Canvas, text: &str, width: i32) -> Vec<TextLine> {
+fn layout(
+    canvas: &mut Canvas,
+    text: &str,
+    width: i32,
+    typography: DefinitionTypography,
+) -> Vec<TextLine> {
     canvas
-        .text_pages(Rect::new(0, 0, width, LINE), text, DEFINITION_TEXT)
+        .text_pages(
+            Rect::new(0, 0, width, typography.line()),
+            text,
+            primitive_ui::TextStyle::new(typography.font()).break_long_words(),
+        )
         .into_iter()
         .map(|range| TextLine {
             soft_wrap: range.end < text.len()
@@ -216,13 +243,14 @@ fn article_layout(
     canvas: &mut Canvas,
     result: &dictionary::LookupEntry,
     width: i32,
+    typography: DefinitionTypography,
 ) -> Vec<TextLine> {
     let Some(article) = result
         .article
         .as_ref()
         .filter(|article| !article.paragraphs.is_empty())
     else {
-        return layout(canvas, &result.text, width);
+        return layout(canvas, &result.text, width, typography);
     };
     let mut prior = 0;
     let mut paragraphs = article.paragraphs.iter().peekable();
@@ -233,12 +261,16 @@ fn article_layout(
         let paragraph = paragraph.trim_end_matches('\n');
         let style = paragraphs.next_if(|style| style.range.start == start);
         let (indent, end_inset) = style.map_or((0, 0), |style| {
-            let nested = (i32::from(style.indent) * EXAMPLE_INSET).min(width / 6);
-            let gutter = if style.list_item { MARKER_GUTTER } else { 0 };
+            let nested = (i32::from(style.indent) * typography.scale(EXAMPLE_INSET)).min(width / 6);
+            let gutter = if style.list_item {
+                typography.scale(MARKER_GUTTER)
+            } else {
+                0
+            };
             ((nested + gutter).min(width / 3), nested)
         });
         let rtl = style.map(|style| paragraph_rtl(paragraph, style));
-        for (index, mut line) in layout(canvas, paragraph, width - indent - end_inset)
+        for (index, mut line) in layout(canvas, paragraph, width - indent - end_inset, typography)
             .into_iter()
             .enumerate()
         {
@@ -319,22 +351,30 @@ impl TextLine {
         )
     }
 
-    fn draw_marker(&self, canvas: &mut Canvas, rect: Rect) {
+    fn draw_marker(&self, canvas: &mut Canvas, rect: Rect, typography: DefinitionTypography) {
         let text = match self.marker {
             Some(dictionary::article::Marker::Number(number)) => format!("{number}."),
             Some(dictionary::article::Marker::Bullet) => "•".to_owned(),
             None => return,
         };
-        let width = self.indent.min(MARKER_GUTTER) - 14;
+        let spacing = typography.scale(14);
+        let width = self.indent.min(typography.scale(MARKER_GUTTER)) - spacing;
         let (x, style) = if self.rtl == Some(true) {
-            (rect.right() + 14, primitive_ui::TextStyle::new(30))
+            (
+                rect.right() + spacing,
+                primitive_ui::TextStyle::new(typography.scale(30)),
+            )
         } else {
             (
-                rect.x - 14 - width,
-                primitive_ui::TextStyle::new(30).right(),
+                rect.x - spacing - width,
+                primitive_ui::TextStyle::new(typography.scale(30)).right(),
             )
         };
-        canvas.text(Rect::new(x, rect.y + 2, width, LINE), &text, style);
+        canvas.text(
+            Rect::new(x, rect.y + 2, width, typography.line()),
+            &text,
+            style,
+        );
     }
 }
 
@@ -343,7 +383,14 @@ fn stretchable_space(ch: char) -> bool {
 }
 
 impl PlacedLine {
-    fn new(canvas: &mut Canvas, line: &str, width: i32, justify: bool, rtl: Option<bool>) -> Self {
+    fn new(
+        canvas: &mut Canvas,
+        line: &str,
+        width: i32,
+        justify: bool,
+        rtl: Option<bool>,
+        font: i32,
+    ) -> Self {
         let level = rtl.map(|rtl| {
             if rtl {
                 unicode_bidi::Level::rtl()
@@ -357,25 +404,27 @@ impl PlacedLine {
                 runs: Vec::new(),
                 justified: false,
                 rtl,
+                font,
             };
         };
         let (levels, ranges) = bidi.visual_runs(paragraph, paragraph.range.clone());
-        if justify && let Some(runs) = Self::spread(canvas, line, width, &levels, &ranges) {
+        if justify && let Some(runs) = Self::spread(canvas, line, width, &levels, &ranges, font) {
             return Self {
                 runs,
                 justified: true,
                 rtl,
+                font,
             };
         }
         let mut x = if rtl == Some(true) {
-            (width - canvas.measure(line, FONT_SIZE)).max(0)
+            (width - canvas.measure(line, font)).max(0)
         } else {
             0
         };
         let runs = ranges
             .into_iter()
             .map(|range| {
-                let width = canvas.measure(&line[range.clone()], FONT_SIZE);
+                let width = canvas.measure(&line[range.clone()], font);
                 let run = PlacedRun {
                     rtl: levels[range.start].is_rtl(),
                     range,
@@ -390,6 +439,7 @@ impl PlacedLine {
             runs,
             justified: false,
             rtl,
+            font,
         }
     }
 
@@ -399,6 +449,7 @@ impl PlacedLine {
         width: i32,
         levels: &[unicode_bidi::Level],
         ranges: &[Range<usize>],
+        font: i32,
     ) -> Option<Vec<PlacedRun>> {
         let mut pieces = Vec::new();
         for run in ranges {
@@ -435,7 +486,7 @@ impl PlacedLine {
             let advance = if space {
                 0
             } else {
-                canvas.measure(&line[range.clone()], FONT_SIZE)
+                canvas.measure(&line[range.clone()], font)
             };
             used += advance;
             measured.push((range, rtl, space, advance));
@@ -486,7 +537,7 @@ impl PlacedLine {
                 } else if index == range.end {
                     *width
                 } else {
-                    canvas.measure(&line[range.start..index], FONT_SIZE)
+                    canvas.measure(&line[range.start..index], self.font)
                 }
             };
             for span in spans
@@ -507,24 +558,21 @@ impl PlacedLine {
     }
 
     fn draw(&self, canvas: &mut Canvas, rect: Rect, line: &str) {
+        let style = primitive_ui::TextStyle::new(self.font).break_long_words();
         if self.justified {
             for run in &self.runs {
                 let bounds = Rect::new(rect.x + run.x, rect.y, rect.w - run.x, rect.h);
-                canvas.text(bounds, &line[run.range.clone()], DEFINITION_TEXT);
+                canvas.text(bounds, &line[run.range.clone()], style);
             }
         } else if let Some(rtl) = self.rtl {
             // Canvas auto-detects direction. A nonprinting mark pins the
             // paragraph base direction across wrapped rows without changing
             // the dictionary text or the hit-test byte positions.
             let mark = if rtl { '\u{200f}' } else { '\u{200e}' };
-            let style = if rtl {
-                DEFINITION_TEXT.right()
-            } else {
-                DEFINITION_TEXT
-            };
+            let style = if rtl { style.right() } else { style };
             canvas.text(rect, &format!("{mark}{line}"), style);
         } else {
-            canvas.text(rect, line, DEFINITION_TEXT);
+            canvas.text(rect, line, style);
         }
     }
 }
@@ -932,8 +980,9 @@ impl Reader {
             return None;
         }
         let view = &self.dictionary_navigation.view;
-        let rows = (rect.h / LINE) as usize;
-        let row = (y as i32 - rect.y) as usize / LINE as usize;
+        let line_height = self.definition_typography().line();
+        let rows = (rect.h / line_height) as usize;
+        let row = ((y as i32 - rect.y) / line_height) as usize;
         if row >= rows {
             return None;
         }
@@ -1344,7 +1393,15 @@ impl Reader {
         !self.dictionary_settings.large_window && self.dictionary_navigation.trail.is_empty()
     }
 
+    fn definition_typography(&self) -> DefinitionTypography {
+        DefinitionTypography(self.dictionary_settings.definition_font_size)
+    }
+
     pub(super) fn definition_layout(&self) -> (Rect, Rect, usize) {
+        let viewport = self.reading_viewport();
+        let (screen_width, screen_height) = viewport.dimensions();
+        let typography = self.definition_typography();
+        let line_height = typography.line();
         let height = if let Some(index) = self.definition_results_page {
             let shown = self
                 .definitions
@@ -1359,6 +1416,7 @@ impl Reader {
             116 + shown as i32 * 104 + paging
         } else {
             let empty_lines = if self.can_retry_with_preset() { 4 } else { 2 };
+            let capacity = (45 * font_size::DEFAULT / typography.0) as usize;
             let lines = self
                 .definitions
                 .get(self.list_page)
@@ -1367,14 +1425,18 @@ impl Reader {
                         .text
                         .lines()
                         .take(8)
-                        .map(|line| line.chars().take(360).count().max(1).div_ceil(45))
+                        .map(|line| {
+                            line.chars()
+                                .take(capacity * 8)
+                                .count()
+                                .max(1)
+                                .div_ceil(capacity)
+                        })
                         .sum::<usize>()
                         .clamp(3, 8)
                 });
-            273 + LINE * lines as i32
+            (273 + line_height * lines as i32).min(screen_height as i32 - 146)
         };
-        let viewport = self.reading_viewport();
-        let (screen_width, screen_height) = viewport.dimensions();
         // Keep the column width stable across viewport changes. Nested results
         // retain cached line breaks and text positions within that column.
         let popup = if self.definition_expanded {
@@ -1383,7 +1445,7 @@ impl Reader {
             definition_bounds(height, self.selection_bounds(), viewport)
         };
         let back = Rect::new(popup.right() - 190, popup.y + 16, 168, 66);
-        (popup, back, (body(popup).h / LINE) as usize)
+        (popup, back, (body(popup).h.max(0) / line_height) as usize)
     }
 
     pub(super) fn draw_definition_popup(&self, canvas: &mut Canvas) {
@@ -1519,6 +1581,8 @@ impl Reader {
             return;
         }
         let rect = body(popup);
+        let typography = self.definition_typography();
+        let line_height = typography.line();
         if let Some(result) = self.definitions.get(self.list_page) {
             let text = &result.text;
             if text.is_empty() {
@@ -1526,13 +1590,13 @@ impl Reader {
             }
             let lines = view
                 .layout
-                .get_or_init(|| article_layout(canvas, result, rect.w));
+                .get_or_init(|| article_layout(canvas, result, rect.w, typography));
             let current = view.find.as_ref().map(|f| &f.hits[f.index]);
             let first = view.first_line(rows);
             for (row, line) in lines.iter().skip(first).take(rows).enumerate() {
-                let y = rect.y + row as i32 * LINE;
-                let line_rect = line.bounds(Rect::new(rect.x, y, rect.w, LINE));
-                line.draw_marker(canvas, line_rect);
+                let y = rect.y + row as i32 * line_height;
+                let line_rect = line.bounds(Rect::new(rect.x, y, rect.w, line_height));
+                line.draw_marker(canvas, line_rect, typography);
                 let content = text[line.range.clone()].trim_end();
                 let placement = line.placed.get_or_init(|| {
                     PlacedLine::new(
@@ -1541,6 +1605,7 @@ impl Reader {
                         line_rect.w,
                         self.dictionary_settings.justify_text && line.soft_wrap,
                         line.rtl,
+                        typography.font(),
                     )
                 });
                 line.words.get_or_init(|| {
@@ -1577,7 +1642,7 @@ impl Reader {
                     for &(index, left, right) in links {
                         if article.links[index].target.is_some() {
                             canvas.fill(
-                                Rect::new(line_rect.x + left, y + LINE - 3, right - left, 2),
+                                Rect::new(line_rect.x + left, y + line_height - 3, right - left, 2),
                                 0,
                             );
                         }
@@ -1596,7 +1661,7 @@ impl Reader {
                         std::slice::from_ref(&part),
                     ) {
                         canvas.fill(
-                            Rect::new(line_rect.x + left, y, (right - left).max(2), LINE),
+                            Rect::new(line_rect.x + left, y, (right - left).max(2), line_height),
                             205,
                         );
                     }

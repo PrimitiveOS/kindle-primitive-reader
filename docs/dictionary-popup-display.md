@@ -1,7 +1,7 @@
 # Dictionary popup display
 
-Open **Search › Dictionaries** to set how definitions appear. Reader remembers
-both choices for future lookups.
+Open **Search › Dictionaries** to set how definitions appear. Reader saves
+these preferences for future lookups.
 
 - **Large window** opens the definition in the expanded panel, with more lines
   visible at once. It starts off. **Expand** and **Collapse** change the current
@@ -20,6 +20,26 @@ saved by an earlier release, reopening Reader, result selection, nested lookups
 and restoring the original selection. Text tests cover paragraph endings,
 nonbreaking spaces and mixed left-to-right and right-to-left word positions.
 [Settings](screenshots/dictionary-popup-settings.png) · [Compact with justified text](screenshots/dictionary-justify-text.png) · [Large window in dark mode](screenshots/dictionary-large-window.png) · [Workflow tests](../src/app/dictionary_panel/tests.rs)
+
+## Definition font size
+
+Tap **Dictionary font size** to change definition text from 8 to 32.
+Tap the minus or plus to move by one, or hold to move by four. **Default**
+sets the draft back to 20. **Apply** saves the size. **Cancel** discards the
+draft. Reader scales the definition line height and paragraph markers with
+the text and keeps its established popup controls.
+
+The Mac checks cover portrait and landscape editing, backup, reopening,
+selection and nested lookup after a definition wraps differently. They also
+check that the same EPUB passage and PDF text geometry return after the
+popup closes. The pinned Lua replay runs KOReader's menu callback, step
+handler, clamping and popup font selection at both limits.
+[KOReader settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L408-L430) · [KOReader popup](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/dictquicklookup.lua#L212-L219) · [Stock comparison](../scripts/compare-dictionary-font-size.py)
+
+[Portrait editor](screenshots/dictionary-font-size-editor.png) ·
+[Landscape editor](screenshots/landscape-dictionary-font-size-editor.png) ·
+[Size 32](screenshots/dictionary-font-size-large.png) ·
+[Size 8](screenshots/dictionary-font-size-small.png)
 
 ## Closing nested lookups
 

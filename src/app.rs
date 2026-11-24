@@ -1764,6 +1764,9 @@ impl Reader {
         self.flow_popup = None;
         self.end_dialog = None;
         self.close_dictionary_preset_picker();
+        if screen != Screen::Dictionaries {
+            self.close_dictionary_font_size();
+        }
         if screen != Screen::Definition {
             self.spelling_lookup = None;
         }
@@ -8424,6 +8427,7 @@ impl App for Reader {
         self.draw_history_timeline_start(canvas);
         self.draw_history_duration_limits(canvas);
         self.draw_dictionary_preset_picker(canvas);
+        self.draw_dictionary_font_size(canvas);
         self.draw_logical_recovery(canvas);
         self.draw_opening_delay(canvas);
         self.draw_opening_ask(canvas);
@@ -8435,6 +8439,9 @@ impl App for Reader {
             return point;
         }
         if let Some(point) = self.opening_modal_press(input) {
+            return point;
+        }
+        if let Some(point) = self.dictionary_font_size_press(input) {
             return point;
         }
         match input {
@@ -8455,6 +8462,9 @@ impl App for Reader {
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
         if let Some(change) = self.closing_profile_input(input) {
+            return change;
+        }
+        if let Some(change) = self.dictionary_font_size_input(input) {
             return change;
         }
         if let Some(change) = self
@@ -8673,6 +8683,9 @@ impl App for Reader {
 
     fn input(&mut self, input: Input) -> Change {
         if let Some(change) = self.closing_profile_input(input) {
+            return change;
+        }
+        if let Some(change) = self.dictionary_font_size_input(input) {
             return change;
         }
         if let Some(change) = self
@@ -9613,6 +9626,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.close_dictionary_font_size();
         self.closing_profile = None;
         if self.closing_before_switch.is_some() && self.screen == Screen::PdfPassword {
             self.handle_pdf_password(Input::PageBack);

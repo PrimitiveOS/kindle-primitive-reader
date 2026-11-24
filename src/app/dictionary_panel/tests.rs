@@ -105,10 +105,11 @@ impl Simulation {
                     })
             })
             .unwrap();
+        let line = self.app.definition_typography().line();
         assert_eq!(
             self.app.input(Input::LongTap(
                 ((left + right) / 2) as f32,
-                (body.y + row as i32 * LINE + LINE / 2) as f32
+                (body.y + row as i32 * line + line / 2) as f32
             )),
             Change::Partial
         );
@@ -433,10 +434,163 @@ fn dictionary_popup_defaults_are_saved_and_restore_nested_large_windows() {
 }
 
 #[test]
+fn dictionary_font_size_steps_and_persists_only_when_applied() {
+    use crate::app::selection_viewport_tests::{adopt, capture, tap};
+    use crate::app::tests::tap_contents_item;
+    use crate::session::ReadingViewport;
+    let mut s = Simulation::new();
+    s.app.activate(Action::ShowDictionaries).unwrap();
+    tap_contents_item(&mut s.app, "Dictionary font size");
+    assert_eq!(s.app.dictionary_navigation.font_size_draft, Some(20));
+    s.tap(font_size::INCREASE);
+    assert_eq!(s.app.dictionary_navigation.font_size_draft, Some(21));
+    assert_eq!(s.hold(font_size::INCREASE), Change::Partial);
+    assert_eq!(s.app.dictionary_navigation.font_size_draft, Some(25));
+    s.draw(Some("dictionary-font-size-editor.png"));
+    assert_eq!(s.app.dictionary_settings.definition_font_size, 20);
+    s.tap(font_size::CANCEL);
+    assert!(s.app.dictionary_navigation.font_size_draft.is_none());
+    assert_eq!(s.app.dictionary_settings.definition_font_size, 20);
+
+    tap_contents_item(&mut s.app, "Dictionary font size");
+    for _ in 0..3 {
+        assert_eq!(s.hold(font_size::INCREASE), Change::Partial);
+    }
+    assert_eq!(s.hold(font_size::INCREASE), Change::None);
+    assert_eq!(s.app.dictionary_navigation.font_size_draft, Some(32));
+    let mut landscape = adopt(&mut s.app, ReadingViewport::LANDSCAPE, 1);
+    capture(
+        &s.app,
+        &mut landscape,
+        "landscape-dictionary-font-size-editor.png",
+        true,
+    );
+    let at = s.app.navigation_layout().centered(font_size::APPLY);
+    tap(&mut s.app, at);
+    assert_eq!(s.app.dictionary_settings.definition_font_size, 32);
+    let stored = fs::read(&s.app.dictionary_preference).unwrap();
+    assert_eq!(
+        SourcePreferences::backup_value(&stored).unwrap()["definition_font_size"],
+        32
+    );
+
+    let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+    s.app = Reader::open(&s.fixture.root, &s.fixture.state, vec![font]).unwrap();
+    assert_eq!(s.app.dictionary_settings.definition_font_size, 32);
+    s.app.activate(Action::ShowDictionaries).unwrap();
+    tap_contents_item(&mut s.app, "Dictionary font size");
+    s.tap(font_size::RESET);
+    assert_eq!(s.app.dictionary_navigation.font_size_draft, Some(20));
+    assert_eq!(s.app.input(Input::PageBack), Change::Partial);
+    assert_eq!(s.app.dictionary_settings.definition_font_size, 32);
+    tap_contents_item(&mut s.app, "Dictionary font size");
+    s.tap(font_size::RESET);
+    s.tap(font_size::APPLY);
+    assert_eq!(s.app.dictionary_settings.definition_font_size, 20);
+    let value =
+        SourcePreferences::backup_value(&fs::read(&s.app.dictionary_preference).unwrap()).unwrap();
+    assert!(value.get("definition_font_size").is_none());
+    assert!(SourcePreferences::backup_value(br#"{"definition_font_size":33}"#).is_err());
+}
+
+#[test]
+fn dictionary_font_size_keeps_wrapped_lookup_targets_and_source_passage() {
+    use crate::app::tests::tap_contents_item;
+    let mut s = Simulation::new();
+    let open_long_definition = |s: &mut Simulation| {
+        s.open_epub_selection();
+        let saved = (s.app.current_history_location(), s.app.selection.clone());
+        s.tap(s.app.selection_button(SelectionAction::Dictionary));
+        s.tap(definition_results_button(s.app.definition_layout().0));
+        s.tap(definition_result_row(s.app.definition_layout().0, 1));
+        saved
+    };
+    let counts = |s: &Simulation| {
+        let layout = s.app.dictionary_navigation.view.layout.get().unwrap();
+        let font = layout[0].placed.get().unwrap().font;
+        (layout.len(), font)
+    };
+    let saved = open_long_definition(&mut s);
+    s.draw(None);
+    let (default_lines, default_size) = counts(&s);
+    assert_eq!(default_size, 36);
+    s.back();
+
+    s.app.activate(Action::ShowDictionaries).unwrap();
+    tap_contents_item(&mut s.app, "Dictionary font size");
+    for _ in 0..3 {
+        assert_eq!(s.hold(font_size::INCREASE), Change::Partial);
+    }
+    s.tap(font_size::APPLY);
+    assert_eq!(open_long_definition(&mut s), saved);
+    let frame = s.draw(Some("dictionary-font-size-large.png"));
+    let (large_lines, large_size) = counts(&s);
+    assert!(large_lines > default_lines);
+    assert_eq!(large_size, 58);
+    s.hold_definition_word("beacon");
+    s.back();
+    assert_eq!(s.draw(None), frame);
+    s.back();
+    assert_eq!(s.app.current_history_location(), saved.0);
+    assert_eq!(s.app.selection, saved.1);
+
+    s.app.activate(Action::ShowDictionaries).unwrap();
+    tap_contents_item(&mut s.app, "Dictionary font size");
+    for _ in 0..6 {
+        assert_eq!(s.hold(font_size::DECREASE), Change::Partial);
+    }
+    assert_eq!(s.hold(font_size::DECREASE), Change::None);
+    s.tap(font_size::APPLY);
+    assert_eq!(open_long_definition(&mut s), saved);
+    s.draw(Some("dictionary-font-size-small.png"));
+    let (small_lines, small_size) = counts(&s);
+    assert!(small_lines < default_lines);
+    assert_eq!(small_size, 14);
+    s.back();
+    assert_eq!(s.app.selection, saved.1);
+}
+
+#[test]
+fn dictionary_font_size_reserves_space_for_four_digit_senses() {
+    let mut s = Simulation::new();
+    write_dictionary(
+        &s.fixture.root.join("dictionaries"),
+        "Numbered senses",
+        "sametypesequence=h\n",
+        &[(
+            "bell",
+            b"<ol start='9999'><li>A bronze signal.</li></ol><ol dir='rtl' start='9999'><li>Example.</li></ol>",
+        )],
+    );
+    for value in [8, 20, 32] {
+        s.app.dictionary_settings.definition_font_size = value;
+        s.app.look_up("bell").unwrap();
+        s.draw(None);
+        let typography = s.app.definition_typography();
+        let lines = s.app.dictionary_navigation.view.layout.get().unwrap();
+        let mut markers = 0;
+        for line in lines {
+            if matches!(line.marker, Some(dictionary::article::Marker::Number(9999))) {
+                let width = line.indent.min(typography.scale(MARKER_GUTTER)) - typography.scale(14);
+                assert!(width >= s.canvas.measure("9999.", typography.scale(30)));
+                markers += 1;
+            }
+        }
+        assert_eq!(markers, 2);
+        s.back();
+    }
+}
+
+#[test]
 fn dictionary_justification_respects_paragraphs_and_maps_mixed_direction_words() {
     let mut s = Simulation::new();
     let text = "A harbour has sheltered water.\nOne more line.\n\nFinally.";
-    let lines = layout(&mut s.canvas, text, 390);
+    let lines = layout(
+        &mut s.canvas,
+        text,
+        390,
+        DefinitionTypography(font_size::DEFAULT),
+    );
     assert!(lines[0].soft_wrap);
     assert!(lines[1..].iter().any(|line| !line.soft_wrap));
     for line in &lines {
@@ -446,7 +600,7 @@ fn dictionary_justification_respects_paragraphs_and_maps_mixed_direction_words()
     }
 
     let text = "Coast في الميناء now";
-    let result = PlacedLine::new(&mut s.canvas, text, 480, true, None);
+    let result = PlacedLine::new(&mut s.canvas, text, 480, true, None, FONT_SIZE);
     assert!(result.justified);
     let hits: Vec<_> = crate::selection::word_ranges(text).collect();
     let boxes = result.range_boxes(&mut s.canvas, text, 0, &hits);
@@ -457,9 +611,13 @@ fn dictionary_justification_respects_paragraphs_and_maps_mixed_direction_words()
     assert_eq!(visual, ["Coast", "الميناء", "في", "now"]);
     assert!(boxes.windows(2).all(|pair| pair[0].2 < pair[1].1));
     assert_eq!(boxes.last().unwrap().2, 480);
-    assert!(!PlacedLine::new(&mut s.canvas, "one\u{00a0}unit", 480, true, None).justified);
-    assert!(!PlacedLine::new(&mut s.canvas, "  Indented text", 480, true, None).justified);
-    assert!(!PlacedLine::new(&mut s.canvas, text, 40, true, None).justified);
+    assert!(
+        !PlacedLine::new(&mut s.canvas, "one\u{00a0}unit", 480, true, None, FONT_SIZE).justified
+    );
+    assert!(
+        !PlacedLine::new(&mut s.canvas, "  Indented text", 480, true, None, FONT_SIZE).justified
+    );
+    assert!(!PlacedLine::new(&mut s.canvas, text, 40, true, None, FONT_SIZE).justified);
 }
 
 #[test]
@@ -1036,8 +1194,9 @@ fn dictionary_navigation_restores_fixed_page_selection_geometry() {
     assert_eq!(original.text(), "PDF");
     let saved = (original.page(), original.bounds().collect::<Vec<_>>());
     let before = s.draw(None);
-    for large in [false, true] {
+    for (large, font_size) in [(false, 20), (true, 32)] {
         s.app.dictionary_settings.large_window = large;
+        s.app.dictionary_settings.definition_font_size = font_size;
         s.tap(s.app.selection_button(SelectionAction::Dictionary));
         assert_eq!(s.app.definition_expanded, large);
         s.draw(None);

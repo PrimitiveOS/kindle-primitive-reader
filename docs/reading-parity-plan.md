@@ -48,8 +48,8 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 230 of 536 in-scope reading-control rows have
-an implemented workflow, 236 are partial, 46 are gaps, and 24 need audit. The
+**Pinned control inventory:** 231 of 536 in-scope reading-control rows have
+an implemented workflow, 236 are partial, 46 are gaps, and 23 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification.
 Reader 0.1.32 adds [search from selection](selection-search.md),
@@ -107,7 +107,9 @@ presets manage source enablement, report unavailable dictionary titles and
 cycle in alphabetical order. A temporary preset applies to typed
 lookup, retry after a miss and a lookup started from a definition. Offline
 lookup history groups consecutive records by book, shows local timestamps,
-and provides its own recording and clearing controls.
+and provides its own recording and clearing controls. Definition text has a
+saved 8–32 font size with a default of 20. Its wrapping, links and word
+targets use the selected size.
 [Saved reading profiles](reading-profiles.md#editing-saved-values) ·
 [Opening profiles](reading-profiles.md#apply-a-profile-on-book-opening) ·
 [Opening time windows](reading-profiles.md#limit-opening-profiles-by-time) ·
@@ -116,7 +118,8 @@ and provides its own recording and clearing controls.
 [Calendar month navigation](reading-statistics.md#jumping-to-a-month) ·
 [Dictionary result navigation](dictionary-popup-display.md#first-and-last-results) ·
 [One-query preset](shared-dictionaries.md#searching-with-a-preset-once) ·
-[Dictionary history](shared-dictionaries.md#dictionary-history)
+[Dictionary history](shared-dictionaries.md#dictionary-history) ·
+[Definition font size](dictionary-popup-display.md#definition-font-size)
 
 Opening profiles read adjacent, centralized path and fingerprint KOReader
 custom metadata in the saved preference order, with publisher fallback.
