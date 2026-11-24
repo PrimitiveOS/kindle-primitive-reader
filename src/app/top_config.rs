@@ -576,6 +576,7 @@ impl Reader {
             ));
         }
         items.extend([
+            Item::new("Menu search", Action::SearchReadingMenus).detail("Find a reading control"),
             Item::new("Find a document", Action::Show(Screen::LibraryFind)),
             Item::new("Dictionary lookup", Action::Show(Screen::DictionaryEntry)),
             Item::new("Wikipedia", Action::Wikipedia).detail("Look up a topic"),

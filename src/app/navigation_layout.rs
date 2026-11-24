@@ -122,6 +122,7 @@ impl Screen {
         matches!(
             self,
             Self::Links
+                | Self::MenuSearchResults
                 | Self::NavigationSettings
                 | Self::PageTurns
                 | Self::PageTurnZones
@@ -202,6 +203,7 @@ impl Screen {
             || matches!(
                 self,
                 Self::GoToPage
+                    | Self::MenuSearch
                     | Self::ContentsSearch
                     | Self::CustomTitle
                     | Self::LibraryFind

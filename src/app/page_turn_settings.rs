@@ -273,9 +273,9 @@ impl Reader {
         self.swipe_turn(dx, dy)
     }
 
-    pub(super) fn page_turn_items(&self) -> Vec<Item> {
+    pub(super) fn page_turn_items(&self, screen: Screen) -> Vec<Item> {
         let item = |text: &str, command| Item::new(text, Action::PageTurnSetting(command));
-        match self.screen {
+        match screen {
             Screen::PageTurnZones => {
                 let mut items = Zones::ALL
                     .into_iter()

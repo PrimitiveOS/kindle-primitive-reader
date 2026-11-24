@@ -360,14 +360,14 @@ impl Reader {
         self.style_view.draft = Some(css);
         self.show(Screen::StyleReview);
     }
-    pub(super) fn style_items(&self) -> Vec<Item> {
+    pub(super) fn style_items(&self, screen: Screen) -> Vec<Item> {
         let Ok(id) = self.style_book() else {
             return vec![Item::new("Open a reflowable book first", Action::Heading)];
         };
         let data = &self.style_store.data;
         let b = data.book(id);
         let action = |title: &str, command: Command| Item::new(title, Action::Style(command));
-        match self.screen {
+        match screen {
             Screen::StyleTweaks => {
                 let mut items = vec![
                     action("Enable style tweaks", Command::Master(!b.enabled)).detail(

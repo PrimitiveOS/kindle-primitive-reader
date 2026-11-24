@@ -12,6 +12,7 @@ use primitive_ui::{CAPTION, Canvas, HAIRLINE, Icon, Input, Rect, TextStyle};
 
 use self::bottom_config::{ConfigRow, SINGLE_VIEW_SECTIONS, TEXT_SECTIONS, VIEW_SECTIONS};
 use super::bar_icons::{EXIT, action_icon, group_icon, panel_icon};
+use super::menu_search::mark_control;
 use super::reading_notifications::Source;
 use super::top_config::TopGroup;
 use super::{Action, Item, Reader, Screen};
@@ -175,6 +176,7 @@ struct Bars {
     row_information: Vec<(Rect, &'static str)>,
     row_help: Vec<(Rect, Action)>,
     buttons: Vec<Button>,
+    menu_focus: Option<Rect>,
 }
 
 impl Bars {
@@ -201,7 +203,14 @@ impl Bars {
         });
     }
 
-    fn group(&mut self, above: i32, items: Vec<Item>, large: bool, at_top: bool) {
+    fn group(
+        &mut self,
+        above: i32,
+        items: Vec<Item>,
+        large: bool,
+        at_top: bool,
+        focus: Option<usize>,
+    ) {
         if items.is_empty() {
             return;
         }
@@ -226,6 +235,9 @@ impl Bars {
             );
             let row_columns = (count - (index / columns) * columns).min(columns);
             let rect = cell(row, index % columns, row_columns).inset(4);
+            if focus == Some(index) {
+                self.menu_focus = Some(rect);
+            }
             let visual = Visual::Tile(action_icon(&item.action));
             self.buttons.push(Button {
                 rect,
@@ -252,6 +264,7 @@ impl Bars {
         current: BarPanel,
         sections: &[(BarPanel, &str)],
         rows: Vec<ConfigRow>,
+        focus: Option<usize>,
     ) {
         if rows.is_empty() {
             return;
@@ -279,6 +292,9 @@ impl Bars {
         }
         for (index, row) in rows.into_iter().enumerate() {
             let y = panel.y + section_height + 4 + index as i32 * row_height;
+            if focus == Some(index) {
+                self.menu_focus = Some(Rect::new(12, y, width - 24, row_height));
+            }
             let label_width = if row.label.is_empty() { 0 } else { 272 };
             if label_width != 0 {
                 let label = Rect::new(34, y, label_width - 18, row_height);
@@ -426,7 +442,13 @@ impl Reader {
                 );
             }
             if let Some(group) = self.top_group {
-                bars.group(tabs.bottom(), self.top_config_items(group), large, true);
+                bars.group(
+                    tabs.bottom(),
+                    self.top_config_items(group),
+                    large,
+                    true,
+                    self.menu_search.focused_top(group),
+                );
             }
         }
 
@@ -490,25 +512,77 @@ impl Reader {
                 .first()
                 .map_or(viewport.page_height() as i32, |rect| rect.y);
             if panel == BarPanel::Pages {
-                bars.group(above, self.page_actions(), large, false);
+                bars.group(
+                    above,
+                    self.page_actions(),
+                    large,
+                    false,
+                    self.menu_search.focused_bottom(panel),
+                );
             } else if self.reading_bottom {
-                let sections: &[(BarPanel, &str)] = match panel.tab() {
-                    BarPanel::Text if self.supports_word_spacing() => &TEXT_SECTIONS,
-                    BarPanel::Text => &TEXT_SECTIONS[..TEXT_SECTIONS.len() - 1],
-                    BarPanel::View if self.supports_view_layout() => &VIEW_SECTIONS,
-                    BarPanel::View => &SINGLE_VIEW_SECTIONS,
-                    _ => &[],
-                };
                 bars.configure(
                     above,
                     large,
                     panel,
-                    sections,
+                    self.bottom_menu_sections(panel),
                     self.bottom_config_rows(panel),
+                    self.menu_search.focused_bottom(panel),
                 );
             }
         }
         bars
+    }
+
+    fn bottom_menu_sections(&self, panel: BarPanel) -> &'static [(BarPanel, &'static str)] {
+        match panel.tab() {
+            BarPanel::Text if self.supports_word_spacing() => &TEXT_SECTIONS,
+            BarPanel::Text => &TEXT_SECTIONS[..TEXT_SECTIONS.len() - 1],
+            BarPanel::View if self.supports_view_layout() => &VIEW_SECTIONS,
+            BarPanel::View => &SINGLE_VIEW_SECTIONS,
+            _ => &[],
+        }
+    }
+
+    pub(super) fn menu_search_panels(&self) -> Vec<(BarPanel, String)> {
+        let (root, panel) = if self.fixed.is_some() {
+            ("View", BarPanel::View)
+        } else {
+            ("Text", BarPanel::Text)
+        };
+        let mut panels = vec![(BarPanel::Pages, "Pages".into())];
+        panels.extend(
+            self.bottom_menu_sections(panel)
+                .iter()
+                .map(|&(section, name)| (section, format!("{root} › {name}"))),
+        );
+        if self.supports_scan_panel() {
+            panels.push((BarPanel::Scan, "Scan".into()));
+        }
+        panels
+    }
+
+    pub(super) fn bottom_menu_items(&self, panel: BarPanel) -> Vec<Item> {
+        if panel == BarPanel::Pages {
+            return self.page_actions();
+        }
+        self.bottom_config_rows(panel)
+            .into_iter()
+            .map(|row| {
+                let link = row
+                    .choices
+                    .into_iter()
+                    .map(|choice| choice.action)
+                    .find(|action| matches!(action, Action::Show(_)));
+                Item::new(row.label, link.unwrap_or(Action::Heading))
+            })
+            .collect()
+    }
+
+    pub(super) fn open_menu_search_panel(&mut self, panel: BarPanel) {
+        self.show(self.tools_screen());
+        self.reading_top = panel == BarPanel::Pages;
+        self.reading_bottom = true;
+        self.set_bottom_panel(Some(panel));
     }
 
     #[cfg(test)]
@@ -605,6 +679,9 @@ impl Reader {
         }
         for button in bars.buttons {
             button.draw(canvas, size);
+        }
+        if let Some(rect) = bars.menu_focus {
+            mark_control(canvas, rect);
         }
     }
 

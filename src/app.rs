@@ -69,6 +69,7 @@ mod library_view;
 mod link_taps;
 mod lookup_history;
 mod mark_chapters;
+mod menu_search;
 mod metadata_save;
 mod navigation_layout;
 mod navigation_preferences;
@@ -340,6 +341,8 @@ enum Screen {
     Matches,
     SearchHistory,
     SearchSettings,
+    MenuSearch,
+    MenuSearchResults,
     BookmarkFind,
     BookmarkMatches,
     Highlights,
@@ -560,6 +563,8 @@ impl Screen {
             Self::Find => "Find in book",
             Self::Matches => "Search results",
             Self::SearchSettings => "Search settings",
+            Self::MenuSearch => "Menu search",
+            Self::MenuSearchResults => "Menu search results",
             Self::SearchHistory => "Recent searches",
             Self::BookmarkFind => "Find bookmarks",
             Self::BookmarkMatches => "Bookmark search results",
@@ -615,6 +620,8 @@ enum Action {
     NameCollection(Option<String>),
     RemoveCollection,
     SetReadingControls(ReadingControls),
+    SearchReadingMenus,
+    PreviewReadingMenu(usize),
     PageTurnSetting(page_turn_settings::Command),
     ToggleNotificationSource(reading_notifications::Source),
     SetReadingOrientation(ReadingOrientation),
@@ -1028,6 +1035,7 @@ pub struct Reader {
     top_header_font_picker: Option<top_header_font::Picker>,
     list_page: usize,
     reading_list_anchor: Option<navigation_layout::ReadingListAnchor>,
+    menu_search: menu_search::Search,
     matches_page: usize,
     match_window: Option<search_layout::MatchWindow>,
     matches_return_to_reading: bool,
@@ -1274,6 +1282,7 @@ impl Reader {
             top_header_font_picker: None,
             list_page: 0,
             reading_list_anchor: None,
+            menu_search: menu_search::Search::open(state),
             matches_page: 0,
             match_window: None,
             matches_return_to_reading: false,
@@ -1829,6 +1838,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.menu_search.clear_overlays();
         self.embedded_font_report = None;
         self.finish_interrupted_scroll();
         self.opening_path_overlay = None;
@@ -2480,23 +2490,30 @@ impl Reader {
     }
 
     fn items(&self) -> Vec<Item> {
+        self.items_for(self.screen)
+    }
+
+    fn items_for(&self, screen: Screen) -> Vec<Item> {
+        if screen == Screen::MenuSearchResults {
+            return self.menu_search.items();
+        }
         if matches!(
-            self.screen,
+            screen,
             Screen::PageTurns | Screen::PageTurnZones | Screen::PageTurnDefaults
         ) {
-            return self.page_turn_items();
+            return self.page_turn_items(screen);
         }
-        if self.screen == Screen::NavigationSettings {
+        if screen == Screen::NavigationSettings {
             return self.navigation_preference_items();
         }
-        if let Screen::BackOptions(options) = self.screen {
+        if let Screen::BackOptions(options) = screen {
             return self.back_option_items(options);
         }
-        if self.screen == Screen::ReadingGuides {
+        if screen == Screen::ReadingGuides {
             return self.reading_guide_items();
         }
         if matches!(
-            self.screen,
+            screen,
             Screen::ReadingProfiles
                 | Screen::ReadingProfile(_)
                 | Screen::ReadingProfileFields(_)
@@ -2511,7 +2528,7 @@ impl Reader {
         ) {
             return self.reading_profile_items();
         }
-        if self.screen == Screen::ReadingGuidesAbout {
+        if screen == Screen::ReadingGuidesAbout {
             return vec![
                 Item::new("Two vertical lines", Action::Heading)
                     .detail("Use them to mark the area to focus on while reading."),
@@ -2519,13 +2536,13 @@ impl Reader {
                     .detail("The lines can move inward as you turn pages. Set the interval to 0 to keep them still."),
             ];
         }
-        if self.screen.is_contents() {
+        if screen.is_contents() {
             return self.contents_items(0, usize::MAX).1;
         }
-        if self.screen == Screen::ContentsSettings {
+        if screen == Screen::ContentsSettings {
             return self.contents_settings_items();
         }
-        if self.screen == Screen::SearchSettings {
+        if screen == Screen::SearchSettings {
             let mut items = vec![
                 Item::new(
                     "Show all results on text selection",
@@ -2548,7 +2565,7 @@ impl Reader {
             return items;
         }
         if matches!(
-            self.screen,
+            screen,
             Screen::StyleTweaks
                 | Screen::FootnoteTweaks
                 | Screen::StylePreset
@@ -2558,13 +2575,13 @@ impl Reader {
                 | Screen::StyleClear
                 | Screen::StyleEditor
         ) {
-            return self.style_items();
+            return self.style_items(screen);
         }
-        if let Screen::ReadingHistory(page) = self.screen {
+        if let Screen::ReadingHistory(page) = screen {
             return self.reading_history_items(page);
         }
         if matches!(
-            self.screen,
+            screen,
             Screen::Vocabulary
                 | Screen::VocabularyWord
                 | Screen::VocabularyOptions
@@ -2572,22 +2589,22 @@ impl Reader {
         ) {
             return self.vocabulary_items();
         }
-        if let Screen::LibraryExport(page) = self.screen {
+        if let Screen::LibraryExport(page) = screen {
             return self.library_export_items(page);
         }
-        if self.screen == Screen::HiddenFlows {
+        if screen == Screen::HiddenFlows {
             return self.hidden_flow_items();
         }
-        if self.screen == Screen::ChapterNavigation {
+        if screen == Screen::ChapterNavigation {
             return self.chapter_level_items();
         }
         if matches!(
-            self.screen,
+            screen,
             Screen::CustomContents | Screen::CustomEdits | Screen::CustomBookmarks
         ) {
             return self.custom_items();
         }
-        match self.screen {
+        match screen {
             Screen::FooterSettings => return self.footer_items(),
             Screen::FooterPresets => {
                 let mut items = vec![
@@ -3058,19 +3075,19 @@ impl Reader {
             Screen::BookmarkMatches => return self.annotation_results(),
             _ => {}
         }
-        if self.screen == Screen::Library {
+        if screen == Screen::Library {
             return self.library_items().collect();
         }
-        if self.screen == Screen::FolderOrder {
+        if screen == Screen::FolderOrder {
             return self.folder_order_items();
         }
-        if matches!(self.screen, Screen::BookArchive | Screen::ArchiveFolder) {
+        if matches!(screen, Screen::BookArchive | Screen::ArchiveFolder) {
             return self.archive_items();
         }
         if let Some(items) = self.organization_items() {
             return items;
         }
-        if self.screen == Screen::LocationHistory {
+        if screen == Screen::LocationHistory {
             return self
                 .back
                 .iter()
@@ -3095,7 +3112,7 @@ impl Reader {
                 })
                 .collect();
         }
-        if self.screen == Screen::ReadingControls {
+        if screen == Screen::ReadingControls {
             let mut items = self.reading_settings_items();
             items.push(self.preferred_dictionary_item());
             if self.active.is_some() || self.fixed.is_some() {
@@ -3107,37 +3124,37 @@ impl Reader {
             }
             return items;
         }
-        if let Some(items) = self.notification_items() {
+        if let Some(items) = self.notification_items(screen) {
             return items;
         }
-        if self.screen == Screen::Links {
+        if screen == Screen::Links {
             return self.page_link_items();
         }
-        if self.screen == Screen::LinkSettings {
+        if screen == Screen::LinkSettings {
             return self.link_settings_items();
         }
-        if self.screen == Screen::EndActionSettings {
+        if screen == Screen::EndActionSettings {
             return self.end_action_rows();
         }
-        if self.screen == Screen::MetadataSaveSettings {
+        if screen == Screen::MetadataSaveSettings {
             return self.metadata_save_items();
         }
         if matches!(
-            self.screen,
+            screen,
             Screen::Dictionaries | Screen::ClearDictionaryHistory
         ) {
             return self.source_rows();
         }
-        if let Screen::DictionaryOptions(i) = self.screen {
+        if let Screen::DictionaryOptions(i) = screen {
             return self.source_options(i);
         }
-        if let Screen::DictionaryButtons(page) = self.screen {
+        if let Screen::DictionaryButtons(page) = screen {
             return self.dictionary_button_items(page);
         }
-        if let Screen::DictionaryPresets(page) = self.screen {
+        if let Screen::DictionaryPresets(page) = screen {
             return self.dictionary_preset_items(page);
         }
-        if self.screen == Screen::ReadingData {
+        if screen == Screen::ReadingData {
             let mut items = vec![
                 Item::new(
                     "Export highlights",
@@ -3169,16 +3186,16 @@ impl Reader {
             );
             return items;
         }
-        if self.screen == Screen::ClearOcr {
+        if screen == Screen::ClearOcr {
             return vec![
                 Item::new("Clear OCR cache", Action::ClearOcr),
                 Item::new("Keep OCR cache", Action::Show(Screen::ReadingData)),
             ];
         }
-        if self.screen == Screen::RestoreBackup {
+        if screen == Screen::RestoreBackup {
             return self.reading_backup_items();
         }
-        if self.screen == Screen::ImportPosition {
+        if screen == Screen::ImportPosition {
             return self
                 .position_import
                 .as_ref()
@@ -3227,7 +3244,7 @@ impl Reader {
                     rows
                 });
         }
-        if self.screen == Screen::ImportPdfAnnotations {
+        if screen == Screen::ImportPdfAnnotations {
             let count = self.pdf_annotation_import.len();
             let mut rows = vec![
                 Item::new("Import annotations", Action::ApplyPdfAnnotations)
@@ -3239,10 +3256,10 @@ impl Reader {
             }));
             return rows;
         }
-        if let Screen::ExportSettings(origin, page) = self.screen {
+        if let Screen::ExportSettings(origin, page) = screen {
             return self.export_settings_items(origin, page);
         }
-        if self.screen == Screen::ExportAnnotations {
+        if screen == Screen::ExportAnnotations {
             return annotation_export::Format::ALL
                 .into_iter()
                 .map(|format| Item::new(format.label(), Action::ExportHighlights(format)))
@@ -3258,12 +3275,12 @@ impl Reader {
                 ])
                 .collect();
         }
-        if self.screen == Screen::ImportAnnotations
+        if screen == Screen::ImportAnnotations
             && let Some(import) = &self.nearby_marks
         {
             return import.items();
         }
-        if self.screen == Screen::ImportAnnotations
+        if screen == Screen::ImportAnnotations
             && let Some(import) = &self.annotation_import
         {
             let checked = format!("{} of {} quotes checked", import.next, import.entries.len());
@@ -3280,7 +3297,7 @@ impl Reader {
                 Item::new(checked, Action::Heading),
             ];
         }
-        if self.screen == Screen::Annotation {
+        if screen == Screen::Annotation {
             let passage = if self.fixed.is_some() {
                 Action::PdfHighlight(self.highlight_index)
             } else {
@@ -3310,14 +3327,14 @@ impl Reader {
             }
             return items;
         }
-        if self.screen == Screen::RemoveHighlight {
+        if screen == Screen::RemoveHighlight {
             return vec![
                 Item::new("Remove highlight and note", Action::RemoveHighlight),
                 Item::new("Keep highlight", Action::Show(Screen::Annotation)),
             ];
         }
         if let Some(fixed) = &self.fixed {
-            return match self.screen {
+            return match screen {
                 Screen::FixedBookmarks => self.bookmark_items(fixed.id),
                 Screen::Highlights => self.bookmark_items(fixed.id),
                 Screen::OcrLanguage => self.ocr_assets.as_ref().map_or_else(Vec::new, |assets| {
@@ -3339,7 +3356,7 @@ impl Reader {
             return Vec::new();
         };
         let reading = &active.reading;
-        match self.screen {
+        match screen {
             Screen::PageNumbering => self.numbering_items(),
             Screen::NumberingDefaults => self.numbering_defaults_items(),
             Screen::PublisherOffer => self.publisher_offer_items(),
@@ -4214,6 +4231,9 @@ impl Reader {
                 self.request_close(profile_panel::on_close::AfterClose::Library)?;
             }
             Action::Show(screen) => self.show(screen),
+            Action::SearchReadingMenus => self.begin_menu_search()?,
+            Action::PreviewReadingMenu(index) => self.menu_search.preview(index)?,
+
             Action::Jump(target) => self.follow(target)?,
             Action::BookMapChapter(chapter) => {
                 self.select_book_map_page(page_overview::MapOrigin::Chapter(chapter), 0)?;
@@ -5657,6 +5677,10 @@ impl Reader {
         if matches!(input, Input::PageBack)
             || matches!(input, Input::Tap(x, y) if navigation.back().contains(x, y))
         {
+            if self.screen == Screen::MenuSearch {
+                self.leave_menu_search();
+                return Change::Partial;
+            }
             self.show(match self.screen {
                 Screen::LibraryFind => Screen::Library,
                 Screen::VocabularySearch => Screen::Vocabulary,
@@ -5724,6 +5748,7 @@ impl Reader {
         let layout = navigation.keyboard();
         let action = match self.screen {
             Screen::DictionaryEntry => "Look up",
+            Screen::MenuSearch => "Search",
             _ if note => "Save",
             Screen::Find => "Find all",
             _ => "Find",
@@ -5760,6 +5785,7 @@ impl Reader {
             }
             let result = match self.screen {
                 Screen::DictionaryEntry => self.look_up(&query),
+                Screen::MenuSearch => self.submit_menu_search(&query),
                 Screen::BookmarkFind => self.annotation_search.submit(&query).map(|()| {
                     self.show(Screen::BookmarkMatches);
                 }),
@@ -8042,7 +8068,10 @@ impl Reader {
             _ => self.screen.title(),
         };
         let scoped_title;
-        let title = if self.screen == Screen::Matches && self.search_chapter_active() {
+        let title = if self.screen == Screen::MenuSearchResults {
+            scoped_title = format!("Menu search · {}", self.menu_search.query());
+            &scoped_title
+        } else if self.screen == Screen::Matches && self.search_chapter_active() {
             scoped_title = format!("Chapter results ({})", self.search_result_order().len());
             &scoped_title
         } else {
@@ -8112,6 +8141,7 @@ impl Reader {
         if matches!(
             self.screen,
             Screen::Find
+                | Screen::MenuSearch
                 | Screen::ContentsSearch
                 | Screen::LibraryFind
                 | Screen::VocabularySearch
@@ -8133,6 +8163,7 @@ impl Reader {
                 Screen::Note | Screen::EditNote => ("Note text", "Save"),
                 Screen::LibraryFind => ("Title, author or filename", "Find"),
                 Screen::ContentsSearch => ("Heading text, or * to show all", "Find"),
+                Screen::MenuSearch => ("Menu name", "Search"),
                 Screen::VocabularySearch => ("Saved word", "Find"),
                 Screen::DictionaryEntry => ("Word or phrase", "Look up"),
                 Screen::BookmarkFind => ("Bookmark, highlighted text, or note", "Find"),
@@ -8547,8 +8578,15 @@ impl Reader {
                 }
             }
         }
+        if let Some(ordinal) = self.menu_search.focused_list(self.screen)
+            && let Some(index) = ordinal.checked_sub(self.list_page * self.list_geometry().rows)
+            && let Some(rect) = group.row_rect(index)
+        {
+            menu_search::mark_control(canvas, rect);
+        }
         if rows.is_empty() {
             let empty = match self.screen {
+                Screen::MenuSearchResults => "No matching menu entries",
                 Screen::Bookmarks | Screen::FixedBookmarks | Screen::Highlights => {
                     "No saved marks in this book"
                 }
@@ -8954,9 +8992,13 @@ impl App for Reader {
         self.draw_closing_profile(canvas);
         self.draw_reading_notification(canvas);
         self.draw_annotation_exchange_confirmation(canvas);
+        self.draw_menu_search_preview(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
+        if let Some(point) = self.menu_search_preview_press(input) {
+            return point;
+        }
         if let Some(point) = self.annotation_exchange_press(input) {
             return point;
         }
@@ -9237,6 +9279,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.menu_search_input(input) {
+            return change;
+        }
         self.notifications.handle_input(input);
         self.finish_interrupted_scroll();
         if self.gestures.consume_assigned_corner_hold(input) {
@@ -9614,6 +9659,7 @@ impl App for Reader {
         if matches!(
             self.screen,
             Screen::Find
+                | Screen::MenuSearch
                 | Screen::LibraryFind
                 | Screen::VocabularySearch
                 | Screen::DictionaryEntry
@@ -9871,6 +9917,7 @@ impl App for Reader {
                         self.show(self.surface_screen());
                     }
                     Screen::Matches => self.show(Screen::Find),
+                    Screen::MenuSearchResults => self.edit_menu_search(),
                     Screen::SearchSettings => {
                         self.open_reading_edge(true, WIDTH as f32 / 2.0);
                         self.top_group = Some(TopGroup::Search);

@@ -131,8 +131,8 @@ impl Reader {
             .detail(format!("{enabled} of {} sources on", Source::ALL.len()))
     }
 
-    pub(super) fn notification_items(&self) -> Option<Vec<Item>> {
-        let items = match self.screen {
+    pub(super) fn notification_items(&self, screen: Screen) -> Option<Vec<Item>> {
+        let items = match screen {
             Screen::ReadingNotifications => Source::ALL
                 .into_iter()
                 .map(|(source, label)| Item::new(label, Action::ToggleNotificationSource(source)))
