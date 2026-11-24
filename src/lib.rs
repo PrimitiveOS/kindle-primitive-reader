@@ -38,6 +38,7 @@ mod font_synthesis;
 mod generated_contents;
 mod gray_glyph;
 pub mod logical_font;
+mod pdf_crop;
 pub use flow_probe::SourcePresentation;
 #[cfg(feature = "kindle")]
 mod footnotes;

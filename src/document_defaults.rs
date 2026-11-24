@@ -126,6 +126,7 @@ impl FixedDefaults {
             epub_spread: self.epub_spread,
             epub_right_to_left: self.epub_right_to_left,
             crop: geometry.crop,
+            semi_auto_crop: geometry.semi_auto_crop,
             offset_x: geometry.offset_x,
             offset_y: geometry.offset_y,
         }

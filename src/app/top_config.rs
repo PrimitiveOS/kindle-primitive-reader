@@ -482,6 +482,9 @@ impl Reader {
                 Item::new("Crop", Action::CropPage),
                 Item::new("Columns", Action::ScanColumns),
             ]);
+            if reading.supports_semi_auto_crop() {
+                items.push(Item::new("Semi-auto crop", Action::SemiAutoCrop));
+            }
             if self.ocr_assets.is_some() && self.ocr.is_none() {
                 items.push(Item::new("Recognize text", Action::RecognizeText));
             }

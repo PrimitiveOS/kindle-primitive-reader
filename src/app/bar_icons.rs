@@ -172,7 +172,9 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         | Action::ReadingMode(_)
         | Action::ReadFixedText
         | Action::ReflowScan => READFLOW,
-        Action::CropPage | Action::RecognizeText | Action::ScanColumns => CROP,
+        Action::CropPage | Action::SemiAutoCrop | Action::RecognizeText | Action::ScanColumns => {
+            CROP
+        }
         Action::FitHeight | Action::FitPage(_) | Action::SetFixedZoom(_) => DISPLAY,
         Action::ListBooks(super::BookList::Favorites) => FAVORITE,
         Action::ListBooks(super::BookList::Recent) => CLOCK,

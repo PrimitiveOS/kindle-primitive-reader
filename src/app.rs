@@ -70,6 +70,7 @@ mod result_context;
 mod saved_highlight_popup;
 mod search_chapter_scope;
 mod selection_popup;
+mod semi_auto_crop;
 mod sidecar_marks;
 mod skim;
 mod step_buttons;
@@ -570,6 +571,7 @@ enum Action {
     RotatePage,
     ReversePageDirection,
     CropPage,
+    SemiAutoCrop,
     RecognizeText,
     RecognizeLanguage(String),
     ReadFixedText,
@@ -788,6 +790,7 @@ pub struct Reader {
     locked: Option<LibraryBook>,
     folder_password_return: Option<Screen>,
     crop_dialog: Option<(FixedPreferences, Option<(f32, f32)>)>,
+    semi_auto_crop: Option<semi_auto_crop::Draft>,
     screen: Screen,
     reading_panel: Option<BarPanel>,
     last_text_panel: BarPanel,
@@ -997,6 +1000,7 @@ impl Reader {
             locked: None,
             folder_password_return: None,
             crop_dialog: None,
+            semi_auto_crop: None,
             screen: Screen::Library,
             reading_panel: None,
             last_text_panel: BarPanel::Text,
@@ -1192,6 +1196,9 @@ impl Reader {
         self.search_result = None;
         self.result_selection = None;
         if let Some(mut reading) = fixed {
+            if let Some(state) = self.library.state(id) {
+                reading.load_crop_seeds(state.pdf_crop_seeds.clone())?;
+            }
             let flows = self
                 .library
                 .state(id)
@@ -1714,7 +1721,7 @@ impl Reader {
     }
 
     fn record_position_at(&mut self, now: Instant) {
-        if self.fixed_search_fit_active() {
+        if self.fixed_search_fit_active() || self.semi_auto_crop.is_some() {
             return;
         }
         self.update_stats_activity(now);
@@ -3677,6 +3684,7 @@ impl Reader {
                 self.crop_dialog = Some((fixed.reading.start_crop()?, None));
                 self.show(Screen::FixedCrop);
             }
+            Action::SemiAutoCrop => self.start_semi_auto_crop()?,
             Action::RecognizeText => self.start_ocr(None)?,
             Action::RecognizeLanguage(language) => self.start_ocr(Some(&language))?,
             Action::ReadFixedText => self.read_fixed_text(false)?,
@@ -6062,6 +6070,9 @@ impl Reader {
     }
 
     fn crop_input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.semi_auto_crop_input(input) {
+            return change;
+        }
         let Some((original, first)) = self.crop_dialog else {
             return Change::None;
         };
@@ -6074,6 +6085,7 @@ impl Reader {
             Input::Tap(x, y) if RESET_CROP.contains(x, y) => (
                 FixedPreferences {
                     crop: None,
+                    semi_auto_crop: false,
                     offset_x: 0.0,
                     offset_y: 0.0,
                     ..original
@@ -6106,18 +6118,10 @@ impl Reader {
                 (
                     FixedPreferences {
                         crop: Some(region),
-                        turns: original.turns,
-                        right_to_left: original.right_to_left,
-                        width_fit: original.continuous,
-                        continuous: original.continuous,
-                        height_fit: original.height_fit,
-                        scan_contrast: original.scan_contrast,
-                        dither: original.dither,
-                        straighten_limit: original.straighten_limit,
-                        force_ocr: original.force_ocr,
-                        scan_white_level: original.scan_white_level,
-                        continuous_gap: original.continuous_gap,
-                        ..FixedPreferences::default()
+                        semi_auto_crop: false,
+                        offset_x: 0.0,
+                        offset_y: 0.0,
+                        ..original
                     },
                     true,
                 )
@@ -6931,6 +6935,9 @@ impl Reader {
         if self.screen == Screen::FixedCrop
             && let Some(fixed) = &self.fixed
         {
+            if self.draw_semi_auto_crop(canvas) {
+                return;
+            }
             let first = self.crop_dialog.and_then(|(_, first)| first);
             let point = first.map(|(x, y)| PdfTextRect {
                 x0: (x - 0.009).max(0.0),

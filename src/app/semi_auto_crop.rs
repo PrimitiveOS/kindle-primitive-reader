@@ -1,0 +1,349 @@
+use super::*;
+use crate::pdf_crop::Seed;
+use primitive_ui::GrayImage;
+
+const APPLY: Rect = Rect::new(853, PAGE_HEIGHT as i32 + 5, 180, 60);
+
+#[derive(Clone, Copy)]
+pub(super) struct Draft {
+    original: FixedPreferences,
+    viewport_height: u32,
+    seed: Seed,
+    size: (f32, f32),
+}
+
+impl Reader {
+    pub(super) fn start_semi_auto_crop(&mut self) -> Result<()> {
+        self.close_fixed_search_fit()?;
+        let fixed = self.fixed.as_mut().ok_or("Open a paged PDF first")?;
+        if !fixed.reading.supports_semi_auto_crop() {
+            return Err("Semi-auto crop is available for paged PDF".into());
+        }
+        let (seed, size) = fixed.reading.initial_crop_seed()?;
+        let (original, viewport_height) = fixed.reading.start_crop_preview()?;
+        self.crop_dialog = None;
+        self.semi_auto_crop = Some(Draft {
+            original,
+            viewport_height,
+            seed,
+            size,
+        });
+        self.show(Screen::FixedCrop);
+        Ok(())
+    }
+
+    pub(super) fn semi_auto_crop_input(&mut self, input: Input) -> Option<Change> {
+        let draft = self.semi_auto_crop?;
+        let action = match input {
+            Input::PageBack => self.cancel_semi_auto_crop(draft),
+            Input::Tap(x, y) if CANCEL_CROP.contains(x, y) => self.cancel_semi_auto_crop(draft),
+            Input::Tap(x, y) if APPLY.contains(x, y) => self.apply_semi_auto_crop(draft),
+            Input::Tap(x, y) => self.adjust_semi_auto_crop(draft, x, y),
+            _ => return Some(Change::None),
+        };
+        Some(match action {
+            Ok(()) => Change::Partial,
+            Err(error) => self.report(error),
+        })
+    }
+
+    fn adjust_semi_auto_crop(&mut self, draft: Draft, x: f32, y: f32) -> Result<()> {
+        let fixed = self.fixed.as_ref().ok_or("Open a paged PDF first")?;
+        let (x, y) = fixed
+            .reading
+            .crop_point(x, y)
+            .ok_or("Tap within the page")?;
+        let seed = draft
+            .seed
+            .adjust(x, y, draft.size)
+            .ok_or("Choose a larger area of the page")?;
+        self.semi_auto_crop = Some(Draft { seed, ..draft });
+        self.notice = None;
+        Ok(())
+    }
+
+    fn cancel_semi_auto_crop(&mut self, draft: Draft) -> Result<()> {
+        let fixed = self.fixed.as_mut().ok_or("Open a paged PDF first")?;
+        fixed
+            .reading
+            .restore_crop_preview(draft.original, draft.viewport_height)?;
+        self.semi_auto_crop = None;
+        self.show(Screen::Fixed);
+        Ok(())
+    }
+
+    fn apply_semi_auto_crop(&mut self, draft: Draft) -> Result<()> {
+        let fixed = self.fixed.as_mut().ok_or("Open a paged PDF first")?;
+        let library = &mut self.library;
+        fixed.reading.apply_crop_seed(
+            draft.original,
+            draft.viewport_height,
+            draft.seed,
+            |page, view, seeds| {
+                let state = library.remember(&fixed.entry, fixed.id, &fixed.entry.title);
+                let before = (
+                    std::mem::replace(&mut state.fixed_preferences, view),
+                    std::mem::replace(&mut state.pdf_crop_seeds, seeds.clone()),
+                    state.position.replace(ReadingPosition {
+                        chapter: 0,
+                        page,
+                        anchor: None,
+                    }),
+                );
+                if let Err(error) = library.persist() {
+                    let state = library.remember(&fixed.entry, fixed.id, &fixed.entry.title);
+                    (
+                        state.fixed_preferences,
+                        state.pdf_crop_seeds,
+                        state.position,
+                    ) = before;
+                    return Err(error);
+                }
+                Ok(())
+            },
+        )?;
+        self.semi_auto_crop = None;
+        self.show(Screen::Fixed);
+        self.record_position();
+        Ok(())
+    }
+
+    pub(super) fn draw_semi_auto_crop(&self, canvas: &mut Canvas) -> bool {
+        let (Some(draft), Some(fixed)) = (self.semi_auto_crop, self.fixed.as_ref()) else {
+            return false;
+        };
+        let reading = &fixed.reading;
+        reading.draw(canvas, None, &[], &[], self.page_paint());
+        if let Some(bounds) = draft
+            .seed
+            .normalized(draft.size)
+            .and_then(|bounds| reading.visible_rectangle(reading.page(), bounds))
+        {
+            let (x, y) = (bounds.x0.round() as i32, bounds.y0.round() as i32);
+            let (right, bottom) = (bounds.x1.round() as i32, bounds.y1.round() as i32);
+            // Pictures compose after UI-layer fills, so draw the handles
+            // as a second picture over the document raster.
+            let ink = if self.uses_night_pages() { 255 } else { 0 };
+            let paint = |canvas: &mut Canvas, rect: Rect| {
+                let (x, y) = (rect.x.max(0), rect.y.max(0));
+                let rect = Rect::new(
+                    x,
+                    y,
+                    rect.right().min(WIDTH as i32) - x,
+                    rect.bottom().min(PAGE_HEIGHT as i32) - y,
+                );
+                if rect.w > 0 && rect.h > 0 {
+                    canvas.picture(
+                        rect,
+                        GrayImage {
+                            width: rect.w as u32,
+                            height: rect.h as u32,
+                            pixels: vec![ink; rect.w as usize * rect.h as usize],
+                        },
+                    );
+                }
+            };
+            for band in [
+                Rect::new(x, y, right - x, 4),
+                Rect::new(x, bottom.saturating_sub(4), right - x, 4),
+                Rect::new(x, y, 4, bottom - y),
+                Rect::new(right.saturating_sub(4), y, 4, bottom - y),
+            ] {
+                paint(canvas, band);
+            }
+            for handle_y in [y, (y + bottom) / 2, bottom] {
+                for handle_x in [x, (x + right) / 2, right] {
+                    if handle_x != (x + right) / 2 || handle_y != (y + bottom) / 2 {
+                        paint(canvas, Rect::new(handle_x - 8, handle_y - 8, 16, 16));
+                    }
+                }
+            }
+        }
+        canvas.fill(
+            Rect::new(
+                0,
+                PAGE_HEIGHT as i32,
+                WIDTH as i32,
+                (HEIGHT - PAGE_HEIGHT) as i32,
+            ),
+            255,
+        );
+        canvas.text(
+            Rect::new(28, PAGE_HEIGHT as i32 + 12, 798, 52),
+            self.notice
+                .as_deref()
+                .unwrap_or("Tap near an edge or corner to adjust the crop"),
+            CAPTION,
+        );
+        draw_toolbar_button(canvas, APPLY, "Apply");
+        draw_toolbar_button(canvas, CANCEL_CROP, "Cancel");
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::tests::{Fixture, capture_test_screen};
+    use crate::pdf_crop::tests::{SIZE, even_seed, fixture, odd_seed};
+
+    fn tap_center(area: Rect) -> Input {
+        Input::Tap((area.x + area.w / 2) as f32, (area.y + area.h / 2) as f32)
+    }
+
+    fn normalized_box(x0: f32, y0: f32, x1: f32, y1: f32) -> PdfTextRect {
+        PdfTextRect { x0, y0, x1, y1 }
+    }
+
+    fn fixed(app: &Reader) -> &FixedReading {
+        &app.fixed.as_ref().unwrap().reading
+    }
+
+    #[test]
+    fn failed_semi_auto_crop_save_keeps_the_draft_and_existing_page_seed() {
+        let paths = Fixture::new();
+        let path = paths.root.join("Crop transaction.pdf");
+        fs::write(&path, fixture()).unwrap();
+        let mut app = Reader::open(&paths.root, &paths.state, Vec::new()).unwrap();
+        app.open_path(&path).unwrap();
+        let reading = &mut app.fixed.as_mut().unwrap().reading;
+        let (original, height) = reading.start_crop_preview().unwrap();
+        reading
+            .apply_crop_seed(original, height, odd_seed(), |_, _, _| Ok(()))
+            .unwrap();
+        let applied = reading.preferences();
+        let (original, height) = reading.start_crop_preview().unwrap();
+        let preview = reading.preferences();
+        assert!(
+            reading
+                .apply_crop_seed(original, height, even_seed(), |_, _, _| {
+                    Err(io::Error::other("mock storage failure"))
+                })
+                .is_err()
+        );
+        assert_eq!(reading.preferences(), preview);
+        assert!(
+            reading
+                .initial_crop_seed()
+                .unwrap()
+                .0
+                .normalized(SIZE)
+                .unwrap()
+                .x0
+                < 0.12
+        );
+        reading.restore_crop_preview(original, height).unwrap();
+        assert_eq!(reading.preferences(), applied);
+    }
+
+    #[test]
+    fn semi_auto_crop_cancels_exactly_and_reopens_with_page_seeds_and_annotation_geometry() {
+        let paths = Fixture::new();
+        let path = paths.root.join("Alternating scan margins.pdf");
+        fs::write(&path, fixture()).unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&paths.root, &paths.state, fonts.clone()).unwrap();
+        app.open_path(&path).unwrap();
+        let id = app.open_book_id().unwrap();
+        assert!(
+            app.scan_items()
+                .iter()
+                .any(|item| item.title == "Semi-auto crop")
+        );
+        app.activate(Action::SetReadingControls(ReadingControls {
+            overlap_footer: true,
+            ..app.controls
+        }))
+        .unwrap();
+        app.activate(Action::SetFixedRotation(1)).unwrap();
+        app.activate(Action::SetFixedTileZoom(FixedTileAxis::Columns, 15))
+            .unwrap();
+        app.input(Input::Swipe {
+            dx: -40.0,
+            dy: -70.0,
+            start_y: 600.0,
+        });
+        let original = fixed(&app).preferences();
+        let point = fixed(&app).history_point();
+        assert_eq!(fixed(&app).page_viewport().unwrap().1.height, HEIGHT);
+        let keep = normalized_box(0.4, 0.4, 0.45, 0.45);
+        let exclude = normalized_box(0.025, 0.14, 0.05, 0.16);
+        let mut state = app.library.state(id).unwrap().pdf_highlights.clone();
+        for (word, bounds) in [("Retained", keep), ("Outside", exclude)] {
+            state.push(PdfHighlight {
+                created_at: None,
+                style: Default::default(),
+                color: Default::default(),
+                page: 0,
+                bounds: vec![bounds],
+                text: word.into(),
+                note: Some(word.into()),
+                continuation: Vec::new(),
+            });
+        }
+        let active = app.fixed.as_ref().unwrap();
+        app.library
+            .remember(&active.entry, id, &active.entry.title)
+            .pdf_highlights = state;
+        app.mark_dirty();
+
+        app.activate(Action::SemiAutoCrop).unwrap();
+        assert_eq!(fixed(&app).page_viewport().unwrap().1.height, PAGE_HEIGHT);
+        let center = fixed(&app).visible_rectangle(0, keep).unwrap().center();
+        app.input(Input::Tap(center.x as f32, center.y as f32));
+        assert_eq!(app.screen, Screen::FixedCrop);
+        assert!(app.saved_popup.is_none());
+        app.save().unwrap();
+        assert_eq!(app.library.state(id).unwrap().fixed_preferences, original);
+        assert!(app.library.state(id).unwrap().pdf_crop_seeds.is_empty());
+        app.input(tap_center(CANCEL_CROP));
+        assert_eq!(fixed(&app).preferences(), original);
+        assert_eq!(fixed(&app).history_point(), point);
+        assert_eq!(fixed(&app).page_viewport().unwrap().1.height, HEIGHT);
+
+        app.activate(Action::SemiAutoCrop).unwrap();
+        app.semi_auto_crop.as_mut().unwrap().seed = odd_seed();
+        capture_test_screen(&app, &fonts, "READER_SEMI_AUTO_CROP_FRAME", false);
+        assert_eq!(app.input(tap_center(APPLY)), Change::Partial);
+        let updated = fixed(&app).preferences();
+        assert!(updated.semi_auto_crop);
+        assert_eq!(updated.tile_zoom, original.tile_zoom);
+        assert_eq!(updated.turns, original.turns);
+        assert_eq!(
+            app.library.state(id).unwrap().pdf_crop_seeds.get(0),
+            Some(odd_seed())
+        );
+        assert_eq!(fixed(&app).visible_links().len(), 1);
+        assert!(fixed(&app).visible_rectangle(0, exclude).is_none());
+        let center = fixed(&app).visible_rectangle(0, keep).unwrap().center();
+        app.input(Input::Tap(center.x as f32, center.y as f32));
+        assert!(app.saved_popup.is_some());
+        app.saved_popup = None;
+        let link = fixed(&app).visible_links().remove(0);
+        let center = fixed(&app)
+            .visible_rectangle(0, link.bounds)
+            .unwrap()
+            .center();
+        app.input(Input::Tap(center.x as f32, center.y as f32));
+        assert_eq!(app.current_position().unwrap().page, 1);
+        app.activate(Action::SemiAutoCrop).unwrap();
+        app.semi_auto_crop.as_mut().unwrap().seed = even_seed();
+        assert_eq!(app.input(tap_center(APPLY)), Change::Partial);
+        app.activate(Action::FixedPage(3)).unwrap();
+        let saved = fixed(&app).preferences();
+        assert_eq!(saved.crop, even_seed().normalized(SIZE));
+        app.save().unwrap();
+
+        let mut reopened = Reader::open(&paths.root, &paths.state, fonts).unwrap();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(fixed(&reopened).preferences(), saved);
+        assert_eq!(reopened.current_position().unwrap().page, 3);
+        reopened.activate(Action::FixedPage(2)).unwrap();
+        let area = fixed(&reopened).preferences().crop.unwrap();
+        assert!((area.x0 - 197.70259 / 600.0).abs() < 0.002);
+        assert!((area.y0 - 217.70259 / 800.0).abs() < 0.002);
+    }
+}

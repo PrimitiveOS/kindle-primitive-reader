@@ -532,6 +532,8 @@ pub struct FixedPreferences {
     pub epub_right_to_left: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crop: Option<PdfTextRect>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub semi_auto_crop: bool,
 }
 
 impl FixedPreferences {
@@ -568,7 +570,7 @@ impl FixedPreferences {
             turns: self.turns % 4,
             width_fit,
             height_fit: self.height_fit && !width_fit && tile_zoom.is_none(),
-            continuous: self.continuous && tile_zoom.is_none(),
+            continuous: self.continuous && tile_zoom.is_none() && !self.semi_auto_crop,
             spread: self.spread && tile_zoom.is_none(),
             continuous_gap: self.continuous_gap.min(MAX_CONTINUOUS_GAP),
             straighten_limit: self.straighten_limit.min(MAX_STRAIGHTEN_DEGREES),
@@ -643,6 +645,7 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                 .get("crop")
                 .and_then(|value| serde_json::from_value(value.clone()).ok())
                 .filter(valid_crop),
+            semi_auto_crop: switch("semi_auto_crop"),
         }
         .normalized())
     }
@@ -869,6 +872,12 @@ pub struct BookState {
     pub preferences: BookPreferences,
     #[serde(default)]
     pub fixed_preferences: FixedPreferences,
+    #[serde(
+        default,
+        deserialize_with = "read_pdf_crop_seeds",
+        skip_serializing_if = "crate::pdf_crop::Seeds::is_empty"
+    )]
+    pub(crate) pdf_crop_seeds: crate::pdf_crop::Seeds,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) preferred_dictionaries: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -912,6 +921,13 @@ fn read_ocr_language<'de, D: serde::Deserializer<'de>>(
         .map(str::to_owned))
 }
 
+fn read_pdf_crop_seeds<'de, D: serde::Deserializer<'de>>(
+    reader: D,
+) -> Result<crate::pdf_crop::Seeds, D::Error> {
+    let value = serde_json::Value::deserialize(reader)?;
+    Ok(serde_json::from_value(value).unwrap_or_default())
+}
+
 impl BookState {
     fn new(entry: &LibraryBook, id: u64) -> Self {
         Self {
@@ -934,6 +950,7 @@ impl BookState {
             top_status_header: None,
             preferences: BookPreferences::default(),
             fixed_preferences: FixedPreferences::default(),
+            pdf_crop_seeds: Default::default(),
             preferred_dictionaries: Vec::new(),
             dictionary_word_forms: None,
             ocr_language: None,
@@ -3305,6 +3322,7 @@ mod tests {
                 epub_spread: None,
                 epub_right_to_left: None,
                 crop: None,
+                semi_auto_crop: false,
             }
         );
         assert!(state.fixed_preferences.is_valid());
