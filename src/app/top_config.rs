@@ -379,6 +379,13 @@ impl Reader {
                 Item::new("Style tweaks", Action::Show(Screen::StyleTweaks))
                     .detail("Supported user CSS and live defaults"),
             );
+            items.push(
+                Item::new(
+                    "Font size rendering",
+                    Action::Show(Screen::FontRendering(super::eager_typography::Scope::Book)),
+                )
+                .detail(self.font_rendering_label()),
+            );
         }
         items.extend(self.quick_display_items());
         // Under Primitive Launcher the pages follow the launcher's theme: no Night pages switch here.

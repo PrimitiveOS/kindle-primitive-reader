@@ -415,7 +415,7 @@ fn changed_file() -> io::Error {
     )
 }
 
-fn check_cancelled(cancelled: &AtomicBool) -> io::Result<()> {
+pub(super) fn check_cancelled(cancelled: &AtomicBool) -> io::Result<()> {
     if cancelled.load(Ordering::Relaxed) {
         Err(io::Error::new(
             io::ErrorKind::Interrupted,
@@ -427,7 +427,11 @@ fn check_cancelled(cancelled: &AtomicBool) -> io::Result<()> {
 }
 
 /// A read lease never keeps a file handle across chunks, storage export, or layout.
-fn read_snapshot(path: &Path, stamp: &FileStamp, cancelled: &AtomicBool) -> io::Result<Vec<u8>> {
+pub(super) fn read_snapshot(
+    path: &Path,
+    stamp: &FileStamp,
+    cancelled: &AtomicBool,
+) -> io::Result<Vec<u8>> {
     check_cancelled(cancelled)?;
     let mut bytes = vec![0; stamp.len as usize];
     for (index, chunk) in bytes.chunks_mut(STORAGE_CHUNK).enumerate() {

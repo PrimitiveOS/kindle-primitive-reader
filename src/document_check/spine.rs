@@ -406,6 +406,7 @@ mod tests {
             hidden_flows: Default::default(),
             chapter_offsets: Default::default(),
             screen_pages: Default::default(),
+            eager_layouts: Default::default(),
         }
     }
 
@@ -604,6 +605,7 @@ mod logical_configuration_tests {
             hidden_flows: Default::default(),
             chapter_offsets: Default::default(),
             screen_pages: Default::default(),
+            eager_layouts: Default::default(),
         };
         let json = serde_json::to_value(SessionConfiguration::from(&config)).unwrap();
         assert_eq!(json["font_policy"], "stock_logical");

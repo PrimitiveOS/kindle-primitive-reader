@@ -304,6 +304,11 @@ pub(crate) struct ParleyChapter {
 }
 
 impl ParleyChapter {
+    #[cfg(feature = "kindle")]
+    pub(crate) fn release_raster_cache(&mut self) {
+        self.glyphs.release_masks();
+    }
+
     pub fn new(
         book: &mut Book,
         href: &str,

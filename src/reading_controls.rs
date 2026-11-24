@@ -22,6 +22,8 @@ pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct ReadingControls {
+    #[serde(skip_serializing_if = "crate::app::eager_typography::Mode::is_default")]
+    pub font_size_rendering: crate::app::eager_typography::Mode,
     #[serde(skip_serializing_if = "is_false")]
     pub remember_opening_location: bool,
     #[serde(skip_serializing_if = "crate::app::back_navigation::BackPreferences::is_default")]

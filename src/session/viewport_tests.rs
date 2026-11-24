@@ -23,6 +23,7 @@ fn authored_config(scroll: bool, overlap_footer: bool) -> BookConfig {
         hidden_flows: Default::default(),
         chapter_offsets: Default::default(),
         screen_pages: Default::default(),
+        eager_layouts: Default::default(),
     }
 }
 

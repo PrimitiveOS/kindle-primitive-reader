@@ -52,12 +52,53 @@ pixels when the count becomes ready. [Reader workflow](../src/app/typography_pag
 The pinned native test enables partial rendering on a cached,
 multi-fragment EPUB. It checks the delayed state after a font edit,
 draws the active fragment, restores the XPointer, then verifies the full
-page count against a fresh full render. Reader's current path prepares the
-active chapter and computes an independent page index. A per-book or
-global mode control and a full-document frame transaction remain open.
+page count against a direct edit with partial mode disabled. On the
+same authored Shore notebook, stock counted 15 pages before the edit and
+38 after the complete rerender. The direct full path reported no partial
+work and kept the source passage.
 [KOReader preference](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L445-L505) ·
 [KOReader render and reload states](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L1740-L1880) ·
 [Native CREngine test](../scripts/koreader-partial-typography-check.lua)
+
+### Choose how to render font size changes
+
+From the top bar, open **Settings › Font size rendering**. **Chapter first**
+shows the edited chapter when it is ready, with the whole-book count
+building in the background. **Whole book first** keeps the current layout
+and font size active while the worker lays out every supported spine item.
+**Default for EPUBs** sets the default for books using **Use default**. An
+individual EPUB can override it. The choice applies to the live Font size
+presets, step buttons and typed editor.
+
+While preparation runs, you can turn pages or use navigation. Reader
+waits for the reading surface, resolves the latest source passage in
+the prepared layouts, paints the new frame, then saves and installs
+the font size and verified page index together. Next and previous
+chapter turns can reuse the prepared Parley layouts. Glyph masks are
+released when returning a chapter to the cache. A newer size replaces
+an older request. **Cancel preparation**, sleep, changing books, and USB
+return discard a pending edit. If the source changes or a save fails,
+the current reading state stays in use.
+
+The prepared path covers regular horizontal paged EPUBs with 2–32 spine
+items, 512 ZIP members, up to 2 MiB compressed and 4 MiB expanded, 256 KiB
+of spine content, 6,000 parsed elements and 384 screen pages. It uses up
+to 64 installed fonts with a 16 MiB combined non-firmware font budget.
+Illustrated chapters and embedded TTF or OTF assets use Chapter first.
+Reader applies Chapter first automatically when the unsupported layout
+is known before the edit. If it finds a resource limit while preparing,
+the edit stops and the notice directs you to Chapter first. Font face,
+spacing, content zoom, styles, and saved-profile application still use
+the chapter-first path.
+
+The Mac test applies a size through the real editor, moves to a different
+source passage before commit, visits Contents and returns. It then checks
+the exact full-book count against independent foreground layouts and
+crosses the chapter boundary in both directions using the prepared layouts.
+[Settings](screenshots/whole-book-font-size-controls.png) ·
+[Preparing the edit](screenshots/whole-book-font-size-preparing.png) ·
+[Committed font size](screenshots/whole-book-font-size-committed.png) ·
+[Mac workflow tests](../src/app/eager_typography/tests.rs)
 
 ## Exact page count
 

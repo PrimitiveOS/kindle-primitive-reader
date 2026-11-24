@@ -1165,6 +1165,8 @@ impl From<PageBrowserGrid> for [u8; 2] {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BookState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) font_size_rendering: Option<crate::app::eager_typography::Mode>,
     #[serde(default, skip_serializing_if = "hidden_flows::HiddenFlows::is_default")]
     pub(crate) hidden_flows: hidden_flows::HiddenFlows,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1292,6 +1294,7 @@ fn read_pdf_crop_seeds<'de, D: serde::Deserializer<'de>>(
 impl BookState {
     fn new(entry: &LibraryBook, id: u64) -> Self {
         Self {
+            font_size_rendering: None,
             highlight_style: None,
             hide_nonlinear: None,
             hidden_flows: Default::default(),
@@ -2608,6 +2611,9 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
         }
         if target.page_browser_grid.is_none() {
             target.page_browser_grid = source.page_browser_grid;
+        }
+        if target.font_size_rendering.is_none() {
+            target.font_size_rendering = source.font_size_rendering;
         }
         if target.screen_orientation.is_none() {
             target.screen_orientation = source.screen_orientation;

@@ -67,6 +67,7 @@ fn css_restore_retains_canonical_focus_across_scroll_spread_reflow_and_reopen_un
             hidden_flows: Default::default(),
             chapter_offsets: Default::default(),
             screen_pages: Default::default(),
+            eager_layouts: Default::default(),
         };
         let mut reading = Reading::open(config).unwrap();
         let saved = reading.probe.matches("HIDDEN SAVED PASSAGE")[0].clone();
@@ -152,6 +153,7 @@ fn saved_custom_flow_markers_remain_resolved_when_publisher_css_omits_their_text
         hidden_flows: Default::default(),
         chapter_offsets: Default::default(),
         screen_pages: Default::default(),
+        eager_layouts: Default::default(),
     };
     let reading = Reading::open(config.clone()).unwrap();
     let anchor = reading.probe.matches("HIDDEN SAVED PASSAGE")[0].clone();

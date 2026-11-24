@@ -945,8 +945,48 @@ enum Renderer {
     Vertical(Box<vertical_layout::VerticalChapter>),
 }
 
-/// One bounded chapter layout. The renderer and cache are replaced at a chapter turn.
-pub struct Probe {
+// Keep the shared model fields identical while keeping Blitz's DOM on the
+// originating thread. A worker can transport its horizontal Parley layouts.
+macro_rules! chapter_probe {
+    ($( $(#[$attribute:meta])* $visibility:vis $field:ident : $kind:ty, )*) => {
+        /// One bounded chapter layout.
+        pub struct Probe {
+            $( $(#[$attribute])* $visibility $field: $kind, )*
+            renderer: Renderer,
+        }
+
+        #[cfg(feature = "kindle")]
+        pub(crate) struct PreparedParleyChapter {
+            $( $(#[$attribute])* $field: $kind, )*
+            renderer: parley_layout::ParleyChapter,
+        }
+
+        #[cfg(feature = "kindle")]
+        impl Probe {
+            fn into_prepared_parley(self) -> Option<PreparedParleyChapter> {
+                let Renderer::Parley(renderer) = self.renderer else {
+                    return None;
+                };
+                Some(PreparedParleyChapter {
+                    $( $(#[$attribute])* $field: self.$field, )*
+                    renderer,
+                })
+            }
+        }
+
+        #[cfg(feature = "kindle")]
+        impl PreparedParleyChapter {
+            fn into_probe(self) -> Probe {
+                Probe {
+                    $( $(#[$attribute])* $field: self.$field, )*
+                    renderer: Renderer::Parley(self.renderer),
+                }
+            }
+        }
+    };
+}
+
+chapter_probe! {
     pub(crate) first_series: Option<crate::epub::BookSeries>,
     pub title: String,
     pub author: Option<String>,
@@ -981,7 +1021,6 @@ pub struct Probe {
     custom_hyphenation_allowed: Vec<bool>,
     lines: Vec<Line>,
     pages: Pagination,
-    renderer: Renderer,
 }
 
 impl Probe {

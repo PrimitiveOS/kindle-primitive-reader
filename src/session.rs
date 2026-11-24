@@ -207,6 +207,7 @@ pub(crate) struct BookConfig {
     // Shared across chapter layouts, previews and font changes for the same open publication.
     pub(crate) chapter_offsets: std::rc::Rc<std::cell::OnceCell<Vec<u64>>>,
     pub(crate) screen_pages: screen_pages::ScreenPages,
+    pub(crate) eager_layouts: screen_pages::eager::Cached,
 }
 
 #[derive(Clone, Copy)]
@@ -233,6 +234,14 @@ impl BookConfig {
         let resources_changed = self.fonts != previous.fonts
             || self.user_styles != previous.user_styles
             || self.user_hyphenation != previous.user_hyphenation;
+        if self.settings != previous.settings
+            || resources_changed
+            || self.scroll != previous.scroll
+            || self.facing_pages != previous.facing_pages
+            || !std::rc::Rc::ptr_eq(&self.hidden_flows, &previous.hidden_flows)
+        {
+            self.eager_layouts = Default::default();
+        }
         if next == prior
             && !resources_changed
             && self.scroll == previous.scroll
@@ -290,6 +299,17 @@ impl BookConfig {
             probe.page_count(),
         );
         Ok(probe)
+    }
+
+    fn reading_chapter(&self, index: usize) -> Result<Probe> {
+        match self.eager_layouts.take(self, index) {
+            Ok(Some(probe)) => Ok(probe),
+            Ok(None) => self.chapter(index),
+            Err(error) => {
+                self.screen_pages.reset();
+                Err(error)
+            }
+        }
     }
 
     fn layout_chapter(
@@ -452,7 +472,7 @@ impl Reading {
         scroll_history_top: Option<f32>,
     ) -> Result<Self> {
         let start = Instant::now();
-        let mut probe = config.chapter(chapter)?;
+        let mut probe = config.reading_chapter(chapter)?;
         let custom_flows = hidden_flows::Resolved::new(&config, &probe, chapter)?;
         if config.hidden_flows.enabled {
             probe.flow_pages = Some(custom_flows.map(chapter, probe.page_count()));
@@ -554,7 +574,7 @@ impl Reading {
             self.adjacent.push((frame_page, prior));
             self.page = page;
         } else if let Some(chapter) = self.adjacent_reading_chapter(direction) {
-            let probe = self.config.chapter(chapter)?;
+            let probe = self.config.reading_chapter(chapter)?;
             self.land_at_chapter_edge(probe, chapter, direction)?;
             crossed_chapter = true;
         } else {
@@ -641,7 +661,7 @@ impl Reading {
         let candidate = if target.chapter == self.chapter {
             None
         } else {
-            Some(self.config.chapter(target.chapter)?)
+            Some(self.config.reading_chapter(target.chapter)?)
         };
         let probe = candidate.as_ref().unwrap_or(&self.probe);
         if !self
@@ -711,6 +731,7 @@ impl Reading {
     pub(crate) fn set_hide_nonlinear(&mut self, enabled: bool) {
         if self.config.hide_nonlinear != enabled {
             self.config.screen_pages.reset();
+            self.config.eager_layouts = Default::default();
         }
         self.config.hide_nonlinear = enabled;
         self.pause_turns();
@@ -891,6 +912,7 @@ impl Reading {
                 }
             };
             self.config.settings = settings;
+            self.config.eager_layouts = Default::default();
             self.frame = frame;
             self.adjacent.clear();
             self.schedule_prefetch();
@@ -902,6 +924,9 @@ impl Reading {
             ..self.config.settings
         }) == settings
         {
+            if self.config.settings != settings {
+                self.config.eager_layouts = Default::default();
+            }
             self.config.settings.invert_night_images = settings.invert_night_images;
             self.probe.settings.invert_night_images = settings.invert_night_images;
             self.config.settings.link_vertical_margins = settings.link_vertical_margins;
@@ -914,6 +939,10 @@ impl Reading {
         config.prepare_page_layout(&self.config);
         *self = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
         Ok(())
+    }
+
+    pub(crate) fn page_turn_pending(&self) -> bool {
+        self.turns.deadline().is_some()
     }
 
     /// Prepare a resized session without replacing the frame or reading position.
@@ -1043,7 +1072,13 @@ impl Reading {
         if page >= next.probe.page_count() {
             return Err("That page is outside the chapter".into());
         }
-        *self = next;
+        let previous = std::mem::replace(self, next);
+        if previous.chapter != chapter {
+            previous
+                .config
+                .eager_layouts
+                .put(previous.chapter, previous.probe);
+        }
         Ok(())
     }
 
@@ -1357,7 +1392,7 @@ impl Reading {
             else {
                 return Ok(Change::None);
             };
-            let probe = self.config.chapter(chapter)?;
+            let probe = self.config.reading_chapter(chapter)?;
             self.land_at_chapter_edge(probe, chapter, direction)?;
         }
         self.focus_anchor = None;
@@ -1388,7 +1423,8 @@ impl Reading {
         self.config
             .screen_pages
             .observe(&self.config, &probe, chapter);
-        self.probe = probe;
+        let previous = std::mem::replace(&mut self.probe, probe);
+        self.config.eager_layouts.put(self.chapter, previous);
         self.chapter = chapter;
         self.page = page;
         self.scroll_top = top;
@@ -1398,7 +1434,7 @@ impl Reading {
     }
 
     pub(crate) fn jump(&mut self, chapter: usize, fragment: Option<&str>) -> Result<()> {
-        let candidate = self.config.chapter(chapter)?;
+        let candidate = self.config.reading_chapter(chapter)?;
         let anchor = match fragment {
             Some(name) => candidate
                 .fragment(name)
@@ -1411,7 +1447,7 @@ impl Reading {
     }
 
     pub(crate) fn jump_to_anchor(&mut self, chapter: usize, anchor: &Anchor) -> Result<()> {
-        let candidate = self.config.chapter(chapter)?;
+        let candidate = self.config.reading_chapter(chapter)?;
         if candidate.page_for(anchor).is_none() {
             return Err("That location is unavailable".into());
         }
@@ -1503,7 +1539,10 @@ impl Reading {
             self.config
                 .screen_pages
                 .observe(&self.config, &candidate, chapter);
-            self.probe = candidate;
+            let previous = std::mem::replace(&mut self.probe, candidate);
+            if self.chapter != chapter {
+                self.config.eager_layouts.put(self.chapter, previous);
+            }
         }
         self.frame = frame;
         self.chapter = chapter;
@@ -2082,6 +2121,7 @@ impl App for Reading {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.config.eager_layouts = Default::default();
         self.config.screen_pages.reset();
         self.config.screen_pages.clear_typography();
         self.turns = PageTurns::new(Instant::now());
@@ -2305,6 +2345,7 @@ mod tests {
             user_styles: Default::default(),
             chapter_offsets: Default::default(),
             screen_pages: Default::default(),
+            eager_layouts: Default::default(),
             engine: Engine::Parley,
             book: crate::test_fixture(book),
             fonts: vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],
@@ -3102,6 +3143,7 @@ mod tests {
             user_styles: Default::default(),
             chapter_offsets: Default::default(),
             screen_pages: Default::default(),
+            eager_layouts: Default::default(),
             engine: Engine::Parley,
             book: crate::test_fixture("vertical-chapters.epub"),
             fonts: vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],

@@ -61,11 +61,16 @@ assert(not view:isPartialRerenderingEnabled() and not view:isRerenderingDelayed(
 assert(view:getTextFromXPointers(focus.start, focus["end"]) == passage)
 view:close()
 
-local fresh = state(48)
+local fresh = state(29)
+assert(not fresh:isPartialRerenderingEnabled())
+fresh:gotoXPointer(focus.start)
+fresh:setFontSize(48)
+fresh:getCurrentPos()
+assert(not fresh:isRerenderingDelayed(false) and fresh:getPartialRerenderingsCount() == 0)
 assert(fresh:getPages() == completed and completed ~= initial)
 assert(fresh:getTextFromXPointers(focus.start, focus["end"]) == passage)
 print(string.format(
-    "CREngine partial typography: baseline=%d, fragment-pass=%d, complete=%d, source restored.",
+    "CREngine partial typography: baseline=%d, fragment-pass=%d, direct full=%d, source restored.",
     initial, provisional, completed))
 fresh:close()
 frame:free()

@@ -1,5 +1,6 @@
 //! Exact screen pages tied to one EPUB edition and layout.
 pub(crate) mod background;
+pub(crate) mod eager;
 
 use std::cell::{Cell, RefCell};
 use std::fs;
@@ -570,6 +571,7 @@ mod tests {
             hidden_flows: Default::default(),
             chapter_offsets: Default::default(),
             screen_pages: Default::default(),
+            eager_layouts: Default::default(),
         }
     }
 

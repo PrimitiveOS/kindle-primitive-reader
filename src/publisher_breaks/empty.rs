@@ -563,6 +563,7 @@ mod tests {
             hidden_flows: Default::default(),
             chapter_offsets: Default::default(),
             screen_pages: Default::default(),
+            eager_layouts: Default::default(),
         };
         let mut reading = crate::session::Reading::restore(config.clone(), 0, 1, None).unwrap();
         assert_eq!(reading.page, 1);

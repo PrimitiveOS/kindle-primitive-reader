@@ -37,6 +37,7 @@ use dictionary_sources::{SourceAction, SourcePreferences};
 pub(crate) mod back_navigation;
 #[cfg(test)]
 mod backup_defaults_integration_tests;
+pub(crate) mod eager_typography;
 mod end_of_book;
 #[cfg(test)]
 mod epub_gif_tests;
@@ -286,6 +287,7 @@ enum Screen {
     ReadingFonts,
     ReadingProfiles,
     DocumentDefaults,
+    FontRendering(eager_typography::Scope),
     StyleTweaks,
     StylePreset,
     StyleFiles,
@@ -466,6 +468,8 @@ impl Screen {
             Self::ReadingFonts => "Reading font",
             Self::ReadingProfiles => "Reading profiles",
             Self::DocumentDefaults => "Document defaults",
+            Self::FontRendering(eager_typography::Scope::Book) => "Font size rendering",
+            Self::FontRendering(eager_typography::Scope::Default) => "Default font size rendering",
             Self::StyleTweaks => "Style tweaks",
             Self::StylePreset => "Style tweak",
             Self::StyleFiles => "Import CSS",
@@ -613,6 +617,8 @@ enum Action {
     Text(Settings),
     ApplyWordSpacing(u64, crate::WordSpacePercent),
     ApplyLogicalFont(u64, f64),
+    FontRendering(eager_typography::Scope, Option<eager_typography::Mode>),
+    CancelEagerFont,
     ShowFonts,
     ShowFooterFonts,
     SetFooterFontFace(Option<String>),
@@ -976,6 +982,7 @@ pub struct Reader {
     nearby: nearby_search::Nearby,
     screen_page_jump: Option<go_to_page::PendingJump>,
     screen_page_worker: crate::session::screen_pages::background::Worker,
+    eager_typography: eager_typography::State,
     find_match_case: bool,
     find_ignore_accents: bool,
     find_regex: bool,
@@ -1218,6 +1225,7 @@ impl Reader {
             nearby: nearby_search::Nearby::default(),
             screen_page_jump: None,
             screen_page_worker: Default::default(),
+            eager_typography: Default::default(),
             find_match_case: false,
             find_ignore_accents: false,
             find_regex: false,
@@ -1298,6 +1306,7 @@ impl Reader {
     }
 
     fn open_with_password(&mut self, mut entry: LibraryBook, password: Option<&str>) -> Result<()> {
+        self.eager_typography.cancel();
         self.closing_profile = None;
         self.opening_execution = None;
         self.screen_page_worker.cancel();
@@ -1534,6 +1543,7 @@ impl Reader {
             user_hyphenation: self.user_hyphenation.clone(),
             chapter_offsets: Default::default(),
             screen_pages: Default::default(),
+            eager_layouts: Default::default(),
             engine: Engine::Parley,
             book: absolute,
             fonts,
@@ -3282,6 +3292,7 @@ impl Reader {
                 );
                 items
             }
+            Screen::FontRendering(scope) => return self.font_rendering_items(scope),
             Screen::DocumentDefaults
             | Screen::StyleTweaks
             | Screen::StylePreset
@@ -4283,6 +4294,11 @@ impl Reader {
             Action::SetUserHyphenation(enabled) => self.set_user_hyphenation(enabled)?,
             Action::ApplyWordSpacing(owner, value) => self.apply_word_spacing(owner, value)?,
             Action::ApplyLogicalFont(owner, value) => self.apply_logical_font(owner, value)?,
+            Action::FontRendering(scope, mode) => self.set_font_rendering(scope, mode)?,
+            Action::CancelEagerFont => {
+                self.eager_typography.cancel();
+                self.notice = None;
+            }
             Action::Text(settings) => {
                 let active = self.active.as_mut().ok_or("No open book")?;
                 active.reading.reflow(settings)?;
@@ -5113,6 +5129,7 @@ impl Reader {
     }
 
     fn close_book_to_library(&mut self) {
+        self.eager_typography.cancel();
         self.closing_profile = None;
         self.closing_before_switch = None;
         self.opening_execution = None;
@@ -5264,6 +5281,11 @@ impl Reader {
     }
 
     fn screen_page_count_intent(&self) -> Option<ScreenPageIntent> {
+        if self.eager_typography.pending()
+            && (self.screen != Screen::GoToPage || self.eager_typography.waiting_for_layout())
+        {
+            return None;
+        }
         if self.needs_screen_page_count() {
             return Some(ScreenPageIntent::Visible);
         }
@@ -8843,6 +8865,9 @@ impl App for Reader {
         if self.gestures.consume_assigned_corner_hold(input) {
             return Change::None;
         }
+        if input == Input::Sleep {
+            self.eager_typography.cancel();
+        }
         if let Some(change) = self.closing_profile_input(input) {
             return change;
         }
@@ -9324,6 +9349,12 @@ impl App for Reader {
                     Screen::VeryLongPressSettings => self.show(Screen::LongPressSettings),
                     Screen::HighlightPromptSettings => self.show(Screen::LongPressSettings),
                     Screen::DocumentDefaults => self.show(Screen::ReadingControls),
+                    Screen::FontRendering(eager_typography::Scope::Book) => {
+                        self.show(Screen::ReadingControls)
+                    }
+                    Screen::FontRendering(eager_typography::Scope::Default) => {
+                        self.show(Screen::FontRendering(eager_typography::Scope::Book))
+                    }
                     Screen::StyleTweaks => self.show(self.tools_screen()),
                     Screen::ReadingGuides => {
                         self.open_reading_edge(true, WIDTH as f32 / 2.0);
@@ -9521,6 +9552,7 @@ impl App for Reader {
         page.into_iter()
             .chain(fixed_page)
             .chain(self.screen_page_worker.deadline(screen_pages))
+            .chain(self.eager_font_deadline())
             .chain(self.export_deadline())
             .chain(self.bookmark_metadata_deadline())
             .chain(
@@ -9568,6 +9600,9 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if let Some(change) = self.eager_font_tick(now) {
+            return change;
+        }
         if let Some(change) = self.opening_execution_tick(now) {
             return change;
         }
@@ -9782,6 +9817,7 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
+        self.eager_typography.cancel();
         self.screen_page_worker.cancel();
         self.save_library()?;
         let now = Instant::now();
@@ -9797,6 +9833,7 @@ impl App for Reader {
 
     fn storage_returned(&mut self) -> io::Result<()> {
         self.gestures.clear_assigned_corner_hold();
+        self.eager_typography.cancel();
         self.alternative_contents = Default::default();
         self.sync_alternative_contents();
         if self.screen.is_contents() {
@@ -10390,6 +10427,7 @@ pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path
         user_hyphenation: Default::default(),
         chapter_offsets: Default::default(),
         screen_pages: Default::default(),
+        eager_layouts: Default::default(),
         engine,
         book,
         fonts,

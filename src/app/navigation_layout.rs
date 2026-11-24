@@ -145,6 +145,7 @@ impl Screen {
                 )
                 | Self::ReadingFonts
                 | Self::Typography
+                | Self::FontRendering(_)
                 | Self::StyleTweaks
                 | Self::StylePreset
                 | Self::StyleFiles

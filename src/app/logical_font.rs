@@ -97,26 +97,42 @@ impl Reader {
             .as_ref()
             .filter(|active| active.id == owner)
             .ok_or("The open book changed; reopen font size before applying")?;
-        if with_storage(|| self.library.identify(&active.entry))? != owner {
-            return Err(
-                "The document edition changed; reopen the book before changing font size".into(),
-            );
-        }
         let mut config = active.reading.config.clone();
         config.settings = config.settings.with_logical_font(value)?;
         config.prepare_page_layout(&active.reading.config);
         let location = position(&active.reading);
+        let publication = active.reading.probe.book;
+        let entry = active.entry.clone();
+        if self.queue_eager_font(owner, value, &config) {
+            return Ok(());
+        }
+        if with_storage(|| self.library.identify(&entry))? != owner {
+            return Err(
+                "The document edition changed; reopen the book before changing font size".into(),
+            );
+        }
         let candidate = Reading::restore(
             config,
             location.chapter,
             location.page,
             location.anchor.as_ref(),
         )?;
-        if candidate.probe.book != active.reading.probe.book
-            || with_storage(|| self.library.identify(&active.entry))? != owner
+        if candidate.probe.book != publication
+            || with_storage(|| self.library.identify(&entry))? != owner
         {
             return Err("The document edition changed during font sizing; reopen the book".into());
         }
+        self.commit_logical_font(owner, value, candidate)?;
+        self.close_logical_font();
+        Ok(())
+    }
+
+    pub(super) fn commit_logical_font(
+        &mut self,
+        owner: u64,
+        value: f64,
+        candidate: Reading,
+    ) -> Result<()> {
         // Validate painting before committing a size: a mapped blank glyph is not success.
         let prior = self
             .library
@@ -137,7 +153,6 @@ impl Reader {
         }
         self.active.as_mut().unwrap().reading = candidate;
         self.record_position();
-        self.close_logical_font();
         Ok(())
     }
     pub(super) fn draw_logical_font(&self, canvas: &mut Canvas) {

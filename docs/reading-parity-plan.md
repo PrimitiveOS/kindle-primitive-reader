@@ -162,7 +162,9 @@ to their text, including supported horizontal padding and solid borders.
 Full Render Mode behavior and its user-facing choices remain open.
 On supported EPUBs, typography edits now preserve the active passage and
 rebuild the whole-book screen-page index when reading resumes, even with
-the header off. The full-document render choice remains open.
+the header off. Bounded horizontal text EPUBs offer a saved whole-book
+rendering choice for live font-size edits. Whole-book rendering for
+other typography controls and broader publication types remains open.
 [Publisher comparisons](render-modes.md) ·
 [Partial typography rendering comparison](whole-book-screen-pages.md#partial-typography-rendering-comparison)
 
@@ -170,6 +172,7 @@ the header off. The full-document render choice remains open.
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.
 - [x] Audit all four native CREngine Render Mode masks against authored CSS and compare Reader’s existing Parley and Blitz paths. The mode control remains open for the measured layout and source-position work. [Reference and captures](render-modes.md)
 - [x] Recount exact screen pages after committed typography edits for supported EPUBs. Check canonical position, ordinary opens, paint-only edits, rollback, sleep, USB and immediate Go to page after completion. [Native comparison and Mac captures](whole-book-screen-pages.md#partial-typography-rendering-comparison)
+- [x] Prepare and commit complete layouts for live font-size edits in bounded text EPUBs. Verify per-book and default preferences, current source focus, old-frame navigation and cached chapter reuse. [Font size rendering](whole-book-screen-pages.md#choose-how-to-render-font-size-changes)
 - [x] Match the normal Book Map's browser-on-tap and direct jump options in the Mac simulator. Check focused EPUB and PDF previews, cancel back to the same map, and one return entry on commit. [Book Map evidence](reading-orientation-contract.md#book-map-and-page-overview)
 - [x] Match the measured vertical margin contributions in the horizontal Parley provider behind an internal opt-in. Check direct sibling edges, structural boundaries, and source-range restoration after pagination changes. [Block spacing comparison](render-modes.md#horizontal-block-spacing)
 - [x] Add physical left and right text float exclusions and side-specific clearance to the horizontal Parley provider behind an internal opt-in. Verify per-line width, source hit-testing and ordinary-flow rollback. [Float comparison](render-modes.md#horizontal-floats-and-clearance)

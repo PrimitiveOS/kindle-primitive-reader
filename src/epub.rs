@@ -446,6 +446,19 @@ impl Book {
         )
     }
 
+    #[cfg(feature = "kindle")]
+    pub(crate) fn supports_eager_typography(&self) -> bool {
+        matches!(&self.content, Content::Archive { archive: Archive::Zip(archive), .. }
+        if archive.missing.is_empty()
+            && archive.zip.len() <= 512
+            && archive.zip.decompressed_size().is_some_and(|bytes| bytes <= 4 * 1024 * 1024)
+            && archive.zip.file_names().all(|name| {
+                name.rsplit_once('.').is_none_or(|(_, extension)| {
+                    !extension.eq_ignore_ascii_case("ttf") && !extension.eq_ignore_ascii_case("otf")
+                })
+            }))
+    }
+
     pub(crate) fn package_xml(&mut self) -> Result<String> {
         match &mut self.content {
             Content::Archive {

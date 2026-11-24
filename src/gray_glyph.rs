@@ -68,6 +68,14 @@ pub(crate) struct GlyphCache {
 }
 
 impl GlyphCache {
+    #[cfg(feature = "kindle")]
+    pub(crate) fn release_masks(&mut self) {
+        self.faces.clear();
+        self.bytes = 0;
+        self.full = false;
+        self.paint_error = None;
+    }
+
     pub(crate) fn with_hinting(
         large_outlines: bool,
         hinting: FontHinting,
