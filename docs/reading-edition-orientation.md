@@ -174,8 +174,8 @@ committed dimensions. Scenes awaiting their viewport updates follow Launcher
 and retain the edition preference for later reading.
 [Selection and lookups in landscape](landscape-selection.md)
 
-The combined workflow passed 1,285 Mac library tests with 66 opt-in cases
-skipped, along with 14 EPUB package and four layout checks.
+The combined workflow passed 1,293 Mac library tests with 66 opt-in cases
+skipped, along with one Kindle entry, 14 EPUB package and four layout checks.
 It covered cross-book Bookmark Browser, full-document search and live
 results rotation, Book Map, Page Overview, Footnote, View HTML, the personal
 hyphenation editor, encrypted PDF entry, PDF crop, custom Contents, page
@@ -183,7 +183,9 @@ links, location history, printed pages, numeric controls, illustration
 inspection, scan text, the end-of-book panel, dictionary and online lookup settings and
 history, reading profiles, in-book font selection, and publisher styles and
 book CSS. It verifies that toolbar gestures use the accepted dimensions and
-that the first displayed frame highlights the accepted turn. A delayed callback from a superseded viewport leaves the current
+that the first displayed frame highlights the accepted turn. Profile Apply,
+resetting text defaults, font-fit recovery, and EPUB and PDF footer-overlap
+changes preserve the displayed reading dimensions. A delayed callback from a superseded viewport leaves the current
 proposal and the edition’s orientation preference intact.
 [Search screenshots](landscape-document-search.md) ·
 [Reading tools](landscape-reading-tools.md) ·

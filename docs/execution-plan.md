@@ -55,7 +55,7 @@ and negotiates the wider reading canvas with a compatible Launcher.
 | --- | --- | --- |
 | Reading display and controls | Portrait and both landscape turns with an authored EPUB on Oasis. The same frame was recovered after each Quick Settings dismissal, and a queued page-key event did not turn the page. | Physical digitizer and button timing, panel refresh, sleep and wake, and a USB data mount and eject. |
 | Text selection and lookup | A timed contact through the Oasis touch input opened an offline dictionary above the selected word. Returning to the selection grid and canceling recovered the same frame. | Direct KOReader comparison on the Kindle, including cross-page PDF selection and hold timing. |
-| Reading profiles | The saved-value editor was compared with the pinned stock callbacks. Device checks cover saving EPUB line spacing separately from applying it. | Additional fixed-document and portrait foreground checks. |
+| Reading profiles | The saved-value editor was compared with the pinned stock callbacks. The Oasis saved EPUB line spacing separately from applying it, then applied it at the same source location with full-width rendering and a working Exit. | Additional fixed-document and portrait foreground checks. |
 | Publisher rendering | Pinned KOReader and Reader independently matched the horizontal coordinates of the two authored Web-width paragraphs. Reader retains its default layout policy. | The remaining box, float, table and break semantics and the full user-facing Render Mode control. |
 
 [Oasis foreground receipt](reading-orientation-contract.md#foreground-acceptance-on-oasis-3) ·

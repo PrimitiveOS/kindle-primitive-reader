@@ -80,3 +80,21 @@ toggling document overlap in an EPUB or PDF.
 
 Set `READER_LANDSCAPE_TOOLS_CAPTURES` to save the desktop render.
 [Included settings in landscape](screenshots/landscape-reading-profile-fields.png)
+
+
+### Oasis profile Apply retest
+
+The first ARM build saved the new EPUB line spacing independently of the
+active book, then revealed a portrait-sized document frame after Apply in
+Landscape Left. The landscape footer caption and Exit disappeared. The
+corrected build `9369dca` uses the accepted document dimensions when it rebuilds
+the page. It saved a 124% value and preserved the profile's included field
+and the open book data until Apply. Apply changed the reading pixels and
+kept the exact source anchor. Framebuffer inspection confirmed ink in the
+landscape-only region and both footer controls. A tap on the far-right Exit
+returned to Launcher.
+
+The same integrated source passed 1,293 Mac library tests, one Kindle entry
+test, 14 EPUB package tests and four layout checks. The reflow-default and
+EPUB/PDF footer-overlap regressions check the whole frame and the Exit target.
+[Oasis frame after Apply](screenshots/oasis-landscape-profile-applied.png)
