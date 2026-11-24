@@ -84,16 +84,25 @@ input, E Ink refresh, and sleep and USB resume checks remain open. [Exact-value 
 [Illustrations](epub-gif-illustrations.md) ·
 [Oasis test sequence](reading-orientation-contract.md#foreground-acceptance-on-oasis-3)
 
-Reader now edits saved line spacing for reflowable profiles and page overlap
-for fixed profiles, plus saved font size and content zoom. Dictionary result
-arrows now support held jumps to the first and last definition and preserve
-an armed highlight while switching sources. [Dictionary result navigation](dictionary-popup-display.md#first-and-last-results)
+Saved profile editing covers reflow typography, page overlap, PDF crop
+margin, and PDF or comic scan contrast. Reading statistics has a
+whole-second duration editor with the stock bounds, steps, defaults and
+accounting. Local statistics database import remains open. Dictionary
+result arrows support held jumps to the first and last definition and
+preserve an armed highlight while switching sources. Named dictionary
+presets manage source enablement. Temporary lookup with a chosen preset
+remains open.
+[Saved reading profiles](reading-profiles.md#editing-saved-values) ·
+[Page duration limits](reading-statistics.md#page-duration-limits) ·
+[Dictionary result navigation](dictionary-popup-display.md#first-and-last-results)
 
 The experimental Parley policies match the pinned KOReader Web mode's
 width and horizontal placement for two authored paragraphs. They also match
 the measured definite box heights and preserve text and source positions when
-a box's background fills across a page break. Full Render Mode behavior and its user-facing choices remain
-open. [Saved reading profiles](reading-profiles.md) · [Publisher widths](render-modes.md)
+a box's background fills across a page break. In supported ordinary
+paragraphs, the opt-in policy also matches stock's explicit opening
+breaks inside keep groups and beside a sibling keep. Full Render Mode
+behavior and its user-facing choices remain open. [Publisher comparisons](render-modes.md)
 
 
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.

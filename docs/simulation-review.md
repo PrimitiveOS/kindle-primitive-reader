@@ -2,6 +2,31 @@
 
 ## Current Mac simulator checkpoint
 
+Reader's page-duration sheet matches the pinned KOReader whole-second
+bounds, tap and hold steps, defaults, and accounting for ordinary visits.
+Reader saves both values with Apply and keeps failed edits for retry.
+Saved PDF profiles now edit crop margin, and PDF and comic profiles edit
+scan contrast. The opt-in EPUB renderer uses the measured opening break
+priority for supported keep groups and keeps the saved source anchor.
+Offline dictionary presets can be created, applied, updated, renamed, and
+deleted from Dictionaries. Presets record which sources to enable.
+[Duration controls and frames](reading-statistics.md#page-duration-limits) ·
+[Saved scan profile controls](reading-profiles.md#editing-saved-values) ·
+[Opening-break comparison](render-modes.md) ·
+[Offline dictionaries](shared-dictionaries.md)
+
+The normal picker opened cached original EPUB, PDF, AZW3, and MOBI files.
+Each turned a page and reopened with identical resumed pixels and an
+unchanged source hash. An additional EPUB/PDF run verified that the
+statistics views leave the reading position and original bytes intact.
+The four-thread Mac suite passed 1,338 library tests, one Kindle entry
+test, 14 EPUB package tests, and four layout tests. Sixty-six opt-in tests
+were skipped. Two OCR fixtures timed out in the higher-concurrency run,
+then passed in isolation and in the complete four-thread run.
+Kindle foreground acceptance and the Store release remain open.
+
+## Seven-day report checkpoint
+
 The seven-day reading progress report reproduces stock weekly, daily, and
 session totals on the same authored visits. The actual pinned SDL widget
 and Reader's portrait and landscape report have reviewed frame captures.
