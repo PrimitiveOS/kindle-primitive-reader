@@ -276,6 +276,7 @@ impl Reader {
             self.nearby.clear();
             self.nearby.results_context = None;
             self.hits.clear();
+            self.clear_flexible_results();
             self.result_selection = None;
             self.search_result = None;
             return Err("Reading styles or the book changed; search again".into());
@@ -729,6 +730,7 @@ impl Reader {
         if !pending.continuing {
             self.search_result = None;
         }
+        self.clear_flexible_results();
         self.hits = vec![hit];
         self.activate(Action::SearchHit(0))?;
         self.nearby.current = Some(pending.query.clone());

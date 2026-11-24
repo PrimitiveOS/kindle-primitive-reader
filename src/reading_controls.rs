@@ -25,6 +25,8 @@ pub(crate) struct ReadingControls {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search_rows: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_max_lines: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub search_context_words: Option<u8>,
     pub hide_nonlinear_default: bool,
     #[serde(skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default")]

@@ -39,6 +39,7 @@ mod external_link;
 mod fixed_book_map;
 #[cfg(test)]
 mod fixed_results_tests;
+mod flexible_results;
 #[cfg(test)]
 mod font_render_tests;
 mod footer_custom_text;
@@ -793,6 +794,7 @@ pub struct Reader {
     matches_page: usize,
     matches_from_selection: bool,
     result_context: Option<result_context::ResultContext>,
+    flexible_results: std::cell::RefCell<Option<flexible_results::FlexibleResults>>,
     focused_result: Option<usize>,
     current_contents_row: Option<usize>,
     contents_view: Option<contents_view::ContentsView>,
@@ -997,6 +999,7 @@ impl Reader {
             matches_page: 0,
             matches_from_selection: false,
             result_context: None,
+            flexible_results: Default::default(),
             focused_result: None,
             current_contents_row: None,
             contents_view: None,
@@ -1652,6 +1655,7 @@ impl Reader {
     }
 
     fn cancel_search(&mut self) {
+        self.clear_flexible_results();
         self.nearby.clear();
         self.pdf_search = None;
         self.search_at = None;
@@ -1790,13 +1794,16 @@ impl Reader {
             return self.publisher_page_window(first, ROWS_PER_PAGE);
         }
         if self.screen == Screen::Matches {
+            let range = self
+                .flexible_result_range()
+                .unwrap_or(first..first.saturating_add(rows));
             if let Some(fixed) = &self.fixed {
                 let items = self
                     .pdf_hits
                     .iter()
                     .enumerate()
-                    .skip(first)
-                    .take(rows)
+                    .skip(range.start)
+                    .take(range.len())
                     .map(|(index, hit)| {
                         Item::new(&hit.snippet, Action::PdfSearchHit(index))
                             .detail(fixed_page_label(&fixed.reading, hit.page))
@@ -1808,8 +1815,8 @@ impl Reader {
                 .hits
                 .iter()
                 .enumerate()
-                .skip(first)
-                .take(rows)
+                .skip(range.start)
+                .take(range.len())
                 .map(|(index, hit)| {
                     Item::new(&hit.snippet, Action::SearchHit(index)).detail(&hit.chapter_title)
                 })
@@ -3830,7 +3837,7 @@ impl Reader {
                     self.push_history(previous);
                 }
                 self.search_result = Some(index);
-                self.matches_page = index / self.match_geometry().rows;
+                self.matches_page = self.match_page_for_index(index);
             }
             Action::PdfSearchHit(index) => {
                 let hit = self
@@ -3844,7 +3851,7 @@ impl Reader {
                     self.push_history(previous);
                 }
                 self.search_result = Some(index);
-                self.matches_page = index / self.match_geometry().rows;
+                self.matches_page = self.match_page_for_index(index);
             }
             Action::PdfHighlight(index) => {
                 let fixed = self.fixed.as_ref().ok_or("No open PDF")?;
@@ -4752,6 +4759,7 @@ impl Reader {
         self.update_lookup_history(|history| {
             history.search(query, match_case, ignore_accents, false)
         })?;
+        self.clear_flexible_results();
         self.matches_from_selection = false;
         self.nearby.clear();
         self.search_result = None;
@@ -7160,6 +7168,9 @@ impl Reader {
             _ => self.screen.title(),
         };
         header(canvas, title, "Back");
+        if self.screen == Screen::Matches && self.draw_flexible_results(canvas) {
+            return;
+        }
         if self.draw_flexible_marks(canvas) {
             return;
         }
@@ -7426,13 +7437,7 @@ impl Reader {
                 Screen::OnlineHistory => "No completed online lookups",
                 Screen::SearchHistory => "No recent searches",
                 Screen::Vocabulary => "No saved words",
-                Screen::Matches if self.search_at.is_some() && self.fixed.is_some() => {
-                    "Searching pages"
-                }
-                Screen::Matches if self.search_at.is_some() || self.nearby.searching_all() => {
-                    "Searching chapters"
-                }
-                Screen::Matches => "No matches",
+                Screen::Matches => self.search_results_empty_label(),
                 Screen::GeneratedContents
                     if self
                         .outline
@@ -8179,6 +8184,9 @@ impl App for Reader {
                 return Change::Partial;
             }
             return Change::None;
+        }
+        if let Some(change) = self.flexible_result_input(input) {
+            return change;
         }
         let (count, mut items) = self.list_window();
         let geometry = self.list_geometry();

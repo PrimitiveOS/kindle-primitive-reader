@@ -20,6 +20,28 @@ pub(super) const CANCEL: Rect = Rect::new(244, 1025, 376, 112);
 pub(super) const APPLY: Rect = Rect::new(644, 1025, 376, 112);
 pub(super) const LIST_HEIGHT: i32 = HEIGHT as i32 - LIST_Y - 250;
 
+pub(super) fn measure_rows<R>(
+    first: usize,
+    count: usize,
+    mut spill: Option<R>,
+    mut measure: impl FnMut(usize) -> R,
+    bounds: impl Fn(&mut R) -> &mut Rect,
+) -> (Vec<R>, Option<R>) {
+    let mut y = LIST_Y;
+    let mut rows = Vec::new();
+    for index in first..count {
+        let mut row = spill.take().unwrap_or_else(|| measure(index));
+        let rect = bounds(&mut row);
+        if y + rect.h > LIST_Y + LIST_HEIGHT {
+            return (rows, Some(row));
+        }
+        rect.y = y;
+        y = rect.bottom();
+        rows.push(row);
+    }
+    (rows, None)
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum Scope {
     Contents,
@@ -156,7 +178,10 @@ impl PickerTarget {
     }
 
     fn is_lines(self) -> bool {
-        matches!(self, Self::Density(_, Field::Lines))
+        matches!(
+            self,
+            Self::Density(_, Field::Lines) | Self::Search(super::search_presentation::Field::Lines)
+        )
     }
 
     fn is_font(self) -> bool {
@@ -335,7 +360,7 @@ impl Reader {
                 });
             }
             Input::Tap(x, y) if target.is_lines() && LINE_DEFAULT.contains(x, y) => {
-                picker.value = Some(DEFAULT_BOOKMARK_LINES);
+                picker.value = Some(target.default_value(&self.controls));
                 self.notice = None;
                 return Some(Change::Partial);
             }
