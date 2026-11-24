@@ -2213,8 +2213,8 @@ fn current_unix_seconds() -> Option<i64> {
 
 #[cfg(feature = "kindle")]
 fn local_footer_time() -> Option<String> {
-    let value = crate::mark_time::local_datetime(current_unix_seconds()?)?;
-    Some(format!("Time {}", value.get(11..16)?))
+    let time = primitive_device::local_time_at(current_unix_seconds()?)?;
+    Some(format!("Time {:02}:{:02}", time.hour, time.minute))
 }
 
 #[cfg(not(feature = "kindle"))]

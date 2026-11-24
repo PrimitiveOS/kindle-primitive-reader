@@ -3,7 +3,6 @@
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use primitive_app::with_storage;
 use serde::{Deserialize, Serialize};
@@ -20,31 +19,21 @@ pub(crate) struct ClockTokens {
     pub(crate) time_with_seconds: String,
 }
 
-pub(crate) fn local_clock() -> Option<ClockTokens> {
-    let seconds = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
-    let seconds = libc::time_t::try_from(seconds).ok()?;
-    let mut value = std::mem::MaybeUninit::<libc::tm>::uninit();
-    // `localtime_r` writes to the caller-owned `tm`, which is valid for this scope.
-    let value = unsafe {
-        if libc::localtime_r(&seconds, value.as_mut_ptr()).is_null() {
-            return None;
+impl ClockTokens {
+    fn from_time(time: primitive_device::LocalTime) -> Self {
+        Self {
+            date: format!("{:04}-{:02}-{:02}", time.year, time.month, time.day),
+            short_date: format!("{:02}-{:02}", time.month, time.day),
+            time: format!("{:02}:{:02}", time.hour, time.minute),
+            time_with_seconds: format!("{:02}-{:02}-{:02}", time.hour, time.minute, time.second),
         }
-        value.assume_init()
-    };
-    Some(ClockTokens {
-        date: format!(
-            "{:04}-{:02}-{:02}",
-            value.tm_year + 1900,
-            value.tm_mon + 1,
-            value.tm_mday
-        ),
-        short_date: format!("{:02}-{:02}", value.tm_mon + 1, value.tm_mday),
-        time: format!("{:02}:{:02}", value.tm_hour, value.tm_min),
-        time_with_seconds: format!(
-            "{:02}-{:02}-{:02}",
-            value.tm_hour, value.tm_min, value.tm_sec
-        ),
-    })
+    }
+}
+
+pub(crate) fn local_clock() -> Option<ClockTokens> {
+    Some(ClockTokens::from_time(primitive_device::local_time_at(
+        crate::mark_time::now()?,
+    )?))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -211,6 +200,24 @@ mod tests {
     fn defaults_match_koreaders_custom_footer() {
         assert_eq!(Preference::default().text, "KOReader");
         assert_eq!(Preference::default().repetitions, 1);
+    }
+
+    #[test]
+    fn footer_tokens_format_the_devices_civil_date_and_time() {
+        let clock = ClockTokens::from_time(primitive_device::LocalTime {
+            year: 2026,
+            month: 11,
+            day: 25,
+            hour: 1,
+            minute: 9,
+            second: 4,
+            weekday: 3,
+            utc_offset: Some(7 * 3600),
+        });
+        assert_eq!(clock.date, "2026-11-25");
+        assert_eq!(clock.short_date, "11-25");
+        assert_eq!(clock.time, "01:09");
+        assert_eq!(clock.time_with_seconds, "01-09-04");
     }
 
     #[test]
