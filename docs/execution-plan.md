@@ -56,6 +56,12 @@ Reset authored statistics by current book, another book and strict duration
 cutoffs. Check confirmation, Cancel, failed writes, resume and pace.
 [Continuous crop](continuous-semi-auto-crop.md) · [Folder order](document-end.md) · [Statistics reset](reading-statistics.md#reset-statistics)
 
+The Mac suite passed 1,152 checks. The Oasis passed 1,137 Reader library
+tests, 14 EPUB package tests and four layout probes. Both skipped 65 opt-in
+cases. Five native captures matched their Mac simulator frames exactly. The
+folder picker differed by two label pixels. Foreground touch and panel refresh
+have separate acceptance checks.
+
 ## Reader 0.1.40 verification plan
 
 Add and remove bookmarks from PDF and EPUB thumbnails. Keep the reading
