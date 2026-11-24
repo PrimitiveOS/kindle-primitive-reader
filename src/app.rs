@@ -791,7 +791,7 @@ pub struct Reader {
     top_header_font_picker: Option<top_header_font::Picker>,
     list_page: usize,
     matches_page: usize,
-    matches_from_selection: bool,
+    matches_return_to_reading: bool,
     result_context: Option<result_context::ResultContext>,
     focused_result: Option<usize>,
     current_contents_row: Option<usize>,
@@ -995,7 +995,7 @@ impl Reader {
             top_header_font_picker: None,
             list_page: 0,
             matches_page: 0,
-            matches_from_selection: false,
+            matches_return_to_reading: false,
             result_context: None,
             focused_result: None,
             current_contents_row: None,
@@ -1202,7 +1202,7 @@ impl Reader {
             });
             self.pdf_result_regions.clear();
             self.pdf_selection = None;
-            self.matches_from_selection = false;
+            self.matches_return_to_reading = false;
             self.back.clear();
             self.forward.clear();
             self.auto_turn
@@ -1340,7 +1340,7 @@ impl Reader {
         let offer_publisher = self.apply_new_numbering_defaults();
         self.restore_character_pages();
         self.fixed = None;
-        self.matches_from_selection = false;
+        self.matches_return_to_reading = false;
         self.back.clear();
         self.forward.clear();
         self.auto_turn
@@ -3850,20 +3850,7 @@ impl Reader {
                 self.search_result = Some(index);
                 self.matches_page = index / self.match_geometry().rows;
             }
-            Action::PdfSearchHit(index) => {
-                let hit = self
-                    .pdf_hits
-                    .get(index)
-                    .ok_or("That result is unavailable")?;
-                let (page, target) = (hit.page, FixedJump::regions(&hit.bounds));
-                let first_result = self.search_result.is_none();
-                let previous = self.jump_fixed(page, target)?;
-                if first_result {
-                    self.push_history(previous);
-                }
-                self.search_result = Some(index);
-                self.matches_page = index / self.match_geometry().rows;
-            }
+            Action::PdfSearchHit(index) => self.open_fixed_list_result(index)?,
             Action::PdfHighlight(index) => {
                 let fixed = self.fixed.as_ref().ok_or("No open PDF")?;
                 let mark = self
@@ -4768,7 +4755,7 @@ impl Reader {
         let ignore_accents = self.find_ignore_accents;
         if self.fixed.is_none() {
             self.start_all_reflow(query)?;
-            self.matches_from_selection = false;
+            self.matches_return_to_reading = false;
             return Ok(());
         }
         let pdf_search = PdfSearch::with_options(query, match_case, ignore_accents)?
@@ -4776,7 +4763,7 @@ impl Reader {
         self.update_lookup_history(|history| {
             history.search(query, match_case, ignore_accents, false)
         })?;
-        self.matches_from_selection = false;
+        self.matches_return_to_reading = false;
         self.nearby.clear();
         self.search_result = None;
         self.matches_page = 0;
@@ -5691,6 +5678,9 @@ impl Reader {
     }
 
     fn draw_search_steps(&self, canvas: &mut Canvas) {
+        if self.draw_fixed_list_search(canvas) {
+            return;
+        }
         if self.nearby.searching_direction() {
             canvas.button(MATCH_PREV, "Cancel", false, false);
             return;
@@ -6438,10 +6428,10 @@ impl Reader {
             self.notice = Some("Edit this excerpt to search a shorter passage".into());
         } else if !from_reading || self.controls.selection_search_all {
             self.start_document_search(&query)?;
-            self.matches_from_selection = from_reading;
+            self.matches_return_to_reading = from_reading;
         } else {
             self.begin_nearby(crate::search::SearchDirection::Next, false)?;
-            self.matches_from_selection = false;
+            self.matches_return_to_reading = false;
             self.hits.clear();
             self.pdf_hits.clear();
         }
@@ -8352,7 +8342,7 @@ impl App for Reader {
                     Screen::Highlights | Screen::LocationHistory if self.fixed.is_some() => {
                         self.show(Screen::FixedTools)
                     }
-                    Screen::Matches if self.matches_from_selection => {
+                    Screen::Matches if self.matches_return_to_reading => {
                         self.cancel_search();
                         self.show(self.surface_screen());
                     }
@@ -16309,8 +16299,8 @@ mod tests {
         assert_eq!(hit.len(), 2);
         assert_eq!(app.pdf_result_regions, vec![(1, hit[0]), (1, hit[1])]);
         let fixed = app.fixed.as_ref().unwrap();
-        let bottom = fixed.reading.preferences();
         assert_eq!(fixed.reading.page(), 1);
+        assert_eq!(fixed.reading.preferences().zoom, 0);
         assert!(
             hit.iter()
                 .all(|&r| fixed.reading.visible_rectangle(1, r).is_some())
@@ -16322,6 +16312,11 @@ mod tests {
             false,
         );
         let top = app.pdf_hits[0].bounds.clone();
+        app.close_fixed_search_fit().unwrap();
+        app.jump_fixed(1, FixedJump::regions(&hit)).unwrap();
+        let fixed = app.fixed.as_ref().unwrap();
+        let bottom = fixed.reading.preferences();
+        assert_eq!(bottom.zoom, 4);
         app.library
             .remember(&fixed.entry, fixed.id, "Signal chart")
             .add_pdf_highlight(PdfHighlight {
@@ -16355,8 +16350,8 @@ mod tests {
             saved
         );
 
-        // This phrase begins on the second line of the chart and wraps back
-        // to the left. Both pairs of search marks fit even at 300% zoom.
+        // The fitted preview keeps both pairs of search marks visible when a
+        // phrase wraps back to the left and restores the previous reading mode.
         for continuous in [false, true] {
             let reading = &mut reopened.fixed.as_mut().unwrap().reading;
             reading.set_continuous(continuous).unwrap();
@@ -16375,7 +16370,8 @@ mod tests {
             assert!(words[2].y0 > words[1].y0 && words[2].x0 < words[1].x0);
             let reading = &reopened.fixed.as_ref().unwrap().reading;
             assert_eq!(reading.page(), 1);
-            assert_eq!(reading.is_continuous(), continuous);
+            assert!(!reading.is_continuous());
+            assert_eq!(reading.preferences().zoom, 0);
             assert_eq!(
                 reopened.pdf_result_regions,
                 words.iter().map(|&bounds| (1, bounds)).collect::<Vec<_>>()
@@ -16397,7 +16393,10 @@ mod tests {
                 );
             }
             reopened.activate(Action::ReturnToLocation).unwrap();
-            assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 0);
+            let reading = &reopened.fixed.as_ref().unwrap().reading;
+            assert_eq!(reading.page(), 0);
+            assert_eq!(reading.is_continuous(), continuous);
+            assert_eq!(reading.preferences().zoom, 4);
         }
     }
 
