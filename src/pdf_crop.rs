@@ -576,8 +576,14 @@ pub(crate) mod tests {
         let area = seed
             .normalized(size)
             .expect("The seed needs a usable width and height");
-        let crop = detect(&pdf, 0, Some(seed), 1264, crate::library::DEFAULT_CROP_MARGIN)
-            .unwrap_or_else(|_| panic!("Could not crop the selected PDF's first page"));
+        let crop = detect(
+            &pdf,
+            0,
+            Some(seed),
+            1264,
+            crate::library::DEFAULT_CROP_MARGIN,
+        )
+        .unwrap_or_else(|_| panic!("Could not crop the selected PDF's first page"));
         let width = crop.x1 - crop.x0;
         let height = crop.y1 - crop.y0;
         assert!((0.025..=1.0).contains(&width) && (0.025..=1.0).contains(&height));
