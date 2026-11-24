@@ -17,6 +17,29 @@ Open **Tools › Reading statistics**, **Reading data › Reading statistics**, 
 
 [Summary](screenshots/reading-statistics-summary.png) · [Daily history](screenshots/reading-daily-history.png) · [Books](screenshots/reading-statistics-books.png) · [Book sessions](screenshots/reading-book-sessions.png) · [Settings](screenshots/reading-statistics-settings.png)
 
+## Jumping to a month
+
+Tap the month heading in **Reading calendar** and enter a month in
+`YYYY-MM` format. The editor accepts years 1000–9999. An exact jump can
+visit a month before the first reading record or after the current month.
+The outer arrows jump to the earliest month for the selected book filter
+and to the current month. The inner arrows, swipes, and page buttons step
+one month at a time. **Browse future months** controls forward stepping.
+[Calendar controls](screenshots/reading-calendar-month-navigation.png) ·
+[Month editor](screenshots/reading-calendar-month-editor.png)
+
+Open a day in the calendar and step across a month boundary in its
+timeline. Back opens the month containing the date you reached. Timelines
+opened from Daily history return to that list. The Mac simulation checks
+the editor, both sets of arrows, and the reading position and totals.
+The checksum-verified stock comparison executes the pinned month controls
+and timeline-close callback. Its host Lua calendar steps through supported
+civil dates, and Reader's Gregorian arithmetic also steps through dates
+before 1900.
+[Pinned stock controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/calendarview.lua#L1164-L1234) ·
+[Pinned timeline return](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/calendarview.lua#L1452-L1468) ·
+[Executable comparison](../scripts/koreader-calendar-month-navigation-check.py)
+
 ## Calendar and timeline settings
 
 Set **Daily timeline starts at** to group midnight reading with the preceding
