@@ -14,16 +14,16 @@ fn week_book_rows(
         let books = &books[..books.len().min(limit)];
         let (earlier, remaining) = rows.split_at_mut(day);
         let slots = &mut remaining[0][..limit];
-        if let Some(previous) = earlier.last() {
-            for (&book, slot) in previous.iter().zip(slots.iter_mut()) {
-                *slot = book.filter(|id| books.contains(id));
-            }
+        for (slot, &book) in slots.iter_mut().zip(books) {
+            *slot = Some(book);
         }
-        for &book in books {
-            if !slots.contains(&Some(book))
-                && let Some(free) = slots.iter_mut().find(|slot| slot.is_none())
-            {
-                *free = Some(book);
+        if let Some(previous) = earlier.last() {
+            for (old_slot, &book) in previous[..limit].iter().enumerate() {
+                if book.is_some()
+                    && let Some(new_slot) = slots.iter().position(|&id| id == book)
+                {
+                    slots.swap(old_slot, new_slot);
+                }
             }
         }
     }
@@ -48,6 +48,8 @@ fn calendar_spans_keep_contiguous_books_in_their_rows_after_duration_rank_change
         ]
     );
     assert!(rows.iter().all(|row| row[2..].iter().all(Option::is_none)));
+    let swapped = week_book_rows([&[1, 2, 3], &[4, 5, 1], &[], &[], &[], &[], &[]], 3);
+    assert_eq!(swapped[1][..3], [Some(1), Some(5), Some(4)]);
 }
 
 impl Reader {

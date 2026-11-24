@@ -797,7 +797,9 @@ impl BookStyle {
                                 && crate::block_margins::collapsible_wrapper(&element.tag))
                             || (keep_group_geometry
                                 && (element.tag == "p"
-                                    || crate::block_margins::collapsible_wrapper(&element.tag)))
+                                    || crate::block_margins::collapsible_wrapper(
+                                        &element.tag,
+                                    )))
                             || (publisher_block_height && element.tag == "p") =>
                     {
                         let target = style

@@ -82,6 +82,10 @@ lua.execute("""
     assert(week.days_books[2][1].span_days == 2 and week.days_books[3][1].id == 3)
     assert(week.days_books[4][1] == false and week.days_books[5][1].span_days == 1)
     assert(week.days_books[5][2].span_days == 2 and week.days_books[6][2].id == 2)
+    local rank_change = setmetatable({nb_book_spans = 3, days_books = {}, calday_widgets = {}}, {__index = CalendarWeek})
+    rank_change:addDay({read_books = {{id = 1}, {id = 2}, {id = 3}}})
+    rank_change:addDay({read_books = {{id = 4}, {id = 5}, {id = 1}}})
+    assert(rank_change.days_books[2][1].id == 1 and rank_change.days_books[2][2].id == 5 and rank_change.days_books[2][3].id == 4)
 """)
 
 os.environ["TZ"] = "UTC"

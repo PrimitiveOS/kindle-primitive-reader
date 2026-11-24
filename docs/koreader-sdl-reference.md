@@ -4,6 +4,8 @@ This is a fresh comparison against genuine pinned KOReader UI running on this Ma
 
 Current evidence for `T3-6.1` through `T3-6.3` covers Back in Reader and the file browser, exit policies, and independent jump and recent-view history. `T3-6.4` remains a keyboard-input gap. [Back navigation](back-navigation.md)
 
+Current evidence for `T4-4.2.3` through `T4-4.2.8` includes all seven starting weekdays, ranked book spans, hourly calendar bins, a minute-based timeline start and a separate calendar shift. The earlier matrix retains the captured baseline. [Calendar and timeline settings](reading-statistics.md#calendar-and-timeline-settings)
+
 ## Scope and reproducibility
 
 The accepted run `20261122T090105Z` contains **128 unmodified full-screen PNGs at 1264 × 1680 framebuffer pixels, 300 DPI**: one reading page, 117 top-menu pages, six bottom panels, one selection popup and three dictionary states. A fresh English profile opens an authored shared EPUB and two authored StarDict dictionaries through ordinary `reader.lua`. Selection uses native source-word geometry; dictionary results come from the built native sdcv. The real Tools menu has two root pages, and both are captured. Top submenu enumeration follows enabled literal tables to depth two. Dynamic factories and leaf setting/network/power actions are inventoried without invocation. The file-browser root icon is an action that closes Reader, so it is visible and inventoried but not invoked.

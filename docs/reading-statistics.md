@@ -7,14 +7,30 @@ Open **Tools › Reading statistics**, **Reading data › Reading statistics**, 
 | Summary | Recorded reading time, distinct reading screens, capped page time, earlier undated screen time, daily history and calendar |
 | Daily history | Dates in reverse order, reading time, distinct screens and books; tap a date for its timeline |
 | Time range | Compare reading time and distinct screens by week or month, then open a period for its individual books |
-| Calendar | A month grid with reading time, book counts and relative duration bars; tap a day, swipe, or use page buttons to change months |
+| Calendar | A month grid with reading time, book titles that span consecutive days, and an optional hourly histogram. Tap a day, swipe, or use page buttons to change months. |
 | Day timeline | An hourly histogram and book intervals clipped to the selected day; tap an interval for its book sessions and **Continue reading** |
-| Settings | Enable statistics, minimum and maximum visit time, freeze finished books, week start, calendar day origin, histogram and future months |
+| Settings | Enable statistics, set visit limits, freeze finished books, choose any starting weekday, edit the timeline start, apply the shift to the calendar, limit book spans, show the histogram, and browse future months. |
 
-<img src="screenshots/reading-calendar.png" width="350" alt="Reader's monthly reading calendar">
+<img src="screenshots/reading-calendar-book-spans.png" width="350" alt="Reader's monthly calendar with two ranked book titles per day and titles spanning adjacent dates">
 <img src="screenshots/reading-timeline.png" width="350" alt="Reader's day timeline with hourly reading bars and book sessions">
 
 [Summary](screenshots/reading-statistics-summary.png) · [Daily history](screenshots/reading-daily-history.png) · [Books](screenshots/reading-statistics-books.png) · [Book sessions](screenshots/reading-book-sessions.png) · [Settings](screenshots/reading-statistics-settings.png)
+
+## Calendar and timeline settings
+
+Set **Daily timeline starts at** to group midnight reading with the preceding
+evening. Hours step by one or four on hold. Minutes step by ten or thirty on
+hold and wrap at the limit. **Set time** saves both values. **Also use in
+calendar view** applies the shift to month cells independently. Older journals
+with a shifted calendar keep that preference. Today in the timeline opens the
+previous date until the configured start time arrives. [Time editor](screenshots/reading-calendar-start-time.png)
+
+**Books per calendar day** accepts one through five and defaults to three. The
+calendar sorts titles by time read, breaking ties by stable book ID. A title
+that also ranks on the next day keeps its row through that week. The `+n` count
+shows additional titles. Tap the day for its full timeline. The optional
+hourly histogram uses the relevant calendar or timeline start for its bins.
+[KOReader settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L1148-L1227) · [KOReader week spans](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/calendarview.lua#L194-L247)
 
 ## Time range reports
 
@@ -81,7 +97,7 @@ uses an exclusive upper date boundary to preserve visits at the next midnight.
 
 New history defaults to the stock five-second minimum and 120-second maximum per visit. Quick skims do not count. Re-reading keeps a new visit. Reading time includes those rereads; capped page time sums at most the configured maximum for each distinct reading screen. These are separate values, as in KOReader's uncapped and capped book queries. Finished books continue recording by default, with an option to freeze them. [Stock defaults and total queries](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L29-L90) · [Page visit accounting](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2560-L2652)
 
-Daily history groups visits by their recorded start date. The calendar and histogram instead clip each recorded interval at the selected day's boundaries. Thus a visit across midnight can contribute time to two calendar days while its start-date total remains on the first day. The calendar can start its day at midnight, 04:00 or 06:00. The date list retains midnight grouping. A day has the duration given by the device's local calendar, including daylight-saving transitions. [Stock daily totals](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L1453-L1479) · [Stock timeline clipping and gap merging](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2862-L2934)
+Daily history groups visits by their civil start date. Reader clips the elapsed intervals used by the calendar and timeline to the chosen day's boundaries. A visit that crosses a boundary can contribute time to both calendar days while its daily-history total remains on the start date. KOReader's monthly SQL assigns each visit to a date using its start timestamp, with the optional offset. Day boundaries follow the current device time zone, including daylight-saving transitions. [Stock daily totals](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L1453-L1479) · [Stock calendar query](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L2822-L2861) · [Stock day timeline](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2862-L2934)
 
 Disabling statistics or freezing a finished book pauses all three time trackers, including the existing screen-time and pace counters. Sleep, USB storage and non-reading screens pause recording. Short intervals on the same page can combine across sleep toward the minimum, without counting the pause or resetting the visit's maximum. Returning to Library finishes that visit. Timeline rows merge adjacent intervals for the same book when their gap is no more than the larger of 30 seconds and the minimum visit time. Gaps contribute no reading time to totals or the histogram.
 
@@ -100,7 +116,11 @@ Deterministic tests cover min/max boundaries, rereads, capped and uncapped total
 Reflow uses source-position reading-screen identities, so page numbers
 and totals need separate layout-change comparisons with KOReader's
 rescaling view. Reader's pace estimator has its own sample policy.
-Minute-level day-origin editing, configurable book-span labels and local
-statistics database import remain open. Reader records the actual pre- and
+The pinned Lua/SQLite check exercises the save and shift callbacks, picker
+wrapping, book duration ranking, and spans across adjacent days. Rust tests
+cover the 04:20 boundary in a fractional-offset zone, both shift choices,
+failed saves, book filtering, and the saved reading position. The separate
+seven-day progress report and local statistics database import remain open.
+Reader records the actual pre- and
 post-pause portions of each visit.
-[Stock layout rescaling](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L439-L441) · [Stock pause and resume timestamps](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2694-L2732)
+[Stock calendar comparison](../scripts/compare-calendar-options.py) · [Stock layout rescaling](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L439-L441) · [Stock pause and resume timestamps](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2694-L2732)
