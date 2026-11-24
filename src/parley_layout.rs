@@ -1,4 +1,7 @@
 mod cjk_width;
+mod inline_blocks;
+#[cfg(test)]
+mod inline_blocks_tests;
 #[cfg(test)]
 mod special_glyph_tests;
 
@@ -161,9 +164,40 @@ pub(crate) struct Paragraph {
     pub(crate) layout: Layout<PaintBrush>,
     ruby: Vec<RubyOverlay>,
     flow: Option<Arc<OwnedProjection>>,
+    pub(crate) inline_text: Option<inline_blocks::InlineText>,
 }
 
 impl Paragraph {
+    pub(crate) fn source_offset(
+        &self,
+        offset: usize,
+        affinity: crate::flow_projection::Affinity,
+    ) -> Option<usize> {
+        match &self.flow {
+            Some(flow) => flow.source_offset(offset, affinity),
+            None => Some(offset),
+        }
+    }
+
+    pub(crate) fn visible_text_offset(
+        &self,
+        offset: usize,
+        affinity: crate::flow_projection::Affinity,
+    ) -> Option<usize> {
+        match &self.inline_text {
+            Some(boxed) => boxed.visible_offset(offset, affinity),
+            None => Some(offset),
+        }
+    }
+
+    pub(crate) fn text_box_at(&self, x: f32, y: f32) -> Option<&inline_blocks::TextBox> {
+        self.inline_text
+            .as_ref()?
+            .boxes
+            .iter()
+            .find(|child| child.hit(x, y))
+    }
+
     fn clip_columns(settings: Settings, columns: Range<f32>) -> Range<usize> {
         let clip =
             |x: f32| (settings.left_margin() as f32 + x).clamp(0.0, settings.width as f32) as usize;
@@ -317,6 +351,11 @@ impl ParleyChapter {
             layout_fonts(&paragraph.layout);
             for ruby in &paragraph.ruby {
                 layout_fonts(&ruby.layout);
+            }
+            if let Some(inline) = &paragraph.inline_text {
+                for child in &inline.boxes {
+                    layout_fonts(&child.layout);
+                }
             }
         }
         for marker in &self.markers {
@@ -479,6 +518,7 @@ impl ParleyChapter {
         };
         let mut context = LayoutContext::new();
         let mut lines: Vec<Line> = Vec::new();
+        let mut remaining_inline_boxes = inline_blocks::MAX_CHAPTER_BOXES;
         let mut y = 0.0_f32;
         let mut image_budget = MAX_IMAGE_PIXELS;
         let fallback = Arc::new(GrayImage::from_pixel(
@@ -993,18 +1033,59 @@ impl ParleyChapter {
                     settings.font_size,
                     hanging,
                 );
-                let (layout, ruby) = layout_with_images(
-                    &mut context,
-                    &mut fonts,
-                    block,
-                    text_width - indent.common,
-                    settings,
-                    styles,
-                    &inline_boxes,
-                    indent,
-                    user_rules,
-                    contour,
-                );
+                let mut plan = None;
+                if settings.inline_block_mode != crate::InlineBlockMode::Ignore
+                    && cell.is_none()
+                    && float.is_none()
+                    && contour.is_none()
+                    && !style.preformatted_spaces
+                {
+                    plan = inline_blocks::plan(
+                        &mut context,
+                        &mut fonts,
+                        block,
+                        source,
+                        styles,
+                        text_width - indent.common,
+                        settings,
+                        user_rules,
+                        remaining_inline_boxes,
+                    );
+                }
+                let (layout, ruby) = if let Some(boxed) = &mut plan {
+                    let outer = block.text_fragment(
+                        block.element,
+                        &boxed.text.text,
+                        std::mem::take(&mut boxed.runs),
+                    );
+                    remaining_inline_boxes -= boxed.items.len();
+                    layout_with_images(
+                        &mut context,
+                        &mut fonts,
+                        &outer,
+                        text_width - indent.common,
+                        settings,
+                        styles,
+                        &boxed.items,
+                        indent,
+                        user_rules,
+                        contour,
+                    )
+                } else {
+                    layout_with_images(
+                        &mut context,
+                        &mut fonts,
+                        block,
+                        text_width - indent.common,
+                        settings,
+                        styles,
+                        &inline_boxes,
+                        indent,
+                        user_rules,
+                        contour,
+                    )
+                };
+                let mut inline_text = plan.map(|boxed| boxed.text);
                 if lines.len() + layout.len() > MAX_LINES {
                     return Err("The chapter exceeds the Parley line limit".into());
                 }
@@ -1030,7 +1111,9 @@ impl ParleyChapter {
                 let first_line = lines.len();
                 for (index, line) in layout.lines().enumerate() {
                     for item in line.items() {
-                        if let PositionedLayoutItem::InlineBox(position) = item {
+                        if inline_text.is_none()
+                            && let PositionedLayoutItem::InlineBox(position) = item
+                        {
                             let image = &mut chapter.illustrations[position.id as usize];
                             let after_gap = if layout.is_rtl() {
                                 position.width - image.display.0 as f32
@@ -1079,7 +1162,11 @@ impl ParleyChapter {
                             })
                             .sum(),
                     };
-                    source_line.project(&projection, line.text_range())?;
+                    if let Some(boxed) = &mut inline_text {
+                        boxed.project_line(&mut source_line, &line, &projection)?;
+                    } else {
+                        source_line.project(&projection, line.text_range())?;
+                    }
                     lines.push(source_line);
                 }
                 let text_bottom = bottom;
@@ -1157,6 +1244,7 @@ impl ParleyChapter {
                     layout,
                     ruby,
                     flow: flow.shared(block.key),
+                    inline_text,
                 });
             }
 
@@ -1381,6 +1469,10 @@ impl ParleyChapter {
                 .flow
                 .as_ref()
                 .map_or(source.blocks[index].text.as_str(), |flow| flow.text());
+            let text = paragraph
+                .inline_text
+                .as_ref()
+                .map_or(text, |boxed| boxed.text.as_str());
             let ruby = paragraph
                 .ruby
                 .iter()
@@ -1390,6 +1482,8 @@ impl ParleyChapter {
                 if text[line.text_range()].chars().any(|ch| !ch.is_whitespace())
                     || line.items().any(|item| matches!(item,
                         PositionedLayoutItem::GlyphRun(run) if run.advance() > 0.0 && run.style().brush.decoration != TextDecoration::default()))
+                    || (paragraph.inline_text.is_some()
+                        && line.items().any(|item| matches!(item, PositionedLayoutItem::InlineBox(_))))
                 {
                     return ruby.max(paragraph.y + line.metrics().content_block_max_coord);
                 }
@@ -1418,25 +1512,29 @@ impl ParleyChapter {
                     && (inside_columns || p.signed_margin)
             });
         let hit = |paragraph: &Paragraph| {
-            let (cluster, _) = parley::Cluster::from_point_exact(
-                &paragraph.layout,
-                x - paragraph.x,
-                y - paragraph.y,
-            )?;
+            use crate::flow_projection::Affinity::After;
+            let lx = x - paragraph.x;
+            let ly = y - paragraph.y;
+            let child = paragraph.text_box_at(lx, ly);
+            let (layout, origin) = child.map_or((&paragraph.layout, [0.0, 0.0]), |child| {
+                (&child.layout, [child.x, child.y])
+            });
+            let (cluster, _) =
+                parley::Cluster::from_point_exact(layout, lx - origin[0], ly - origin[1])?;
             let line = cluster.line();
             let metrics = line.metrics();
-            if paragraph.y + metrics.content_block_max_coord <= visible.start
-                || paragraph.y + metrics.content_block_min_coord >= visible.end
+            let top = paragraph.y + origin[1];
+            if top + metrics.content_block_max_coord <= visible.start
+                || top + metrics.content_block_min_coord >= visible.end
             {
                 return None;
             }
             let offset = cluster.text_range().start;
-            let offset = match &paragraph.flow {
-                Some(flow) => {
-                    flow.source_offset(offset, crate::flow_projection::Affinity::After)?
-                }
-                None => offset,
+            let offset = match child {
+                Some(child) => child.source.start + offset,
+                None => paragraph.visible_text_offset(offset, After)?,
             };
+            let offset = paragraph.source_offset(offset, After)?;
             Some((paragraph.key, offset))
         };
         if self.float_geometry {
@@ -1448,14 +1546,6 @@ impl ParleyChapter {
 
     pub(crate) fn uses_float_geometry(&self) -> bool {
         self.float_geometry
-    }
-
-    pub(crate) fn mapping(&self, key: usize) -> Option<&OwnedProjection> {
-        self.paragraphs
-            .iter()
-            .find(|paragraph| paragraph.key == key)?
-            .flow
-            .as_deref()
     }
 
     pub(crate) fn limitations(&self) -> &[String] {
@@ -1634,49 +1724,52 @@ impl ParleyChapter {
                 }
                 for item in line.items() {
                     if let PositionedLayoutItem::GlyphRun(run) = item {
-                        if !run.style().brush.painted {
-                            continue;
-                        }
-                        self.glyphs.draw_run(
+                        paint_text_run(
+                            &mut self.glyphs,
                             page,
-                            stride,
+                            settings,
                             &paint_columns,
                             (paint_x, paragraph.y - range.start),
                             &run,
-                            settings.text_contrast,
-                            settings.font_gamma_index,
                         );
-                        let decoration = run.style().brush.decoration;
-                        if decoration != TextDecoration::default() {
-                            let metrics = run.run().font_metrics();
-                            let thickness = metrics.underline_size.round().clamp(1.0, 12.0);
-                            let baseline = paragraph.y - range.start + run.baseline();
-                            let rows = [
-                                decoration
-                                    .underline
-                                    .then_some(baseline - metrics.underline_offset),
-                                decoration
-                                    .overline
-                                    .then_some(baseline - metrics.ascent + thickness),
-                                decoration
-                                    .strike
-                                    .then_some(baseline - run.run().font_size() * 2.0 / 7.0),
-                            ];
-                            let limit = paint_columns.len() as f32;
-                            let x0 = paint_columns.start
-                                + (paint_x + run.offset()).floor().clamp(0.0, limit) as usize;
-                            let x1 = paint_columns.start
-                                + (paint_x + run.offset() + run.advance())
-                                    .ceil()
-                                    .clamp(0.0, limit) as usize;
-                            for y in rows.into_iter().flatten() {
-                                let start = y.round().clamp(0.0, visible_height as f32) as usize;
-                                let end = (y.round() + thickness).clamp(0.0, visible_height as f32)
-                                    as usize;
-                                for row in start..end {
-                                    page[row * stride + x0..row * stride + x1].fill(48);
-                                }
-                            }
+                    }
+                }
+            }
+            if let Some(boxed) = &paragraph.inline_text {
+                for child in &boxed.boxes {
+                    let (horizontal, vertical) = child.painted_bounds();
+                    let top = paragraph.y + vertical.start;
+                    let bottom = paragraph.y + vertical.end;
+                    if bottom <= range.start || top >= range.end {
+                        continue;
+                    }
+                    if let Some(gray) = child.background() {
+                        let width = paint_columns.len() as f32;
+                        let left = (paint_x + horizontal.start).round().clamp(0.0, width) as usize;
+                        let right = (paint_x + horizontal.end).round().clamp(0.0, width) as usize;
+                        let top = (top - range.start)
+                            .floor()
+                            .clamp(0.0, visible_height as f32)
+                            as usize;
+                        let bottom = (bottom - range.start)
+                            .ceil()
+                            .clamp(0.0, visible_height as f32)
+                            as usize;
+                        for row in top..bottom {
+                            let offset = row * stride + paint_columns.start;
+                            page[offset + left..offset + right].fill(gray);
+                        }
+                    }
+                    for item in child.layout.lines().flat_map(|line| line.items()) {
+                        if let PositionedLayoutItem::GlyphRun(run) = item {
+                            paint_text_run(
+                                &mut self.glyphs,
+                                page,
+                                settings,
+                                &paint_columns,
+                                (paint_x + child.x, paragraph.y + child.y - range.start),
+                                &run,
+                            );
                         }
                     }
                 }
@@ -1760,7 +1853,59 @@ fn visible_rows(range: &Range<f32>, settings: Settings) -> usize {
         .clamp(1.0, settings.text_height() as f32) as usize
 }
 
-#[derive(Clone, Copy)]
+fn paint_text_run(
+    glyphs: &mut GlyphCache,
+    page: &mut [u8],
+    settings: Settings,
+    columns: &Range<usize>,
+    (x, y): (f32, f32),
+    run: &parley::GlyphRun<'_, PaintBrush>,
+) {
+    let stride = settings.width as usize;
+    let visible_height = page.len() / stride;
+    if !run.style().brush.painted {
+        return;
+    }
+    glyphs.draw_run(
+        page,
+        stride,
+        columns,
+        (x, y),
+        run,
+        settings.text_contrast,
+        settings.font_gamma_index,
+    );
+    let decoration = run.style().brush.decoration;
+    if decoration != TextDecoration::default() {
+        let metrics = run.run().font_metrics();
+        let thickness = metrics.underline_size.round().clamp(1.0, 12.0);
+        let baseline = y + run.baseline();
+        let rows = [
+            decoration
+                .underline
+                .then_some(baseline - metrics.underline_offset),
+            decoration
+                .overline
+                .then_some(baseline - metrics.ascent + thickness),
+            decoration
+                .strike
+                .then_some(baseline - run.run().font_size() * 2.0 / 7.0),
+        ];
+        let limit = columns.len() as f32;
+        let x0 = columns.start + (x + run.offset()).floor().clamp(0.0, limit) as usize;
+        let x1 =
+            columns.start + (x + run.offset() + run.advance()).ceil().clamp(0.0, limit) as usize;
+        for y in rows.into_iter().flatten() {
+            let start = y.round().clamp(0.0, visible_height as f32) as usize;
+            let end = (y.round() + thickness).clamp(0.0, visible_height as f32) as usize;
+            for row in start..end {
+                page[row * stride + x0..row * stride + x1].fill(48);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
 struct LineIndent {
     common: u32,
     amount: f32,

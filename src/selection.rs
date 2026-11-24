@@ -157,7 +157,10 @@ impl Probe {
         for paragraph in renderer.paragraphs_in(point.page) {
             let y = point.y - paragraph.y;
             let x = point.x - paragraph.x;
-            let layout = &paragraph.layout;
+            let child = paragraph.text_box_at(x, y);
+            let (layout, x, y) = child.map_or((&paragraph.layout, x, y), |child| {
+                (&child.layout, x - child.x, y - child.y)
+            });
             if (point.inside_columns || paragraph.signed_margin)
                 && paragraph.hit_columns().contains(&point.x)
                 && (0.0..layout.height()).contains(&y)
@@ -170,16 +173,15 @@ impl Probe {
                 && Cluster::from_point(layout, x, y).is_some()
             {
                 let cursor = Cursor::from_point(layout, x, y);
-                let offset = match renderer.mapping(paragraph.key) {
-                    Some(mapping) => mapping.source_offset(
-                        cursor.index(),
-                        match cursor.affinity() {
-                            Affinity::Upstream => SourceAffinity::Before,
-                            Affinity::Downstream => SourceAffinity::After,
-                        },
-                    )?,
-                    None => cursor.index(),
+                let affinity = match cursor.affinity() {
+                    Affinity::Upstream => SourceAffinity::Before,
+                    Affinity::Downstream => SourceAffinity::After,
                 };
+                let visible = match child {
+                    Some(child) => child.source.start + cursor.index(),
+                    None => paragraph.visible_text_offset(cursor.index(), affinity)?,
+                };
+                let offset = paragraph.source_offset(visible, affinity)?;
                 return Some(self.anchor(paragraph.key, offset));
             }
         }
@@ -349,56 +351,39 @@ impl Probe {
             let Some(layout_spans) = view.layout_spans(span) else {
                 continue;
             };
-            let layout = &paragraph.layout;
-            let left = paragraph.x;
-            let origin = paragraph.y;
             let columns = paragraph.paint_columns(self.settings);
+            let outer = Geometry {
+                layout: &paragraph.layout,
+                x: paragraph.x,
+                y: paragraph.y,
+                placed_boxes: paragraph.inline_text.is_some()
+                    || !self.source.blocks[index].images.is_empty(),
+            };
             for span in layout_spans {
-                let Some(span) = visible_span(layout, origin, &page, span) else {
-                    continue;
-                };
-                let start = Cursor::from_byte_index(layout, span.start, Affinity::Downstream);
-                let boundary = Cluster::from_byte_index(layout, span.end - 1)
-                    .map_or(span.end, |cluster| cluster.text_range().end);
-                let end = Cursor::from_byte_index(layout, boundary, Affinity::Upstream);
-                Selection::new(start, end).geometry_with(layout, |mut rect, row| {
-                    rect.x0 += f64::from(left);
-                    rect.x1 += f64::from(left);
-                    // Parley includes replaced elements at the same caret position
-                    // in selection rectangles. Highlight the surrounding text runs.
-                    if !self.source.blocks[index].images.is_empty()
-                        && let Some(line) = layout.get(row)
-                    {
-                        for item in line.items() {
-                            let parley::PositionedLayoutItem::InlineBox(image) = item else {
-                                continue;
-                            };
-                            let right = f64::from(left + image.x + image.width);
-                            let left = f64::from(left + image.x);
-                            if left >= rect.x1 || right <= rect.x0 {
-                                continue;
+                if let Some(boxed) = &paragraph.inline_text {
+                    for part in boxed.layout_spans(&span) {
+                        outer.append(part, &page, self.settings, &columns, &mut rects);
+                    }
+                    for child in &boxed.boxes {
+                        if let Some(part) = child.local_span(&span) {
+                            Geometry {
+                                layout: &child.layout,
+                                x: paragraph.x + child.x,
+                                y: paragraph.y + child.y,
+                                placed_boxes: false,
                             }
-                            if rect.x0 < left
-                                && let Some(left_run) = page_rect(
-                                    BoundingBox { x1: left, ..rect },
-                                    origin,
-                                    &page,
-                                    self.settings,
-                                    &columns,
-                                )
-                            {
-                                rects.push(left_run);
-                            }
-                            rect.x0 = right;
-                            if rect.x0 >= rect.x1 {
-                                return;
-                            }
+                            .append(
+                                part,
+                                &page,
+                                self.settings,
+                                &columns,
+                                &mut rects,
+                            );
                         }
                     }
-                    if let Some(rect) = page_rect(rect, origin, &page, self.settings, &columns) {
-                        rects.push(rect);
-                    }
-                });
+                } else {
+                    outer.append(span, &page, self.settings, &columns, &mut rects);
+                }
             }
         }
         rects
@@ -473,6 +458,74 @@ impl Probe {
             first_byte,
             last_byte,
         })
+    }
+}
+
+struct Geometry<'a> {
+    layout: &'a Layout<crate::parley_layout::PaintBrush>,
+    x: f32,
+    y: f32,
+    placed_boxes: bool,
+}
+
+impl Geometry<'_> {
+    fn append(
+        &self,
+        span: Range<usize>,
+        page: &Range<f32>,
+        settings: Settings,
+        columns: &Range<usize>,
+        rects: &mut Vec<HighlightRect>,
+    ) {
+        let Self {
+            layout,
+            x: left,
+            y: origin,
+            placed_boxes,
+        } = *self;
+        let Some(span) = visible_span(layout, origin, page, span) else {
+            return;
+        };
+        let start = Cursor::from_byte_index(layout, span.start, Affinity::Downstream);
+        let boundary = Cluster::from_byte_index(layout, span.end - 1)
+            .map_or(span.end, |cluster| cluster.text_range().end);
+        let end = Cursor::from_byte_index(layout, boundary, Affinity::Upstream);
+        Selection::new(start, end).geometry_with(layout, |mut rect, row| {
+            rect.x0 += f64::from(left);
+            rect.x1 += f64::from(left);
+            // Parley includes replaced elements at the same caret position
+            // in selection rectangles. Highlight the surrounding text runs.
+            if placed_boxes && let Some(line) = layout.get(row) {
+                for item in line.items() {
+                    let parley::PositionedLayoutItem::InlineBox(image) = item else {
+                        continue;
+                    };
+                    let right = f64::from(left + image.x + image.width);
+                    let left = f64::from(left + image.x);
+                    if left >= rect.x1 || right <= rect.x0 {
+                        continue;
+                    }
+                    if rect.x0 < left
+                        && let Some(left_run) = page_rect(
+                            BoundingBox { x1: left, ..rect },
+                            origin,
+                            page,
+                            settings,
+                            columns,
+                        )
+                    {
+                        rects.push(left_run);
+                    }
+                    rect.x0 = right;
+                    if rect.x0 >= rect.x1 {
+                        return;
+                    }
+                }
+            }
+            if let Some(rect) = page_rect(rect, origin, page, settings, columns) {
+                rects.push(rect);
+            }
+        });
     }
 }
 

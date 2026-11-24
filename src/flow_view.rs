@@ -194,6 +194,7 @@ impl ChapterFlow {
         }
         Ok(LayoutBlock {
             source: block,
+            element: block.element,
             text,
             styled_text,
             images: Images {
@@ -214,6 +215,7 @@ impl ChapterFlow {
 /// Source-only consumers must continue to use the original canonical Block.
 pub(crate) struct LayoutBlock<'a> {
     source: &'a Block,
+    pub element: usize,
     pub text: &'a str,
     pub styled_text: StyledRuns<'a>,
     pub images: Images<'a>,
@@ -231,6 +233,7 @@ impl<'a> LayoutBlock<'a> {
     pub(crate) fn identity(source: &'a Block) -> Self {
         Self {
             source,
+            element: source.element,
             text: &source.text,
             styled_text: StyledRuns::Original(&source.styled_text),
             images: Images {
@@ -240,6 +243,32 @@ impl<'a> LayoutBlock<'a> {
             },
             ruby: Rubies {
                 source: &source.ruby,
+                projected: None,
+                masks: &[],
+            },
+        }
+    }
+    pub(crate) fn text_fragment<'b>(
+        &self,
+        element: usize,
+        text: &'b str,
+        runs: Vec<StyledText>,
+    ) -> LayoutBlock<'b>
+    where
+        'a: 'b,
+    {
+        LayoutBlock {
+            source: self.source,
+            element,
+            text,
+            styled_text: StyledRuns::Projected(runs),
+            images: Images {
+                source: &[],
+                projected: None,
+                masks: &[],
+            },
+            ruby: Rubies {
+                source: &[],
                 projected: None,
                 masks: &[],
             },

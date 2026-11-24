@@ -311,6 +311,18 @@ pub enum BlockWidthMode {
     PublisherWithConstraints,
 }
 
+/// Candidate inline-block geometry for the publisher render modes.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InlineBlockMode {
+    #[default]
+    Ignore,
+    /// The authored width includes padding regardless of the declared box model.
+    Flat,
+    /// Book and Web honor the declared width's box model.
+    BoxSizing,
+}
+
 /// Experimental intrinsic sizing for ordinary publisher paragraphs.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -380,6 +392,8 @@ pub struct Settings {
     /// Reconstruct missing table rows and roots from supported publisher CSS boxes.
     #[doc(hidden)]
     pub repair_css_tables: bool,
+    #[doc(hidden)]
+    pub inline_block_mode: InlineBlockMode,
     #[doc(hidden)]
     pub fit_content: FitContentMode,
     /// Apply positive physical sides to supported auto-width publisher paragraphs.
@@ -472,6 +486,7 @@ impl Default for Settings {
             preserve_forced_page_margins: false,
             block_width: BlockWidthMode::Ignore,
             repair_css_tables: false,
+            inline_block_mode: InlineBlockMode::Ignore,
             fit_content: FitContentMode::Ignore,
             publisher_horizontal_margins: false,
             publisher_signed_horizontal_margins: false,
@@ -748,6 +763,19 @@ impl Line {
         let spans = view
             .source_spans(bytes.clone())
             .ok_or("A layout line has invalid projected boundaries")?;
+        self.set_source_spans(spans, || {
+            view.source_offset(bytes.start, flow_projection::Affinity::After)
+                .or_else(|| view.source_offset(bytes.start, flow_projection::Affinity::Before))
+                .unwrap_or(0)
+        });
+        Ok(())
+    }
+
+    fn set_source_spans(
+        &mut self,
+        spans: impl IntoIterator<Item = Range<usize>>,
+        empty: impl FnOnce() -> usize,
+    ) {
         let mut kept: Vec<Range<usize>> = Vec::new();
         for span in spans {
             if let Some(last) = kept.last_mut()
@@ -761,15 +789,11 @@ impl Line {
         self.bytes = match (kept.first(), kept.last()) {
             (Some(first), Some(last)) => first.start..last.end,
             _ => {
-                let point = view
-                    .source_offset(bytes.start, flow_projection::Affinity::After)
-                    .or_else(|| view.source_offset(bytes.start, flow_projection::Affinity::Before))
-                    .unwrap_or(0);
+                let point = empty();
                 point..point
             }
         };
         self.spans = (kept.len() > 1).then(|| kept.into());
-        Ok(())
     }
 }
 

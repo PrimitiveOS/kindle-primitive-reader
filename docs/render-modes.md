@@ -10,8 +10,8 @@ The probe records the chosen bitmask and checks the **UpdatePos** event.
 | Mode | Native mask | Mask with older-DOM compatibility | Enabled features |
 | --- | --- | --- | --- |
 | Legacy | `0x00000000` | `0x00000000` | Original block rendering path |
-| Flat | `0x03030031` | `0x00030031` | Enhanced blocks, vertical margin collapse with individual negative margins, W3C content-box sizing, prepared float boxes rendered inline, inline-block boxes and anonymous table repair |
-| Book | `0x03375131` | `0x00375131` | Flat features, automatic horizontal margin alignment, limited CSS width enforcement, floating float boxes, own-float handling and exact float footprints |
+| Flat | `0x03030031` | `0x00030031` | Enhanced blocks, vertical margin collapse with individual negative margins, prepared float boxes rendered inline, inline-block boxes and anonymous table repair |
+| Book | `0x03375131` | `0x00375131` | Flat features, W3C content-box sizing, automatic horizontal margin alignment, limited CSS width enforcement, floating float boxes, own-float handling and exact float footprints |
 | Web | `0x7FFFFFFF` | `0x7CFFFFFF` | All bits through bit 30, including empty forced breaks, net negative collapsed margins, negative horizontal margins, block and page overflow, and absolute CSS width and height |
 
 The older-DOM path removes bits `0x01000000` and `0x02000000` for
@@ -80,13 +80,56 @@ source-selection rectangles use the Parley or vertical engines.
 | Mechanism | Reader work required for the observed mode behavior |
 | --- | --- |
 | Legacy | Match the legacy inline model and the old handling of incomplete CSS tables. Separate publisher margins are measured below. |
-| Flat | Extend the measured empty-box geometry below to nested and margin-only boxes, and extend margin grouping to the remaining formatting contexts, inline floats, and anonymous boxes beyond the simple CSS table cases below. |
+| Flat | Extend the measured empty-box geometry below to nested and margin-only boxes, and extend margin grouping to the remaining formatting contexts, inline floats, inline-block containers with complex content, and anonymous boxes beyond the simple CSS table cases below. |
 | Book | Extend the horizontal float model below to complex boxes and inline floats, and implement the remaining style-width and auto-margin behavior |
 | Web | Extend signed margins and float geometry, implement full publisher box sizing and automatic placement, and extend physical break-page painting to complex boxes |
 
 The four options depend on independent box geometry, pagination and
 source mappings. A Reader renderer choice would currently change several
 of these behaviors together. The **Render Mode** matrix item remains open.
+
+## Text-only inline blocks
+
+The authored [inline-block specimen](../tests/fixtures/render-inline-blocks.xhtml)
+compares the same Noto Sans text at 600 × 720, 96 content DPI, 36-pixel
+reading margins and nominal 32-pixel text. Gray band widths below come from
+the native captures. In Legacy the bands follow unboxed inline text.
+Flat includes padding in a declared width. Book and Web apply the
+declared box model, adding padding to content-box widths.
+
+| Native specimen | Legacy | Flat | Book | Web |
+| --- | ---: | ---: | ---: | ---: |
+| 192 px content box with 12 px side padding | 91 px | 192 px | 216 px | 216 px |
+| Intrinsic span containing styled text | 160 px | 164 px | 164 px | 164 px |
+| 104 px content box with 8 px side padding | 177 px | 104 px | 120 px | 120 px |
+| 40% border box with 10 px side padding | 127 px | 211 px | 211 px | 211 px |
+| Text after the 192 px box, screen x | 216 px | 316 px | 340 px | 340 px |
+
+The internal Parley candidate implements these width and padding rules in
+horizontal, text-only paragraphs. It shapes each box separately, uses its
+last line's baseline, and places the whole box in one host line. A narrow
+box can wrap its own text. A host line containing a box moves to the next
+page as a unit. Links, text selection, and anchors use the same source
+bytes as ordinary inline layout, including when a box is the entire
+paragraph. Native and Reader text metrics can produce different line cuts.
+
+The default Reader configuration continues ordinary inline layout.
+A paragraph flows as ordinary text when it contains an unsupported box,
+such as an empty or nested box, a box mixed with floats, images, ruby or
+table cells, constrained dimensions, publisher heights or borders, or a
+right-to-left host. These cases and
+the older-DOM flag selection still need acceptance for the full setting.
+[Native Web capture](screenshots/render-inline-blocks-stock-web.png) ·
+[Reader Book/Web capture](screenshots/render-inline-blocks-reader-book-web.png) ·
+[Native assertions](../scripts/koreader-render-inline-blocks-check.lua)
+
+Generate the replay EPUB with
+`python3 scripts/generate-render-inline-blocks-fixture.py /tmp/inline-boxes.epub`.
+Pass that EPUB, a scratch cache directory, the fixture Noto Sans regular
+font and a capture directory to the native Lua assertions. Run
+`cargo test --locked --lib inline_blocks` for the Reader geometry, source
+and page checks. Set `READER_INLINE_BLOCK_SCREENS` to an existing directory
+to save its three candidate captures.
 
 ## Repairing missing CSS table rows and roots
 
