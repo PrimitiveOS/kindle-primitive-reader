@@ -241,6 +241,35 @@ folder action, the dictionary close control, both clippings screens and
 column or row zoom. The folder listing differed by two grayscale pixels.
 [Current book folder](screenshots/current-book-folder.png) · [Dictionary lookup](screenshots/dictionary-close-stack.png) · [Clippings options](screenshots/export-kindle-clippings-options.png) · [Scan zoom](screenshots/fixed-tile-zoom.png)
 
+## Reader 0.1.39 release on the Oasis
+
+Store installed the published ARMHF package with both Reader licenses. The
+installed executable matched the release, and the public catalog returned the
+same ZIP digest and size.
+[GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.39) · [Package workflow](https://github.com/PrimitiveOS/kindle-primitive-reader/actions/runs/45354900754) · [Store entry](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `f3152da55a8ec4915d4890fa92e4ac9f09a038430a0a7e7a8f378be671da22ce` | 21,601,194 |
+| Kindle executable | `b7a36b7c359adfda1d840a9cb17822f86ad19a6d38cbef6587a6d91f9b81c797` | 34,401,696 |
+
+The release opened each original in an isolated Reader profile, advanced to
+a changed frame, verified its source digest and resumed after restart. Times
+end when Reader has the first grayscale frame in memory.
+
+| File type | Bytes | First frame | Advance and resume |
+| --- | ---: | ---: | --- |
+| EPUB | 436,947 | 1,786 ms | Passed |
+| PDF | 2,005,917 | 890 ms | Passed |
+| AZW3 | 590,896 | 1,010 ms | Passed |
+| MOBI | 625,173 | 2,176 ms | Passed |
+
+The 1,137 automated Oasis checks include the custom footer cycle, the saved
+folder order, fixed and relative footnote text size and editing a PDF chapter
+from its thumbnail. Eight captured frames matched the Mac simulator. Two
+pixels differed on the ninth frame's folder picker label. Physical touch
+and panel refresh have separate checks. [Verification plan](execution-plan.md#reader-0139-verification-plan)
+
 ## Reader 0.1.38 release on the Oasis
 
 Both Reader licenses match the tagged source. Store installed the published
