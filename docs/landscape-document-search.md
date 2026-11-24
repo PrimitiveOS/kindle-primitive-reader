@@ -13,4 +13,4 @@ Run `cargo test --locked --lib document_search_viewport_`. Set `READER_SELECTION
 
 The separate search settings and history screens still use portrait geometry. A turn while the results list is already open requires the viewport transaction to preserve that first-visible result during presentation. Physical device rotation remains a device verification step.
 
-Rotating while Matches is open keeps the first visible result on the new page. The runtime stages the new results cache with the resized document, retains the accepted list on abort, and commits the two together after display confirmation.
+The first visible result stays on screen through a rotation and back, including when the new viewport places it on the first page. An explicit page turn establishes a new result to retain. The runtime stages the new results cache with the resized document, retains the accepted list on abort, and commits the two together after display confirmation.
