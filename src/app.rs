@@ -12329,18 +12329,23 @@ mod tests {
             Change::Partial
         );
         assert!(app.definition_expanded);
-        let back = primitive_ui::back_button(WIDTH as i32);
+        let [_, collapse, _] = definition_actions(app.definition_layout().0);
         assert_eq!(
-            app.input(Input::Tap((back.x + 15) as f32, (back.y + 15) as f32)),
+            app.input(Input::Tap(
+                (collapse.x + 15) as f32,
+                (collapse.y + 15) as f32
+            )),
             Change::Partial
         );
         assert!(app.definition_over_book());
-        let (_, popup_done, _) = app.definition_layout();
+        let [_, expand, _] = definition_actions(app.definition_layout().0);
         assert_eq!(
-            app.input(Input::Tap(
-                (popup_done.x + 15) as f32,
-                (popup_done.y + 15) as f32
-            )),
+            app.input(Input::Tap((expand.x + 15) as f32, (expand.y + 15) as f32)),
+            Change::Partial
+        );
+        let back = primitive_ui::back_button(WIDTH as i32);
+        assert_eq!(
+            app.input(Input::Tap((back.x + 15) as f32, (back.y + 15) as f32)),
             Change::Partial
         );
         assert_eq!(app.screen, Screen::Book);
