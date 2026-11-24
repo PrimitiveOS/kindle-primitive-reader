@@ -166,7 +166,7 @@ impl Fill {
         }
     }
 }
-/// Backgrounds extend through padding, including a wrapper's child paragraphs.
+/// Backgrounds extend through padding and supported sized wrappers.
 /// Layout coordinates stay separate from text hit bounds and source offsets.
 pub(crate) fn fills(
     source: &Source,
@@ -207,7 +207,7 @@ pub(crate) fn fills(
             top -= before as f32;
             bottom += after as f32;
             if style.flow.painted
-                && (before > 0 || after > 0)
+                && (before > 0 || after > 0 || boxes.is_some_and(|boxes| boxes[idx].sized_wrapper))
                 && let Some(gray) = style.background
             {
                 out.push(Fill {

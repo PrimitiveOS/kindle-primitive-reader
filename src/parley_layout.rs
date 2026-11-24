@@ -521,7 +521,12 @@ impl ParleyChapter {
         let gap = settings.font_size * 0.32;
         let mut row_flow = crate::table_layout::RowFlow::default();
         let mut positions = crate::table_borders::Positions::default();
-        let mut fill_positions = (vertical_padding.is_some()
+        let wrapper_backgrounds = publisher_boxes.as_ref().is_some_and(|boxes| {
+            boxes.iter().zip(styles).any(|(area, style)| {
+                area.sized_wrapper && style.flow.painted && style.background.is_some()
+            })
+        });
+        let mut fill_positions = (wrapper_backgrounds || vertical_padding.is_some()
             && styles.iter().any(|s| {
                 s.background.is_some()
                     && s.vertical_padding

@@ -140,9 +140,11 @@ local function check_band(mode, phrase, left, width)
 end
 for _, mode in ipairs{legacy, flat, book} do
     check_band(mode, "Centered box marker", 54, 1156)
+    check_band(mode, "Centered container marker", 54, 1156)
     check_band(mode, "Pixel box marker", 54, 1156)
 end
 check_band(web, "Centered box marker", 389, 485)
+check_band(web, "Centered container marker", 389, 485)
 check_band(web, "Pixel box marker", 54, 260)
 for _, check in ipairs{{legacy,3},{flat,1},{book,1},{web,3}} do
     local mode, expected = unpack(check)

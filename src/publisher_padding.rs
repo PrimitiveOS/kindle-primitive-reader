@@ -1,4 +1,6 @@
 //! Publisher block boxes, measured against their parent content area.
+mod wrappers;
+
 use crate::{
     BlockWidthMode,
     book_style::{BoxMargin, CssLength, ImageLength, Style, WritingMode},
@@ -15,6 +17,7 @@ pub(crate) struct BoxArea {
     pub outer_width: u32,
     border: [u32; 2],
     pub cell: Option<Cell>,
+    pub sized_wrapper: bool,
 }
 
 fn publisher_width(area: BoxArea, style: &Style, font: f32) -> Option<BoxArea> {
@@ -105,6 +108,7 @@ impl BoxArea {
             outer_width: width,
             border: [0, 0],
             cell,
+            sized_wrapper: false,
         }
     }
 
@@ -225,7 +229,7 @@ pub(crate) fn layout_with_flow(
     block_width: BlockWidthMode,
     measure: impl FnMut(&crate::source::Block) -> (u32, u32),
 ) -> Option<Vec<BoxArea>> {
-    let width_candidates = if block_width == BlockWidthMode::Publisher {
+    let width_candidates = if block_width != BlockWidthMode::Ignore {
         text_box_candidates(source, styles, |style| {
             matches!(
                 style.image_width,
@@ -235,9 +239,15 @@ pub(crate) fn layout_with_flow(
     } else {
         Vec::new()
     };
+    let wrapper_candidates = if block_width == BlockWidthMode::PublisherWithWrappers {
+        wrappers::candidates(source, styles, width, font)
+    } else {
+        Vec::new()
+    };
     if flow.is_identity()
         && borders.is_none()
         && !width_candidates.contains(&TextBoxCandidate::Simple)
+        && !wrapper_candidates.contains(&true)
         && !styles.iter().zip(&source.elements).any(|(style, element)| {
             !style.flow.suppressed
                 && ((element.tag == "table" && style.border_collapse)
@@ -289,11 +299,13 @@ pub(crate) fn layout_with_flow(
             continue;
         }
         let mut area = BoxArea::new(parent.x, parent.width, parent.cell);
-        if width_candidates.get(idx) == Some(&TextBoxCandidate::Simple)
+        let wrapper = wrapper_candidates.get(idx) == Some(&true);
+        if (wrapper || width_candidates.get(idx) == Some(&TextBoxCandidate::Simple))
             && let Some(published) =
                 publisher_width(area, &styles[idx], font * styles[idx].size_scale)
         {
             area = published;
+            area.sized_wrapper = wrapper;
         }
         if let Some(cell) = cells[idx]
             && area.width as f32 / f32::from(cell.columns) >= 2.5 * font
@@ -362,6 +374,7 @@ mod tests {
             outer_width: 200,
             border: [0, 0],
             cell: None,
+            sized_wrapper: false,
         };
         assert_eq!(
             area.paragraph_bounds_for_text(parley::BaseDirection::Auto, "Latin אבג", style, 40.),
@@ -472,3 +485,6 @@ mod width_tests;
 
 #[cfg(test)]
 mod height_tests;
+
+#[cfg(test)]
+mod wrapper_tests;

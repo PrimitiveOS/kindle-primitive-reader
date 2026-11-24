@@ -107,12 +107,46 @@ The native oracle asserts the stock word origin and the width and origin of
 each solid paint band. Reader tests additionally check line wrapping,
 restored source quotes and touch hit testing. Reader wraps the 260-pixel
 sample in two lines under its own text metrics. Remaining box sizing work
-includes colored ancestor boxes, nonzero horizontal margins, overflow,
+includes complex ancestor boxes, nonzero horizontal margins, overflow,
 and boxes with images, tables, or floats.
 [CREngine width resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7909-L7982) · [CREngine auto margins](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L8178-L8202) · [Native oracle](../scripts/koreader-render-modes-check.lua) · [Reader capture](screenshots/render-modes-reader-web-width.png)
 
 Run `cargo test --locked --lib publisher_width` for the Reader comparison.
 Set `READER_WEB_WIDTH_CAPTURE` to a PNG path to save a capture.
+
+### Sized wrappers around ordinary paragraphs
+
+The internal `PublisherWithWrappers` policy extends publisher sizing
+to a direct `div`, `section` or `article` in the document body when
+the wrapper contains ordinary paragraphs. Its pixel or percentage
+width constrains child wrapping, source hit boxes and the wrapper’s
+painted background. The same margin calculation centers it within its
+parent’s content width.
+
+| The authored 42% wrapper at 1264 × 1606 | Child text starts at | Solid background band |
+| --- | ---: | ---: |
+| KOReader Legacy, Flat and Book | x = 54 | x = 54, width = 1,156 px |
+| KOReader Web | x = 389 | x = 389, width = 485 px |
+| Reader with the wrapper policy | x = 389 | x = 389, width = 485 px |
+| Reader’s ordinary layout and the paragraph-only policy | x = 54 | Existing background behavior |
+
+Wrapped paragraphs keep their canonical source positions, including on
+subsequent pages of the same container. A hidden child removed by
+`display:none` contributes no painted rows. The tests compare byte-identical
+frames in unsupported boxes and with Publisher styles off. Nested wrappers,
+children with their own dimensions, complex borders or spacing, floats
+inside the wrapper, and media and tables use their existing layout.
+
+Run `cargo test --locked --lib publisher_wrappers` for the Reader
+comparison. Set `READER_PUBLISHER_WRAPPER_CAPTURES` to an existing
+directory to capture the matching and continuation views. The original
+Render Mode fixture also checks the same wrapper in the pinned native
+oracle.
+[CREngine’s width flag](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7909-L7923) ·
+[Wrapper background](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L10253-L10285) ·
+[Native Web capture](screenshots/render-modes-stock-web.png) ·
+[Reader Web width and wrappers](screenshots/render-modes-reader-web-wrappers.png) ·
+[Reader wrapper continued](screenshots/render-modes-reader-wrapper-continuation.png)
 
 ## Definite heights on ordinary paragraphs
 

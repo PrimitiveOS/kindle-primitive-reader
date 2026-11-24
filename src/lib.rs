@@ -299,6 +299,7 @@ pub enum BlockWidthMode {
     #[default]
     Ignore,
     Publisher,
+    PublisherWithWrappers,
 }
 
 /// Experimental horizontal float policy for the Parley provider.
