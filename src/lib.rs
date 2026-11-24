@@ -128,6 +128,14 @@ fn test_fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+#[cfg(test)]
+fn test_symbol_font() -> PathBuf {
+    std::env::var_os("READER_TEST_FIXTURES").map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/PrimitiveSymbols.ttf"),
+        |root| PathBuf::from(root).join("fonts/PrimitiveSymbols.ttf"),
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Engine {
     Blitz,
@@ -1875,10 +1883,7 @@ mod firmware_font_tests {
     #[test]
     fn bundled_koreader_symbol_subset_covers_seven_observed_private_use_symbols() {
         let primary = test_fixture("fonts/NotoSans-Regular.ttf");
-        let symbols = std::env::var_os("READER_TEST_FIXTURES").map_or_else(
-            || Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/PrimitiveSymbols.ttf"),
-            |root| PathBuf::from(root).join("fonts/PrimitiveSymbols.ttf"),
-        );
+        let symbols = test_symbol_font();
         let paths = [primary, symbols];
         let mut fonts = font_context_with_firmware(&paths, Path::new("/missing-firmware")).unwrap();
         // Eight private-use scalars were observed in original AZW3 002. The

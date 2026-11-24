@@ -14489,7 +14489,7 @@ mod tests {
         let fonts = vec![
             crate::test_fixture("fonts/NotoSans-Regular.ttf"),
             crate::test_fixture("fonts/NotoSans-Bold.ttf"),
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/PrimitiveSymbols.ttf"),
+            crate::test_symbol_font(),
         ];
         let mut app = fixture.app();
         app.fonts = fonts.clone();
