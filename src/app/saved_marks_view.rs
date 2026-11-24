@@ -63,6 +63,7 @@ impl Reader {
             Screen::BookmarkMatches | Screen::BookmarkBrowser(_) | Screen::BookMap
         ) || self.screen.uses_contents_list_viewport()
             || self.screen.uses_reading_list_viewport()
+            || self.screen.uses_numeric_settings_list()
         {
             Geometry::STANDARD.in_navigation(self.navigation_layout())
         } else {

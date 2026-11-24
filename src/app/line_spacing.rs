@@ -4,7 +4,6 @@ use super::{step_buttons::StepButtons, *};
 const DECREASE: Rect = Rect::new(48, LIST_Y + 286, 352, 112);
 const DEFAULT: Rect = Rect::new(424, LIST_Y + 286, 416, 112);
 const INCREASE: Rect = Rect::new(864, LIST_Y + 286, 352, 112);
-const STEPS: StepButtons = StepButtons::new(DECREASE, INCREASE);
 
 impl Reader {
     pub(super) fn prepare_line_spacing_editor(&mut self) {
@@ -46,7 +45,7 @@ impl Reader {
     }
 
     fn close_line_spacing(&mut self) {
-        self.open_reading_edge(false, WIDTH as f32 / 2.);
+        self.open_reading_edge(false, self.navigation_layout().width as f32 * 0.5);
         self.reading_panel = Some(BarPanel::TextLayout);
     }
 
@@ -55,15 +54,17 @@ impl Reader {
             return None;
         };
         if matches!(input, Input::PageBack)
-            || matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
+            || matches!(input, Input::Tap(x, y) if self.navigation_layout().back().contains(x, y))
         {
             self.close_line_spacing();
             return Some(Change::Partial);
         }
-        let value = if matches!(input, Input::Tap(x, y) | Input::LongTap(x, y) if DEFAULT.contains(x, y))
+        let layout = self.numeric_layout();
+        let [decrease, default, increase] = layout.steps([DECREASE, DEFAULT, INCREASE], false);
+        let value = if matches!(input, Input::Tap(x, y) | Input::LongTap(x, y) if default.contains(x, y))
         {
             Ok(self.line_spacing_default())
-        } else if let Some(delta) = STEPS.delta(input, 5) {
+        } else if let Some(delta) = StepButtons::new(decrease, increase).delta(input, 5) {
             self.line_spacing_value()
                 .map(|value| value.saturating_add_signed(delta).clamp(50, 200))
         } else {
@@ -152,15 +153,17 @@ impl Reader {
         ) {
             return;
         }
-        STEPS.draw(canvas);
+        let layout = self.numeric_layout();
+        let [decrease, default, increase] = layout.steps([DECREASE, DEFAULT, INCREASE], false);
+        StepButtons::new(decrease, increase).draw(canvas);
         canvas.button(
-            DEFAULT,
+            default,
             &format!("Default: {}%", self.line_spacing_default()),
             false,
             false,
         );
         canvas.text(
-            Rect::new(48, LIST_Y + 428, 1168, 150),
+            layout.detail(Rect::new(48, LIST_Y + 428, 1168, 150), false),
             "Line spacing from 50% to 200%.\nTap −/+ for 1%; hold for 5%.\nThe default is 100% unless changed in Document defaults.",
             CAPTION.lines(3),
         );

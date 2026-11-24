@@ -65,6 +65,7 @@ mod navigation_preferences;
 mod nearby_search;
 #[cfg(test)]
 mod nonlinear_tests;
+mod numeric_editor;
 mod online_panel;
 mod overview_bookmarks;
 mod page_overview;
@@ -5154,7 +5155,7 @@ impl Reader {
         if let Some(change) = self.word_spacing_input(input) {
             return change;
         }
-        let navigation = if self.screen == Screen::GoToPage {
+        let navigation = if self.screen.uses_navigation_viewport() {
             self.navigation_layout()
         } else {
             navigation_layout::NavigationLayout::PORTRAIT
@@ -7418,6 +7419,8 @@ impl Reader {
             canvas.single_line_field(
                 if self.screen == Screen::Find {
                     search.find_field(self.can_paste_text())
+                } else if self.screen.is_numeric_editor() {
+                    self.numeric_layout().field()
                 } else {
                     navigation.body(LIST_Y, 130)
                 },
@@ -7425,6 +7428,12 @@ impl Reader {
                 hint,
                 self.screen == Screen::PdfPassword,
             );
+            if self.screen.is_numeric_editor() {
+                let numeric = self.numeric_layout();
+                if numeric.is_landscape() && !self.editor.text.is_empty() {
+                    canvas.text(numeric.hint(), hint, CAPTION);
+                }
+            }
             canvas.keyboard(self.editor.layer, action, None);
             self.draw_content_dpi(canvas);
             self.draw_logical_font(canvas);
@@ -7475,11 +7484,17 @@ impl Reader {
                 canvas.text(
                     if self.screen == Screen::Find {
                         search.find_notice()
+                    } else if self.screen.is_numeric_editor() {
+                        self.numeric_layout().notice()
                     } else {
                         navigation.body(LIST_Y + 158, 75)
                     },
                     notice,
-                    CAPTION,
+                    if self.screen.is_numeric_editor() && self.numeric_layout().is_landscape() {
+                        CAPTION.lines(3)
+                    } else {
+                        CAPTION
+                    },
                 );
             }
             return;

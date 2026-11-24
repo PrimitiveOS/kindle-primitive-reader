@@ -81,7 +81,7 @@ impl Reader {
     }
 
     fn close_word_spacing(&mut self) {
-        self.open_reading_edge(false, WIDTH as f32 / 2.);
+        self.open_reading_edge(false, self.navigation_layout().width as f32 * 0.5);
         self.reading_panel = Some(BarPanel::TextSpacing);
     }
 
@@ -90,37 +90,40 @@ impl Reader {
             return None;
         };
         if matches!(input, Input::PageBack)
-            || matches!(input,Input::Tap(x,y) if primitive_ui::back_button(WIDTH as i32).contains(x,y))
+            || matches!(input,Input::Tap(x,y) if self.navigation_layout().back().contains(x,y))
         {
             self.close_word_spacing();
             return Some(Change::Partial);
         }
+        let layout = self.numeric_layout();
+        let [decrease, default, increase] = layout.steps([DECREASE, DEFAULT, INCREASE], true);
+        let [scaling, minimum] = layout.choices([SCALING, MINIMUM]);
         let (x, y, step) = match input {
             Input::Tap(x, y) => (x, y, 1u16),
             Input::LongTap(x, y) => (x, y, 10u16),
             _ => return None,
         };
-        let result = if DEFAULT.contains(x, y) {
+        let result = if default.contains(x, y) {
             Ok(Draft {
                 value: self.word_spacing_default(),
                 ..draft
             })
-        } else if SCALING.contains(x, y) || MINIMUM.contains(x, y) {
+        } else if scaling.contains(x, y) || minimum.contains(x, y) {
             self.parsed_word_spacing_draft(draft).map(|mut next| {
-                next.field = if SCALING.contains(x, y) {
+                next.field = if scaling.contains(x, y) {
                     Field::Scaling
                 } else {
                     Field::Minimum
                 };
                 next
             })
-        } else if DECREASE.contains(x, y) || INCREASE.contains(x, y) {
+        } else if decrease.contains(x, y) || increase.contains(x, y) {
             self.parsed_word_spacing_draft(draft).map(|mut next| {
                 let (old, lower, upper) = match next.field {
                     Field::Scaling => (next.value.scaling, 10, 500),
                     Field::Minimum => (u16::from(next.value.minimum), 25, 100),
                 };
-                let value = if DECREASE.contains(x, y) {
+                let value = if decrease.contains(x, y) {
                     old.saturating_sub(step).max(lower)
                 } else {
                     old.saturating_add(step).min(upper)
@@ -205,31 +208,37 @@ impl Reader {
         let Screen::NumberingValue(NumberField::WordSpacing(draft)) = self.screen else {
             return;
         };
+        let layout = self.numeric_layout();
+        let [decrease, default, increase] = layout.steps([DECREASE, DEFAULT, INCREASE], true);
+        let [scaling, minimum] = layout.choices([SCALING, MINIMUM]);
         let value = self
             .parsed_word_spacing_draft(draft)
             .map_or(draft.value, |d| d.value);
         canvas.button(
-            SCALING,
+            scaling,
             &format!("Scaling: {}%", value.scaling),
             draft.field == Field::Scaling,
             false,
         );
         canvas.button(
-            MINIMUM,
+            minimum,
             &format!("Reduction: {}%", value.minimum),
             draft.field == Field::Minimum,
             false,
         );
-        canvas.button(DECREASE, "-", false, false);
-        let default = self.word_spacing_default();
+        canvas.button(decrease, "-", false, false);
+        let saved_default = self.word_spacing_default();
         canvas.button(
-            DEFAULT,
-            &format!("Default: {}/{}%", default.scaling, default.minimum),
+            default,
+            &format!(
+                "Default: {}/{}%",
+                saved_default.scaling, saved_default.minimum
+            ),
             false,
             false,
         );
-        canvas.button(INCREASE, "+", false, false);
-        canvas.text(Rect::new(48,LIST_Y+428,1168,200),
+        canvas.button(increase, "+", false, false);
+        canvas.text(layout.detail(Rect::new(48, LIST_Y + 428, 1168, 200), true),
             "Scaling changes natural space width.\nReduction is the minimum remaining width.\n100% prevents reduction; hold -/+ for 10%.",CAPTION.lines(3));
     }
 }

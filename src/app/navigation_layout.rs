@@ -114,6 +114,8 @@ impl Screen {
         self.is_contents()
             || self.uses_contents_list_viewport()
             || self.uses_reading_list_viewport()
+            || self.is_numeric_editor()
+            || self.uses_numeric_settings_list()
             || self.uses_reading_text_editor()
             || self.is_bookmark_list()
             || matches!(
@@ -161,7 +163,9 @@ pub(super) struct ReadingListStage {
 
 impl ReadingListStage {
     pub(super) fn capture(reader: &Reader) -> Option<Self> {
-        if !reader.screen.uses_reading_list_viewport() {
+        if !reader.screen.uses_reading_list_viewport()
+            && !reader.screen.uses_numeric_settings_list()
+        {
             return None;
         }
         let retained = reader

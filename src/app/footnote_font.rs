@@ -4,10 +4,11 @@ use crate::footnotes::font_size::FontSize;
 
 const RELATIVE: Rect = Rect::new(48, LIST_Y + 172, 568, 104);
 const FIXED: Rect = Rect::new(648, LIST_Y + 172, 568, 104);
-const STEPS: StepButtons = StepButtons::new(
+const FOOTNOTE_STEPS: [Rect; 3] = [
     Rect::new(48, LIST_Y + 300, 352, 110),
+    Rect::new(420, LIST_Y + 316, 424, 62),
     Rect::new(864, LIST_Y + 300, 352, 110),
-);
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Mode {
@@ -87,9 +88,11 @@ impl Reader {
         let Screen::FootnoteFontSize(mode) = self.screen else {
             return None;
         };
+        let layout = self.numeric_layout();
+        let [relative, fixed] = layout.choices([RELATIVE, FIXED]);
         let selected = match input {
-            Input::Tap(x, y) if RELATIVE.contains(x, y) => Some(Mode::Relative),
-            Input::Tap(x, y) if FIXED.contains(x, y) => Some(Mode::Fixed),
+            Input::Tap(x, y) if relative.contains(x, y) => Some(Mode::Relative),
+            Input::Tap(x, y) if fixed.contains(x, y) => Some(Mode::Fixed),
             _ => None,
         };
         if let Some(selected) = selected {
@@ -99,7 +102,9 @@ impl Reader {
             self.show(Screen::FootnoteFontSize(selected));
             return Some(Change::Partial);
         }
-        let delta = STEPS.delta(input, if mode == Mode::Fixed { 10 } else { 3 })?;
+        let [decrease, _, increase] = layout.steps(FOOTNOTE_STEPS, true);
+        let step = if mode == Mode::Fixed { 10 } else { 3 };
+        let delta = StepButtons::new(decrease, increase).delta(input, step)?;
         Some(match self.footnote_font_size_value(mode) {
             Ok(value) => {
                 let range = mode.range();
@@ -126,14 +131,15 @@ impl Reader {
     }
 
     pub(super) fn draw_footnote_font_editor(&self, canvas: &mut Canvas, mode: Mode) {
-        canvas.button(RELATIVE, "Relative", mode == Mode::Relative, false);
-        canvas.button(FIXED, "Fixed", mode == Mode::Fixed, false);
-        STEPS.draw(canvas);
-        canvas.text(
-            Rect::new(420, LIST_Y + 316, 424, 62),
-            mode.hint(),
-            CAPTION.center(),
-        );
+        let layout = self.numeric_layout();
+        let [relative, fixed] = layout.choices([RELATIVE, FIXED]);
+        let [decrease, caption, increase] = layout.steps(FOOTNOTE_STEPS, true);
+        canvas.button(relative, "Relative", mode == Mode::Relative, false);
+        canvas.button(fixed, "Fixed", mode == Mode::Fixed, false);
+        StepButtons::new(decrease, increase).draw(canvas);
+        if !layout.is_landscape() {
+            canvas.text(caption, mode.hint(), CAPTION.center());
+        }
     }
 }
 

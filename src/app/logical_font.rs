@@ -35,7 +35,7 @@ impl Reader {
             .unwrap_or(crate::logical_font::DEFAULT)
     }
     fn close_logical_font(&mut self) {
-        self.open_reading_edge(false, WIDTH as f32 / 2.);
+        self.open_reading_edge(false, self.navigation_layout().width as f32 * 0.5);
         self.reading_panel = Some(BarPanel::Text);
     }
     pub(super) fn logical_font_input(&mut self, input: Input) -> Option<Change> {
@@ -43,21 +43,23 @@ impl Reader {
             return None;
         };
         if matches!(input, Input::PageBack)
-            || matches!(input,Input::Tap(x,y) if primitive_ui::back_button(WIDTH as i32).contains(x,y))
+            || matches!(input,Input::Tap(x,y) if self.navigation_layout().back().contains(x,y))
         {
             self.close_logical_font();
             return Some(Change::Partial);
         }
+        let layout = self.numeric_layout();
+        let [decrease, default, increase] = layout.steps([DECREASE, DEFAULT, INCREASE], false);
         let (x, y, step) = match input {
             Input::Tap(x, y) => (x, y, 0.5f64),
             Input::LongTap(x, y) => (x, y, 4.0f64),
             _ => return None,
         };
-        let value = if DEFAULT.contains(x, y) {
+        let value = if default.contains(x, y) {
             Ok(self.logical_font_default())
-        } else if DECREASE.contains(x, y) || INCREASE.contains(x, y) {
+        } else if decrease.contains(x, y) || increase.contains(x, y) {
             self.logical_font_value().map(|value| {
-                if DECREASE.contains(x, y) {
+                if decrease.contains(x, y) {
                     (value - step).max(12.0)
                 } else {
                     (value + step).min(255.0)
@@ -144,15 +146,17 @@ impl Reader {
         ) {
             return;
         }
-        canvas.button(DECREASE, "-", false, false);
+        let layout = self.numeric_layout();
+        let [decrease, default, increase] = layout.steps([DECREASE, DEFAULT, INCREASE], false);
+        canvas.button(decrease, "-", false, false);
         canvas.button(
-            DEFAULT,
+            default,
             &format!("Default: {:.1}", self.logical_font_default()),
             false,
             false,
         );
-        canvas.button(INCREASE, "+", false, false);
-        canvas.text(Rect::new(48,LIST_Y+428,1168,150),"Logical size 12 to 255. Hold -/+ for 4.\nLarge values reach the stock 340 px limit.\nContent DPI and facing pages do not change size.",CAPTION.lines(3));
+        canvas.button(increase, "+", false, false);
+        canvas.text(layout.detail(Rect::new(48, LIST_Y + 428, 1168, 150), false),"Logical size 12 to 255. Hold -/+ for 4.\nLarge values reach the stock 340 px limit.\nContent DPI and facing pages do not change size.",CAPTION.lines(3));
     }
 }
 

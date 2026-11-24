@@ -34,7 +34,7 @@ impl Reader {
             .unwrap_or(Settings::default().render_dpi)
     }
     fn close_content_dpi(&mut self) {
-        self.open_reading_edge(false, WIDTH as f32 / 2.);
+        self.open_reading_edge(false, self.navigation_layout().width as f32 * 0.5);
         self.reading_panel = Some(BarPanel::TextRendering);
     }
     pub(super) fn content_dpi_input(&mut self, input: Input) -> Option<Change> {
@@ -42,21 +42,23 @@ impl Reader {
             return None;
         };
         if matches!(input, Input::PageBack)
-            || matches!(input,Input::Tap(x,y) if primitive_ui::back_button(WIDTH as i32).contains(x,y))
+            || matches!(input,Input::Tap(x,y) if self.navigation_layout().back().contains(x,y))
         {
             self.close_content_dpi();
             return Some(Change::Partial);
         }
+        let layout = self.numeric_layout();
+        let [decrease, default, increase] = layout.steps([DECREASE, DEFAULT, INCREASE], false);
         let (x, y, step) = match input {
             Input::Tap(x, y) => (x, y, 1u16),
             Input::LongTap(x, y) => (x, y, 20u16),
             _ => return None,
         };
-        let value = if DEFAULT.contains(x, y) {
+        let value = if default.contains(x, y) {
             Ok(self.content_dpi_default())
-        } else if DECREASE.contains(x, y) || INCREASE.contains(x, y) {
+        } else if decrease.contains(x, y) || increase.contains(x, y) {
             self.content_dpi_value().map(|value| {
-                if DECREASE.contains(x, y) {
+                if decrease.contains(x, y) {
                     value.saturating_sub(step)
                 } else {
                     value.saturating_add(step).min(300)
@@ -140,15 +142,17 @@ impl Reader {
         ) {
             return;
         }
-        canvas.button(DECREASE, "-", false, false);
+        let layout = self.numeric_layout();
+        let [decrease, default, increase] = layout.steps([DECREASE, DEFAULT, INCREASE], false);
+        canvas.button(decrease, "-", false, false);
         canvas.button(
-            DEFAULT,
+            default,
             &format!("Default: {} dpi", self.content_dpi_default()),
             false,
             false,
         );
-        canvas.button(INCREASE, "+", false, false);
-        canvas.text(Rect::new(48,LIST_Y+428,1168,150),"0: Off. 96: original pixel scale.\nHold -/+ to change by 20 dpi.\nText size and screen DPI stay unchanged.",CAPTION.lines(3));
+        canvas.button(increase, "+", false, false);
+        canvas.text(layout.detail(Rect::new(48, LIST_Y + 428, 1168, 150), false),"0: Off. 96: original pixel scale.\nHold -/+ to change by 20 dpi.\nText size and screen DPI stay unchanged.",CAPTION.lines(3));
     }
 }
 
