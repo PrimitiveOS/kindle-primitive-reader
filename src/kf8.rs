@@ -1177,16 +1177,28 @@ pub(crate) mod tests {
     }
 
     fn fixture_flows(base: &str, auxiliary: Option<&str>) -> Vec<u8> {
-        fixture_with_record(base, auxiliary, None)
+        fixture_with_records(base, auxiliary, &[])
     }
 
     pub(crate) fn font_fixture(bytes: &[u8]) -> Vec<u8> {
         let base = "<html><head><link rel='stylesheet' href='kindle:flow:0001?mime=text/css'/></head><body><p id='font-sample'>Waves at the headland</p></body></html>";
         let css = "@font-face {font-family: Harbor;src:url('kindle:embed:0003?mime=application/x-font-ttf')} #font-sample {font-family:Harbor,serif}";
-        fixture_with_record(base, Some(css), Some(bytes))
+        fixture_with_records(base, Some(css), &[bytes])
     }
 
-    fn fixture_with_record(base: &str, auxiliary: Option<&str>, font: Option<&[u8]>) -> Vec<u8> {
+    #[cfg(feature = "kindle")]
+    pub(crate) fn font_report_fixture(fonts: &[&[u8]]) -> Vec<u8> {
+        let base = "<html><head><link rel='stylesheet' href='kindle:flow:0001?mime=text/css'/></head><body></body></html>";
+        let css = concat!(
+            "@font-face{font-family:Voyage;src:url('kindle:embed:0003?mime=application/x-font-ttf')}",
+            "@font-face{font-family:Quarry;src:url('kindle:embed:0004?mime=application/x-font-ttf')}",
+            "@font-face{font-family:Damaged;src:url('kindle:embed:0005?mime=application/x-font-ttf')}",
+            "h2{font-family:Voyage,serif}",
+        );
+        fixture_with_records(base, Some(css), fonts)
+    }
+
+    fn fixture_with_records(base: &str, auxiliary: Option<&str>, fonts: &[&[u8]]) -> Vec<u8> {
         let first = "<h1>Shore Notes</h1><p>Look at the <a href='kindle:pos:fid:0001:off:0000000000'>next chapter</a>.</p><p><img src='kindle:embed:0001?mime=image/png'/></p>";
         let second = "<h2>Arrival</h2><p>Mặt trời lên.</p>";
         let raw = format!("{base}{first}{base}{second}");
@@ -1251,9 +1263,7 @@ pub(crate) mod tests {
             word(&mut fdst, 24, main + aux.len());
             records.push(fdst);
         }
-        if let Some(font) = font {
-            records.push(font.to_vec());
-        }
+        records.extend(fonts.iter().map(|font| font.to_vec()));
         let mut pdb = vec![0; 78 + 8 * records.len()];
         pdb[..12].copy_from_slice(b"Shore Notes\0");
         pdb[60..68].copy_from_slice(b"BOOKMOBI");

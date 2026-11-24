@@ -1200,7 +1200,7 @@ impl Probe {
     }
 
     fn from_book_with_font_loader(
-        mut book: Book,
+        book: Book,
         engine: Engine,
         settings: Settings,
         chapter: usize,
@@ -1209,6 +1209,32 @@ impl Probe {
         user_styles: &user_styles::Snapshot,
         load_fonts: impl FnOnce() -> Result<FontContext>,
     ) -> Result<Self> {
+        Self::layout_opened_book(
+            &mut Some(book),
+            engine,
+            settings,
+            chapter,
+            excerpt,
+            user_rules,
+            user_styles,
+            load_fonts,
+        )
+    }
+
+    // Parley borrows publication resources for the layout so an isolated
+    // worker can inspect the next chapter with the same parsed snapshot.
+    // Blitz owns its resource loader and takes the Book for that path.
+    fn layout_opened_book(
+        opened: &mut Option<Book>,
+        engine: Engine,
+        settings: Settings,
+        chapter: usize,
+        excerpt: Option<String>,
+        user_rules: &user_hyphenation::Rules,
+        user_styles: &user_styles::Snapshot,
+        load_fonts: impl FnOnce() -> Result<FontContext>,
+    ) -> Result<Self> {
+        let book = opened.as_mut().ok_or("Reading source is unavailable")?;
         if book.is_fixed_layout() {
             return Err("Open this fixed-layout EPUB in Reader".into());
         }
@@ -1298,13 +1324,19 @@ impl Probe {
         let mut registered_faces = std::collections::HashMap::new();
         let (renderer, mut lines, content_height) = match engine {
             Engine::Blitz => {
-                let (layout, lines, extent) =
-                    blitz::BlitzChapter::new(book, &href, &xhtml, &source, fonts, settings)?;
+                let (layout, lines, extent) = blitz::BlitzChapter::new(
+                    opened.take().ok_or("Reading source is unavailable")?,
+                    &href,
+                    &xhtml,
+                    &source,
+                    fonts,
+                    settings,
+                )?;
                 (Renderer::Blitz(Box::new(layout)), lines, extent)
             }
             Engine::Parley => {
                 let author = book_style::BookStyle::load_with_base(
-                    &mut book, &href, &source, &mut fonts, settings,
+                    book, &href, &source, &mut fonts, settings,
                 )
                 .with_user_css(user_styles)?;
                 #[cfg(feature = "kindle")]
@@ -1373,7 +1405,7 @@ impl Probe {
                                 });
                         let mut lay_out = |source: &Source, faces| {
                             parley_layout::ParleyChapter::with_flow(
-                                &mut book,
+                                book,
                                 &href,
                                 source,
                                 faces,
@@ -1406,7 +1438,7 @@ impl Probe {
                                     // all its cells. Keep the chapter readable in source order.
                                     drop(lay_out);
                                     parley_layout::ParleyChapter::with_source_order(
-                                        &mut book,
+                                        book,
                                         &href,
                                         &source,
                                         fonts,

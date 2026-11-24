@@ -49,8 +49,14 @@ pub(crate) fn reference(url: &str) -> Option<usize> {
     base32(number, 4).ok().filter(|number| *number > 0)
 }
 
+pub(crate) enum Input {
+    File(File),
+    #[cfg(feature = "kindle")]
+    Snapshot(std::sync::Arc<[u8]>),
+}
+
 pub(crate) struct FontSource {
-    pub file: File,
+    pub input: Input,
     pub records: BTreeMap<usize, Range<usize>>,
 }
 
@@ -60,12 +66,20 @@ impl FontSource {
             .records
             .get(&number)
             .ok_or("The publication font is missing")?;
-        self.file.seek(SeekFrom::Start(range.start as u64))?;
-        decode(
-            (&mut self.file).take(range.len() as u64),
-            range.len(),
-            limit,
-        )
+        let length = range.len();
+        match &mut self.input {
+            Input::File(file) => {
+                file.seek(SeekFrom::Start(range.start as u64))?;
+                decode(file.take(length as u64), length, limit)
+            }
+            #[cfg(feature = "kindle")]
+            Input::Snapshot(bytes) => {
+                let record = bytes
+                    .get(range.clone())
+                    .ok_or("The publication font is outside the snapshot")?;
+                decode(record, length, limit)
+            }
+        }
     }
 }
 

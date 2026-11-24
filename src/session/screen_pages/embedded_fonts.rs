@@ -11,6 +11,7 @@ use crate::{
     book_style::BookStyle,
     embedded_font_usage::Families,
     epub::{Book, Chapter},
+    loose,
     session::Reading,
     user_hyphenation, user_styles,
 };
@@ -100,12 +101,14 @@ struct Request {
 
 impl Request {
     fn eligible(&self, sources: &ScreenPageSources) -> bool {
+        let supported_format = self
+            .path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("epub"))
+            || loose::Format::for_path(&self.path) == Some(loose::Format::Mobi);
         self.engine == Engine::Parley
             && !self.facing
-            && self
-                .path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("epub"))
+            && supported_format
             && self.spine.len() <= MAX_SPINE_ITEMS
             && sources.book.len <= ARCHIVE_LIMIT
             && sources.fonts.len() <= FONT_COUNT_LIMIT
@@ -127,16 +130,16 @@ impl Request {
             Ok(ScreenPageSources::read_paths(&self.path, &self.fonts))
         })?;
         if let Some(sources) = sources.filter(|sources| !disabled && self.eligible(sources)) {
-            let bytes: Arc<[u8]> = read_snapshot(&self.path, &sources.book, cancelled)?.into();
-            let mut book = Book::open_snapshot(bytes.clone())?;
+            let bytes = read_snapshot(&self.path, &sources.book, cancelled)?.into();
+            let mut book = Book::font_inspection_snapshot(&self.path, bytes)?;
             self.verify_publication(&book)?;
-            if book.supports_screen_page_count()
+            if book.supports_whole_book_font_inspection()
                 && book
                     .chapter_offsets()?
                     .last()
                     .is_some_and(|&size| size <= MAX_SPINE_BYTES)
             {
-                return self.inspect_book(bytes, book, sources, cancelled);
+                return self.inspect_book(book, sources, cancelled);
             }
         }
         let mut report = Report {
@@ -161,7 +164,6 @@ impl Request {
 
     fn inspect_book(
         &self,
-        bytes: Arc<[u8]>,
         mut book: Book,
         sources: ScreenPageSources,
         cancelled: &AtomicBool,
@@ -169,7 +171,7 @@ impl Request {
         let mut families = self.current.clone();
         if book.may_have_embedded_fonts() {
             families.include_catalog(BookStyle::embedded_font_catalog(&mut book, self.chapter));
-            drop(book);
+            let mut book = Some(book);
             let fonts = crate::font_context_with_font_data(
                 &self.fonts,
                 Path::new(FIRMWARE_FONTS),
@@ -185,8 +187,8 @@ impl Request {
             )?;
             for index in 0..self.spine.len() {
                 check_cancelled(cancelled)?;
-                let probe = Probe::from_book_with_font_loader(
-                    Book::open_snapshot(bytes.clone())?,
+                let probe = Probe::layout_opened_book(
+                    &mut book,
                     self.engine,
                     self.settings,
                     index,
@@ -207,7 +209,7 @@ impl Request {
             (ScreenPageSources::read_paths(&self.path, &self.fonts).as_ref() == Some(&sources))
                 .then_some(())
                 .ok_or_else(|| {
-                    io::Error::other("The EPUB or reading fonts changed during inspection")
+                    io::Error::other("The publication or reading fonts changed during inspection")
                 })
         })?;
         Ok(Report {

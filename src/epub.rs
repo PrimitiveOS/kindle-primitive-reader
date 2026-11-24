@@ -169,6 +169,18 @@ impl Book {
         Self::from_archive(Archive::Zip(crate::epub_zip::open_snapshot(bytes)?))
     }
 
+    #[cfg(feature = "kindle")]
+    pub(crate) fn font_inspection_snapshot(
+        path: &Path,
+        bytes: std::sync::Arc<[u8]>,
+    ) -> Result<Self> {
+        if loose::Format::for_path(path) == Some(loose::Format::Mobi) {
+            let fonts = kf8::fonts::Input::Snapshot(bytes.clone());
+            return Self::from_mobi(&bytes, loose::fallback_title(path), fonts);
+        }
+        Self::open_snapshot(bytes)
+    }
+
     fn from_archive(mut archive: Archive) -> Result<Self> {
         // Some reader-compatible publications compress this marker or write another member
         // first. Its identity and the following OCF/OPF checks identify the publication.
@@ -457,6 +469,12 @@ impl Book {
     }
 
     #[cfg(feature = "kindle")]
+    pub(crate) fn supports_whole_book_font_inspection(&self) -> bool {
+        self.supports_screen_page_count()
+            || matches!(&self.content, Content::Loose { fonts: Some(_), .. })
+    }
+
+    #[cfg(feature = "kindle")]
     pub(crate) fn supports_eager_typography(&self) -> bool {
         matches!(&self.content, Content::Archive { archive: Archive::Zip(archive), .. }
         if archive.missing.is_empty()
@@ -591,12 +609,23 @@ impl Book {
             return Err(mobi::MobiError::TooLarge.into());
         }
         let bytes = loose::read_bounded(&mut input, mobi::MAX_MOBI_BYTES)?;
-        let fallback_title = loose::fallback_title(path);
+        Self::from_mobi(
+            &bytes,
+            loose::fallback_title(path),
+            kf8::fonts::Input::File(input),
+        )
+    }
+
+    fn from_mobi(
+        bytes: &[u8],
+        fallback_title: &str,
+        font_input: kf8::fonts::Input,
+    ) -> Result<Self> {
         let mut prior_mobi = BTreeMap::new();
-        let mut revision = crate::revision_bytes(&bytes);
+        let mut revision = crate::revision_bytes(bytes);
         let mut small_legacy = false;
         let mut publisher_contents = crate::kf8::legacy_contents::Contents::default();
-        let publication = match kf8::open_edition(&bytes)? {
+        let publication = match kf8::open_edition(bytes)? {
             kf8::Edition::Legacy(document) => {
                 publisher_contents = document.contents;
                 let label = document
@@ -701,7 +730,7 @@ impl Book {
                 resources: publication.resources,
                 fb2_note_sections: Default::default(),
                 fonts: (!publication.font_records.is_empty()).then_some(kf8::fonts::FontSource {
-                    file: input,
+                    input: font_input,
                     records: publication.font_records,
                 }),
             },

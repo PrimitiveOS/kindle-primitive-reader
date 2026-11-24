@@ -250,7 +250,11 @@ mod tests {
     use std::{fs, thread};
 
     fn wait(reader: &mut Reader) -> &Inspection {
-        let until = Instant::now() + Duration::from_secs(15);
+        wait_for(reader, Duration::from_secs(15))
+    }
+
+    fn wait_for(reader: &mut Reader, timeout: Duration) -> &Inspection {
+        let until = Instant::now() + timeout;
         loop {
             assert!(Instant::now() < until, "font inspection did not finish");
             if reader.embedded_font_report_deadline().is_none() {
@@ -334,6 +338,129 @@ mod tests {
         assert_eq!(app.current_history_location(), source);
         assert_eq!(app.back, history);
         assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn kf8_embedded_font_report_scans_later_usage_and_omits_invalid_faces() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Shore type specimen.azw3");
+        let silk = fs::read(crate::test_fixture("fonts/Silkscreen-Regular.ttf")).unwrap();
+        let noto = fs::read(crate::test_fixture("fonts/NotoSans-Regular.ttf")).unwrap();
+        let mut invalid = silk.clone();
+        invalid[..4].copy_from_slice(b"JUNK");
+        let record = crate::kf8::fonts::tests::record;
+        let bytes = crate::kf8::tests::font_report_fixture(&[
+            &record(&silk, true, true),
+            &record(&noto, false, false),
+            &record(&invalid, true, false),
+        ]);
+        fs::write(&path, &bytes).unwrap();
+        if let Some(output) = std::env::var_os("READER_EMBEDDED_FONT_REPORT_KF8_FIXTURE") {
+            fs::write(output, &bytes).unwrap();
+        }
+
+        let mut app = reader(&fixture);
+        app.open_path(&path).unwrap();
+        let source = app.current_history_location();
+        let history = app.back.clone();
+        let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
+        open_rendering(&mut app);
+        let details = app.reading_button_in_row("Embedded fonts", "Details");
+        tap(&mut app, details);
+        let report = wait(&mut app);
+        assert_eq!(report.report.scope, Scope::Book);
+        assert_eq!(family_values(report), [("Quarry", false), ("Voyage", true)]);
+        let current = &app
+            .active
+            .as_ref()
+            .unwrap()
+            .reading
+            .probe
+            .embedded_font_usage;
+        assert!(current.iter().all(|family| !family.used));
+        capture(&app, &mut canvas, "embedded-fonts-report-kf8.png", false);
+
+        let done = Panel::new(&app).done;
+        tap(&mut app, done);
+        let off = app.reading_button_in_row("Embedded fonts", "Off");
+        tap(&mut app, off);
+        let details = app.reading_button_in_row("Embedded fonts", "Details");
+        tap(&mut app, details);
+        let report = wait(&mut app);
+        assert_eq!(report.report.scope, Scope::Disabled);
+        assert_eq!(
+            family_values(report),
+            [("Quarry", false), ("Voyage", false)]
+        );
+        assert_eq!(app.input(Input::PageBack), Change::Partial);
+        assert_eq!(app.current_history_location(), source);
+        assert_eq!(app.back, history);
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+
+    #[test]
+    #[ignore = "Set READER_KF8_FONT_REPORT_ORIGINALS to a private list of authorized AZW3 paths"]
+    fn original_kf8_embedded_font_reports_keep_the_passage_and_source_bytes() {
+        use std::path::Path;
+        let list = std::env::var_os("READER_KF8_FONT_REPORT_ORIGINALS").unwrap();
+        let list = fs::read_to_string(list).unwrap();
+        let mut total = 0;
+        let mut books = 0;
+        let mut used = 0;
+        let mut unused = 0;
+        let mut unchecked = 0;
+        let mut empty = 0;
+        for source in list.lines().filter(|line| !line.is_empty()) {
+            let path = Path::new(source);
+            let before = fs::read(path).unwrap();
+            let fixture = Fixture::new();
+            let fonts = ["NotoSans-Regular.ttf", "Silkscreen-Regular.ttf"]
+                .map(|font| crate::test_fixture(&format!("fonts/{font}")));
+            let mut app =
+                Reader::open(path.parent().unwrap(), &fixture.state, fonts.to_vec()).unwrap();
+            app.open_path(path).unwrap();
+            let source = app.current_history_location();
+            let history = app.back.clone();
+            open_rendering(&mut app);
+            // Broken resources may leave the row disabled. Its help can still open.
+            let help = app.reading_row_help_rect("Embedded fonts");
+            assert_eq!(
+                app.input(Input::LongTap(
+                    (help.x + help.w / 2) as f32,
+                    (help.y + help.h / 2) as f32,
+                )),
+                Change::Partial
+            );
+            let report = wait_for(&mut app, Duration::from_secs(90));
+            assert!(matches!(
+                report.report.scope,
+                Scope::Book | Scope::CurrentChapter
+            ));
+            let exact = report.report.scope == Scope::Book;
+            books += usize::from(exact);
+            empty += usize::from(report.report.families.is_empty());
+            for family in report.report.families.iter() {
+                if family.used {
+                    used += 1;
+                } else if exact {
+                    unused += 1;
+                } else {
+                    unchecked += 1;
+                }
+            }
+            assert_eq!(app.input(Input::PageBack), Change::Partial);
+            assert_eq!(app.current_history_location(), source);
+            assert_eq!(app.back, history);
+            assert!(
+                fs::read(path).unwrap() == before,
+                "original KF8 bytes changed"
+            );
+            total += 1;
+        }
+        println!(
+            "Original KF8 reports: {total} books, {books} whole-book scans, {used} used, {unused} unused, {unchecked} unchecked, {empty} empty reports"
+        );
+        assert!(total >= 3 && books >= 2 && used > 0 && unused > 0 && empty > 0);
     }
 
     #[test]

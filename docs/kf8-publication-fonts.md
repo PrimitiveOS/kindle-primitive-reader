@@ -17,3 +17,39 @@ The authored regression assigns Silkscreen to one heading and reads the rest of 
 ```sh
 cargo test --locked --features kindle --lib kf8_font
 ```
+
+### Font family details
+
+Under **Text › Rendering**, tap **Details** or hold **Embedded fonts**.
+For a KF8 edition within Reader’s whole-book inspection limits, the report
+uses the same publisher layouts and local FONT records as ordinary reading.
+It uses an immutable copy of the publication while checking the chapters.
+This can expose a font used only in a later section. Declared families with
+no observed use are marked **Not used** after the complete scan. Resource
+records that fail validation cannot supply a family. With the switch off,
+registered families remain visible and none are marked used.
+[Reader limits and controls](embedded-font-families.md#font-family-details) ·
+[Authored Kindle-format simulator capture](screenshots/embedded-fonts-report-kf8.png)
+
+The authored KF8 test exercises a compressed and masked font used only in
+the second section, one valid family with no uses, and a damaged font
+record. It opens and dismisses the report from normal Reader controls and
+checks the same reading location, jump history, and source bytes. The pinned
+KOReader runtime opened the authored specimen and five original KF8
+editions. Its Embedded Fonts callback had no registered families to show
+for these six files. Reader uses the registered and instantiated distinction
+from the KOReader EPUB report. [Pinned UI callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/creoptions.lua#L700-L715) · [Native KF8 replay](../scripts/koreader-kf8-font-report-check.lua)
+
+On the Mac, the normal library and help control completed whole-book
+inspection for all five original editions. Across them the reports found
+four used family entries, two unused entries, and one book with no
+readable family. Each report preserved the reading position and jump
+history, and the five original files matched their initial bytes. The
+isolated debug test took 193 seconds for all five editions, including
+opening and laying out the books.
+
+The authored test writes a reproducible KF8 when
+`READER_EMBEDDED_FONT_REPORT_KF8_FIXTURE` points to a scratch path. Run
+`cargo test --locked --features kindle --lib kf8_embedded_font_report_scans`
+to generate it. The stock script accepts a scratch cache directory, the
+Noto Sans test font, and one or more local KF8s.

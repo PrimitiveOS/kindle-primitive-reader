@@ -55,13 +55,15 @@ does not use them. The report is available with either font setting and
 with Publisher CSS off. Done returns to the same Rendering controls
 and reading location.
 
-For packaged EPUBs with a regular layout, up to 96 spine items, an 8 MiB
-archive and 2 MiB of spine markup, Reader checks the book in the background
-one chapter at a time. Installed fonts and publisher styles use the active
-layout settings. The worker checks the book and font source stamps before
-accepting its result. Larger books, extracted EPUBs, facing pages and other
-providers show current-chapter usage and label unchecked families explicitly.
-The existing publisher CSS and font resource limits still apply.
+For packaged EPUBs and supported KF8 editions with a regular layout, up to 96
+spine items, an 8 MiB book and 2 MiB of spine markup, Reader checks the book in
+the background one chapter at a time. It parses one immutable publication copy
+and shapes each section with the accepted reading layout. Installed fonts and
+publisher styles use the active layout settings. The worker checks the book and
+font source stamps before accepting its result. Larger books, extracted EPUBs,
+facing pages and other providers show current-chapter usage and label unchecked
+families explicitly. The publisher CSS and font resource limits still apply.
+[KF8 comparison and capture](kf8-publication-fonts.md#font-family-details)
 
 The pinned KOReader help replay verifies both names for a two-chapter EPUB,
 including a family that is registered but unused, a family instantiated
