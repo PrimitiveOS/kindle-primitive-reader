@@ -99,5 +99,38 @@ executable, supervisor, launch header and fixture checksums. Reader’s
 package carries both project licenses, the OCR executable and model, and
 the protocol marker in the first ten lines of the installed entry. The
 Mac passed 1,277 library tests, 14 EPUB package tests, and four layout
-probes against this Reader source. Physical foreground checks are pending.
+probes against this Reader source.
 [Launcher source and handoff notes](https://github.com/PrimitiveOS/kindle-primitive-launcher/blob/65e47b5da8338924932a49f2bb7953efce8f24a7/docs/launcher-viewport-handoff.md)
+
+
+### First live Oasis session
+
+The isolated Launcher read the Reader tile from its scratch Documents directory.
+An injected touchscreen tap opened Reader through the normal Launcher session.
+Reader presented the authored EPUB in portrait and accepted both landscape turns
+in the same process. Each landscape ready record showed 1680 × 1264 logical
+pixels over a 1264 × 1680 native panel, stride 1280, firmware rotation 0 and pan
+0,0. A swipe inward from the bottom of the right-hand landscape view opened the
+Reader controls. Injected events on the Kindle’s gpio-keys evdev node moved
+between pages 2 and 3 in both directions. Page 3 had the same projected frame in
+both landscape turns. The far-right Exit button returned to
+the portrait Launcher with exit code 0. Reopening Reader displayed its saved
+Continue reading entry, and the authored Japanese EPUB rendered in its vertical
+writing mode. The authored two-page PDF advanced with an injected page key
+and returned to its original framebuffer bytes with the other key.
+
+[Portrait EPUB](screenshots/oasis-viewport-epub-portrait.png) ·
+[Landscape EPUB frame shared by both turns](screenshots/oasis-viewport-epub-right.png) ·
+[Vertical Japanese EPUB](screenshots/oasis-viewport-vertical-epub.png) ·
+[Portrait PDF](screenshots/oasis-viewport-pdf-portrait.png)
+
+The device screenshots are framebuffer readbacks. The input exercised the
+Kindle’s evdev path by injection. Mechanical key timing, panel refresh appearance,
+the Quick Settings overlay, sleep and USB data resume still require their
+foreground acceptance checks.
+
+The first landscape frame exposed a stale Screen selection until the next
+redraw. Reader now renders the matching pending orientation in the staged frame
+and saves the edition preference on commit. It also sizes toolbar tap zones and
+custom swipe edges from the accepted viewport. The host regressions exercise
+both landscape turns and preserve the existing portrait input boundaries.

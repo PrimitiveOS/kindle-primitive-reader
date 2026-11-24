@@ -77,8 +77,9 @@ refresh, touch, routed page keys, sleep, USB and exit tests.
 Mac coverage includes exact-value editors, OCR cancellation, scan text
 and illustration inspection in both viewport sizes. The scan and
 illustration tests preserve the source location through a rejected turn and
-a return to the original view. The foreground hardware sequence remains
-open. [Exact-value editors](landscape-numeric-editors.md) ·
+a return to the original view. The first live Oasis session verified portrait, both landscape turns,
+injected page-key events and Exit. The overlay, mechanical input, E Ink
+refresh, and sleep and USB resume checks remain open. [Exact-value editors](landscape-numeric-editors.md) ·
 [Scans and OCR](landscape-scan-text.md) ·
 [Illustrations](epub-gif-illustrations.md) ·
 [Oasis test sequence](reading-orientation-contract.md#foreground-acceptance-on-oasis-3)
