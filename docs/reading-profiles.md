@@ -113,6 +113,7 @@ Mac workflow checks legacy on/off kerning, inherited defaults, cancelled
 selection, a conflicting file write, the included-setting mask and the
 saved reading position in landscape.
 [Landscape font choices](screenshots/landscape-profile-rendering-choices.png) ·
+[Landscape book choices](screenshots/landscape-profile-book-rendering.png) ·
 [Pinned text options](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/creoptions.lua#L629-L745) ·
 [Executable comparison](../scripts/koreader-reading-profiles-check.lua)
 

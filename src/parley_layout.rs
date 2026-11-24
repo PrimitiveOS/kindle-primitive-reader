@@ -526,13 +526,14 @@ impl ParleyChapter {
                 area.sized_wrapper && style.flow.painted && style.background.is_some()
             })
         });
-        let mut fill_positions = (wrapper_backgrounds || vertical_padding.is_some()
-            && styles.iter().any(|s| {
-                s.background.is_some()
-                    && s.vertical_padding
-                        .iter()
-                        .any(|v| v.pixels(outer_width, settings.font_size) > 0.)
-            }))
+        let mut fill_positions = (wrapper_backgrounds
+            || vertical_padding.is_some()
+                && styles.iter().any(|s| {
+                    s.background.is_some()
+                        && s.vertical_padding
+                            .iter()
+                            .any(|v| v.pixels(outer_width, settings.font_size) > 0.)
+                }))
         .then(|| Vec::with_capacity(source.blocks.len()));
         let mut last_cell = None;
         // Marker ownership is the LI, not whichever paragraph happens to be

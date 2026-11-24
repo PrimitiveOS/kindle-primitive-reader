@@ -802,7 +802,9 @@ impl BookStyle {
                             && crate::source::is_block_tag(&element.tag))
                             || (nested_margin_collapse
                                 && crate::block_margins::collapsible_wrapper(&element.tag))
-                            || ((keep_group_geometry || opening_break_geometry || publisher_wrapper_width)
+                            || ((keep_group_geometry
+                                || opening_break_geometry
+                                || publisher_wrapper_width)
                                 && (element.tag == "p"
                                     || crate::block_margins::collapsible_wrapper(
                                         &element.tag,

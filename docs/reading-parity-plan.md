@@ -84,7 +84,8 @@ input, E Ink refresh, and sleep and USB resume checks remain open. [Exact-value 
 [Illustrations](epub-gif-illustrations.md) ·
 [Oasis test sequence](reading-orientation-contract.md#foreground-acceptance-on-oasis-3)
 
-Saved profile editing covers reflow typography, page overlap, PDF crop
+Saved profile editing covers reflow typography, hinting, kerning,
+publisher styles and fonts, image rendering, page overlap, PDF crop
 margin, and PDF or comic scan contrast. Reading statistics has a
 whole-second duration editor with the stock bounds, steps, defaults and
 accounting. Local statistics database import remains open. Dictionary
@@ -97,7 +98,8 @@ remains open.
 [Dictionary result navigation](dictionary-popup-display.md#first-and-last-results)
 
 The experimental Parley policies match the pinned KOReader Web mode's
-width and horizontal placement for two authored paragraphs. They also match
+width and horizontal placement for two authored paragraphs and a
+centered container around ordinary paragraphs. They also match
 the measured definite box heights and preserve text and source positions when
 a box's background fills across a page break. In supported ordinary
 paragraphs, the opt-in policy also matches stock's explicit opening
