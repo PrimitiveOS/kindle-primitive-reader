@@ -7,81 +7,6 @@ const CONFIRM: Rect = Rect::new(192, 545, 880, 392);
 const CANCEL: Rect = Rect::new(232, 779, 352, 110);
 const DELETE: Rect = Rect::new(640, 779, 388, 110);
 
-pub(super) struct FixedPageActions {
-    page: usize,
-    existing: bool,
-    flow_editing: bool,
-}
-
-impl FixedPageActions {
-    fn panel(&self) -> Rect {
-        let height = if self.flow_editing { 434 } else { 325 };
-        Rect::new(192, (HEIGHT as i32 - height) / 2, 880, height)
-    }
-
-    fn button(&self, index: i32) -> Rect {
-        let panel = self.panel();
-        Rect::new(panel.x + 36, panel.y + 107 + index * 109, panel.w - 72, 94)
-    }
-
-    pub(super) fn draw(&self, canvas: &mut Canvas) {
-        let panel = self.panel();
-        canvas.popup(panel);
-        canvas.text(
-            Rect::new(panel.x + 36, panel.y + 20, panel.w - 72, 66),
-            &format!("Page {} actions", self.page + 1),
-            BODY.bold(),
-        );
-        canvas.button(
-            self.button(0),
-            if self.existing {
-                "Edit chapter"
-            } else {
-                "Start chapter here"
-            },
-            false,
-            false,
-        );
-        if self.flow_editing {
-            canvas.button(self.button(1), "Mark flow boundary", false, false);
-        }
-        canvas.button(
-            self.button(1 + i32::from(self.flow_editing)),
-            "Cancel",
-            false,
-            false,
-        );
-    }
-
-    pub(super) fn input(self, reader: &mut Reader, input: Input) -> Change {
-        let result = match input {
-            Input::Tap(x, y) if self.button(0).contains(x, y) => reader.edit_custom(
-                fixed_page_position(self.page),
-                String::new(),
-                Screen::PageOverview,
-            ),
-            Input::Tap(x, y) if self.flow_editing && self.button(1).contains(x, y) => {
-                reader.show_flow_page_popup(None, self.page)
-            }
-            Input::PageBack => return Change::Partial,
-            Input::Tap(x, y)
-                if !self.panel().contains(x, y)
-                    || self.button(1 + i32::from(self.flow_editing)).contains(x, y) =>
-            {
-                return Change::Partial;
-            }
-            _ => {
-                reader.flow_popup = Some(hidden_flows::FlowPopup::FixedPage(self));
-                return Change::None;
-            }
-        };
-        match result {
-            Ok(()) => Change::Partial,
-            Err(error) => reader.report(error),
-        }
-    }
-}
-
 fn fixed_page_position(page: usize) -> ReadingPosition {
     ReadingPosition {
         chapter: 0,
@@ -126,7 +51,7 @@ impl Reader {
             .is_some_and(|state| state.custom_contents.enabled)
     }
 
-    pub(super) fn show_fixed_page_actions(&mut self, page: usize) -> Result<()> {
+    pub(super) fn edit_fixed_thumbnail_chapter(&mut self, page: usize) -> Result<()> {
         if self
             .fixed
             .as_ref()
@@ -134,16 +59,20 @@ impl Reader {
         {
             return Err("That page is unavailable".into());
         }
-        let contents = &self
-            .chapter_state()
-            .ok_or("Open a book first")?
-            .custom_contents;
-        self.flow_popup = Some(hidden_flows::FlowPopup::FixedPage(FixedPageActions {
-            page,
-            existing: contents.find(&fixed_page_position(page)).is_some(),
-            flow_editing: self.flow_editing_enabled(),
-        }));
-        Ok(())
+        self.edit_custom(
+            fixed_page_position(page),
+            String::new(),
+            Screen::PageOverview,
+        )
+    }
+
+    pub(super) fn has_fixed_thumbnail_chapter(&self, page: usize) -> bool {
+        self.chapter_state().is_some_and(|state| {
+            state
+                .custom_contents
+                .find(&fixed_page_position(page))
+                .is_some()
+        })
     }
 
     pub(super) fn custom_items(&self) -> Vec<Item> {
@@ -478,6 +407,7 @@ impl Reader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::overview_bookmarks::{PageAction, tap_page_action};
     use crate::app::tests::{Fixture, capture_test_screen};
 
     fn open_document(fixture: &Fixture) -> (Reader, PathBuf, Vec<u8>) {
@@ -502,20 +432,6 @@ mod tests {
     fn hold_thumbnail(reader: &mut Reader, tile: usize) {
         let (x, y) = center(overview_tile(tile));
         assert_eq!(reader.input(Input::LongTap(x, y)), Change::Partial);
-    }
-
-    fn page_actions(reader: &Reader) -> &FixedPageActions {
-        match reader.flow_popup.as_ref() {
-            Some(hidden_flows::FlowPopup::FixedPage(actions)) => actions,
-            _ => panic!("Expected the held page's editing actions"),
-        }
-    }
-
-    fn choose(reader: &mut Reader, index: i32) {
-        assert_eq!(
-            reader.input(tap(page_actions(reader).button(index))),
-            Change::Partial
-        );
     }
 
     fn enter_title(reader: &mut Reader, text: &str) {
@@ -554,8 +470,7 @@ mod tests {
         let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
         let preview = primitive_app::frame(&reader, &mut canvas, false);
         hold_thumbnail(&mut reader, 1);
-        assert!(!page_actions(&reader).existing);
-        assert_eq!(page_actions(&reader).page, 5);
+        assert!(!reader.has_fixed_thumbnail_chapter(5));
         capture_test_screen(
             &reader,
             &reader.fonts,
@@ -565,7 +480,7 @@ mod tests {
         assert_eq!(reader.input(Input::PageBack), Change::Partial);
         assert_eq!(primitive_app::frame(&reader, &mut canvas, false), preview);
         hold_thumbnail(&mut reader, 1);
-        choose(&mut reader, 0);
+        tap_page_action(&mut reader, PageAction::Chapter);
         assert_eq!(reader.chapter_draft.as_ref().unwrap().position.page, 5);
         assert_eq!(reader.input(Input::PageBack), Change::Partial);
         assert_eq!(reader.screen, Screen::PageOverview);
@@ -580,13 +495,13 @@ mod tests {
         );
 
         hold_thumbnail(&mut reader, 1);
-        choose(&mut reader, 0);
+        tap_page_action(&mut reader, PageAction::Chapter);
         enter_title(&mut reader, "Survey site");
         assert_eq!(reader.screen, Screen::PageOverview);
         assert_eq!(primitive_app::frame(&reader, &mut canvas, false), preview);
         hold_thumbnail(&mut reader, 1);
-        assert!(page_actions(&reader).existing);
-        choose(&mut reader, 0);
+        assert!(reader.has_fixed_thumbnail_chapter(5));
+        tap_page_action(&mut reader, PageAction::Chapter);
         assert_eq!(reader.editor.string(), "Survey site");
         capture_test_screen(
             &reader,
@@ -620,7 +535,7 @@ mod tests {
         reopened.activate(Action::Overview).unwrap();
         assert_eq!(reopened.input(Input::PageForward), Change::Partial);
         hold_thumbnail(&mut reopened, 1);
-        choose(&mut reopened, 0);
+        tap_page_action(&mut reopened, PageAction::Chapter);
         assert_eq!(reopened.input(tap(REMOVE)), Change::Partial);
         assert_eq!(reopened.input(tap(CANCEL)), Change::Partial);
         assert_eq!(reopened.screen, Screen::CustomTitle);
@@ -662,8 +577,7 @@ mod tests {
         reader.activate(Action::Flow(FlowAction::Toggle)).unwrap();
         reader.activate(Action::Overview).unwrap();
         hold_thumbnail(&mut reader, 1);
-        assert!(page_actions(&reader).flow_editing);
-        choose(&mut reader, 1);
+        tap_page_action(&mut reader, PageAction::HiddenFlow);
         assert!(matches!(reader.flow_popup, Some(FlowPopup::Mark { .. })));
         let sheet = Sheet::centered(Rect::new(0, 0, WIDTH as i32, HEIGHT as i32), "", "", "");
         assert_eq!(
@@ -678,10 +592,17 @@ mod tests {
             1
         );
         hold_thumbnail(&mut reader, 1);
-        choose(&mut reader, 2);
+        tap_page_action(&mut reader, PageAction::Cancel);
         assert!(reader.flow_popup.is_none());
+        assert!(reader.chapter_state().unwrap().bookmarks.is_empty());
         hold_thumbnail(&mut reader, 1);
-        choose(&mut reader, 0);
+        tap_page_action(&mut reader, PageAction::Bookmark);
+        assert_eq!(
+            reader.chapter_state().unwrap().bookmarks[0].position.page,
+            1
+        );
+        hold_thumbnail(&mut reader, 1);
+        tap_page_action(&mut reader, PageAction::Chapter);
         enter_title(&mut reader, "Supplement");
         assert_eq!(reader.current_position(), origin);
         reader.show(Screen::FixedContents);
@@ -692,6 +613,7 @@ mod tests {
             .unwrap();
         reader.activate(supplement.action).unwrap();
         assert_eq!(reader.current_position().unwrap().page, 1);
+        assert!(reader.page_is_bookmarked());
         assert!(
             reader
                 .fixed
@@ -706,6 +628,7 @@ mod tests {
         reader.custom_action(CustomAction::Toggle).unwrap();
         reader.activate(Action::Overview).unwrap();
         hold_thumbnail(&mut reader, 1);
+        tap_page_action(&mut reader, PageAction::HiddenFlow);
         assert!(matches!(reader.flow_popup, Some(FlowPopup::Mark { .. })));
     }
 }

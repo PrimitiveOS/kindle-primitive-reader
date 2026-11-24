@@ -1,5 +1,6 @@
 //! Regression workflows spanning navigation, source masks, export and typography.
 use super::*;
+use crate::app::overview_bookmarks::{PageAction, tap_page_action};
 use crate::app::tests::{Fixture, capture_test_screen};
 use crate::library::{Highlight, PdfHighlight};
 use primitive_ui::{Sheet, SheetAction};
@@ -28,6 +29,7 @@ fn mark(app: &mut Reader, chapter: Option<usize>, page: usize) {
         )),
         Change::Partial
     );
+    tap_page_action(app, PageAction::HiddenFlow);
     confirm(app);
 }
 

@@ -1,6 +1,6 @@
 # Custom hidden reading flows
 
-**Navigation → Custom hidden flows** lets you exclude long notes, a bibliography or other source pages from ordinary reading without editing the book. Turn it on, open **Page browser**, and hold the first page to choose **Start hidden flow**. Hold the first page you want to include again and choose **Restart regular flow**. **Mark current page** provides the same visible action. A held existing boundary offers **Remove marker** in a confirmation sheet.
+**Navigation → Custom hidden flows** lets you exclude long notes, a bibliography or other source pages from ordinary reading without editing the book. Turn it on, open **Page browser**, and hold the first page to choose **Mark flow boundary**, then **Start hidden flow**. Hold the first page you want to include again and use **Mark flow boundary › Restart regular flow**. **Mark current page** opens the same confirmation. An existing boundary offers **Remove marker**.
 
 Links, Contents, Book map, bookmarks, search results and explicit jumps can still open a hidden page. Forward and back then traverse that hidden flow and the surrounding regular flow. Other hidden flows remain skipped. The footer numbers each opened hidden flow and counts its pages independently. Main-flow page counts, progress, chapter counts and remaining-time estimates exclude hidden pages. Cross-chapter EPUB progress remains a source-size estimate, as in ordinary Reader reading.
 

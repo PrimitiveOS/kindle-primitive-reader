@@ -60,6 +60,7 @@ mod nearby_search;
 #[cfg(test)]
 mod nonlinear_tests;
 mod online_panel;
+mod overview_bookmarks;
 mod progress_markers;
 mod quick_display;
 mod read_alarm;
@@ -4295,14 +4296,7 @@ impl Reader {
         };
         let state = self.library.remember(entry, id, title);
         if !already_bookmarked {
-            if state.bookmarks.len() >= 256 {
-                return Err("This book has reached its bookmark limit".into());
-            }
-            state.bookmarks.push(Bookmark {
-                created_at: crate::mark_time::now(),
-                label,
-                position,
-            });
+            overview_bookmarks::push_page_bookmark(state, position, label)?;
             self.mark_book_changed();
         }
         self.show(screen);
@@ -4331,22 +4325,20 @@ impl Reader {
     fn current_bookmark_index(&self) -> Option<usize> {
         let book = self.library.state(self.open_book_id()?)?;
         if let Some(fixed) = &self.fixed {
-            return book
-                .bookmarks
-                .iter()
-                .position(|mark| mark.position.page == fixed.reading.page());
+            return overview_bookmarks::bookmark_index_for_page(
+                book,
+                None,
+                fixed.reading.page(),
+                None,
+            );
         }
         let reading = &self.active.as_ref()?.reading;
-        book.bookmarks.iter().position(|mark| {
-            let position = &mark.position;
-            position.chapter == reading.chapter
-                && position
-                    .anchor
-                    .as_ref()
-                    .and_then(|anchor| reading.probe.page_for(anchor))
-                    .unwrap_or(position.page)
-                    == reading.page
-        })
+        overview_bookmarks::bookmark_index_for_page(
+            book,
+            Some(reading.chapter),
+            reading.page,
+            Some(&reading.probe),
+        )
     }
 
     fn toggle_bookmark(&mut self) -> Result<()> {
@@ -5286,6 +5278,7 @@ impl Reader {
                     CAPTION.center(),
                 );
             }
+            self.draw_overview_bookmark(canvas, rect, overview.chapter, page);
             canvas.button(
                 Rect::new(rect.x + 18, rect.y + rect.h - 84, rect.w - 36, 68),
                 &label,
@@ -5364,12 +5357,7 @@ impl Reader {
                 else {
                     return Change::None;
                 };
-                let page = overview.first + index;
-                let result = if overview.chapter.is_none() && self.custom_contents_enabled() {
-                    self.show_fixed_page_actions(page)
-                } else {
-                    self.show_flow_page_popup(overview.chapter, page)
-                };
+                let result = self.hold_overview_page(overview.chapter, overview.first + index);
                 return match result {
                     Ok(()) => Change::Partial,
                     Err(error) => self.report(error),

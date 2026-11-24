@@ -43,7 +43,8 @@ Each chapter points to the source page shown in the editor.
 Saving, removing or cancelling returns to the same thumbnail group and keeps
 the current reading location and bookmarks. Selecting the chapter in Contents
 then opens its page. If hidden-flow editing is enabled, the same page action
-menu also offers **Mark flow boundary**.
+menu also offers **Mark flow boundary**. **Bookmark page** saves the selected
+page independently of its chapter title. [Thumbnail bookmarks](bookmark-browser.md#bookmark-from-page-browser)
 
 <img src="screenshots/fixed-thumbnail-chapter-actions.png" alt="A held PDF thumbnail offers to start a chapter on page six" width="300"> <img src="screenshots/fixed-thumbnail-chapter-edit.png" alt="The PDF chapter title editor identifies the same source page and offers Remove chapter" width="300">
 
