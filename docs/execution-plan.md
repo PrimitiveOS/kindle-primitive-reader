@@ -45,6 +45,24 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Negotiated viewport verification
+
+The release history and the viewport branch are integrated in the Reader
+repository. The development build retains the released portrait fallback
+and negotiates the wider reading canvas with a compatible Launcher.
+
+| Workflow | Current evidence | Remaining checks |
+| --- | --- | --- |
+| Reading display and controls | Portrait and both landscape turns with an authored EPUB on Oasis. The same frame was recovered after each Quick Settings dismissal, and a queued page-key event did not turn the page. | Physical digitizer and button timing, panel refresh, sleep and wake, and a USB data mount and eject. |
+| Text selection and lookup | A timed contact through the Oasis touch input opened an offline dictionary above the selected word. Returning to the selection grid and canceling recovered the same frame. | Direct KOReader comparison on the Kindle, including cross-page PDF selection and hold timing. |
+| Reading profiles | The saved-value editor was compared with the pinned stock callbacks. Device checks cover saving EPUB line spacing separately from applying it. | Additional fixed-document and portrait foreground checks. |
+| Publisher rendering | Pinned KOReader and Reader independently matched the horizontal coordinates of the two authored Web-width paragraphs. Reader retains its default layout policy. | The remaining box, float, table and break semantics and the full user-facing Render Mode control. |
+
+[Oasis foreground receipt](reading-orientation-contract.md#foreground-acceptance-on-oasis-3) ·
+[Offline lookup and selection](landscape-selection.md#oasis-reading-frame-check) ·
+[Profile workflows](reading-profiles.md) ·
+[Publisher rendering comparison](render-modes.md)
+
 ## Reader 0.1.50 verification plan
 
 Exercise absolute, relative and hidden-flow page navigation with source

@@ -44,12 +44,11 @@ only to find and compare relevant controls.
 
 ### Execution checklist
 
-**Milestone status:** 33 of 39 checklist items (85%) have desktop, scope, or
-device-system evidence. This count tracks plan milestones, not overall feature
-parity; many reading requirements and the foreground Kindle acceptance gates
-remain open.
+**Milestone status:** 50 of the 56 checklist items have desktop, scope, or
+device evidence. The control inventory and foreground Kindle acceptance
+checks below track the remaining feature and device work.
 
-**Control evidence snapshot:** 230 of 536 in-scope reading-control rows have
+**Pinned control inventory:** 230 of 536 in-scope reading-control rows have
 an implemented workflow, 236 are partial, 46 are gaps, and 24 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification.
@@ -84,6 +83,12 @@ input, E Ink refresh, and sleep and USB resume checks remain open. [Exact-value 
 [Scans and OCR](landscape-scan-text.md) ·
 [Illustrations](epub-gif-illustrations.md) ·
 [Oasis test sequence](reading-orientation-contract.md#foreground-acceptance-on-oasis-3)
+
+Reader now edits saved line spacing for reflowable profiles and page overlap
+for fixed profiles. The initial publisher-width implementation matches the
+pinned KOReader Web mode's box width and horizontal placement for two authored
+paragraph cases. Full Render Mode behavior and its user-facing choices remain
+open. [Saved reading profiles](reading-profiles.md) · [Publisher widths](render-modes.md)
 
 
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.
