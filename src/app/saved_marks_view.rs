@@ -1,8 +1,13 @@
 //! Layout for a book's bookmarks, highlights, and notes.
+use std::borrow::Cow;
+
 use primitive_ui::{BLACK, HAIRLINE, PAPER, RowAccessory, Rows, SECONDARY, TextStyle, chevron};
 
-use super::list_density::{Geometry, list_text_pixels};
+use super::list_density::{Geometry, fit_logical_font, list_text_pixels};
 use super::{Action, Canvas, Item, Reader, Rect, Screen};
+
+mod fit;
+use fit::TitleFit;
 
 struct RowTypography {
     title_size: i32,
@@ -61,7 +66,9 @@ impl Reader {
         }
         canvas.card(group.bounds);
         let row_height = self.list_geometry().row_height;
-        let mark_typography = RowTypography::fit(self.controls.bookmark_density.font(), row_height);
+        let logical_font = self.controls.bookmark_density.font();
+        let mark_typography = RowTypography::fit(logical_font, row_height);
+        let preferred_font = fit_logical_font(logical_font, row_height);
         // Search and import actions use the standard card text size (38px).
         let action_typography = RowTypography::fit(18, row_height);
         let pad = 32;
@@ -70,16 +77,17 @@ impl Reader {
             let Some(row) = group.row_rect(index) else {
                 continue;
             };
+            let is_mark = matches!(
+                action.action,
+                Action::Bookmark(_) | Action::Highlight(_) | Action::PdfHighlight(_)
+            );
             let &RowTypography {
                 title_size,
                 title_height,
                 detail_size,
                 detail_height,
                 stacked,
-            } = if matches!(
-                action.action,
-                Action::Bookmark(_) | Action::Highlight(_) | Action::PdfHighlight(_)
-            ) {
+            } = if is_mark {
                 &mark_typography
             } else {
                 &action_typography
@@ -97,7 +105,14 @@ impl Reader {
             let link = item.accessory == RowAccessory::Disclosure;
             let text_x = row.x + pad;
             let text_width = row.w - 2 * pad - if link { 56 } else { 0 };
-            let (title_bounds, detail_bounds) = match (item.detail, stacked) {
+            let detail_width = text_width * 2 / 5;
+            let caption_aside = Rect::new(
+                text_x + text_width - detail_width,
+                row.y + (row.h - detail_height) / 2,
+                detail_width,
+                detail_height,
+            );
+            let (mut title_bounds, mut detail_bounds) = match (item.detail, stacked) {
                 (Some(_), true) => {
                     let top = row.y + (row.h - title_height - detail_height) / 2;
                     (
@@ -107,7 +122,6 @@ impl Reader {
                 }
                 (Some(_), false) => {
                     // Preserve dates and location captions beside one-line entries.
-                    let detail_width = text_width * 2 / 5;
                     (
                         Rect::new(
                             text_x,
@@ -115,12 +129,7 @@ impl Reader {
                             text_width - detail_width - 24,
                             title_height,
                         ),
-                        Rect::new(
-                            text_x + text_width - detail_width,
-                            row.y + (row.h - detail_height) / 2,
-                            detail_width,
-                            detail_height,
-                        ),
+                        caption_aside,
                     )
                 }
                 (None, _) => (
@@ -133,14 +142,49 @@ impl Reader {
                     Rect::new(0, 0, 0, 0),
                 ),
             };
-            canvas.text(
-                title_bounds,
-                item.title,
-                TextStyle::new(title_size)
-                    .bold()
-                    .break_long_words()
-                    .ink(ink),
-            );
+            if is_mark && self.controls.bookmark_shrink_to_fit {
+                let title = if item.title.contains(['\n', '\r']) {
+                    Cow::Owned(item.title.replace(['\n', '\r'], " "))
+                } else {
+                    Cow::Borrowed(item.title)
+                };
+                let mut reserve = if item.detail.is_some() && stacked {
+                    detail_height
+                } else {
+                    0
+                };
+                let mut area = Rect::new(text_x, row.y, title_bounds.w, row.h - reserve - 6);
+                let mut fit = TitleFit::measure(canvas, &title, area, preferred_font);
+                if reserve > 0 && !fit.complete(&title) {
+                    // Give long entries the full row height. The date and
+                    // reading location keep their own width and type size.
+                    reserve = 0;
+                    detail_bounds = caption_aside;
+                    area.w = text_width - detail_width - 24;
+                    area.h = row.h - 6;
+                    fit = TitleFit::measure(canvas, &title, area, preferred_font);
+                }
+                let fit = fit.shrink(canvas, &title, area);
+                title_bounds = Rect::new(
+                    text_x,
+                    row.y + (row.h - fit.height() - reserve) / 2,
+                    area.w,
+                    fit.height(),
+                );
+                if reserve > 0 {
+                    detail_bounds.y = title_bounds.bottom();
+                }
+                fit.draw(canvas, title_bounds, &title, ink);
+            } else {
+                canvas.text(
+                    title_bounds,
+                    item.title,
+                    TextStyle::new(title_size)
+                        .bold()
+                        .break_long_words()
+                        .ink(ink),
+                );
+            }
             if let Some(detail) = item.detail {
                 canvas.text(
                     detail_bounds,
