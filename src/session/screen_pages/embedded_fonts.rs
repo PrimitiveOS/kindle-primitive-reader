@@ -185,9 +185,6 @@ impl Request {
             )?;
             for index in 0..self.spine.len() {
                 check_cancelled(cancelled)?;
-                if index == self.chapter {
-                    continue;
-                }
                 let probe = Probe::from_book_with_font_loader(
                     Book::open_snapshot(bytes.clone())?,
                     self.engine,
@@ -198,6 +195,9 @@ impl Request {
                     &self.styles,
                     || Ok(fonts.clone()),
                 )?;
+                if index == self.chapter && probe.embedded_font_usage != self.current {
+                    return Err("The visible chapter’s font use changed during inspection".into());
+                }
                 families.merge(&probe.embedded_font_usage);
                 thread::yield_now();
             }

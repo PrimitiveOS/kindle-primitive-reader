@@ -372,4 +372,33 @@ mod tests {
         assert_ne!(app.input(Input::Wake), Change::Exit);
         assert_eq!(app.current_history_location(), source);
     }
+
+    #[test]
+    fn embedded_font_report_pages_preserve_the_background_and_dismiss_once() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Long font list.epub");
+        write_reference_book(&path, "paged-report");
+        let mut app = reader(&fixture);
+        app.open_path(&path).unwrap();
+        let source = app.current_history_location();
+        open_rendering(&mut app);
+        let details = app.reading_button_in_row("Embedded fonts", "Details");
+        tap(&mut app, details);
+        let inspection = wait(&mut app);
+        assert_eq!(inspection.report.scope, Scope::Book);
+        assert_eq!(inspection.report.families.len(), 7);
+        assert_eq!(inspection.page, 0);
+        let next = Panel::new(&app).next;
+        tap(&mut app, next);
+        assert_eq!(app.embedded_font_report.as_ref().unwrap().page, 1);
+        assert_eq!(app.input(Input::PageForward), Change::None);
+        let previous = Panel::new(&app).previous;
+        tap(&mut app, previous);
+        assert_eq!(app.input(Input::PageForward), Change::Partial);
+        assert_eq!(app.embedded_font_report.as_ref().unwrap().page, 1);
+        assert_eq!(app.input(Input::Tap(30.0, 30.0)), Change::Partial);
+        assert!(app.embedded_font_report.is_none());
+        assert_eq!(app.reading_panel, Some(BarPanel::TextRendering));
+        assert_eq!(app.current_history_location(), source);
+    }
 }

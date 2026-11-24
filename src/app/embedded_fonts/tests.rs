@@ -20,11 +20,15 @@ pub(super) fn write_reference_book(path: &Path, variant: &str) {
         "inline" | "unused" => "",
         _ => r#"@font-face {font-family: Voyage; src: url("../fonts/Silkscreen-Regular.ttf");}"#,
     };
-    let unused = if variant == "report" {
-        r#"@font-face {font-family: Quarry; src: url("../fonts/NotoSans-Regular.ttf");}"#
-    } else {
-        ""
+    let unused: &[&str] = match variant {
+        "report" => &["Quarry"],
+        "paged-report" => &["Anchor", "Beacon", "Channel", "Dune", "Ferry", "Harbor"],
+        _ => &[],
     };
+    let unused = unused.iter().map(|family| {
+        format!(r#"@font-face {{font-family: {family}; src: url("../fonts/NotoSans-Regular.ttf");}}"#)
+    }).collect::<Vec<_>>().join("
+");
     let css = format!(
         r#"{embedded}
 {unused}
