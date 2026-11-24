@@ -66,6 +66,7 @@ mod reading_backup;
 mod reading_bars;
 mod reading_footer;
 mod result_context;
+mod search_chapter_scope;
 mod saved_highlight_popup;
 mod selection_popup;
 mod sidecar_marks;
