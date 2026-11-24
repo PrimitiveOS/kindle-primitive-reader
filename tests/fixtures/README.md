@@ -10,6 +10,7 @@ The [manifest](manifest.json) records the expected reading order, locations, lin
 | `text-decorations.xhtml` | Original proof sheet with a dated correction, underlined instruction, overline and two styled links. |
 | `publisher-faces.epub` | Two OFL fonts assigned to four styles and two CSS families. Compare the normal, emphasized and imprint lettering, then restore the source anchor. [Reading checks](../../docs/embedded-font-families.md) |
 | `night-landing.epub` | A short and a multi-page endnote in a separate chapter, two inline references, a link back to the passage and an ordinary heading link. Each note has original sample text. |
+| `workshop-notes.fb2` | Original FictionBook with an earlier notes section, a later comments section, a backlink, and ordinary paragraph and catalogue links. [Native and simulator comparison](../../docs/fb2-footnotes.md) |
 | `english-hyphenation.epub` | Compare Automatic and Authored modes on identical English text. The language comes from the OPF. Check both fragments of a split word and restore its source anchor. [Simulator comparison](../../docs/english-hyphenation.md) |
 | `english-regions.xhtml` | Read the same text with explicit US and British declarations. Compare the different line endings in the [simulated page](../../docs/screenshots/english-regions.png). |
 | `long-chapter.epub` | Continuous layout through 240 numbered observations in one chapter. Find observation 137 again after changing the viewport or font size. |
