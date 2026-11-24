@@ -3,6 +3,7 @@ use super::{Line, Settings, book_style::Style, source::Source};
 use std::ops::Range;
 
 mod empty;
+mod text_keeps;
 pub(crate) use empty::physical::{PositionedRun, plan as plan_empty_geometry};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -134,6 +135,7 @@ pub(crate) fn layout(
             extend(&mut boxes, p, extent.start, extent.end);
         }
     }
+    let oversized = text_keeps::oversized(source, styles, settings, &boxes);
     let mut following = None;
     for (i, element) in source.elements.iter().enumerate().rev() {
         if element.selector_only
@@ -143,7 +145,10 @@ pub(crate) fn layout(
         {
             continue;
         }
-        let rules = styles[i].page_breaks;
+        let mut rules = styles[i].page_breaks;
+        if oversized.get(i) == Some(&true) {
+            rules.keep_together = false;
+        }
         let extent = boxes[i].clone();
         if rules != Rules::default() {
             if let Some(extent) = extent.clone().or_else(|| following.map(|y| y..y)) {

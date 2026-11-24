@@ -404,6 +404,42 @@ does not expose the unfinished Render Mode choices.
 [KOReader Web](screenshots/empty-geometry-stock-web.png) ·
 [Reader sized](screenshots/empty-geometry-reader-sized.png)
 
+## Oversized text groups with an authored keep
+
+The native renderer measures a group before deciding whether to move it
+to a fresh page. A group that fits there can stay together. When a group
+is taller than a page, KOReader uses the space remaining below the
+preceding text and wraps the group across page turns.
+
+Reader’s internal policy now follows that behavior for transparent
+horizontal wrappers directly in the document body. When their extent
+exceeds one reading page, their ordinary paragraph children can flow
+through the current page. A fitting wrapper still keeps its text
+together. Explicit rules on the outer wrapper remain active.
+
+| Authored group at 1264 × 720 | Pinned KOReader | Reader default | Reader with the policy |
+| --- | --- | --- | --- |
+| Three lines after seven preceding lines | Flat, Book and Web move all three to page 2. Legacy starts on page 1. | All three move to page 2. | All three move to page 2. |
+| Twelve lines after four preceding lines | Starts on page 1 and ends on page 2 in all four modes. | Starts on page 2 and ends on page 3. | Starts on page 1 and ends on page 2. |
+
+Page numbers are relative to each authored spine item. Tests recover a
+serialized quote and its touch location after the opening line moves
+back to page 1. Fitting groups and documents with publisher styles
+disabled render byte-identical frames. Padded, bordered or decorated
+wrappers, nested groups, active floats, images, special paragraph
+rules and tables keep their existing path.
+
+Generate the specimen with `python3 scripts/generate-render-text-keeps-fixture.py`.
+Run the native oracle with the same arguments as the Render Mode probe.
+Run `cargo test --locked --lib publisher_breaks` and set
+`READER_TEXT_KEEP_CAPTURES` to an existing folder to save Reader frames.
+[CREngine grouped page placement](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvpagesplitter.cpp#L921-L987) ·
+[Native oracle](../scripts/koreader-render-text-keeps-check.lua) ·
+[Reader tests](../src/publisher_breaks/text_keeps/tests.rs) ·
+[KOReader Web](screenshots/render-text-keeps-stock-web.png) ·
+[Reader default](screenshots/render-text-keeps-reader-default.png) ·
+[Reader with the policy](screenshots/render-text-keeps-reader-bounded.png)
+
 ## Reproduce
 
 The EPUB uses authored CSS and text. Generate it with

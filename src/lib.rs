@@ -364,6 +364,9 @@ pub struct Settings {
     /// Position and paint supported empty boxes between ordinary text blocks.
     #[doc(hidden)]
     pub empty_break_geometry: bool,
+    /// Let an oversized ordinary publisher keep group flow into available pages.
+    #[doc(hidden)]
+    pub relax_oversized_publisher_keeps: bool,
     pub line_height: f32,
     /// None preserves legacy multiplier-based line spacing for existing profiles.
     pub line_spacing_percent: Option<u16>,
@@ -428,6 +431,7 @@ impl Default for Settings {
             float_mode: FloatMode::Ignore,
             empty_break_mode: EmptyBreakMode::Current,
             empty_break_geometry: false,
+            relax_oversized_publisher_keeps: false,
             line_height: 1.35,
             line_spacing_percent: None,
             word_spacing: 0.0,

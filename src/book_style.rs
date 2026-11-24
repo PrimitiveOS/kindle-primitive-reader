@@ -595,6 +595,8 @@ impl BookStyle {
                 crate::BlockMarginMode::Collapse | crate::BlockMarginMode::CollapseNegative
             )
         });
+        let keep_group_geometry =
+            settings.is_some_and(|config| config.relax_oversized_publisher_keeps);
         let logical = settings.filter(|settings| settings.logical_font_size.is_some());
         let relative_font = |scale: f32| {
             logical.map_or_else(
@@ -793,6 +795,9 @@ impl BookStyle {
                             && crate::source::is_block_tag(&element.tag))
                             || (nested_margin_collapse
                                 && crate::block_margins::collapsible_wrapper(&element.tag))
+                            || (keep_group_geometry
+                                && (element.tag == "p"
+                                    || crate::block_margins::collapsible_wrapper(&element.tag)))
                             || (publisher_block_height && element.tag == "p") =>
                     {
                         let target = style
