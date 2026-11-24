@@ -1,45 +1,68 @@
 use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
-use primitive_app::{WIDTH, with_storage};
+use primitive_app::with_storage;
 use primitive_ui::{CAPTION, Canvas, GrayImage, HAIRLINE, Input, Rect};
 
 use crate::fixed_session::FixedReading;
 use crate::library::FixedReflowSpacing;
 use crate::scan_reflow::ScanReflow;
-use crate::session::{
-    DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, draw_page_picture,
-};
+use crate::session::{PAGE_REFRESH_GAP, PagePaint, PageTurns, ReadingViewport, draw_page_picture};
 use crate::{Anchor, Probe, Result, Settings};
 
-const SPACING_TOGGLE: Rect = Rect::new(622, PAGE_HEIGHT as i32 + 5, 192, 60);
-const SPACING_PANEL: Rect = Rect::new(0, PAGE_HEIGHT as i32 - 146, WIDTH as i32, 146);
-const SPACING_BUTTONS: [(FixedReflowSpacing, &str, Rect); 3] = [
-    (
-        FixedReflowSpacing::Small,
-        "Small",
-        Rect::new(38, SPACING_PANEL.y + 68, 176, 60),
-    ),
-    (
-        FixedReflowSpacing::Medium,
-        "Medium",
-        Rect::new(228, SPACING_PANEL.y + 68, 176, 60),
-    ),
-    (
-        FixedReflowSpacing::Large,
-        "Large",
-        Rect::new(418, SPACING_PANEL.y + 68, 176, 60),
-    ),
-];
-const SPACING_CANCEL: Rect = Rect::new(840, SPACING_PANEL.y + 68, 178, 60);
-const SPACING_APPLY: Rect = Rect::new(1032, SPACING_PANEL.y + 68, 194, 60);
-
-const SCAN_SMALLER: Rect = Rect::new(840, PAGE_HEIGHT as i32 + 5, 120, 60);
-const SCAN_LARGER: Rect = Rect::new(974, PAGE_HEIGHT as i32 + 5, 120, 60);
 const MIN_SCAN_HEIGHT: u32 = 24;
 const MAX_SCAN_HEIGHT: u32 = 72;
 const SCAN_SIZE_STEP: i32 = 8;
+
+struct Controls {
+    footer_y: i32,
+    width: i32,
+    spacing: Rect,
+    panel: Rect,
+    choices: [(FixedReflowSpacing, &'static str, Rect); 3],
+    cancel: Rect,
+    apply: Rect,
+    smaller: Rect,
+    larger: Rect,
+}
+
+impl Controls {
+    fn new(viewport: ReadingViewport) -> Self {
+        let width = viewport.dimensions().0 as i32;
+        let footer_y = viewport.page_height() as i32;
+        let panel = Rect::new(0, footer_y - 146, width, 146);
+        let row = panel.y + 68;
+        Self {
+            footer_y,
+            width,
+            spacing: Rect::new(width - 642, footer_y + 5, 192, 60),
+            panel,
+            choices: [
+                (
+                    FixedReflowSpacing::Small,
+                    "Small",
+                    Rect::new(38, row, 176, 60),
+                ),
+                (
+                    FixedReflowSpacing::Medium,
+                    "Medium",
+                    Rect::new(228, row, 176, 60),
+                ),
+                (
+                    FixedReflowSpacing::Large,
+                    "Large",
+                    Rect::new(418, row, 176, 60),
+                ),
+            ],
+            cancel: Rect::new(width - 424, row, 178, 60),
+            apply: Rect::new(width - 232, row, 194, 60),
+            smaller: Rect::new(width - 424, footer_y + 5, 120, 60),
+            larger: Rect::new(width - 290, footer_y + 5, 120, 60),
+        }
+    }
+}
 
 #[derive(Clone)]
 enum FlowStyle {
@@ -67,7 +90,7 @@ enum FlowAnchor {
 }
 
 impl FlowStyle {
-    fn layout_text(&self, text: &str) -> Result<Option<FlowLayout>> {
+    fn layout_text(&self, text: &str, viewport: ReadingViewport) -> Result<Option<FlowLayout>> {
         let Self::Text {
             title,
             fonts,
@@ -80,8 +103,13 @@ impl FlowStyle {
         if text.trim().is_empty() {
             return Ok(None);
         }
+        let settings = Settings {
+            width: viewport.dimensions().0,
+            height: viewport.page_height(),
+            ..*settings
+        };
         let settings = if *spacing == FixedReflowSpacing::Medium {
-            *settings
+            settings
         } else {
             let base = u32::from(settings.effective_line_spacing_percent());
             settings.with_line_spacing_percent(spacing.scaled_pitch(base).clamp(50, 200) as u16)
@@ -90,9 +118,14 @@ impl FlowStyle {
         Ok(Some(FlowLayout::Text(Box::new(probe))))
     }
 
-    fn layout_page(&self, document: &FixedReading, page: usize) -> Result<Option<FlowLayout>> {
+    fn layout_page(
+        &self,
+        document: &FixedReading,
+        page: usize,
+        viewport: ReadingViewport,
+    ) -> Result<Option<FlowLayout>> {
         match self {
-            Self::Text { .. } => self.layout_text(&document.page_text(page)?.text),
+            Self::Text { .. } => self.layout_text(&document.page_text(page)?.text, viewport),
             Self::Scan {
                 text_height,
                 spacing,
@@ -104,8 +137,14 @@ impl FlowStyle {
                     return Ok(None);
                 };
                 let raster = document.ocr_raster(page)?;
-                let layout =
-                    ScanReflow::new(raster, &words, WIDTH, PAGE_HEIGHT, *text_height, *spacing)?;
+                let layout = ScanReflow::new(
+                    raster,
+                    &words,
+                    viewport.dimensions().0,
+                    viewport.page_height(),
+                    *text_height,
+                    *spacing,
+                )?;
                 Ok(Some(FlowLayout::Scan(layout)))
             }
         }
@@ -161,11 +200,11 @@ impl FlowLayout {
         }
     }
 
-    fn capture(&mut self, page: usize) -> Result<GrayImage> {
+    fn capture(&mut self, page: usize, viewport: ReadingViewport) -> Result<GrayImage> {
         match self {
             Self::Text(probe) => Ok(GrayImage {
-                width: WIDTH,
-                height: PAGE_HEIGHT,
+                width: viewport.dimensions().0,
+                height: viewport.page_height(),
                 pixels: probe.capture(page)?,
             }),
             Self::Scan(scan) => Ok(scan.render(page)?),
@@ -175,6 +214,9 @@ impl FlowLayout {
 
 /// Paginated text or image crops from a fixed document, one source page at a time.
 pub(crate) struct TextFlow {
+    viewport: ReadingViewport,
+    instance: Arc<()>,
+    revision: u64,
     document_page: usize,
     #[cfg(test)]
     document_pages: usize,
@@ -188,6 +230,21 @@ pub(crate) struct TextFlow {
     turns: PageTurns,
     boundary: Option<String>,
     end_attempt: bool,
+}
+
+pub(crate) struct ViewportStage {
+    candidate: Box<TextFlow>,
+}
+
+impl ViewportStage {
+    pub(crate) fn matches(&self, flow: &TextFlow) -> bool {
+        Arc::ptr_eq(&self.candidate.instance, &flow.instance)
+            && self.candidate.revision == flow.revision
+    }
+
+    pub(crate) fn exchange(&mut self, flow: &mut TextFlow) {
+        std::mem::swap(self.candidate.as_mut(), flow);
+    }
 }
 
 impl TextFlow {
@@ -216,10 +273,11 @@ impl TextFlow {
             }
         };
         let page = document.page();
+        let viewport = document.viewport();
         let layout = style
-            .layout_page(document, page)?
+            .layout_page(document, page, viewport)?
             .ok_or_else(|| format!("Page {} {}", page + 1, style.missing_text()))?;
-        Self::with_layout(page, document.count(), style, layout)
+        Self::with_layout(page, document.count(), style, layout, viewport)
     }
 
     fn with_layout(
@@ -227,12 +285,16 @@ impl TextFlow {
         document_pages: usize,
         style: FlowStyle,
         mut layout: FlowLayout,
+        viewport: ReadingViewport,
     ) -> Result<Self> {
         if document_page >= document_pages {
             return Err("Document page is unavailable".into());
         }
-        let frame = layout.capture(0)?;
+        let frame = layout.capture(0, viewport)?;
         Ok(Self {
+            viewport,
+            instance: Arc::new(()),
+            revision: 0,
             document_page,
             #[cfg(test)]
             document_pages,
@@ -254,10 +316,43 @@ impl TextFlow {
 
     pub(crate) fn from_start(&self, document: &FixedReading) -> Result<Self> {
         let style = self.style.clone();
+        let viewport = document.viewport();
         let layout = style
-            .layout_page(document, 0)?
+            .layout_page(document, 0, viewport)?
             .ok_or_else(|| format!("Page 1 {}", style.missing_text()))?;
-        Self::with_layout(0, document.count(), style, layout)
+        Self::with_layout(0, document.count(), style, layout, viewport)
+    }
+
+    pub(crate) fn prepare_viewport(
+        &self,
+        document: &FixedReading,
+        viewport: ReadingViewport,
+    ) -> Result<ViewportStage> {
+        // The continuous fixed view may start on an earlier source page when
+        // it fills the last screen. TextFlow keeps its own explicit page.
+        let (layout, page, anchor, frame) = self.relayout(&self.style, document, viewport)?;
+        Ok(ViewportStage {
+            candidate: Box::new(Self {
+                viewport,
+                instance: Arc::clone(&self.instance),
+                revision: self.revision,
+                document_page: self.document_page,
+                #[cfg(test)]
+                document_pages: self.document_pages,
+                style: self.style.clone(),
+                layout,
+                page,
+                retained_anchor: Some(anchor),
+                spacing_draft: self.spacing_draft,
+                frame,
+                turns: PageTurns {
+                    pending: self.turns.pending.clone(),
+                    next_refresh: self.turns.next_refresh,
+                },
+                boundary: self.boundary.clone(),
+                end_attempt: self.end_attempt,
+            }),
+        })
     }
 
     pub(crate) fn deadline(&self) -> Option<Instant> {
@@ -267,6 +362,7 @@ impl TextFlow {
     pub(crate) fn pause(&mut self) {
         self.turns = PageTurns::new(Instant::now());
         self.end_attempt = false;
+        self.advance_revision();
     }
 
     pub(crate) fn take_end_attempt(&mut self) -> bool {
@@ -274,11 +370,12 @@ impl TextFlow {
     }
 
     pub(crate) fn input(&mut self, input: Input, document: &FixedReading) -> Result<bool> {
+        let controls = Controls::new(self.viewport);
         if let Some(draft) = self.spacing_draft {
-            return self.spacing_input(input, document, draft);
+            return self.spacing_input(input, document, &controls, draft);
         }
         if let Input::Tap(x, y) = input
-            && SPACING_TOGGLE.contains(x, y)
+            && controls.spacing.contains(x, y)
         {
             self.spacing_draft = Some(self.line_spacing());
             self.pause();
@@ -287,10 +384,10 @@ impl TextFlow {
         if matches!(self.style, FlowStyle::Scan { .. })
             && let Input::Tap(x, y) = input
         {
-            if SCAN_SMALLER.contains(x, y) {
+            if controls.smaller.contains(x, y) {
                 return self.resize_scan(-SCAN_SIZE_STEP, document);
             }
-            if SCAN_LARGER.contains(x, y) {
+            if controls.larger.contains(x, y) {
                 return self.resize_scan(SCAN_SIZE_STEP, document);
             }
         }
@@ -301,11 +398,18 @@ impl TextFlow {
                 let displacement = if dx.abs() >= dy.abs() { dx } else { dy };
                 if displacement < 0.0 { 1 } else { -1 }
             }
-            Input::Tap(x, y) if y < PAGE_HEIGHT as f32 && x < WIDTH as f32 / 3.0 => -1,
-            Input::Tap(x, y) if y < PAGE_HEIGHT as f32 && x > WIDTH as f32 * 2.0 / 3.0 => 1,
+            Input::Tap(x, y) if y < controls.footer_y as f32 && x < controls.width as f32 / 3.0 => {
+                -1
+            }
+            Input::Tap(x, y)
+                if y < controls.footer_y as f32 && x > controls.width as f32 * 2.0 / 3.0 =>
+            {
+                1
+            }
             _ => return Ok(false),
         };
         self.turns.pending.push(direction);
+        self.advance_revision();
         self.tick(Instant::now(), document)
     }
 
@@ -317,14 +421,17 @@ impl TextFlow {
         &mut self,
         input: Input,
         document: &FixedReading,
+        controls: &Controls,
         draft: FixedReflowSpacing,
     ) -> Result<bool> {
         match input {
             Input::PageBack => self.spacing_draft = None,
-            Input::Tap(x, y) if SPACING_CANCEL.contains(x, y) || SPACING_TOGGLE.contains(x, y) => {
+            Input::Tap(x, y)
+                if controls.cancel.contains(x, y) || controls.spacing.contains(x, y) =>
+            {
                 self.spacing_draft = None;
             }
-            Input::Tap(x, y) if SPACING_APPLY.contains(x, y) => {
+            Input::Tap(x, y) if controls.apply.contains(x, y) => {
                 if draft != self.line_spacing() {
                     let mut style = self.style.clone();
                     style.set_spacing(draft);
@@ -333,7 +440,8 @@ impl TextFlow {
                 self.spacing_draft = None;
             }
             Input::Tap(x, y) => {
-                let Some((choice, _, _)) = SPACING_BUTTONS
+                let Some((choice, _, _)) = controls
+                    .choices
                     .iter()
                     .find(|(_, _, rect)| rect.contains(x, y))
                 else {
@@ -346,6 +454,7 @@ impl TextFlow {
             }
             _ => return Ok(false),
         }
+        self.advance_revision();
         Ok(true)
     }
 
@@ -374,18 +483,7 @@ impl TextFlow {
     }
 
     fn refresh_layout(&mut self, style: FlowStyle, document: &FixedReading) -> Result<()> {
-        let anchor = self
-            .retained_anchor
-            .clone()
-            .or_else(|| self.layout.anchor(self.page))
-            .ok_or("The current reading passage is unavailable")?;
-        let mut layout = style
-            .layout_page(document, self.document_page)?
-            .ok_or_else(|| format!("Page {} {}", self.document_page + 1, style.missing_text()))?;
-        let page = layout
-            .page_for(&anchor)
-            .ok_or("The current reading passage is unavailable after changing the layout")?;
-        let frame = layout.capture(page)?;
+        let (layout, page, anchor, frame) = self.relayout(&style, document, self.viewport)?;
         self.style = style;
         self.layout = layout;
         self.page = page;
@@ -396,10 +494,32 @@ impl TextFlow {
         Ok(())
     }
 
+    fn relayout(
+        &self,
+        style: &FlowStyle,
+        document: &FixedReading,
+        viewport: ReadingViewport,
+    ) -> Result<(FlowLayout, usize, FlowAnchor, GrayImage)> {
+        let anchor = self
+            .retained_anchor
+            .clone()
+            .or_else(|| self.layout.anchor(self.page))
+            .ok_or("The current reading passage is unavailable")?;
+        let mut layout = style
+            .layout_page(document, self.document_page, viewport)?
+            .ok_or_else(|| format!("Page {} {}", self.document_page + 1, style.missing_text()))?;
+        let page = layout
+            .page_for(&anchor)
+            .ok_or("The current reading passage is unavailable after changing the layout")?;
+        let frame = layout.capture(page, viewport)?;
+        Ok((layout, page, anchor, frame))
+    }
+
     pub(crate) fn tick(&mut self, now: Instant, document: &FixedReading) -> Result<bool> {
+        let viewport = self.viewport;
         self.step_with_navigation(
             now,
-            |style, page| style.layout_page(document, page),
+            |style, page| style.layout_page(document, page, viewport),
             |page, direction| document.next_reading_page(page, direction),
         )
     }
@@ -427,6 +547,7 @@ impl TextFlow {
         if due.is_empty() {
             return Ok(false);
         }
+        self.advance_revision();
         let mut turns = due.into_iter();
         let mut page = self.page;
         let mut boundary = None;
@@ -459,7 +580,7 @@ impl TextFlow {
                 break;
             };
             let page = if step > 0 { 0 } else { layout.page_count() - 1 };
-            let frame = layout.capture(page)?;
+            let frame = layout.capture(page, self.viewport)?;
             self.document_page = adjacent;
             self.layout = layout;
             self.page = page;
@@ -474,7 +595,7 @@ impl TextFlow {
 
         let page_changed = page != self.page;
         if page_changed {
-            self.frame = self.layout.capture(page)?;
+            self.frame = self.layout.capture(page, self.viewport)?;
             self.page = page;
             self.retained_anchor = None;
         }
@@ -490,6 +611,10 @@ impl TextFlow {
         self.turns.next_refresh = Instant::now().max(now) + PAGE_REFRESH_GAP;
     }
 
+    fn advance_revision(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     pub(crate) fn draw(
         &self,
         canvas: &mut Canvas,
@@ -497,33 +622,34 @@ impl TextFlow {
         inverted: bool,
         guides: Option<crate::app::reading_guides::Lines>,
     ) {
+        let controls = Controls::new(self.viewport);
         let mut paint = PagePaint::full(inverted);
         paint.reading_guides = guides;
         if self.spacing_draft.is_some() {
-            paint.visible.end = SPACING_PANEL.y as u32;
+            paint.visible.end = controls.panel.y as u32;
         }
         draw_page_picture(canvas, self.frame.clone(), paint);
         canvas.button(
-            SPACING_TOGGLE,
+            controls.spacing,
             "Spacing",
             self.spacing_draft.is_some(),
             false,
         );
         if let Some(draft) = self.spacing_draft {
-            canvas.fill(SPACING_PANEL, 255);
-            canvas.fill(Rect::new(0, SPACING_PANEL.y, WIDTH as i32, 1), HAIRLINE);
+            canvas.fill(controls.panel, 255);
+            canvas.fill(Rect::new(0, controls.panel.y, controls.width, 1), HAIRLINE);
             canvas.text(
-                Rect::new(38, SPACING_PANEL.y + 8, 400, 53),
+                Rect::new(38, controls.panel.y + 8, 400, 53),
                 "Line spacing",
                 CAPTION,
             );
-            for (choice, label, rect) in SPACING_BUTTONS {
+            for (choice, label, rect) in controls.choices {
                 canvas.button(rect, label, draft == choice, false);
             }
-            canvas.button(SPACING_CANCEL, "Cancel", false, false);
-            canvas.button(SPACING_APPLY, "Apply", false, false);
+            canvas.button(controls.cancel, "Cancel", false, false);
+            canvas.button(controls.apply, "Apply", false, false);
         }
-        canvas.fill(Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, 1), HAIRLINE);
+        canvas.fill(Rect::new(0, controls.footer_y, controls.width, 1), HAIRLINE);
         let caption = format!(
             "Document page {} · {} {} of {}",
             self.document_page + 1,
@@ -535,18 +661,18 @@ impl TextFlow {
             && let FlowStyle::Scan { text_height, .. } = self.style
         {
             if text_height > MIN_SCAN_HEIGHT {
-                canvas.button(SCAN_SMALLER, "-", false, false);
+                canvas.button(controls.smaller, "-", false, false);
             }
             if text_height < MAX_SCAN_HEIGHT {
-                canvas.button(SCAN_LARGER, "+", false, false);
+                canvas.button(controls.larger, "+", false, false);
             }
         }
         canvas.text(
-            Rect::new(38, PAGE_HEIGHT as i32 + 12, SPACING_TOGGLE.x - 60, 48),
+            Rect::new(38, controls.footer_y + 12, controls.spacing.x - 60, 48),
             notice.or(self.boundary.as_deref()).unwrap_or(&caption),
             CAPTION,
         );
-        canvas.button(DONE, "Back", false, false);
+        canvas.button(self.viewport.done(), "Back", false, false);
     }
 }
 
@@ -561,39 +687,88 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::session::PAGE_HEIGHT;
+    use primitive_app::WIDTH;
+
+    fn authored_document(scan: bool) -> FixedReading {
+        use crate::library::{DocumentFormat, FixedPreferences};
+        let name = if scan { "raster.pdf" } else { "vector.pdf" };
+        let mut document = FixedReading::open(
+            PAGE_HEIGHT,
+            DocumentFormat::Pdf,
+            &crate::test_fixture(&format!("scan-reflow/{name}")),
+            1,
+            &[],
+            FixedPreferences::default(),
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        if scan {
+            assert!(document.page_text(1).unwrap().words.is_empty());
+            let ocr = crate::ocr::parse_tsv(
+                include_bytes!("../tests/fixtures/scan-reflow/page-2-ocr.tsv"),
+                1350,
+                1800,
+            )
+            .unwrap();
+            assert!(ocr.text.words.len() > 500);
+            document.remember_ocr(1, "eng", ocr.text).unwrap();
+        }
+        document
+    }
+
+    #[test]
+    fn scan_text_viewport_retains_the_exact_reading_anchor_for_both_providers() {
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let portrait = ReadingViewport::PORTRAIT;
+        let landscape = ReadingViewport::LANDSCAPE;
+        for scan in [false, true] {
+            let mut document = authored_document(scan);
+            let mut flow =
+                TextFlow::open(&document, "Harbor", &fonts, Settings::default(), scan).unwrap();
+            flow.input(Input::PageForward, &document).unwrap();
+            flow.tick(Instant::now() + Duration::from_secs(1), &document)
+                .unwrap();
+            let origin = flow.layout.anchor(flow.page).unwrap();
+            assert_eq!(flow.page, 1);
+            assert!(matches!(origin, FlowAnchor::Scan(_)) == scan);
+            let original = flow.frame.pixels.clone();
+            let pending = flow.deadline();
+            let mut staged = flow.prepare_viewport(&document, landscape).unwrap();
+            assert!(staged.matches(&flow));
+            staged.exchange(&mut flow);
+            assert_eq!(flow.viewport, landscape);
+            assert_eq!(flow.document_page(), 1);
+            assert_eq!(flow.retained_anchor.as_ref(), Some(&origin));
+            assert_eq!(flow.layout.page_for(&origin), Some(flow.page));
+            assert_eq!(flow.frame.width, landscape.dimensions().0);
+            assert_eq!(flow.frame.height, landscape.page_height());
+            assert_eq!(flow.deadline(), pending);
+            let mut round_trip = flow.prepare_viewport(&document, portrait).unwrap();
+            round_trip.exchange(&mut flow);
+            assert_eq!(flow.page, 1);
+            assert_eq!(flow.retained_anchor.as_ref(), Some(&origin));
+            assert_eq!(flow.frame.pixels, original);
+            if scan {
+                document.forget_ocr();
+                assert!(flow.prepare_viewport(&document, landscape).is_err());
+                assert_eq!(flow.viewport, portrait);
+                assert_eq!(flow.frame.pixels, original);
+            }
+        }
+    }
 
     #[test]
     fn fixed_reflow_spacing_preserves_a_later_passage_and_restores_cancelled_layout() {
-        use crate::library::{DocumentFormat, FixedPreferences};
+        let controls = Controls::new(ReadingViewport::PORTRAIT);
         let tap =
             |rect: Rect| Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
-        for (scan, name) in [(false, "vector.pdf"), (true, "raster.pdf")] {
-            let path = crate::test_fixture(&format!("scan-reflow/{name}"));
-            let mut document = FixedReading::open(
-                PAGE_HEIGHT,
-                DocumentFormat::Pdf,
-                &path,
-                1,
-                &[],
-                FixedPreferences::default(),
-                None,
-                None,
-                None,
-            )
-            .unwrap()
-            .unwrap();
+        for scan in [false, true] {
+            let mut document = authored_document(scan);
             let position = document.history_point();
-            if scan {
-                assert!(document.page_text(1).unwrap().words.is_empty());
-                let ocr = crate::ocr::parse_tsv(
-                    include_bytes!("../tests/fixtures/scan-reflow/page-2-ocr.tsv"),
-                    1350,
-                    1800,
-                )
-                .unwrap();
-                assert!(ocr.text.words.len() > 500);
-                document.remember_ocr(1, "eng", ocr.text).unwrap();
-            }
             let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
             let settings = Settings {
                 width: WIDTH,
@@ -610,8 +785,8 @@ mod tests {
             let origin = flow.layout.anchor(1).unwrap();
             assert_ne!(Some(&origin), flow.layout.anchor(0).as_ref());
             let original = flow.frame.pixels.clone();
-            assert!(flow.input(tap(SPACING_TOGGLE), &document).unwrap());
-            assert!(flow.input(tap(SPACING_BUTTONS[0].2), &document).unwrap());
+            assert!(flow.input(tap(controls.spacing), &document).unwrap());
+            assert!(flow.input(tap(controls.choices[0].2), &document).unwrap());
             assert_eq!(flow.frame.pixels, original);
             assert!(!flow.input(Input::PageForward, &document).unwrap());
             assert!(flow.input(Input::PageBack, &document).unwrap());
@@ -620,11 +795,11 @@ mod tests {
             assert_eq!(flow.frame.pixels, original);
 
             for choice in [2, 0, 1] {
-                flow.input(tap(SPACING_TOGGLE), &document).unwrap();
-                flow.input(tap(SPACING_BUTTONS[choice].2), &document)
+                flow.input(tap(controls.spacing), &document).unwrap();
+                flow.input(tap(controls.choices[choice].2), &document)
                     .unwrap();
-                flow.input(tap(SPACING_APPLY), &document).unwrap();
-                assert_eq!(flow.line_spacing(), SPACING_BUTTONS[choice].0);
+                flow.input(tap(controls.apply), &document).unwrap();
+                assert_eq!(flow.line_spacing(), controls.choices[choice].0);
                 assert_eq!(flow.retained_anchor.as_ref(), Some(&origin));
                 assert_eq!(flow.layout.page_for(&origin), Some(flow.page));
                 assert_eq!(flow.document_page(), 1);
@@ -637,13 +812,13 @@ mod tests {
             assert_eq!(flow.frame.pixels, original);
             if scan {
                 document.forget_ocr();
-                flow.input(tap(SPACING_TOGGLE), &document).unwrap();
-                flow.input(tap(SPACING_BUTTONS[2].2), &document).unwrap();
-                assert!(flow.input(tap(SPACING_APPLY), &document).is_err());
+                flow.input(tap(controls.spacing), &document).unwrap();
+                flow.input(tap(controls.choices[2].2), &document).unwrap();
+                assert!(flow.input(tap(controls.apply), &document).is_err());
                 assert_eq!(flow.line_spacing(), FixedReflowSpacing::Medium);
                 assert_eq!(flow.retained_anchor.as_ref(), Some(&origin));
                 assert_eq!(flow.frame.pixels, original);
-                assert!(flow.input(tap(SPACING_CANCEL), &document).unwrap());
+                assert!(flow.input(tap(controls.cancel), &document).unwrap());
             }
         }
     }
@@ -669,14 +844,15 @@ mod tests {
             settings,
             spacing: FixedReflowSpacing::Medium,
         };
-        let layout = style.layout_text(texts[0]).unwrap().unwrap();
-        let mut flow = TextFlow::with_layout(0, texts.len(), style, layout).unwrap();
+        let viewport = ReadingViewport::PORTRAIT;
+        let layout = style.layout_text(texts[0], viewport).unwrap().unwrap();
+        let mut flow = TextFlow::with_layout(0, texts.len(), style, layout, viewport).unwrap();
         let last = flow.layout.page_count() - 1;
         assert!(last > 0);
         let requested = RefCell::new(Vec::new());
         let mut lookup = |style: &FlowStyle, page: usize| {
             requested.borrow_mut().push(page);
-            style.layout_text(texts[page])
+            style.layout_text(texts[page], viewport)
         };
 
         flow.turns.pending.extend(std::iter::repeat_n(1, last));

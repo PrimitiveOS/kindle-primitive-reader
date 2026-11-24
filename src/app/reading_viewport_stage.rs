@@ -31,6 +31,7 @@ pub(super) struct Stage {
     illustration: Option<Box<PreparedFixedViewport>>,
     footnote: Option<Footnote>,
     selection_html: Option<Inspector>,
+    text_flow: Option<crate::text_flow::ViewportStage>,
     marks: Option<(super::saved_marks_view::FlexibleMarks, usize)>,
     visual_navigation: super::visual_navigation::VisualNavigation,
     matches: Option<super::search_layout::MatchStage>,
@@ -68,6 +69,17 @@ impl Reader {
         } else {
             None
         };
+        let text_flow = if target != from {
+            self.text_flow
+                .as_ref()
+                .map(|flow| {
+                    let document = &self.fixed.as_ref().ok_or("The document closed")?.reading;
+                    flow.prepare_viewport(document, target)
+                })
+                .transpose()?
+        } else {
+            None
+        };
         Ok(Stage {
             book: self.open_book_id(),
             position: self.current_position(),
@@ -86,6 +98,7 @@ impl Reader {
                 .selection_html
                 .as_ref()
                 .and_then(|inspector| inspector.resized(target)),
+            text_flow,
             marks: None,
             visual_navigation: super::visual_navigation::VisualNavigation::capture(self),
             matches: (target != from && self.screen == Screen::Matches)
@@ -164,9 +177,9 @@ impl Reader {
         Ok(())
     }
 
-    pub(super) fn commit_reading_viewport(&mut self, staged: Stage) -> Result<()> {
+    pub(super) fn commit_reading_viewport(&mut self, mut staged: Stage) -> Result<()> {
         staged.check_origin(self)?;
-        match staged.candidate {
+        match std::mem::replace(&mut staged.candidate, Candidate::Current) {
             Candidate::Current => return Ok(()),
             Candidate::Library(viewport) => {
                 self.library_viewport = viewport;
@@ -182,6 +195,7 @@ impl Reader {
                     .commit_viewport(*prepared)?;
             }
         }
+        staged.exchange_text_flow(self);
         if let Some(prepared) = staged.illustration {
             self.illustration
                 .as_mut()
@@ -255,6 +269,7 @@ impl Stage {
     }
 
     fn exchange_reading_tools(&mut self, reader: &mut Reader) {
+        self.exchange_text_flow(reader);
         if let (Some(current), Some(prepared)) = (&mut reader.footnote, &mut self.footnote) {
             std::mem::swap(current, prepared);
         }
@@ -262,6 +277,12 @@ impl Stage {
             (&mut reader.selection_html, &mut self.selection_html)
         {
             std::mem::swap(current, prepared);
+        }
+    }
+
+    fn exchange_text_flow(&mut self, reader: &mut Reader) {
+        if let (Some(current), Some(prepared)) = (&mut reader.text_flow, &mut self.text_flow) {
+            prepared.exchange(current);
         }
     }
 
@@ -276,6 +297,12 @@ impl Stage {
                     .as_ref()
                     .is_some_and(|view| view.owns_prepared_viewport(prepared))
             })
+            || (self.from != self.target
+                && match (&self.text_flow, &reader.text_flow) {
+                    (Some(stage), Some(flow)) => !stage.matches(flow),
+                    (None, None) => false,
+                    _ => true,
+                })
             || !self.visual_navigation.matches(reader)
             || self
                 .reading_list
@@ -344,8 +371,162 @@ pub(super) fn draw_test_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::selection_viewport_tests::{adopt, canvas, capture, press, tap};
     use crate::app::tests::Fixture;
+    use crate::app::{Action, ReadingOrientation};
+    use primitive_app::Change;
     use primitive_app::viewport::{LogicalTurn, Viewport, ViewportDecision};
+    use primitive_ui::{Input, Rect};
+
+    #[test]
+    fn scan_text_viewport_stages_rolls_back_and_uses_landscape_controls() {
+        let portrait = ReadingViewport::PORTRAIT;
+        let landscape = ReadingViewport::LANDSCAPE;
+        for (file, scan, label) in [
+            ("vector.pdf", false, "read-text"),
+            ("raster.pdf", true, "reflow-scan"),
+        ] {
+            let action = || {
+                if scan {
+                    Action::ReflowScan
+                } else {
+                    Action::ReadFixedText
+                }
+            };
+            let fixture = Fixture::new();
+            let source = fixture.root.join("Harbor survey.pdf");
+            std::fs::copy(crate::test_fixture(&format!("scan-reflow/{file}")), &source).unwrap();
+            let fonts = vec![
+                crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+                crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+            ];
+            let mut reader = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+            reader.open_path(&source).unwrap();
+            reader.jump_fixed(1, None).unwrap();
+            if scan {
+                let document = &mut reader.fixed.as_mut().unwrap().reading;
+                assert!(document.page_text(1).unwrap().words.is_empty());
+                let ocr = crate::ocr::parse_tsv(
+                    include_bytes!("../../tests/fixtures/scan-reflow/page-2-ocr.tsv"),
+                    1350,
+                    1800,
+                )
+                .unwrap();
+                document.remember_ocr(1, "eng", ocr.text).unwrap();
+            }
+            let mut portrait_canvas = adopt(&mut reader, portrait, 1);
+            reader.activate(action()).unwrap();
+            assert_eq!(reader.screen, Screen::ReadFixedText);
+            let position = reader.current_position();
+            let history_len = reader.back.len();
+            let first = primitive_app::frame(&reader, &mut portrait_canvas, false);
+            let turn = |reader: &mut Reader, input: Input| {
+                let changed = reader.input(input);
+                if let Some(due) = reader.text_flow.as_ref().unwrap().deadline() {
+                    assert_eq!(reader.tick(due), Change::Partial);
+                } else {
+                    assert_eq!(changed, Change::Partial);
+                }
+            };
+            turn(&mut reader, Input::PageForward);
+            let before = primitive_app::frame(&reader, &mut portrait_canvas, false);
+            assert_ne!(first, before);
+
+            let candidate = Viewport {
+                generation: 2,
+                turn: LogicalTurn::Clockwise,
+                logical_size: landscape.dimensions(),
+            };
+            let mut wide = canvas(&reader, landscape);
+            reader.stage_viewport(candidate).unwrap();
+            wide.begin();
+            reader.draw_staged_viewport(&mut wide).unwrap();
+            let staged = wide.finish(false);
+            assert_eq!(staged.len(), 1680 * 1264);
+            assert_eq!(reader.reading_viewport(), portrait);
+            assert_eq!(reader.current_position(), position);
+            assert_eq!(
+                primitive_app::frame(&reader, &mut portrait_canvas, false),
+                before
+            );
+            reader.finish_viewport(candidate, ViewportDecision::Abort);
+            assert_eq!(reader.reading_viewport(), portrait);
+            assert_eq!(
+                primitive_app::frame(&reader, &mut portrait_canvas, false),
+                before
+            );
+
+            let candidate = Viewport {
+                generation: 3,
+                ..candidate
+            };
+            reader.stage_viewport(candidate).unwrap();
+            let portrait_spacing = Rect::new(622, 1611, 192, 60);
+            tap(&mut reader, portrait_spacing);
+            wide.begin();
+            assert!(reader.draw_staged_viewport(&mut wide).is_err());
+            reader.finish_viewport(candidate, ViewportDecision::Abort);
+            assert_eq!(reader.input(Input::PageBack), Change::Partial);
+
+            reader
+                .set_reading_orientation(ReadingOrientation::LandscapeRight)
+                .unwrap();
+            assert_eq!(
+                reader.viewport_request(),
+                Some(primitive_app::viewport::ViewportRequest::Fixed(
+                    LogicalTurn::Clockwise
+                ))
+            );
+            let mut wide = adopt(&mut reader, landscape, 4);
+            assert_eq!(primitive_app::frame(&reader, &mut wide, false), staged);
+            assert_eq!(reader.current_position(), position);
+            assert_eq!(reader.back.len(), history_len);
+            capture(&reader, &mut wide, &format!("landscape-{label}.png"), false);
+
+            let spacing = Rect::new(1038, 1195, 192, 60);
+            press(&reader, &mut wide, spacing, false);
+            tap(&mut reader, spacing);
+            let large = Rect::new(418, 1112, 176, 60);
+            tap(&mut reader, large);
+            capture(
+                &reader,
+                &mut wide,
+                &format!("landscape-{label}-spacing.png"),
+                true,
+            );
+            press(&reader, &mut wide, Rect::new(1256, 1112, 178, 60), false);
+            tap(&mut reader, Rect::new(1256, 1112, 178, 60));
+            assert_eq!(primitive_app::frame(&reader, &mut wide, false), staged);
+
+            if scan {
+                tap(&mut reader, Rect::new(1390, 1195, 120, 60));
+                assert_ne!(primitive_app::frame(&reader, &mut wide, false), staged);
+                tap(&mut reader, Rect::new(1256, 1195, 120, 60));
+                assert_eq!(primitive_app::frame(&reader, &mut wide, false), staged);
+            }
+            let mut portrait_canvas = adopt(&mut reader, portrait, 5);
+            assert_eq!(
+                primitive_app::frame(&reader, &mut portrait_canvas, false),
+                before
+            );
+            assert_eq!(reader.current_position(), position);
+            assert_eq!(reader.back.len(), history_len);
+
+            let mut wide = adopt(&mut reader, landscape, 6);
+            assert_eq!(reader.input(Input::Tap(950.0, 600.0)), Change::None);
+            assert!(reader.text_flow.as_ref().unwrap().deadline().is_none());
+            turn(&mut reader, Input::Tap(1550.0, 600.0));
+            assert_ne!(primitive_app::frame(&reader, &mut wide, false), staged);
+            turn(&mut reader, Input::PageBack);
+            assert_eq!(primitive_app::frame(&reader, &mut wide, false), staged);
+            press(&reader, &mut wide, landscape.done(), false);
+            tap(&mut reader, landscape.done());
+            assert_eq!(reader.screen, Screen::Fixed);
+            assert_eq!(reader.current_position(), position);
+            reader.activate(action()).unwrap();
+            press(&reader, &mut wide, landscape.done(), false);
+        }
+    }
 
     #[test]
     fn viewport_hooks_prepare_and_draw_before_adopting_reflow_and_fixed_frames() {

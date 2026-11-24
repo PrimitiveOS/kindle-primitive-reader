@@ -8421,7 +8421,7 @@ impl App for Reader {
             };
         }
         if self.screen == Screen::ReadFixedText {
-            if matches!(input, Input::Tap(x, y) if DONE.contains(x, y)) {
+            if matches!(input, Input::Tap(x, y) if self.reading_viewport().done().contains(x, y)) {
                 self.show(Screen::Fixed);
                 return Change::Partial;
             }

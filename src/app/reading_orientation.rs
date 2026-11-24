@@ -160,6 +160,7 @@ impl Reader {
                 | Screen::Fixed
                 | Screen::FixedTools
                 | Screen::FixedCrop
+                | Screen::ReadFixedText
                 | Screen::Skim
                 | Screen::Definition
                 | Screen::OnlineLookup
