@@ -23,4 +23,13 @@ continuous scrolling, fixed-page zoom and pan, and the return step. Chapter
 depth rules for markers, titles, and chapter commands remain independent
 parity work.
 
+The Mac suite passed 1,005 Reader library tests, one Kindle binary test,
+14 EPUB package tests and four layout checks. The ARMHF suite passed 1,009
+Reader library tests, 14 EPUB package tests and four layout checks natively
+on the Oasis 3. Both skipped 62 optional Reader tests. The chapter navigation,
+24-row settings, 24-row stable-label and EPUB page-label frames matched
+between Mac and Oasis. The PDF Contents frame differed by one pixel.
+These captures compare software rendering. Foreground input and E Ink
+refresh remain separate checks.
+
 [Reader chapter workflow](../src/app/chapter_navigation/tests.rs) · [KOReader chapter starts](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L597-L646) · [Reflow jump](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L704-L761) · [Fixed-page jump](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerpaging.lua#L1147-L1209)
