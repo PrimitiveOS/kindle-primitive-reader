@@ -521,16 +521,23 @@ impl Reader {
         if filled > 0 {
             canvas.fill(Rect::new(track.x + 9, track.y + 17, filled, 8), 0);
         }
-        if let Some(markers) = self.whole_book_marker_pages(false) {
+        let track_width = track.w - 18;
+        let mut previous = 0;
+        let mut draw_marker = |fraction: f64| {
+            let x = (fraction * track_width as f64).round() as i32;
+            if x > previous + 2 && x < track_width - 2 {
+                canvas.fill(Rect::new(track.x + 9 + x, track.y + 11, 2, 20), 0);
+                previous = x;
+            }
+        };
+        if let Some(markers) =
+            self.alternative_book_marker_fractions(super::progress_markers::MarkerTrack::Skim)
+        {
+            markers.into_iter().for_each(draw_marker);
+        } else if let Some(markers) = self.whole_book_marker_pages(false) {
             let last_page = markers.count.saturating_sub(1).max(1);
-            let track_width = track.w - 18;
-            let mut previous = 0;
             for page in markers.starts {
-                let x = (page as f64 / last_page as f64 * track_width as f64).round() as i32;
-                if x > previous + 2 && x < track_width - 2 {
-                    canvas.fill(Rect::new(track.x + 9 + x, track.y + 11, 2, 20), 0);
-                    previous = x;
-                }
+                draw_marker(page as f64 / last_page as f64);
             }
         }
         if let Some(skim) = &self.skim {

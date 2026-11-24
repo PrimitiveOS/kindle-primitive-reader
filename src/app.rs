@@ -1764,7 +1764,9 @@ impl Reader {
         if screen != Screen::GoToPage {
             self.screen_page_jump = None;
         }
-        if !matches!(screen, Screen::Book | Screen::GoToPage) {
+        if !(matches!(screen, Screen::Book | Screen::GoToPage)
+            || screen == Screen::Skim && self.uses_alternative_contents())
+        {
             self.screen_page_worker.cancel();
         }
         self.search_results_navigation.menu_open = false;
@@ -5231,6 +5233,20 @@ impl Reader {
             return self.stats_awake && self.screen_page_jump.is_some();
         }
         let header = self.controls.top_header;
+        if self.stats_awake
+            && (self.screen == Screen::Skim
+                || self.screen == Screen::Book
+                    && ((self.top_header_visible() && header.chapter_marks)
+                        || (self.controls.footer_scope
+                            == crate::reading_controls::ProgressScope::Book
+                            && !self.controls.hide_chapter_markers)))
+            && self
+                .open_book_id()
+                .and_then(|id| self.alternative_entries(id))
+                .is_some_and(|entries| !entries.is_empty())
+        {
+            return true;
+        }
         self.stats_awake
             && self.screen == Screen::Book
             && self.top_header_visible()

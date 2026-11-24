@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use primitive_app::with_storage;
 
 use super::{
-    FileStamp, Generation, PageSample, ScreenPageSources, ScreenPages, checked_prefix,
-    heading_pages, same_spine,
+    FileStamp, Generation, HeadingPages, PageSample, ScreenPageSources, ScreenPages,
+    checked_prefix, heading_pages, same_spine,
 };
 use crate::epub::{Book, Chapter};
 use crate::session::Reading;
@@ -59,7 +59,7 @@ impl Waiting {
 struct ChapterSample {
     index: usize,
     pagination: PageSample,
-    headings: Option<Vec<(usize, usize)>>,
+    headings: HeadingPages,
 }
 
 struct Pending {
@@ -284,7 +284,7 @@ fn accept_result(reading: &Reading, id: &Rc<()>, result: Option<Vec<ChapterSampl
     };
     generation.samples = completed;
     for part in result {
-        generation.heading_pages[part.index] = part.headings;
+        generation.heading_pages[part.index] = Some(part.headings);
     }
     generation.missing = 0;
     generation.prefix = Some(prefix);

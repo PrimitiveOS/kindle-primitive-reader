@@ -3,11 +3,18 @@
 use super::{ActiveBook, Reader};
 use crate::Probe;
 use crate::fixed_session::FixedReading;
+use crate::generated_contents::{OutlineEntry, OutlineTarget};
 use crate::library::BookState;
 
 pub(super) struct MarkerPages {
     pub(super) starts: Vec<usize>,
     pub(super) count: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum MarkerTrack {
+    Footer,
+    Skim,
 }
 
 impl Probe {
@@ -70,6 +77,74 @@ impl Reader {
         })
     }
 
+    pub(super) fn alternative_header_marker_pages(&self, book: &ActiveBook) -> Option<MarkerPages> {
+        let entries = self.alternative_entries(book.id)?;
+        let state = self.library.state(book.id)?;
+        let reading = &book.reading;
+        if let Some(markers) = reading
+            .whole_book_alternative_markers(entries, |depth| state.contents_depths.includes(depth))
+        {
+            return Some(MarkerPages {
+                starts: markers
+                    .starts
+                    .into_iter()
+                    .map(|marker| marker.absolute)
+                    .collect(),
+                count: markers.count,
+            });
+        }
+        Some(MarkerPages {
+            starts: sorted_pages(
+                entries
+                    .iter()
+                    .filter(|entry| state.contents_depths.includes(entry.depth))
+                    .filter_map(|entry| local_alternative_page(book, entry)),
+            ),
+            count: reading.probe.page_count(),
+        })
+    }
+
+    pub(super) fn alternative_book_marker_fractions(&self, track: MarkerTrack) -> Option<Vec<f64>> {
+        let book = self.active.as_ref()?;
+        let entries = self.alternative_entries(book.id)?;
+        let state = self.library.state(book.id)?;
+        let reading = &book.reading;
+        if reading.config.hidden_flows.enabled {
+            return Some(Vec::new());
+        }
+        let include = |depth| state.contents_depths.includes(depth);
+        let mut starts =
+            if let Some(markers) = reading.whole_book_alternative_markers(entries, include) {
+                markers
+                    .starts
+                    .into_iter()
+                    .filter_map(|marker| {
+                        book_marker_fraction(book, track, marker.chapter, marker.page, marker.pages)
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                entries
+                    .iter()
+                    .filter(|entry| include(entry.depth))
+                    .filter_map(|entry| match entry.target {
+                        OutlineTarget::Chapter(chapter) => {
+                            book_marker_fraction(book, track, chapter, 0, 1)
+                        }
+                        OutlineTarget::Heading(..) => book_marker_fraction(
+                            book,
+                            track,
+                            reading.chapter,
+                            local_alternative_page(book, entry)?,
+                            reading.probe.page_count(),
+                        ),
+                    })
+                    .collect()
+            };
+        starts.sort_unstable_by(f64::total_cmp);
+        starts.dedup();
+        Some(starts)
+    }
+
     pub(super) fn publisher_header_marker_pages(&self, book: &ActiveBook) -> Option<MarkerPages> {
         let state = self.library.state(book.id)?;
         if state.custom_contents.enabled {
@@ -103,6 +178,53 @@ impl Reader {
             chapter_title_at(local_headings(active, state), active.reading.page).unwrap_or_default()
         })
     }
+}
+
+fn local_alternative_page(book: &ActiveBook, entry: &OutlineEntry) -> Option<usize> {
+    let reading = &book.reading;
+    match &entry.target {
+        OutlineTarget::Chapter(chapter) if *chapter == reading.chapter => Some(0),
+        OutlineTarget::Heading(chapter, anchor) if *chapter == reading.chapter => {
+            reading.probe.page_for(anchor)
+        }
+        _ => None,
+    }
+}
+
+// Retain the units of each existing progress track. Footer measures page
+// boundaries. Skim measures the first-to-last position used by its thumb.
+fn book_marker_fraction(
+    book: &ActiveBook,
+    track: MarkerTrack,
+    chapter: usize,
+    page: usize,
+    pages: usize,
+) -> Option<f64> {
+    let reading = &book.reading;
+    let chapters = reading.probe.chapter_count();
+    if chapter >= chapters {
+        return None;
+    }
+    let denominator = match track {
+        MarkerTrack::Footer => pages,
+        MarkerTrack::Skim => pages.saturating_sub(1),
+    }
+    .max(1);
+    let local = page as f64 / denominator as f64;
+    if chapters == 1 {
+        return Some(local);
+    }
+    let weights = reading.progress_weights();
+    if let (Some([start, end]), Some(&total)) = (weights.get(chapter..=chapter + 1), weights.last())
+        && total > 0
+    {
+        return (end > start)
+            .then(|| (*start as f64 + (end - start) as f64 * local) / total as f64);
+    }
+    Some(match track {
+        MarkerTrack::Footer => (chapter as f64 + local) / chapters as f64,
+        MarkerTrack::Skim => chapter as f64 / (chapters - 1) as f64,
+    })
 }
 
 fn fixed_headings<'a>(

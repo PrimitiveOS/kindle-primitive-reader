@@ -4,7 +4,7 @@ use crate::{Anchor, Result};
 
 const MAX_CHAPTERS: usize = 512;
 const MAX_ENTRIES: usize = 1024;
-const MAX_CHAPTER_HEADINGS: usize = 64;
+pub(crate) const MAX_CHAPTER_HEADINGS: usize = 64;
 const MAX_LABEL_CHARS: usize = 96;
 const MAX_ANCHOR_PATH_BYTES: usize = 4096;
 
@@ -84,15 +84,7 @@ impl GeneratedContents {
             .iter()
             .filter(|_| href.len() <= MAX_ANCHOR_PATH_BYTES)
             .filter_map(|block| {
-                let depth = match source.elements[block.element].tag.as_str() {
-                    "h1" => 0,
-                    "h2" => 1,
-                    "h3" => 2,
-                    "h4" => 3,
-                    "h5" => 4,
-                    "h6" => 5,
-                    _ => return None,
-                };
+                let depth = heading_depth(&source.elements[block.element].tag)?;
                 let title = outline_label(&block.text);
                 (!title.is_empty() || self.alternative).then_some((depth, title, block.key))
             });
@@ -167,6 +159,18 @@ impl GeneratedContents {
                 target: OutlineTarget::Chapter(chapter),
             });
         }
+    }
+}
+
+pub(crate) fn heading_depth(tag: &str) -> Option<usize> {
+    match tag {
+        "h1" => Some(0),
+        "h2" => Some(1),
+        "h3" => Some(2),
+        "h4" => Some(3),
+        "h5" => Some(4),
+        "h6" => Some(5),
+        _ => None,
     }
 }
 

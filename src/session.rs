@@ -610,6 +610,20 @@ impl Reading {
         }
     }
 
+    pub(crate) fn request_alternative_marker_pages(&mut self, required: bool) {
+        self.config.screen_pages.request_markers(required);
+        if required
+            && self.probe.screen_page_sources.is_none()
+            && self.has_exact_local_screen_pages()
+            && !self.hides_nonlinear()
+        {
+            self.probe.screen_page_sources =
+                with_storage(|| Ok(screen_pages::ScreenPageSources::read(&self.config)))
+                    .ok()
+                    .flatten();
+        }
+    }
+
     pub(crate) fn jump_to_screen_ordinal(&mut self, ordinal: usize) -> Result<()> {
         let sources = with_storage(|| Ok(screen_pages::ScreenPageSources::read(&self.config)))?;
         if sources.is_none() || sources != self.probe.screen_page_sources {
@@ -663,6 +677,21 @@ impl Reading {
             &self.probe,
             self.chapter,
             self.page,
+            allow_depth,
+        )
+    }
+
+    pub(crate) fn whole_book_alternative_markers(
+        &self,
+        entries: &[crate::generated_contents::OutlineEntry],
+        allow_depth: impl Fn(usize) -> bool,
+    ) -> Option<screen_pages::AlternativeMarkers> {
+        self.config.screen_pages.alternative_markers(
+            &self.config,
+            &self.probe,
+            self.chapter,
+            self.page,
+            entries,
             allow_depth,
         )
     }

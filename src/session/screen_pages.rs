@@ -10,7 +10,8 @@ use std::rc::Rc;
 use std::time::SystemTime;
 
 use super::BookConfig;
-use crate::{Engine, Probe, Settings, epub::Chapter, user_hyphenation, user_styles};
+use crate::generated_contents::{MAX_CHAPTER_HEADINGS, OutlineEntry, OutlineTarget, heading_depth};
+use crate::{Anchor, Engine, Probe, Settings, epub::Chapter, user_hyphenation, user_styles};
 
 /// The file and the ordered reading font stack, including fallbacks. EPUB
 /// publisher CSS and embedded fonts are members of the same archive.
@@ -82,6 +83,7 @@ pub(crate) struct ScreenPages(Rc<RefCell<Option<Generation>>>, Rc<Cell<Demand>>)
 #[derive(Clone, Copy, Default)]
 struct Demand {
     navigation: bool,
+    markers: bool,
     typography: Typography,
 }
 
@@ -107,9 +109,15 @@ impl ScreenPages {
         self.1.set(demand);
     }
 
+    pub(super) fn request_markers(&self, required: bool) {
+        let mut demand = self.1.get();
+        demand.markers = required;
+        self.1.set(demand);
+    }
+
     fn requested(&self) -> bool {
         let demand = self.1.get();
-        demand.navigation || demand.typography != Typography::None
+        demand.navigation || demand.markers || demand.typography != Typography::None
     }
 
     pub(super) fn for_relayout(&self, typography: bool, eligible: bool) -> Self {
@@ -202,7 +210,7 @@ impl ScreenPages {
         let generation = slot.get_or_insert_with(|| Generation::new(config, probe, sources));
         generation.record(chapter, &probe.chapter, PageSample::new(probe));
         if !generation.rejected && generation.heading_pages[chapter].is_none() {
-            generation.heading_pages[chapter] = heading_pages(probe);
+            generation.heading_pages[chapter] = Some(heading_pages(probe));
         }
         if generation.prefix.is_some() {
             self.complete_typography();
@@ -223,7 +231,7 @@ impl ScreenPages {
         let prefix = generation.prefix.as_ref()?;
         let mut marks = Vec::new();
         for (chapter, local) in generation.heading_pages.iter().enumerate() {
-            for &(heading, page) in local.as_ref()? {
+            for &(heading, page) in local.as_ref()?.publisher.as_ref()? {
                 if allow_depth(probe.toc.get(heading)?.depth) {
                     marks.push(prefix[chapter] + page);
                 }
@@ -232,6 +240,63 @@ impl ScreenPages {
         marks.sort_unstable();
         marks.dedup();
         Some((marks, count))
+    }
+
+    pub(super) fn alternative_markers(
+        &self,
+        config: &BookConfig,
+        probe: &Probe,
+        chapter: usize,
+        page: usize,
+        entries: &[OutlineEntry],
+        allow_depth: impl Fn(usize) -> bool,
+    ) -> Option<AlternativeMarkers> {
+        let (_, count) = self.position(config, probe, chapter, page)?;
+        let slot = self.0.borrow();
+        let generation = slot.as_ref()?;
+        let prefix = generation.prefix.as_ref()?;
+        let mut starts = Vec::new();
+        for entry in entries.iter().filter(|entry| allow_depth(entry.depth)) {
+            let (chapter, local) = match &entry.target {
+                OutlineTarget::Chapter(chapter) => (*chapter, 0),
+                OutlineTarget::Heading(chapter, anchor) => {
+                    let sample = generation.samples.get(*chapter)?.as_ref()?;
+                    if anchor.book != generation.publication
+                        || anchor.revision != sample.source_revision
+                        || anchor.chapter != generation.spine.get(*chapter)?.href
+                        || anchor.offset != 0
+                    {
+                        return None;
+                    }
+                    let headings = &generation
+                        .heading_pages
+                        .get(*chapter)?
+                        .as_ref()?
+                        .alternative;
+                    let Ok(index) =
+                        headings.binary_search_by_key(&anchor.block, |&(block, _)| block)
+                    else {
+                        // This source heading was suppressed in the measured layout.
+                        continue;
+                    };
+                    (*chapter, headings[index].1)
+                }
+            };
+            let start = *prefix.get(chapter)?;
+            let pages = prefix.get(chapter + 1)?.checked_sub(start)?;
+            if local >= pages {
+                return None;
+            }
+            starts.push(AlternativeMarker {
+                chapter,
+                page: local,
+                pages,
+                absolute: start + local,
+            });
+        }
+        starts.sort_unstable_by_key(|marker| marker.absolute);
+        starts.dedup_by_key(|marker| marker.absolute);
+        Some(AlternativeMarkers { starts, count })
     }
 
     pub(super) fn position(
@@ -265,7 +330,7 @@ struct Generation {
     sources: ScreenPageSources,
     spine: Vec<Chapter>,
     samples: Vec<Option<PageSample>>,
-    heading_pages: Vec<Option<Vec<(usize, usize)>>>,
+    heading_pages: Vec<Option<HeadingPages>>,
     missing: usize,
     prefix: Option<Vec<usize>>,
     rejected: bool,
@@ -374,10 +439,50 @@ impl Generation {
     }
 }
 
+pub(crate) struct AlternativeMarker {
+    pub(crate) chapter: usize,
+    pub(crate) page: usize,
+    pub(crate) pages: usize,
+    pub(crate) absolute: usize,
+}
+
+pub(crate) struct AlternativeMarkers {
+    pub(crate) starts: Vec<AlternativeMarker>,
+    pub(crate) count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct HeadingPages {
+    publisher: Option<Vec<(usize, usize)>>,
+    alternative: Vec<(usize, usize)>,
+}
+
 // Keep outline indexing bounded independently of the displayed tick density.
-pub(super) fn heading_pages(probe: &Probe) -> Option<Vec<(usize, usize)>> {
+pub(super) fn heading_pages(probe: &Probe) -> HeadingPages {
     const MAX_HEADINGS: usize = 16_384;
-    (probe.toc.len() < MAX_HEADINGS).then(|| probe.local_contents_pages().to_vec())
+    let mut alternative: Vec<_> = probe
+        .source
+        .blocks
+        .iter()
+        .filter(|block| heading_depth(&probe.source.elements[block.element].tag).is_some())
+        .take(MAX_CHAPTER_HEADINGS)
+        .filter_map(|block| {
+            let anchor = Anchor {
+                book: probe.book,
+                chapter: probe.chapter.clone(),
+                revision: probe.source.revision,
+                block: block.key,
+                offset: 0,
+                illustration: None,
+            };
+            Some((block.key, probe.page_for(&anchor)?))
+        })
+        .collect();
+    alternative.sort_unstable_by_key(|&(block, _)| block);
+    HeadingPages {
+        publisher: (probe.toc.len() < MAX_HEADINGS).then(|| probe.local_contents_pages().to_vec()),
+        alternative,
+    }
 }
 
 pub(super) fn layout_settings(settings: Settings) -> Settings {

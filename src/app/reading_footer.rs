@@ -1121,7 +1121,10 @@ impl Reader {
             );
             if let Some(book) = &self.active {
                 let local_count = book.reading.probe.page_count();
-                if let Some(published) = self.publisher_header_marker_pages(book) {
+                if let Some(published) = self
+                    .alternative_header_marker_pages(book)
+                    .or_else(|| self.publisher_header_marker_pages(book))
+                {
                     draw_header_ticks(
                         canvas,
                         width,
@@ -1836,23 +1839,28 @@ impl Reader {
             let marker_width = self.controls.chapter_marker_width.width();
             let mut last = -marker_width;
             let selected = self.whole_book_marker_pages(true);
-            p.book_ticks.draw(
-                selected.as_ref().map(|markers| markers.starts.as_slice()),
-                |tick| {
-                    let x = (tick * bar.w as f64).round() as i32;
-                    let marker_x = x - marker_width / 2;
-                    if marker_x > last + marker_width
-                        && marker_x > 0
-                        && marker_x < bar.w - marker_width
-                    {
-                        canvas.fill(
-                            Rect::new(bar.x + marker_x, bar.y - 1, marker_width, bar.h + 2),
-                            0,
-                        );
-                        last = marker_x;
-                    }
-                },
-            );
+            let mut draw = |tick: f64| {
+                let x = (tick * bar.w as f64).round() as i32;
+                let marker_x = x - marker_width / 2;
+                if marker_x > last + marker_width && marker_x > 0 && marker_x < bar.w - marker_width
+                {
+                    canvas.fill(
+                        Rect::new(bar.x + marker_x, bar.y - 1, marker_width, bar.h + 2),
+                        0,
+                    );
+                    last = marker_x;
+                }
+            };
+            if let Some(markers) =
+                self.alternative_book_marker_fractions(super::progress_markers::MarkerTrack::Footer)
+            {
+                markers.into_iter().for_each(draw);
+            } else {
+                p.book_ticks.draw(
+                    selected.as_ref().map(|markers| markers.starts.as_slice()),
+                    &mut draw,
+                );
+            }
         }
     }
 
