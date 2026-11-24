@@ -322,6 +322,13 @@ impl BookConfig {
         self.chapter_offsets
             .get_or_init(|| book.chapter_offsets().unwrap_or_default());
         let facing = self.requested_facing_geometry();
+        let full = Settings {
+            in_page_footnotes: self.settings.in_page_footnotes
+                && !self.scroll
+                && facing.is_none()
+                && !self.hidden_flows.enabled,
+            ..self.settings
+        };
         let settings = if let Some(geometry) = facing {
             let width = geometry.leaf_width();
             let margin_limit = width / 4;
@@ -333,10 +340,10 @@ impl BookConfig {
                 margin_right: Some(self.settings.right_margin().min(margin_limit)),
                 margin_top: Some(self.settings.top_margin()),
                 margin_bottom: Some(self.settings.bottom_margin()),
-                ..self.settings
+                ..full
             }
         } else {
-            self.settings
+            full
         };
         settings.validate()?;
         let narrow = facing.is_some();
@@ -360,7 +367,7 @@ impl BookConfig {
                     book,
                     self.engine,
                     &self.fonts,
-                    self.settings,
+                    full,
                     index,
                     None,
                     &self.user_hyphenation,
@@ -370,6 +377,7 @@ impl BookConfig {
         }?;
         if eligible
             && !probe.is_vertical()
+            && probe.in_page_notes.is_none()
             && !(self.hide_nonlinear && probe.has_nonlinear_chapters())
             && sources == screen_pages::ScreenPageSources::read(self)
         {
@@ -478,9 +486,13 @@ impl Reading {
             probe.flow_pages = Some(custom_flows.map(chapter, probe.page_count()));
         }
         let display_anchor = anchor.and_then(|anchor| probe.restore_anchor(anchor));
-        let focused_page = display_anchor
-            .as_ref()
-            .and_then(|anchor| probe.page_for(anchor));
+        let focused_page = display_anchor.as_ref().and_then(|anchor| {
+            if probe.page_displays_anchor(fallback_page, anchor) {
+                Some(fallback_page)
+            } else {
+                probe.page_for(anchor)
+            }
+        });
         // Keep a valid canonical focus while CSS temporarily hides its passage.
         // A real reading motion clears this focus; layout changes alone do not.
         let anchor = anchor.filter(|anchor| probe.project_anchor(anchor).is_some());
@@ -1083,6 +1095,19 @@ impl Reading {
     }
 
     pub(crate) fn visible_end(&self) -> f32 {
+        if let Some(pages) = &self.probe.in_page_notes {
+            return pages
+                .iter()
+                .take(self.page + 1)
+                .rev()
+                .find_map(|page| {
+                    page.parts
+                        .first()
+                        .filter(|part| part.y == 0)
+                        .map(|part| part.source.end)
+                })
+                .unwrap_or(0.0);
+        }
         self.visible_columns()
             .map(|(range, _)| range.end)
             .fold(0.0, f32::max)
@@ -1095,6 +1120,13 @@ impl Reading {
     }
 
     pub(crate) fn visible_parts(&self) -> Vec<VisiblePart> {
+        if self.probe.in_page_notes.is_some() {
+            return self
+                .probe
+                .page_parts(self.page)
+                .map(|(range, y)| VisiblePart { range, x: 0, y })
+                .collect();
+        }
         if let Some(top) = self.scroll_top
             && self.probe.flow_pages.is_some()
         {
@@ -1301,24 +1333,32 @@ impl Reading {
         direction: crate::search::SearchDirection,
     ) -> Option<Anchor> {
         let previous = direction == crate::search::SearchDirection::Previous;
-        let mut edges = self.visible_columns().filter_map(|(range, _)| {
-            let mut lines = self.probe.lines.iter().filter(|line| {
-                !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
-            });
-            let line = if previous {
-                lines.next_back()
-            } else {
-                lines.next()
-            }?;
-            Some(self.probe.anchor(
-                line.block,
-                if previous {
-                    line.bytes.end
+        let column_count = if self.probe.in_page_notes.is_some() {
+            1
+        } else {
+            usize::MAX
+        };
+        let mut edges = self
+            .visible_columns()
+            .take(column_count)
+            .filter_map(|(range, _)| {
+                let mut lines = self.probe.lines.iter().filter(|line| {
+                    !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
+                });
+                let line = if previous {
+                    lines.next_back()
                 } else {
-                    line.bytes.start
-                },
-            ))
-        });
+                    lines.next()
+                }?;
+                Some(self.probe.anchor(
+                    line.block,
+                    if previous {
+                        line.bytes.end
+                    } else {
+                        line.bytes.start
+                    },
+                ))
+            });
         if previous { edges.last() } else { edges.next() }.or_else(|| self.anchor())
     }
 

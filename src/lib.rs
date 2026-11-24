@@ -404,6 +404,9 @@ pub struct Settings {
     /// Give an eligible explicit page-break-before priority at its opening edge.
     #[doc(hidden)]
     pub prefer_publisher_opening_breaks: bool,
+    /// Compose eligible authored EPUB footnotes in a separate band in page mode.
+    #[doc(hidden)]
+    pub in_page_footnotes: bool,
     pub line_height: f32,
     /// None preserves legacy multiplier-based line spacing for existing profiles.
     pub line_spacing_percent: Option<u16>,
@@ -478,6 +481,7 @@ impl Default for Settings {
             empty_break_geometry: false,
             relax_oversized_publisher_keeps: false,
             prefer_publisher_opening_breaks: false,
+            in_page_footnotes: false,
             line_height: 1.35,
             line_spacing_percent: None,
             word_spacing: 0.0,
@@ -1044,6 +1048,7 @@ chapter_probe! {
     custom_hyphenation_allowed: Vec<bool>,
     lines: Vec<Line>,
     pages: Pagination,
+    in_page_notes: Option<Vec<footnotes::in_page::Page>>,
 }
 
 impl Probe {
@@ -1176,6 +1181,7 @@ impl Probe {
         let main_language = settings.typography.resolve(publication_language);
         let shaping_language = main_language.map(TypographyLocale::shaping_language);
         let complete = excerpt.is_none();
+        let compose_footnotes = settings.in_page_footnotes && complete && book.is_reflowable_epub();
         let xhtml = match excerpt {
             Some(value) => value,
             None => book.chapter(chapter).map_err(|e| e.to_string())?,
@@ -1378,6 +1384,18 @@ impl Probe {
         {
             pages.trim_unpainted_tail(chapter.last_paint_bottom(&source));
         }
+        let in_page_notes = if compose_footnotes
+            && !spine_rtl
+            && publisher_edges.is_empty()
+            && matches!(&renderer, Renderer::Parley(layout)
+                if !layout.uses_float_geometry()
+                    && layout.publisher_height_spaces().is_empty()
+                    && layout.fitted_height_tails().is_empty())
+        {
+            footnotes::in_page::paginate(&href, &xhtml, &source, &lines, settings)
+        } else {
+            None
+        };
         Ok(Self {
             title,
             author,
@@ -1423,12 +1441,55 @@ impl Probe {
             reading_flow,
             lines,
             pages,
+            in_page_notes,
             renderer,
         })
     }
 
     pub fn page_count(&self) -> usize {
-        self.pages.len()
+        self.in_page_notes
+            .as_ref()
+            .map_or(self.pages.len(), Vec::len)
+    }
+
+    pub(crate) fn page_parts(&self, page: usize) -> impl Iterator<Item = (Range<f32>, u32)> + '_ {
+        let ordinary = self
+            .in_page_notes
+            .is_none()
+            .then(|| self.pages.range(page))
+            .flatten();
+        let composed = self
+            .in_page_notes
+            .as_ref()
+            .and_then(|pages| pages.get(page));
+        ordinary.into_iter().map(|range| (range, 0)).chain(
+            composed
+                .into_iter()
+                .flat_map(|page| &page.parts)
+                .map(|part| (part.source.clone(), part.y)),
+        )
+    }
+
+    fn page_target(&self, page: usize, y: f32) -> Option<(Range<f32>, f32)> {
+        if self.in_page_notes.is_none() {
+            return Some((self.pages.range(page)?, y));
+        }
+        self.page_parts(page).find_map(|(source, offset)| {
+            let local_y = y - offset as f32;
+            let top = self.settings.top_margin() as f32;
+            (top..top + source.end - source.start)
+                .contains(&local_y)
+                .then_some((source, local_y))
+        })
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn page_displays_anchor(&self, page: usize, anchor: &Anchor) -> bool {
+        self.in_page_notes.is_some()
+            && self.anchor_top(anchor).is_some_and(|top| {
+                self.page_parts(page)
+                    .any(|(source, _)| source.contains(&top))
+            })
     }
 
     pub(crate) fn is_vertical(&self) -> bool {
@@ -1573,7 +1634,7 @@ impl Probe {
     }
 
     pub fn link_at(&self, page: usize, x: f32, y: f32) -> Option<Destination> {
-        let range = self.pages.range(page)?;
+        let (range, y) = self.page_target(page, y)?;
         self.link_in(range, x, y)
     }
 
@@ -1616,10 +1677,22 @@ impl Probe {
     }
 
     pub fn links_on_page(&self, page: usize) -> Vec<(String, Destination)> {
-        let Some(bounds) = self.pages.range(page) else {
-            return Vec::new();
-        };
-        self.links_in(bounds)
+        if self.in_page_notes.is_none() {
+            return self
+                .pages
+                .range(page)
+                .map(|bounds| self.links_in(bounds))
+                .unwrap_or_default();
+        }
+        let mut links = Vec::new();
+        for (bounds, _) in self.page_parts(page) {
+            for (label, target) in self.links_in(bounds) {
+                if !links.iter().any(|(_, previous)| previous == &target) {
+                    links.push((label, target));
+                }
+            }
+        }
+        links
     }
 
     pub(crate) fn links_in(&self, bounds: Range<f32>) -> Vec<(String, Destination)> {
@@ -1951,7 +2024,15 @@ impl Probe {
     }
 
     pub fn page_for(&self, anchor: &Anchor) -> Option<usize> {
-        self.anchor_top(anchor).map(|top| self.pages.page(top))
+        let top = self.anchor_top(anchor)?;
+        if let Some(pages) = &self.in_page_notes {
+            return pages.iter().position(|page| {
+                page.parts
+                    .first()
+                    .is_some_and(|part| part.y == 0 && part.source.contains(&top))
+            });
+        }
+        Some(self.pages.page(top))
     }
 
     pub(crate) fn anchor_top(&self, anchor: &Anchor) -> Option<f32> {
@@ -2015,7 +2096,8 @@ impl Probe {
     }
 
     pub fn page_anchor(&self, page: usize) -> Option<Anchor> {
-        self.anchor_in(self.pages.range(page)?)
+        self.page_parts(page)
+            .find_map(|(range, _)| self.anchor_in(range))
     }
 
     pub(crate) fn anchor_in(&self, range: Range<f32>) -> Option<Anchor> {
@@ -2053,7 +2135,10 @@ impl Probe {
 
     #[cfg(feature = "kindle")]
     pub(crate) fn page_range(&self, page: usize) -> Range<f32> {
-        self.pages.range(page).unwrap_or_default()
+        self.page_parts(page)
+            .next()
+            .map(|(range, _)| range)
+            .unwrap_or_default()
     }
 
     #[cfg(feature = "kindle")]
@@ -2105,6 +2190,32 @@ impl Probe {
     }
 
     pub fn capture(&mut self, page: usize) -> Result<Vec<u8>> {
+        if let Some(pages) = &self.in_page_notes {
+            if let Renderer::Parley(renderer) = &mut self.renderer {
+                let page = pages.get(page).ok_or("That page is unavailable")?;
+                let top = self.settings.top_margin();
+                let stride = self.settings.width as usize;
+                let mut frame = vec![255; stride * self.settings.height as usize];
+                for part in &page.parts {
+                    let rows = footnotes::in_page::height_of(&part.source);
+                    let settings = Settings {
+                        height: top + self.settings.bottom_margin() + rows,
+                        ..self.settings
+                    };
+                    let pixels = renderer.capture(part.source.clone(), settings)?;
+                    let from = top as usize * stride;
+                    let to = (top + part.y) as usize * stride;
+                    let count = rows as usize * stride;
+                    frame[to..to + count].copy_from_slice(&pixels[from..from + count]);
+                }
+                if let Some(y) = page.separator {
+                    let start = (top + y) as usize * stride + self.settings.left_margin() as usize;
+                    let width = self.settings.width / 7;
+                    frame[start..start + width as usize].fill(85);
+                }
+                return Ok(frame);
+            }
+        }
         let range = self.pages.range(page).ok_or("That page is unavailable")?;
         self.capture_range(range)
     }

@@ -3,6 +3,7 @@
 use roxmltree::{Document, Node, ParsingOptions};
 
 pub(crate) mod font_size;
+pub(crate) mod in_page;
 mod layout_roots;
 pub(crate) use layout_roots::LayoutRoots;
 

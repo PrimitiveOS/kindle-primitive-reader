@@ -31,9 +31,10 @@ names, excluded paragraph targets, and duplicate IDs.
 KOReader's independent CSS tweaks for in-page notes and endnotes use a
 footnote-aware page splitter. It reserves part of the reading page,
 deduplicates repeated references on the page, and can carry a long note
-across page boundaries. That pagination and the associated styling
-controls remain open in Reader. The popup comparison used a Mac SDL
-runtime and has no physical Kindle evidence.
+across page boundaries. The initial Reader composer supports a bounded
+EPUB layout policy. FictionBook and the associated styling controls
+remain open. The popup comparison used a Mac SDL runtime.
+[Reader in-page EPUB pagination](in-page-footnotes.md) ·
 [In-page style rules](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L851-L947) ·
 [Native footnote page splitter](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvpagesplitter.cpp#L679-L810)
 

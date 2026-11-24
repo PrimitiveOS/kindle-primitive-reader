@@ -121,7 +121,8 @@ impl Probe {
 
     /// Select the Unicode word directly under a page coordinate.
     pub fn word_at(&self, page: usize, x: f32, y: f32) -> Option<TextSelection> {
-        self.word_in(self.pages.range(page)?, x, y)
+        let (range, y) = self.page_target(page, y)?;
+        self.word_in(range, x, y)
     }
 
     pub(crate) fn word_in(&self, range: Range<f32>, x: f32, y: f32) -> Option<TextSelection> {
@@ -144,7 +145,7 @@ impl Probe {
 
     /// Find the caret nearest the point within a visible paragraph.
     pub fn text_position_at(&self, page: usize, x: f32, y: f32) -> Option<Anchor> {
-        let range = self.pages.range(page)?;
+        let (range, y) = self.page_target(page, y)?;
         if let Renderer::Vertical(renderer) = &self.renderer {
             let (key, offset) = renderer.caret_at(range, x, y)?;
             return Some(self.anchor(key, offset));
@@ -278,10 +279,16 @@ impl Probe {
     /// Return the portions of a selection visible on this page. Geometry is
     /// derived anew from source anchors after font, page, or viewport changes.
     pub fn selection_rects(&self, page: usize, selection: &TextSelection) -> Vec<HighlightRect> {
-        let Some(range) = self.pages.range(page) else {
-            return Vec::new();
-        };
-        self.selection_rects_in(range, selection)
+        self.page_parts(page)
+            .flat_map(|(range, y)| {
+                self.selection_rects_in(range, selection)
+                    .into_iter()
+                    .map(move |mut rect| {
+                        rect.y += y as i32;
+                        rect
+                    })
+            })
+            .collect()
     }
 
     pub(crate) fn selection_rects_in(
