@@ -33,7 +33,9 @@ use parley::{
 };
 
 use crate::epub::Book;
+use crate::footnotes::in_page::Targets as FootnoteTargets;
 use crate::source::{Element, Source, Stylesheet};
+use crate::user_styles::FootnoteSize;
 
 const MAX_SHEETS: usize = 8;
 const MAX_SHEET_BYTES: usize = 96 * 1024;
@@ -336,6 +338,7 @@ pub(crate) struct Style {
     pub font_family: Family,
     pub font_weights: Arc<HashMap<u64, f32>>,
     pub size_scale: f32,
+    pub(crate) allow_small_note_text: bool,
     pub text_rise: TextRise,
     pub decoration: TextDecoration,
     pub page_breaks: crate::publisher_breaks::Rules,
@@ -382,6 +385,7 @@ impl Default for Style {
             font_family: Family::Generic(GenericFamily::Serif),
             font_weights: Arc::default(),
             size_scale: 1.0,
+            allow_small_note_text: false,
             text_rise: TextRise::default(),
             decoration: TextDecoration::default(),
             page_breaks: Default::default(),
@@ -416,6 +420,19 @@ impl Default for Style {
             hyphens: Hyphens::Auto,
             writing_mode: WritingMode::Horizontal,
             preformatted_spaces: false,
+        }
+    }
+}
+
+impl Style {
+    pub(crate) fn font_pixels(&self, settings: crate::Settings) -> f32 {
+        let size = settings.styled_font(self.size_scale);
+        if self.allow_small_note_text {
+            // A deliberately small note can contain an even smaller relative
+            // script. Keep its scale below the ordinary text-size floor.
+            size.min((settings.font_size * self.size_scale).max(4.0))
+        } else {
+            size
         }
     }
 }
@@ -611,8 +628,17 @@ impl BookStyle {
         elements: &[Element],
         settings: crate::Settings,
     ) -> Vec<Style> {
+        self.compute_with_footnotes(elements, settings, None)
+    }
+
+    pub(crate) fn compute_with_footnotes(
+        &self,
+        elements: &[Element],
+        settings: crate::Settings,
+        footnotes: Option<(&FootnoteTargets, FootnoteSize)>,
+    ) -> Vec<Style> {
         self.scale_dpi(
-            self.compute_with_font(elements, Some(settings)),
+            self.compute_with_font(elements, Some(settings), footnotes),
             settings.render_dpi,
         )
     }
@@ -655,13 +681,14 @@ impl BookStyle {
     }
 
     pub fn compute(&self, elements: &[Element]) -> Vec<Style> {
-        self.compute_with_font(elements, None)
+        self.compute_with_font(elements, None, None)
     }
 
     fn compute_with_font(
         &self,
         elements: &[Element],
         settings: Option<crate::Settings>,
+        footnotes: Option<(&FootnoteTargets, FootnoteSize)>,
     ) -> Vec<Style> {
         let structural_borders = settings.is_some_and(|config| {
             config.empty_break_mode.expands()
@@ -805,6 +832,22 @@ impl BookStyle {
                 CascadeOrigin::Author,
                 accept_fit,
             );
+            let footnote_size = footnotes.and_then(|(targets, size)| {
+                let display = match winners[40].map(|(_, property)| property) {
+                    Some(Property::Display(display)) => *display,
+                    Some(Property::Reset(40, _)) => Display::Inline,
+                    _ => style.display,
+                };
+                // The chosen size replaces block font declarations. Inline
+                // elements such as superscripts still compute from the resized parent.
+                let block = display == Display::Block || display.is_list_item();
+                targets.font_scale(index, size, block)
+            });
+            let note_size = footnote_size.map(|scale| Property::Size(Size::Root(scale)));
+            if let Some(property) = &note_size {
+                winners[1] = Some(((5, false, (0, 0, 0)), property));
+                style.allow_small_note_text = true;
+            }
             for (_, property) in winners.into_iter().flatten() {
                 match property {
                     Property::Reset(16, reset) => {

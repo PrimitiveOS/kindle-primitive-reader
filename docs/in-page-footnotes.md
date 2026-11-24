@@ -68,6 +68,35 @@ engines kept the other six chapters in the ordinary layout because the
 publisher stylesheet hides their note targets. The source-file hashes matched
 before and after both runs. [Private-corpus test](../src/footnotes/in_page.rs)
 
+## Footnote size
+
+In **Style tweaks › In-page footnote size**, choose the book’s own size or use
+the live default. The choices include the 80% legacy setting, publisher sizes,
+and block sizes of 100%, 90%, 85%, 80%, 75%, 70%, and 65%. Changing the default
+keeps a book’s explicit selection. The style switch retains the preference
+when notes return to ordinary reading.
+
+For the supported EPUB notes, the legacy setting changes the note container
+and lets explicit sizes on nested blocks take precedence. The percentage
+options apply to note blocks, with relative sizing preserved for inline text
+such as superscripts. The same layout supplies each bottom band and the
+canonical note. The normal body stays at the reading size.
+[Reader size controls](screenshots/in-page-footnote-size-choices.png) ·
+[Size controls in landscape and dark mode](screenshots/in-page-footnote-size-landscape.png)
+
+The pinned KOReader menu replay compares every size on the same authored
+EPUB. Its selected note text measures 229 px at 100% and 149 px at 65%,
+with ordinary body text at 220 px in both cases. Reader measures 230 px,
+149 px, and 221 px. An inline note label scales with its block, and the
+publisher’s explicit block size survives the legacy setting. The Mac
+tests show the note in both locations and check save and reopen through
+the actual size menu.
+Other note formats and physical E Ink checks remain open for this control.
+[Reader 100%](screenshots/in-page-reader-note-size-100.png) ·
+[Reader 65%](screenshots/in-page-reader-note-size-65.png) ·
+[KOReader 100%](screenshots/in-page-stock-note-size-100.png) ·
+[KOReader 65%](screenshots/in-page-stock-note-size-65.png)
+
 ## Replay on macOS
 
 Run the Reader tests on the [deterministic authored EPUB](../tests/fixtures/in-page-footnotes.epub).
@@ -81,9 +110,8 @@ reader="$PWD"
 scratch=$(mktemp -d)
 mkdir -p "$scratch/profile" "$scratch/cache" "$scratch/captures"
 READER_SELECTION_VIEWPORT_CAPTURES="$scratch/captures" \
-  cargo test --locked --features kindle --lib in_page_footnote_style
-READER_IN_PAGE_FOOTNOTE_CAPTURES="$scratch/captures" \
-  cargo test --locked --features kindle --lib footnotes::in_page::tests
+  READER_IN_PAGE_FOOTNOTE_CAPTURES="$scratch/captures" \
+  cargo test --locked --features kindle --lib in_page
 cd "$stock/runtime/koreader"
 KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
   SDL_VIDEODRIVER=dummy ./luajit "$reader/scripts/koreader-in-page-footnotes-check.lua" \

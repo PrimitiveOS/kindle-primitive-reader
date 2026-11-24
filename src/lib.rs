@@ -1313,6 +1313,11 @@ impl Probe {
                 source.accept_previous_mobi(previous)?;
             }
         }
+        let footnote_targets = if compose_footnotes && engine == Engine::Parley && !spine_rtl {
+            footnotes::in_page::Targets::parse(&xhtml, &source)
+        } else {
+            None
+        };
         let mut fonts = load_fonts()?;
         #[cfg(feature = "kindle")]
         let mut custom_hyphenation_allowed = Vec::new();
@@ -1343,7 +1348,11 @@ impl Probe {
                 {
                     registered_faces.clone_from(author.registered_faces());
                 }
-                let styles = author.compute_for_settings(&source.elements, settings);
+                let styles = author.compute_with_footnotes(
+                    &source.elements,
+                    settings,
+                    footnote_targets.as_ref().zip(user_styles.footnote_size()),
+                );
                 reading_flow = flow_view::ChapterFlow::from_styles(&source, &styles)?;
                 #[cfg(feature = "kindle")]
                 {
@@ -1504,11 +1513,9 @@ impl Probe {
         {
             pages.trim_unpainted_tail(chapter.last_paint_bottom(&source));
         }
-        let in_page_notes = match &renderer {
-            Renderer::Parley(layout)
-                if compose_footnotes
-                    && !spine_rtl
-                    && !layout.uses_float_geometry()
+        let in_page_notes = match (&renderer, &footnote_targets) {
+            (Renderer::Parley(layout), Some(targets))
+                if !layout.uses_float_geometry()
                     && layout.publisher_height_spaces().is_empty()
                     && layout.fitted_height_tails().is_empty() =>
             {
@@ -1517,7 +1524,7 @@ impl Probe {
                     .and_then(|artwork| {
                         footnotes::in_page::paginate(
                             &href,
-                            &xhtml,
+                            targets,
                             &source,
                             &lines,
                             &artwork,

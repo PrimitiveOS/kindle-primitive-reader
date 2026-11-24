@@ -1,13 +1,14 @@
 //! Supported style controls, book-specific CSS review and multiline editing.
 use super::navigation_layout::NavigationLayout;
 use super::*;
-use crate::user_styles::{self, Data, EPUB_FOOTNOTES, PRESETS, Snapshot};
+use crate::user_styles::{self, Data, EPUB_FOOTNOTES, FootnoteSize, PRESETS, Snapshot};
 use primitive_ui::{TextStyle, editor::Multiline};
 #[derive(Clone)]
 pub(super) enum Command {
     Preset(String),
     Choose(String, Option<bool>),
     Global(String, bool),
+    SetFootnoteSize(Option<FootnoteSize>),
     Master(bool),
     Files,
     Import(usize),
@@ -17,6 +18,12 @@ pub(super) enum Command {
     ToggleCustom,
     Clear,
     ConfirmClear,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum NoteSizeScope {
+    Book,
+    Default,
 }
 #[derive(Default)]
 pub(super) struct View {
@@ -155,6 +162,22 @@ impl Reader {
             Command::Global(name, value) => {
                 let mut next = self.style_store.data.clone();
                 next.make_global(id, &name, value)?;
+                self.apply_style_data(next)?;
+            }
+            Command::SetFootnoteSize(value) => {
+                if !self.style_preset_available(EPUB_FOOTNOTES) {
+                    return Err("Enable style tweaks in a reflowable EPUB first".into());
+                }
+                let mut next = self.style_store.data.clone();
+                match self.screen {
+                    Screen::InPageFootnoteSize(NoteSizeScope::Book) => {
+                        next.books.entry(id).or_default().footnote_size = value;
+                    }
+                    Screen::InPageFootnoteSize(NoteSizeScope::Default) => {
+                        next.footnote_size = value.ok_or("Choose a default size first")?;
+                    }
+                    _ => return Err("Open the in-page footnote size settings first".into()),
+                }
                 self.apply_style_data(next)?;
             }
             Command::Master(enabled) => {
@@ -364,11 +387,50 @@ impl Reader {
                     let row = action(p.title, Command::Preset(p.id.into())).detail(source);
                     if p.id == EPUB_FOOTNOTES {
                         items.insert(1, row);
+                        items.insert(
+                            2,
+                            Item::new(
+                                "In-page footnote size",
+                                Action::Show(Screen::InPageFootnoteSize(NoteSizeScope::Book)),
+                            )
+                            .detail(b.footnote_size.unwrap_or(data.footnote_size).label()),
+                        );
                     } else {
                         items.push(row);
                     }
                 }
                 items.push(Item::new("Supported reflow styles",Action::Heading).detail("Margins, hiding, floats, arbitrary selectors and vendor hints are not supported."));
+                items
+            }
+            Screen::InPageFootnoteSize(scope) => {
+                let mut items = Vec::new();
+                let selected = match scope {
+                    NoteSizeScope::Book => {
+                        items.push(
+                            action("Use default", Command::SetFootnoteSize(None)).detail(
+                                if b.footnote_size.is_none() {
+                                    format!("Selected · {}", data.footnote_size.label())
+                                } else {
+                                    data.footnote_size.label().into()
+                                },
+                            ),
+                        );
+                        items.push(Item::new(
+                            "Default size for all books",
+                            Action::Show(Screen::InPageFootnoteSize(NoteSizeScope::Default)),
+                        ));
+                        b.footnote_size
+                    }
+                    NoteSizeScope::Default => Some(data.footnote_size),
+                };
+                items.extend(FootnoteSize::CHOICES.into_iter().map(|size| {
+                    let item = action(size.label(), Command::SetFootnoteSize(Some(size)));
+                    if selected == Some(size) {
+                        item.detail("Selected")
+                    } else {
+                        item
+                    }
+                }));
                 items
             }
             Screen::StylePreset => {

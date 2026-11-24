@@ -13,11 +13,11 @@ local BB = require("ffi/blitbuffer")
 local source, cache, font, captures = assert(arg[1]), assert(arg[2]), assert(arg[3]), assert(arg[4])
 local width, height, margin = 720, 480, 32
 local tweak_id = "footnote-inpage_epub"
-local function find_tweak(items)
+local function find_tweak(items, id)
     for _, item in ipairs(items) do
-        if item.tweak_id == tweak_id then return item end
+        if item.tweak_id == (id or tweak_id) then return item end
         if type(item.sub_item_table) == "table" then
-            local child = find_tweak(item.sub_item_table)
+            local child = find_tweak(item.sub_item_table, id)
             if child then return child end
         end
     end
@@ -176,6 +176,59 @@ local restart = position(view, "The harbor record restarts")
 assert(forced_ref < restart)
 assert(capture(view, forced_ref, "stock-note-before-hard-break"))
 view:close()
+
+local function width_in_canonical_note(view_, text)
+    local hits = assert(view_:findAllText(text, false, false, 8, true, 0, 255))
+    assert(#hits == 1, text)
+    local hit = hits[1]
+    view_:gotoPage(view_:getPageFromXPointer(hit.start))
+    local boxes = assert(view_:getWordBoxesFromPositions(hit.start, hit["end"], true))
+    assert(#boxes >= 1, text)
+    return boxes[#boxes].x1 - boxes[1].x0
+end
+
+local function measure_sizes(name, capture_name)
+    local candidate = open(assert(controller:getCssText()))
+    local reference_page = position(candidate, "Survey notes for the northern pier")
+    local note_page = position(candidate, "Measured note text")
+    assert(note_page > reference_page)
+    local body = width_in_canonical_note(candidate, "Ordinary body text")
+    local note_width = width_in_canonical_note(candidate, "Measured note text")
+    local inline_width = width_in_canonical_note(candidate, "inline note label")
+    if capture_name then assert(capture(candidate, reference_page, capture_name)) end
+    candidate:close()
+    print(string.format("note_size=%s body=%d note=%d inline=%d", name, body, note_width, inline_width))
+    return {body = body, note = note_width, inline = inline_width}
+end
+
+controller:onReadSettings(Settings:wrap({}))
+assert(row.checked_func())
+local author = measure_sizes("publisher")
+local legacy_tweak = assert(find_tweak(menu.style_tweaks.sub_item_table, "inpage_footnote_font-size_smaller"))
+legacy_tweak.callback()
+assert(legacy_tweak.checked_func())
+local legacy = measure_sizes("legacy")
+local full_tweak = assert(find_tweak(menu.style_tweaks.sub_item_table, "inpage_footnote_font-size_100"))
+full_tweak.callback()
+assert(full_tweak.checked_func() and not legacy_tweak.checked_func())
+local full = measure_sizes("100", "stock-note-size-100")
+local small_tweak = assert(find_tweak(menu.style_tweaks.sub_item_table, "inpage_footnote_font-size_65"))
+small_tweak.callback()
+assert(small_tweak.checked_func() and not full_tweak.checked_func())
+local small = measure_sizes("65", "stock-note-size-65")
+assert(author.body == legacy.body and legacy.body == full.body and full.body == small.body)
+assert(author.note == legacy.note and author.inline == legacy.inline)
+assert(author.note > full.note and author.inline > full.inline)
+assert(small.note / full.note > 0.58 and small.note / full.note < 0.71)
+assert(small.inline / full.inline > 0.54 and small.inline / full.inline < 0.76)
+for _, percent in ipairs({90, 85, 80, 75, 70}) do
+    local choice = assert(find_tweak(menu.style_tweaks.sub_item_table, "inpage_footnote_font-size_" .. percent))
+    choice.callback()
+    assert(choice.checked_func() and not small_tweak.checked_func())
+    local measured = measure_sizes(tostring(percent))
+    assert(measured.body == full.body)
+    assert(math.abs(measured.note / full.note - percent / 100) < 0.055)
+end
 local ordinary = open("")
 local ordinary_reference = position(ordinary, "The east pier")
 assert(not capture(ordinary, ordinary_reference, "stock-note-disabled"))

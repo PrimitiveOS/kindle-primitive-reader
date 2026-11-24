@@ -11,7 +11,8 @@ which saves typography for previously unseen books. Typography profiles also
 remain independent of styles; applying a profile does not replace custom CSS.
 
 **In-page EPUB footnotes** lays out eligible publisher-marked notes at the
-bottom of the page. Find it under **Style tweaks** while an EPUB is open.
+bottom of the page. Find it and the independent footnote size settings under
+**Style tweaks** while an EPUB is open.
 [Footnote settings and layout comparison](in-page-footnotes.md)
 
 The master switch disables all tweaks for the current book while retaining its

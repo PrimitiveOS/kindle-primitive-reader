@@ -306,6 +306,7 @@ enum Screen {
     TypographyLanguages(typography_settings::LanguageScope),
     StyleTweaks,
     StylePreset,
+    InPageFootnoteSize(style_tweaks::NoteSizeScope),
     StyleFiles,
     StyleReview,
     StyleEditor,
@@ -497,6 +498,10 @@ impl Screen {
             Self::FontRendering(eager_typography::Scope::Default) => "Default font size rendering",
             Self::StyleTweaks => "Style tweaks",
             Self::StylePreset => "Style tweak",
+            Self::InPageFootnoteSize(style_tweaks::NoteSizeScope::Book) => "In-page footnote size",
+            Self::InPageFootnoteSize(style_tweaks::NoteSizeScope::Default) => {
+                "Default footnote size"
+            }
             Self::StyleFiles => "Import CSS",
             Self::StyleReview => "Review CSS",
             Self::StyleEditor => "Book CSS",
@@ -2498,6 +2503,7 @@ impl Reader {
             self.screen,
             Screen::StyleTweaks
                 | Screen::StylePreset
+                | Screen::InPageFootnoteSize(_)
                 | Screen::StyleFiles
                 | Screen::StyleReview
                 | Screen::StyleClear
@@ -3379,6 +3385,7 @@ impl Reader {
             Screen::DocumentDefaults
             | Screen::StyleTweaks
             | Screen::StylePreset
+            | Screen::InPageFootnoteSize(_)
             | Screen::StyleFiles
             | Screen::StyleReview
             | Screen::StyleClear
@@ -9640,6 +9647,12 @@ impl App for Reader {
                         self.show(Screen::FontRendering(eager_typography::Scope::Book))
                     }
                     Screen::StyleTweaks => self.show(self.tools_screen()),
+                    Screen::InPageFootnoteSize(style_tweaks::NoteSizeScope::Default) => self.show(
+                        Screen::InPageFootnoteSize(style_tweaks::NoteSizeScope::Book),
+                    ),
+                    Screen::InPageFootnoteSize(style_tweaks::NoteSizeScope::Book) => {
+                        self.show(Screen::StyleTweaks)
+                    }
                     Screen::ReadingGuides => {
                         self.open_reading_edge(true, WIDTH as f32 / 2.0);
                     }

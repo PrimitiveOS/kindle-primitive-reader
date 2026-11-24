@@ -637,6 +637,67 @@ fn has_note_band(app: &Reader) -> bool {
 }
 
 #[test]
+fn in_page_footnote_size_uses_saved_book_and_default_choices() {
+    let fixture = Fixture::new();
+    let path = footnote_book(&fixture, "Size choices.epub");
+    let original = fs::read(&path).unwrap();
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    let id = app.open_book_id().unwrap();
+    let origin = app.current_history_location();
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "In-page EPUB footnotes");
+    tap_contents_item(&mut app, "Use on all books");
+    assert!(has_note_band(&app));
+    let legacy = capture(&mut app);
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "In-page footnote size");
+    tap_contents_item(&mut app, "65%");
+    let small = capture(&mut app);
+    assert_ne!(small, legacy);
+    assert_eq!(app.current_history_location(), origin);
+    assert_eq!(
+        app.style_store.data.book(id).footnote_size,
+        Some(FootnoteSize::SixtyFive)
+    );
+    tap_contents_item(&mut app, "Default size for all books");
+    tap_contents_item(&mut app, "100%");
+    assert_eq!(capture(&mut app), small);
+    let back = app.navigation_layout().back();
+    tap(&mut app, back);
+    assert_eq!(app.screen, Screen::InPageFootnoteSize(NoteSizeScope::Book));
+    let mut screen = crate::app::selection_viewport_tests::canvas(&app, ReadingViewport::PORTRAIT);
+    press(&app, &mut screen, app.list_geometry().row(2), false);
+    capture_viewport(
+        &app,
+        &mut screen,
+        "in-page-footnote-size-choices.png",
+        false,
+    );
+    let mut wide = adopt(&mut app, ReadingViewport::LANDSCAPE, 2);
+    press(&app, &mut wide, app.list_geometry().row(2), true);
+    capture_viewport(&app, &mut wide, "in-page-footnote-size-landscape.png", true);
+    adopt(&mut app, ReadingViewport::PORTRAIT, 3);
+    assert_eq!(app.current_history_location(), origin);
+    app.show(Screen::Book);
+    app.save().unwrap();
+    drop(app);
+
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    assert_eq!(capture(&mut app), small);
+    assert_eq!(app.current_history_location(), origin);
+    assert_eq!(app.style_store.data.footnote_size, FootnoteSize::Full);
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "In-page footnote size");
+    tap_contents_item(&mut app, "Use default");
+    assert_eq!(app.style_store.data.book(id).footnote_size, None);
+    assert_ne!(capture(&mut app), small);
+    assert_eq!(app.current_history_location(), origin);
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
 fn in_page_footnote_style_reflows_from_visible_controls_and_preserves_the_passage() {
     let f = Fixture::new();
     let path = footnote_book(&f, "Footnotes.epub");

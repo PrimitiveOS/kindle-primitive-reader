@@ -874,7 +874,7 @@ impl ParleyChapter {
                 .filter(|item| marker_hosts.get(&item.element) == Some(&block.key))
                 .and_then(|item| {
                     let style = &styles[item.element];
-                    let size = settings.styled_font(style.size_scale);
+                    let size = style.font_pixels(settings);
                     Some((style.marker.label(flow.ordinal(item)?)?, style, size))
                 });
             let literal = marker.as_ref().and_then(|(label, style, size)| {
@@ -988,7 +988,7 @@ impl ParleyChapter {
                     == Some(&TextBoxCandidate::Simple)
                 {
                     // CREngine measures intrinsic percentage indents against one em.
-                    let em = settings.styled_font(style.size_scale).floor() as u32;
+                    let em = style.font_pixels(settings).floor() as u32;
                     let indent =
                         LineIndent::resolve(style, em, column_width, settings.font_size, 0);
                     let intrinsic = make_paragraph(
@@ -2477,7 +2477,7 @@ fn make_paragraph(
             LineHeight::FontSizeRelative(spacing)
         }
     };
-    let font_size = |style: &Style| settings.styled_font(style.size_scale);
+    let font_size = |style: &Style| style.font_pixels(settings);
     let weight = |style: &Style| {
         FontWeight::new(crate::font_render::font_weight(
             if settings.bold_text && style.font_weight < FontWeight::BOLD {
@@ -2879,7 +2879,7 @@ impl ImageSizing {
         } else {
             settings.text_height()
         };
-        let font_size = settings.styled_font(style.size_scale);
+        let font_size = style.font_pixels(settings);
         let html_scale = if settings.render_dpi == 0 {
             1.
         } else {

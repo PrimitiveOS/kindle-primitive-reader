@@ -65,6 +65,13 @@ chapters = {
     "forced": """<p>The keeper marked a second position<a href="#force-note" id="force-marker" epub:type="noteref">3</a>.</p>
 <p style="page-break-before:always" id="force-restart">The harbor record restarts on the next page.</p>
 <aside id="force-note" epub:type="footnote"><p>The second position was confirmed later.</p></aside>""",
+    "sizing": """<p id="size-start">Survey notes for the northern pier<a href="#size-note" id="size-ref" epub:type="noteref"><sup>1</sup></a>.</p>
+<p id="size-body">Ordinary body text stays at the reading size.</p>
+<p style="page-break-before:always">The tide rose at the lower landing.</p>
+<aside id="size-note" epub:type="footnote">
+  <p style="font-size:1.2rem">Measured note text <sup style="font-size:0.5em">inline note label</sup>.</p>
+  <p>The depths were recorded before the afternoon crossing. <a href="#size-ref" role="doc-backlink">Return</a></p>
+</aside>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)

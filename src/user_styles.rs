@@ -13,47 +13,114 @@ pub(crate) const MAX_CSS: usize = 64 * 1024;
 pub(crate) const MAX_RULES: usize = 128;
 pub(crate) const MAX_DECLARATIONS: usize = 32;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FootnoteSize {
+    Publisher,
+    #[default]
+    Legacy,
+    Full,
+    Ninety,
+    EightyFive,
+    Eighty,
+    SeventyFive,
+    Seventy,
+    SixtyFive,
+}
+
+impl FootnoteSize {
+    #[cfg(feature = "kindle")]
+    pub(crate) const CHOICES: [Self; 9] = [
+        Self::Legacy,
+        Self::Full,
+        Self::Ninety,
+        Self::EightyFive,
+        Self::Eighty,
+        Self::SeventyFive,
+        Self::Seventy,
+        Self::SixtyFive,
+        Self::Publisher,
+    ];
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Publisher => "Publisher sizes",
+            Self::Legacy => "80% (legacy)",
+            Self::Full => "100%",
+            Self::Ninety => "90%",
+            Self::EightyFive => "85%",
+            Self::Eighty => "80%",
+            Self::SeventyFive => "75%",
+            Self::Seventy => "70%",
+            Self::SixtyFive => "65%",
+        }
+    }
+
+    pub(crate) fn scale(self, root: bool, block: bool) -> Option<f32> {
+        if self == Self::Legacy {
+            return root.then_some(0.8);
+        }
+        if !block {
+            return None;
+        }
+        Some(match self {
+            Self::Full => 1.0,
+            Self::Ninety => 0.9,
+            Self::EightyFive => 0.85,
+            Self::Eighty => 0.8,
+            Self::SeventyFive => 0.75,
+            Self::Seventy => 0.7,
+            Self::SixtyFive => 0.65,
+            Self::Publisher | Self::Legacy => return None,
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Snapshot {
     css: Arc<str>,
     pub digest: [u8; 16],
-    in_page_epub_footnotes: bool,
+    footnote_size: Option<FootnoteSize>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
             css: Arc::from(""),
             digest: md5::compute(b"").0,
-            in_page_epub_footnotes: false,
+            footnote_size: None,
         }
     }
 }
 impl Snapshot {
     pub(crate) fn new(css: String) -> crate::Result<Self> {
-        Self::with_footnotes(css, false)
+        Self::with_footnotes(css, None)
     }
-    fn with_footnotes(css: String, in_page_epub_footnotes: bool) -> crate::Result<Self> {
+    fn with_footnotes(css: String, footnote_size: Option<FootnoteSize>) -> crate::Result<Self> {
         crate::book_style::validate_user_css(&css)?;
         let digest = md5::compute(css.as_bytes()).0;
         Ok(Self {
             css: css.into(),
             digest,
-            in_page_epub_footnotes,
+            footnote_size,
         })
     }
     pub(crate) fn css(&self) -> &str {
         &self.css
     }
     pub(crate) fn is_empty(&self) -> bool {
-        self.css.is_empty() && !self.in_page_epub_footnotes
+        self.css.is_empty() && self.footnote_size.is_none()
     }
     pub(crate) fn in_page_epub_footnotes(&self) -> bool {
-        self.in_page_epub_footnotes
+        self.footnote_size.is_some()
+    }
+    pub(crate) fn footnote_size(&self) -> Option<FootnoteSize> {
+        self.footnote_size
     }
     #[cfg(feature = "kindle")]
     pub(crate) fn for_note_layout(&self, allowed: bool) -> Self {
         Self {
-            in_page_epub_footnotes: allowed && self.in_page_epub_footnotes,
+            footnote_size: self.footnote_size.filter(|_| allowed),
             ..self.clone()
         }
     }
@@ -221,6 +288,8 @@ pub(crate) struct BookTweaks {
     pub choices: BTreeMap<String, bool>,
     pub custom: Option<String>,
     pub custom_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footnote_size: Option<FootnoteSize>,
 }
 impl Default for BookTweaks {
     fn default() -> Self {
@@ -229,6 +298,7 @@ impl Default for BookTweaks {
             choices: BTreeMap::new(),
             custom: None,
             custom_enabled: false,
+            footnote_size: None,
         }
     }
 }
@@ -238,13 +308,23 @@ pub(crate) struct Data {
     version: u8,
     pub global: BTreeSet<String>,
     pub books: BTreeMap<u64, BookTweaks>,
+    #[serde(default, skip_serializing_if = "FootnoteSize::is_default")]
+    pub footnote_size: FootnoteSize,
 }
+
+impl FootnoteSize {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 impl Default for Data {
     fn default() -> Self {
         Self {
             version: 1,
             global: BTreeSet::new(),
             books: BTreeMap::new(),
+            footnote_size: FootnoteSize::default(),
         }
     }
 }
@@ -324,14 +404,16 @@ impl Data {
             .collect();
         selected.sort_by_key(|p| (p.priority, p.id));
         let mut css = String::new();
-        let mut in_page_epub_footnotes = false;
+        let mut footnote_size = None;
         for preset in selected {
             match preset.effect {
                 Effect::Css(snippet) => {
                     css.push_str(snippet);
                     css.push('\n');
                 }
-                Effect::InPageEpubFootnotes => in_page_epub_footnotes = true,
+                Effect::InPageEpubFootnotes => {
+                    footnote_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
+                }
             }
         }
         if b.custom_enabled
@@ -339,7 +421,7 @@ impl Data {
         {
             css.push_str(custom);
         }
-        Snapshot::with_footnotes(css, in_page_epub_footnotes)
+        Snapshot::with_footnotes(css, footnote_size)
     }
     pub(crate) fn validate(&self) -> crate::Result<()> {
         let valid_id = |id: &str| {

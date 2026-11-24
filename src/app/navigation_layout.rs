@@ -156,6 +156,7 @@ impl Screen {
                 | Self::FontRendering(_)
                 | Self::StyleTweaks
                 | Self::StylePreset
+                | Self::InPageFootnoteSize(_)
                 | Self::StyleFiles
                 | Self::StyleReview
                 | Self::StyleClear

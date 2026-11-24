@@ -25,7 +25,7 @@ const MAX_PAGES: usize = 512;
 
 pub(crate) fn paginate(
     chapter: &str,
-    xhtml: &str,
+    targets: &Targets,
     source: &Source,
     lines: &[Line],
     artwork_bottoms: &BTreeMap<usize, f32>,
@@ -37,7 +37,7 @@ pub(crate) fn paginate(
     if lines.len() > MAX_LINES || gap == 0 || gap >= height {
         return None;
     }
-    let (notes, references) = discover(chapter, xhtml, source, lines)?;
+    let (notes, references) = discover(chapter, targets, source, lines)?;
     let groups = line_groups(lines, &notes, artwork_bottoms, height)?;
     let extents: Vec<_> = groups.iter().map(|group| group.extent.clone()).collect();
     let edges = publisher_breaks::in_page_note_boundaries(&extents, breaks)?;
@@ -171,59 +171,83 @@ fn line_groups(
 
 type References = BTreeMap<usize, Vec<usize>>;
 
+pub(crate) struct Targets {
+    roots: BTreeMap<usize, usize>,
+    ids: BTreeMap<String, usize>,
+    ancestry: Vec<Option<usize>>,
+}
+
+impl Targets {
+    pub(crate) fn parse(xhtml: &str, source: &Source) -> Option<Self> {
+        let document = roxmltree::Document::parse_with_options(
+            xhtml,
+            roxmltree::ParsingOptions {
+                allow_dtd: true,
+                ..Default::default()
+            },
+        )
+        .ok()?;
+        let mut roots = BTreeMap::new();
+        let mut ids = BTreeMap::new();
+        for node in document.descendants().filter(roxmltree::Node::is_element) {
+            if !super::note_container(node) {
+                continue;
+            }
+            let id = node
+                .attribute("id")
+                .or_else(|| node.attribute((super::XML, "id")))?;
+            let owner = source.fragment_owner(id)?;
+            let index = roots.len();
+            if index >= MAX_NOTES
+                || roots.insert(owner, index).is_some()
+                || ids.insert(id.to_owned(), index).is_some()
+            {
+                return None;
+            }
+        }
+        if roots.is_empty() {
+            return None;
+        }
+        // Source elements are ordered so inherited ownership is already known.
+        let mut ancestry: Vec<Option<usize>> = Vec::with_capacity(source.elements.len());
+        for (index, element) in source.elements.iter().enumerate() {
+            let inherited = element.parent.and_then(|parent| ancestry[parent]);
+            let root = roots.get(&index).copied();
+            if inherited.is_some() && root.is_some() {
+                return None;
+            }
+            ancestry.push(root.or(inherited));
+        }
+        Some(Self {
+            roots,
+            ids,
+            ancestry,
+        })
+    }
+
+    pub(crate) fn font_scale(
+        &self,
+        index: usize,
+        size: crate::user_styles::FootnoteSize,
+        block: bool,
+    ) -> Option<f32> {
+        self.ancestry[index]?;
+        size.scale(self.roots.contains_key(&index), block)
+    }
+}
+
 fn discover(
     chapter: &str,
-    xhtml: &str,
+    targets: &Targets,
     source: &Source,
     lines: &[Line],
 ) -> Option<(Vec<Range<usize>>, References)> {
-    let document = roxmltree::Document::parse_with_options(
-        xhtml,
-        roxmltree::ParsingOptions {
-            allow_dtd: true,
-            ..Default::default()
-        },
-    )
-    .ok()?;
-    let mut roots = BTreeMap::new();
-    let mut ids = BTreeMap::new();
-    for node in document.descendants().filter(roxmltree::Node::is_element) {
-        if !super::note_container(node) {
-            continue;
-        }
-        let id = node
-            .attribute("id")
-            .or_else(|| node.attribute((super::XML, "id")))?;
-        let owner = source.fragment_owner(id)?;
-        let index = roots.len();
-        if index >= MAX_NOTES
-            || roots.insert(owner, index).is_some()
-            || ids.insert(id, index).is_some()
-        {
-            return None;
-        }
-    }
-    if roots.is_empty() {
-        return None;
-    }
-    // Build note ancestry once in the Source's parent-before-child order.
-    let mut elements: Vec<Option<usize>> = Vec::with_capacity(source.elements.len());
-    for (index, element) in source.elements.iter().enumerate() {
-        let inherited = element
-            .parent
-            .and_then(|parent| elements.get(parent).copied().flatten());
-        let root = roots.get(&index).copied();
-        if inherited.is_some() && root.is_some() {
-            return None;
-        }
-        elements.push(root.or(inherited));
-    }
     let blocks: BTreeMap<_, _> = source
         .blocks
         .iter()
         .map(|block| (block.key, block))
         .collect();
-    let mut regions = vec![None::<Range<usize>>; roots.len()];
+    let mut regions = vec![None::<Range<usize>>; targets.roots.len()];
     let mut checked_directions = BTreeSet::new();
     let mut block_lines = BTreeMap::<_, Vec<_>>::new();
     for (index, line) in lines.iter().enumerate() {
@@ -234,7 +258,7 @@ fn discover(
         {
             return None;
         }
-        if let Some(id) = elements[block.element] {
+        if let Some(id) = targets.ancestry[block.element] {
             if !block.images.is_empty() {
                 return None;
             }
@@ -263,10 +287,10 @@ fn discover(
             if path != chapter {
                 continue;
             }
-            let Some(&id) = ids.get(fragment.as_str()) else {
+            let Some(&id) = targets.ids.get(fragment.as_str()) else {
                 continue;
             };
-            if elements[block.element].is_some() {
+            if targets.ancestry[block.element].is_some() {
                 return None;
             }
             let Some(index) = block_lines.get(&block.key).and_then(|indices| {
@@ -290,7 +314,7 @@ fn discover(
             used.insert(id);
         }
     }
-    (used.len() == roots.len()).then_some((regions, references))
+    (used.len() == targets.roots.len()).then_some((regions, references))
 }
 
 #[derive(Default)]
@@ -422,6 +446,89 @@ mod tests {
             .unwrap();
         }
         pixels
+    }
+
+    #[test]
+    fn in_page_footnote_size_reflows_only_note_blocks_and_keeps_inline_scaling() {
+        use crate::user_styles::{Data, EPUB_FOOTNOTES, FootnoteSize};
+        let path = test_fixture("in-page-footnotes.epub");
+        let fonts = [test_fixture("fonts/NotoSans-Regular.ttf")];
+        let before = std::fs::read(&path).unwrap();
+        let render = |size| {
+            let mut data = Data::default();
+            data.choose(1, EPUB_FOOTNOTES, Some(true)).unwrap();
+            data.books.get_mut(&1).unwrap().footnote_size = Some(size);
+            Probe::layout_opened_book(
+                &mut Some(Book::open(&path).unwrap()),
+                Engine::Parley,
+                settings(false),
+                7,
+                None,
+                &Default::default(),
+                &data.snapshot(1).unwrap(),
+                || crate::font_context(&fonts),
+            )
+            .unwrap()
+        };
+        let measure = |probe: &Probe, page, text: &str| {
+            let first = probe.matches(text).remove(0);
+            let end = probe.anchor(first.block, first.offset + text.len());
+            let selected = probe.select_range(&first, &end).unwrap();
+            let rect = probe.selection_rects(page, &selected);
+            assert_eq!(rect.len(), 1, "{text}");
+            rect[0].width as f32
+        };
+        let mut large = render(FootnoteSize::Full);
+        let mut small = render(FootnoteSize::SixtyFive);
+        let legacy = render(FootnoteSize::Legacy);
+        let publisher = render(FootnoteSize::Publisher);
+        let reference = large.fragment("size-ref").unwrap();
+        let note = large.fragment("size-note").unwrap();
+        let page = large.page_for(&reference).unwrap();
+        let large_image = capture(&mut large, page, "reader-note-size-100.png");
+        let small_image = capture(&mut small, page, "reader-note-size-65.png");
+        assert_ne!(large_image, small_image);
+        for probe in [&large, &small, &legacy, &publisher] {
+            assert_eq!(probe.page_for(&reference), Some(page));
+            assert_eq!(probe.fragment("size-note"), Some(note.clone()));
+            assert!(probe.page_for(&note).unwrap() > page);
+            assert!(
+                probe.in_page_notes.as_ref().unwrap()[page]
+                    .separator
+                    .is_some()
+            );
+            assert_eq!(
+                measure(probe, page, "Ordinary body text"),
+                measure(&large, page, "Ordinary body text"),
+            );
+        }
+        for phrase in ["Measured note text", "inline note label"] {
+            let base = measure(&large, page, phrase);
+            let fraction = measure(&small, page, phrase) / base;
+            assert!((0.60..0.71).contains(&fraction), "{phrase}: {fraction}");
+            assert_eq!(
+                measure(&legacy, page, phrase),
+                measure(&publisher, page, phrase),
+            );
+            assert!(measure(&publisher, page, phrase) > base);
+        }
+        let full_width = measure(&large, page, "Measured note text");
+        for (size, scale) in [
+            (FootnoteSize::Ninety, 0.90),
+            (FootnoteSize::EightyFive, 0.85),
+            (FootnoteSize::Eighty, 0.80),
+            (FootnoteSize::SeventyFive, 0.75),
+            (FootnoteSize::Seventy, 0.70),
+        ] {
+            let width = measure(&render(size), page, "Measured note text");
+            assert!((width / full_width - scale).abs() < 0.04, "{size:?}");
+        }
+        eprintln!(
+            "Reader note at 100% is {full_width}px, at 65% is {}px; normal text is {}px",
+            measure(&small, page, "Measured note text"),
+            measure(&large, page, "Ordinary body text"),
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
     #[test]
@@ -775,6 +882,7 @@ mod tests {
     #[test]
     #[ignore = "Requires a private manifest of authorized, unchanged original EPUBs"]
     fn original_epub_in_page_notes_compose_and_preserve_canonical_anchors() {
+        use crate::user_styles::{Data, EPUB_FOOTNOTES, FootnoteSize};
         #[derive(serde::Deserialize)]
         struct Original {
             path: std::path::PathBuf,
@@ -798,15 +906,20 @@ mod tests {
         let settings = Settings {
             height: 1606,
             font_size: 47.0,
-            in_page_footnotes: true,
             ..Default::default()
         };
+        let mut data = Data::default();
+        data.choose(0, EPUB_FOOTNOTES, Some(true)).unwrap();
+        data.books.get_mut(&0).unwrap().footnote_size = Some(FootnoteSize::SixtyFive);
+        let ordinary_styles = Default::default();
+        let note_styles = data.snapshot(0).unwrap();
         let mut tested = 0;
         let mut composed = 0;
         let mut composed_media = 0;
         let mut painted_bands = 0;
         let mut anchors = 0;
         for (ordinal, original) in originals.iter().enumerate() {
+            let before = std::fs::read(&original.path).expect("cannot read private EPUB");
             let package =
                 Book::open(&original.path).unwrap_or_else(|_| panic!("cannot open private EPUB"));
             for chapter in &original.chapters {
@@ -815,15 +928,21 @@ mod tests {
                     .iter()
                     .position(|entry| entry.href == chapter.href)
                     .expect("private chapter locator");
-                let open = |settings| {
-                    Probe::open(&original.path, Engine::Parley, &fonts, settings, index)
-                        .unwrap_or_else(|_| panic!("cannot render private chapter"))
+                let open = |styles| {
+                    Probe::layout_opened_book(
+                        &mut Some(Book::open(&original.path).expect("cannot open private EPUB")),
+                        Engine::Parley,
+                        settings,
+                        index,
+                        None,
+                        &Default::default(),
+                        styles,
+                        || crate::font_context(&fonts),
+                    )
+                    .unwrap_or_else(|_| panic!("cannot render private chapter"))
                 };
-                let ordinary = open(Settings {
-                    in_page_footnotes: false,
-                    ..settings
-                });
-                let mut enabled = open(settings);
+                let ordinary = open(&ordinary_styles);
+                let mut enabled = open(&note_styles);
                 tested += 1;
                 let bands = enabled.in_page_notes.as_ref().map_or(Vec::new(), |pages| {
                     pages
@@ -858,6 +977,7 @@ mod tests {
                     painted_bands += bands.len();
                 }
             }
+            assert!(std::fs::read(&original.path).expect("cannot read private EPUB") == before);
         }
         eprintln!(
             "private matched={tested} composed={composed} composed_media={composed_media} bands={painted_bands} canonical_anchors={anchors}"
