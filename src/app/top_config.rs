@@ -1,6 +1,6 @@
 //! Actions available from the reading view's grouped top menu.
 
-use super::{Action, BookList, Item, Reader, Screen, text_items};
+use super::{Action, BookList, Item, Reader, Screen, chapter_navigation::Direction, text_items};
 use crate::reading_controls::ReadingControls;
 
 pub(super) use crate::book_menus::TopGroup;
@@ -70,6 +70,8 @@ impl Reader {
                 Action::ToggleBookmark,
             ),
             Item::new("Go to page", Action::Show(Screen::GoToPage)),
+            Item::new("Previous chapter", Action::Chapter(Direction::Previous)),
+            Item::new("Next chapter", Action::Chapter(Direction::Next)),
             Item::new("Book map", Action::Show(Screen::BookMap)),
             Item::new("Custom hidden flows", Action::Show(Screen::HiddenFlows)),
             Item::new("Page browser", Action::Overview).detail("Browse page thumbnails"),
