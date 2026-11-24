@@ -49,6 +49,12 @@ the caller. Extra advances are measured before wrapping and shared by line
 measurement, painting and selection. Reader applies this to horizontal CJK
 text. [CJK width and geometry checks](../../docs/cjk-width.md)
 
+The optional Fast kerning path applies classic SFNT font pairs with
+FreeType's default pixel fitting. Layout, glyph positions and cursor
+geometry share the same leading gap. Each gap keeps its predecessor so a
+wrapped line drops a pair that crosses the line boundary.
+[Fast kerning comparison](../../docs/kerning-modes.md#fast-pair-spacing)
+
 The ranged builder accepts an optional signed font-weight advance callback.
 Reader supplies the remaining weight difference after face selection, including
 a publisher's declared face class. Fractional advances use the same before/after

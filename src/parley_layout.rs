@@ -81,7 +81,7 @@ const KERNING_OFF: [FontFeature; 2] = [
     FontFeature::new(Tag::new(b"vkrn"), 0),
 ];
 const KERNING_FAST: [FontFeature; 23] = [
-    FontFeature::new(Tag::new(b"kern"), 1),
+    FontFeature::new(Tag::new(b"kern"), 0),
     FontFeature::new(Tag::new(b"vkrn"), 0),
     FontFeature::new(Tag::new(b"mark"), 0),
     FontFeature::new(Tag::new(b"mkmk"), 0),
@@ -136,6 +136,16 @@ fn kerning_features(mode: crate::FontKerningMode) -> Option<&'static [FontFeatur
         crate::FontKerningMode::Fast => Some(&KERNING_FAST),
         crate::FontKerningMode::Good => Some(&KERNING_GOOD),
         crate::FontKerningMode::Best => None,
+    }
+}
+
+fn apply_kerning<B: parley::Brush>(
+    builder: &mut parley::RangedBuilder<'_, B>,
+    mode: crate::FontKerningMode,
+) {
+    builder.set_fast_kerning(mode == crate::FontKerningMode::Fast);
+    if let Some(features) = kerning_features(mode) {
+        builder.push_default(StyleProperty::FontFeatures(features.into()));
     }
 }
 
@@ -2317,9 +2327,7 @@ fn make_annotation(
     if let Some(policy) = &cjk_spacing {
         builder.set_cluster_spacing(Some(policy));
     }
-    if let Some(features) = kerning_features(settings.effective_font_kerning_mode()) {
-        builder.push_default(StyleProperty::FontFeatures(features.into()));
-    }
+    apply_kerning(&mut builder, settings.effective_font_kerning_mode());
     let family: FontFamily<'_> = if settings.override_fonts {
         GenericFamily::Serif.into()
     } else {
@@ -2406,9 +2414,7 @@ fn make_paragraph(
     if let Some(policy) = &cjk_spacing {
         builder.set_cluster_spacing(Some(policy));
     }
-    if let Some(features) = kerning_features(settings.effective_font_kerning_mode()) {
-        builder.push_default(StyleProperty::FontFeatures(features.into()));
-    }
+    apply_kerning(&mut builder, settings.effective_font_kerning_mode());
     let soft_hyphen = |offset| {
         let index = automatic
             .custom_words

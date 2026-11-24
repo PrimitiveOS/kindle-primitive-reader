@@ -53,6 +53,8 @@ The TCR fixture has SHA-256
 
 The simulated interface uses [Launcher’s Noto Sans Regular](https://github.com/PrimitiveOS/kindle-primitive-launcher/blob/799cd5348d0a82673ea4fc36664ffc084146f238/assets/fonts/NotoSans-Regular.ttf). Its [SIL Open Font License](fonts/OFL-NotoSans.txt) travels with the test bundle.
 
+`fast-pair-kerning.epub` contains an original pair-spacing specimen. Harbor Pair Test is a renamed derivative of Silkscreen Regular with authored legacy AV, VA, and To pair values. It retains the [Silkscreen SIL Open Font License](fonts/OFL-Silkscreen.txt). [Deterministic generator](../../scripts/generate-fast-kerning-fixture.py) · [Fast kerning comparison](../../docs/kerning-modes.md#fast-pair-spacing)
+
 `signal-guide.epub` contains an original two-chapter field notebook with an inline SVG reference and a percentage-sized PNG sketch. The Parley tests verify CSS sizing, image targets, text geometry and source coverage. The Reader test taps the illustrated link, returns, saves and reopens the book. Reproduce the [simulated page](../../docs/screenshots/epub-inline-illustrations.png) using `reader-probe parley tests/fixtures/signal-guide.epub --font <NotoSans-Regular.ttf> --width 1264 --height 1680 --size 44 --margin 72 --output <page.png>`.
 
 

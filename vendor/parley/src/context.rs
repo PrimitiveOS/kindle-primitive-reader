@@ -40,6 +40,7 @@ pub struct LayoutContext<B: Brush = [u8; 4]> {
     /// Style index for each character, parallel to [`Analysis::char_info`].
     pub(crate) char_style_indices: Vec<u16>,
     pub(crate) scx: Shaper,
+    pub(crate) fast_kerning: crate::fast_kerning::Cache,
 
     // Unicode analysis data sources (provided by icu)
     pub(crate) analysis_data_sources: AnalysisDataSources,
@@ -61,6 +62,7 @@ impl<B: Brush> LayoutContext<B> {
             char_style_indices: vec![],
             analysis_data_sources: AnalysisDataSources::new(),
             scx: Shaper::default(),
+            fast_kerning: Default::default(),
         }
     }
 

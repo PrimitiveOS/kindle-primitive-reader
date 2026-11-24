@@ -1182,6 +1182,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         run.data.spacing,
                         Justification::NONE,
                         &self.layout.data.cluster_spacing,
+                    ).with_fast_kerning(
+                        &self.layout.data.fast_pair_gaps,
+                        self.state.line.clusters.start,
                     );
 
                     let line_height = run.data.line_height;
@@ -1874,6 +1877,7 @@ fn commit_line<B: Brush>(
     let (hanging_advance, justification_end_cluster, hanging_opportunities) = hanging_whitespace(
         layout,
         &lines.line_items[start_item_idx..end_item_idx],
+        state.clusters.start,
         overflow,
     );
     // The word separators counted as the line was built include the line's hanging whitespace, and
@@ -1913,6 +1917,7 @@ fn commit_line<B: Brush>(
     lines.lines.push(LineData {
         item_range: start_item_idx..end_item_idx,
         text_range: text_start..text_end,
+        first_cluster: state.clusters.start,
         max_advance,
         break_reason,
         soft_hyphen: state.soft_hyphen,
@@ -1974,6 +1979,7 @@ fn commit_line<B: Brush>(
 fn hanging_whitespace<B: Brush>(
     layout: &Layout<B>,
     line_items: &[LineItemData],
+    first_cluster: u32,
     overflow: f32,
 ) -> (f32, u32, u32) {
     let mut hanging_whitespace_advance = 0.;
@@ -2015,7 +2021,7 @@ fn hanging_whitespace<B: Brush>(
                     layout.data.runs[line_item.index].spacing,
                     Justification::NONE,
                     &layout.data.cluster_spacing,
-                );
+                ).with_fast_kerning(&layout.data.fast_pair_gaps, first_cluster);
                 let slice = layout
                     .data
                     .shaped_text

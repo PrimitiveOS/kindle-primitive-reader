@@ -3,6 +3,7 @@
 
 use crate::inline_box::{InlineBox, LayoutInlineBox};
 use crate::layout::spacing::{Gaps, Justification, Spacing};
+use crate::fast_kerning::PairGap;
 use crate::layout::style_metrics::{BoxMetrics, StyleMetrics};
 use crate::layout::whitespace::whitespace_hangs;
 use crate::layout::{ContentWidths, LineMetrics, Style};
@@ -100,6 +101,7 @@ pub(crate) struct SoftHyphenOpportunity {
 pub(crate) struct LineData {
     /// Range of the source text.
     pub(crate) text_range: Range<usize>,
+    pub(crate) first_cluster: u32,
     /// Range of line items.
     pub(crate) item_range: Range<usize>,
     /// Metrics for the line.
@@ -230,6 +232,7 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) soft_hyphens: Vec<SoftHyphenOpportunity>,
     /// Extra advance indexed by the first shaped cluster of an atom. Empty by default.
     pub(crate) cluster_spacing: Vec<Gaps>,
+    pub(crate) fast_pair_gaps: Vec<PairGap>,
     /// Maximum allowed shrink of each ordinary space atom.
     pub(crate) space_shrink: Vec<f32>,
     pub(crate) runs: Vec<RunData>,
@@ -283,6 +286,7 @@ impl<B: Brush> Default for LayoutData<B> {
             shaped_text: ShapedText::new(),
             soft_hyphens: Vec::new(),
             cluster_spacing: Vec::new(),
+            fast_pair_gaps: Vec::new(),
             space_shrink: Vec::new(),
             runs: Vec::new(),
             items: Vec::new(),
@@ -318,6 +322,7 @@ impl<B: Brush> LayoutData<B> {
         self.shaped_text.clear();
         self.soft_hyphens.clear();
         self.cluster_spacing.clear();
+        self.fast_pair_gaps.clear();
         self.space_shrink.clear();
         self.runs.clear();
         self.items.clear();
@@ -458,6 +463,7 @@ struct ContentWidthsMeasurer {
     /// `running_min_width` when the hanging whitespace started before the last break
     /// opportunity, in which case the line consists entirely of hanging whitespace.
     running_hanging_whitespace: f32,
+    running_min_hanging_whitespace: f32,
 
     /// Whether that running whitespace hangs conditionally before a forced break (following CSS
     /// Text 4 § 4.3.2, that's the case for `WhiteSpaceCollapse::Preserve`). Conditionally hanging
@@ -482,6 +488,7 @@ impl ContentWidthsMeasurer {
             running_min_width: first_line_indent,
             running_max_width: first_line_indent,
             running_hanging_whitespace: 0.,
+            running_min_hanging_whitespace: 0.,
             hangs_conditionally: false,
             text_wrap_mode: TextWrapMode::Wrap,
             soft_indent: indent_options.indent_following_soft_wrap_break(indent_amount),
@@ -497,14 +504,15 @@ impl ContentWidthsMeasurer {
     /// The next fragment then starts a line after a soft wrap break, which will be indented iff the
     /// indent is "hanging" (see [`IndentOptions::hanging`]).
     #[inline(always)]
-    fn soft_break(&mut self, line_has_content: bool) {
+    fn soft_break(&mut self, line_has_content: bool) -> bool {
         if !line_has_content || self.running_min_width < 0.0 {
-            return;
+            return false;
         }
         self.min_width = self
             .min_width
-            .max(self.running_min_width - self.running_hanging_whitespace);
+            .max(self.running_min_width - self.running_min_hanging_whitespace);
         self.running_min_width = self.soft_indent;
+        true
     }
 
     /// Ends the current line at a forced break.
@@ -517,12 +525,13 @@ impl ContentWidthsMeasurer {
     fn hard_break(&mut self) {
         self.min_width = self
             .min_width
-            .max(self.running_min_width - self.running_hanging_whitespace);
+            .max(self.running_min_width - self.running_min_hanging_whitespace);
         if !self.hangs_conditionally {
             self.running_max_width -= self.running_hanging_whitespace;
         }
         self.max_width = self.max_width.max(self.running_max_width);
         self.running_hanging_whitespace = 0.0;
+        self.running_min_hanging_whitespace = 0.0;
         self.line_has_content = false;
         self.running_min_width = self.hard_indent;
         self.running_max_width = self.hard_indent;
@@ -543,12 +552,16 @@ impl ContentWidthsMeasurer {
                     let can_hang = item.bidi_level == layout_data.base_level;
                     let is_rtl = item.bidi_level.is_rtl();
 
-                    if run_spacing.is_zero() && layout_data.cluster_spacing.is_empty() {
+                    if run_spacing.is_zero()
+                        && layout_data.cluster_spacing.is_empty()
+                        && layout_data.fast_pair_gaps.is_empty()
+                    {
                         self.measure_text_run::<B, false>(
                             &layout_data.styles,
                             slice,
                             run_spacing,
                             &layout_data.cluster_spacing,
+                            &[],
                             can_hang,
                             is_rtl,
                         );
@@ -558,6 +571,7 @@ impl ContentWidthsMeasurer {
                             slice,
                             run_spacing,
                             &layout_data.cluster_spacing,
+                            &layout_data.fast_pair_gaps,
                             can_hang,
                             is_rtl,
                         );
@@ -622,17 +636,20 @@ impl ContentWidthsMeasurer {
         slice: ShapedSlice<'_>,
         spacing: Spacing,
         cluster_spacing: &[Gaps],
+        fast_pair_gaps: &[PairGap],
         can_hang: bool,
         is_rtl: bool,
     ) {
         let clusters = slice.shaped_clusters();
         // The cluster index at which nothing has been placed on the current line yet, if any.
         let mut empty_at = if self.line_has_content { usize::MAX } else { 0 };
+        let mut minimum_start = slice.shaped_clusters_range().start;
 
         // The spacing gap of the current atom.
         let mut gap = 0.;
         let mut skip_atom = false;
         for (i, cluster) in clusters.iter().enumerate() {
+            let index = slice.shaped_clusters_range().start + i as u32;
             let whitespace = cluster.whitespace();
             let style = &styles[cluster.style_index as usize];
             let is_atom_start = i == 0 || cluster.is_grapheme_start();
@@ -643,20 +660,21 @@ impl ContentWidthsMeasurer {
                 if prev_text_wrap_mode == TextWrapMode::Wrap
                     && (cluster.is_soft_wrap_opportunity_before()
                         || style.overflow_wrap == OverflowWrap::Anywhere)
+                    && self.soft_break(i != empty_at)
                 {
-                    self.soft_break(i != empty_at);
+                    minimum_start = index;
                 }
                 // `Whitespace::Newline` are forced breaks. Note newlines have no advance.
                 if whitespace == Whitespace::Newline {
                     // Newlines hang, so whitespace before them keeps hanging.
                     self.hard_break();
+                    minimum_start = index + 1;
                     empty_at = i + 1;
                     skip_atom = true;
                     continue;
                 }
                 if SPACED {
-                    let index = slice.shaped_clusters_range().start as usize + i;
-                    let extra = cluster_spacing.get(index).copied().unwrap_or(Gaps::ZERO);
+                    let extra = cluster_spacing.get(index as usize).copied().unwrap_or(Gaps::ZERO);
                     gap = spacing.gaps(whitespace).after + extra.total();
                 }
             } else if skip_atom {
@@ -678,8 +696,11 @@ impl ContentWidthsMeasurer {
                     advance += gap;
                 }
             }
-            self.running_min_width += advance;
-            self.running_max_width += advance;
+            let pair = PairGap::on_right(fast_pair_gaps, index);
+            let minimum = advance + pair.map_or(0.0, |pair| pair.advance_on_line(minimum_start));
+            let maximum = advance + pair.map_or(0.0, |pair| pair.advance_on_line(0));
+            self.running_min_width += minimum;
+            self.running_max_width += maximum;
 
             // A cluster hangs if all of its characters hang. Its first character is checked via the
             // cached flags so the common case never touches `characters`.
@@ -696,11 +717,13 @@ impl ContentWidthsMeasurer {
                             )
                         }));
             if hangs {
-                self.running_hanging_whitespace += advance;
+                self.running_hanging_whitespace += maximum;
+                self.running_min_hanging_whitespace += minimum;
                 self.hangs_conditionally =
                     style.white_space_collapse == WhiteSpaceCollapse::Preserve;
             } else {
                 self.running_hanging_whitespace = 0.0;
+                self.running_min_hanging_whitespace = 0.0;
             }
         }
         self.line_has_content = empty_at != clusters.len();
@@ -714,6 +737,7 @@ impl ContentWidthsMeasurer {
         }
         // Inline boxes don't hang.
         self.running_hanging_whitespace = 0.0;
+        self.running_min_hanging_whitespace = 0.0;
         self.running_min_width += inline_box.width;
         self.running_max_width += inline_box.width;
         self.line_has_content = true;

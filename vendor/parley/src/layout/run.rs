@@ -131,10 +131,12 @@ impl<'a, B: Brush> Run<'a, B> {
         if self.line_data.is_some() {
             let line = &layout.lines[self.line_index as usize];
             EffectiveSpacing::new(self.data.spacing, line.justification, &layout.cluster_spacing)
+                .with_fast_kerning(&layout.fast_pair_gaps, line.first_cluster)
                 .with_expansion(&layout.expanded_gaps[line.expanded_gaps.clone()])
                 .with_shrink(&layout.space_shrink, line.space_shrink_fraction)
         } else {
             EffectiveSpacing::new(self.data.spacing, Justification::NONE, &layout.cluster_spacing)
+                .with_fast_kerning(&layout.fast_pair_gaps, self.shaped.shaped_clusters_range.start)
         }
     }
 

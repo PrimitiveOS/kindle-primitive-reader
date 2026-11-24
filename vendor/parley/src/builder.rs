@@ -45,6 +45,7 @@ pub(crate) struct BuilderOptions<'a> {
     automatic_hyphens: &'a [usize],
     trusted_soft_hyphen_words: &'a [Range<usize>],
     cluster_spacing: Option<&'a ClusterSpacingFn>,
+    fast_kerning: bool,
     font_weight_spacing: Option<&'a FontWeightSpacingFn>,
     soft_hyphen_policy: Option<&'a (dyn Fn(usize) -> SoftHyphenAction + Send + Sync)>,
 }
@@ -60,6 +61,7 @@ impl BuilderOptions<'_> {
             automatic_hyphens: &[],
             trusted_soft_hyphen_words: &[],
             cluster_spacing: None,
+            fast_kerning: false,
             font_weight_spacing: None,
         }
     }
@@ -135,6 +137,13 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
     /// source is unchanged, including ligatures, combining marks and variations.
     pub fn set_cluster_spacing(&mut self, policy: Option<&'b ClusterSpacingFn>) {
         self.options.cluster_spacing = policy;
+    }
+
+    /// Apply classic horizontal pair adjustments using FreeType's default
+    /// pixel fitting. Disable the shaper's 'kern' feature to avoid applying
+    /// both OpenType and classic spacing.
+    pub fn set_fast_kerning(&mut self, enabled: bool) {
+        self.options.fast_kerning = enabled;
     }
 
     /// Apply font-weight synthesis advances to layout and hit testing.
@@ -470,6 +479,14 @@ fn build_into_layout<B: Brush>(
             text,
             layout,
             &lcx.analysis_data_sources,
+        );
+    }
+
+    if options.fast_kerning {
+        lcx.fast_kerning.collect(
+            &layout.data.shaped_text,
+            text,
+            &mut layout.data.fast_pair_gaps,
         );
     }
 

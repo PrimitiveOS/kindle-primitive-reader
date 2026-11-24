@@ -4,6 +4,7 @@
 //! Additional advance applied on top of shaped advance.
 
 use parley_engine::{Atom, Grapheme, ShapedSlice, shape::Whitespace};
+use crate::fast_kerning::PairGap;
 
 /// Whether the whitespace is a word separator.
 ///
@@ -147,6 +148,8 @@ impl Default for Justification {
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct EffectiveSpacing<'a> {
     cluster_spacing: &'a [Gaps],
+    fast_pair_gaps: &'a [PairGap],
+    line_start: u32,
     spacing: Spacing,
     justification: Justification,
     expanded_gaps: &'a [(u32, f32)],
@@ -171,7 +174,15 @@ impl<'a> EffectiveSpacing<'a> {
             shrink_capacities: &[],
             shrink_fraction: 0.0,
             cluster_spacing,
+            fast_pair_gaps: &[],
+            line_start: 0,
         }
+    }
+
+    pub(crate) fn with_fast_kerning(mut self, gaps: &'a [PairGap], line_start: u32) -> Self {
+        self.fast_pair_gaps = gaps;
+        self.line_start = line_start;
+        self
     }
 
     pub(crate) fn with_expansion(mut self, gaps: &'a [(u32, f32)]) -> Self {
@@ -191,6 +202,7 @@ impl<'a> EffectiveSpacing<'a> {
             && self.justification.amount_per_opportunity == 0.
             && self.expanded_gaps.is_empty()
             && self.cluster_spacing.is_empty()
+            && self.fast_pair_gaps.is_empty()
     }
 
     /// The gaps around `atom`.
@@ -202,6 +214,9 @@ impl<'a> EffectiveSpacing<'a> {
         if let Some(&extra) = self.cluster_spacing.get(index) {
             gaps.before += extra.before;
             gaps.after += extra.after;
+        }
+        if let Some(pair) = PairGap::on_right(self.fast_pair_gaps, index as u32) {
+            gaps.before += pair.advance_on_line(self.line_start);
         }
 
         if self.shrink_fraction > 0.0

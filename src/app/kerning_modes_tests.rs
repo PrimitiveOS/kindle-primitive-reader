@@ -1,6 +1,7 @@
 use super::*;
 use crate::FontKerningMode;
 use crate::app::tests::{Fixture, capture_test_screen};
+use std::fs;
 
 fn tap(app: &mut Reader, label: &str) {
     let rect = app.reading_button(label);
@@ -82,4 +83,86 @@ fn four_kerning_modes_are_selectable_and_persist_per_book() {
         tap(&mut app, "Rendering");
     }
     capture_test_screen(&app, &fonts, "READER_KERNING_SCREENSHOT", false);
+}
+
+#[test]
+fn fast_pair_kerning_reader_action_reflows_and_keeps_the_source_anchor() {
+    use crate::session::Reading;
+
+    let fixture = Fixture::new();
+    let book = crate::test_fixture("fast-pair-kerning.epub");
+    let source = fs::read(&book).unwrap();
+    fs::copy(book, &fixture.book).unwrap();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/HarborPairTest-Regular.ttf"),
+    ];
+    let open = || Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    let mut app = open();
+    app.open_path(&fixture.book).unwrap();
+    let reading = &mut app.active.as_mut().unwrap().reading;
+    let anchor = reading.probe.matches("Lantern").remove(0);
+    *reading = Reading::restore(reading.config.clone(), 0, 0, Some(&anchor)).unwrap();
+    app.open_reading_edge(false, 500.0);
+    if app.reading_panel != Some(BarPanel::TextRendering) {
+        tap(&mut app, "Rendering");
+    }
+    tap_kerning_choice(&mut app, "Off");
+    let reading = &mut app.active.as_mut().unwrap().reading;
+    let before = reading.probe.capture(reading.page).unwrap();
+    tap_kerning_choice(&mut app, "Fast");
+    let reading = &mut app.active.as_mut().unwrap().reading;
+    let after = reading.probe.capture(reading.page).unwrap();
+    assert_ne!(before, after);
+    assert_eq!(reading.anchor().as_ref(), Some(&anchor));
+    app.save().unwrap();
+    let mut reopened = open();
+    reopened.open_path(&fixture.book).unwrap();
+    assert_eq!(
+        settings(&reopened).effective_font_kerning_mode(),
+        FontKerningMode::Fast
+    );
+    let saved = &mut reopened.active.as_mut().unwrap().reading;
+    assert_eq!(saved.anchor().as_ref(), Some(&anchor));
+    assert_eq!(after, saved.probe.capture(saved.page).unwrap());
+    assert_eq!(fs::read(&fixture.book).unwrap(), source);
+    capture_test_screen(&reopened, &fonts, "READER_FAST_KERNING_SCREENSHOT", false);
+}
+
+#[test]
+#[ignore = "Requires READER_FAST_KERNING_ORIGINAL pointing to an authorized original EPUB"]
+fn fast_pair_kerning_real_epub_reopens_at_the_original_source_anchor() {
+    use crate::session::Reading;
+
+    let fixture = Fixture::new();
+    let original = std::env::var_os("READER_FAST_KERNING_ORIGINAL").unwrap();
+    let original_bytes = fs::read(&original).unwrap();
+    fs::copy(&original, &fixture.book).unwrap();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let open = || Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    let mut app = open();
+    app.open_path(&fixture.book).unwrap();
+    let reading = &mut app.active.as_mut().unwrap().reading;
+    let anchor = reading.probe.page_anchor(0).unwrap();
+    *reading = Reading::restore(reading.config.clone(), 0, 0, Some(&anchor)).unwrap();
+    app.open_reading_edge(false, 500.0);
+    if app.reading_panel != Some(BarPanel::TextRendering) {
+        tap(&mut app, "Rendering");
+    }
+    tap_kerning_choice(&mut app, "Fast");
+    let reading = &mut app.active.as_mut().unwrap().reading;
+    assert_eq!(reading.anchor().as_ref(), Some(&anchor));
+    let saved_frame = reading.probe.capture(reading.page).unwrap();
+    app.save().unwrap();
+    let mut reopened = open();
+    reopened.open_path(&fixture.book).unwrap();
+    assert_eq!(
+        settings(&reopened).effective_font_kerning_mode(),
+        FontKerningMode::Fast
+    );
+    let reading = &mut reopened.active.as_mut().unwrap().reading;
+    assert_eq!(reading.anchor().as_ref(), Some(&anchor));
+    assert_eq!(saved_frame, reading.probe.capture(reading.page).unwrap());
+    assert_eq!(fs::read(&fixture.book).unwrap(), original_bytes);
+    assert_eq!(fs::read(original).unwrap(), original_bytes);
 }

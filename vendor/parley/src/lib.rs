@@ -111,6 +111,7 @@ pub use fontique;
 mod analysis;
 mod builder;
 mod context;
+mod fast_kerning;
 mod font;
 mod inline_box;
 mod resolve;
