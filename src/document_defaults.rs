@@ -9,6 +9,7 @@ use std::{
 
 pub(crate) const FILE: &str = "document-defaults.json";
 pub(crate) const MAX_BYTES: u64 = 64 * 1024;
+pub(crate) const MAX_SAVED_MARGIN: u32 = 1024;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -237,7 +238,7 @@ pub(crate) fn validate_preferences(p: &BookPreferences) -> io::Result<()> {
         || !(-2.0..=12.0).contains(&p.word_spacing)
         || p.percent_word_spacing.is_some_and(|pair| !pair.valid())
         || !(-1.0..=4.0).contains(&p.letter_spacing)
-        || margins.into_iter().flatten().any(|n| n > 1024)
+        || margins.into_iter().flatten().any(|n| n > MAX_SAVED_MARGIN)
         || p.word_expansion.is_some_and(|n| n > 20)
         || p.cjk_width_percent
             .is_some_and(|n| !(100..=150).contains(&n))

@@ -59,6 +59,9 @@ impl NumberField {
             | Self::LogicalFont(_)
             | Self::LineSpacing(_)
             | Self::WordSpacing(_) => Screen::Book,
+            Self::ProfileValue(index, crate::reading_profiles::ValueField::Margin(_)) => {
+                Screen::ReadingProfileMargins(index)
+            }
             Self::ProfileValue(index, _) => Screen::ReadingProfileValues(index),
             Self::AutoTurn => Screen::AutoTurn,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,

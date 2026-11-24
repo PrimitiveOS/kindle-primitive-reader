@@ -1,5 +1,6 @@
 //! Values editable in a saved profile without applying it to a book.
 use super::{Field, Profile};
+use crate::library::BookPreferences;
 use std::{io, ops::RangeInclusive};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -7,16 +8,74 @@ pub(crate) enum ValueField {
     FontSize,
     ContentZoom,
     LineSpacing,
+    Margin(MarginEdge),
     HorizontalOverlap,
     VerticalOverlap,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MarginEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl MarginEdge {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Left => "Left margin",
+            Self::Right => "Right margin",
+            Self::Top => "Top margin",
+            Self::Bottom => "Bottom margin",
+        }
+    }
+
+    pub(crate) fn is_vertical(self) -> bool {
+        matches!(self, Self::Top | Self::Bottom)
+    }
+
+    fn value(self, preferences: &BookPreferences) -> u32 {
+        let inherited = preferences
+            .margin
+            .unwrap_or(crate::Settings::default().margin);
+        match self {
+            Self::Left => preferences.margin_left.or(preferences.margin_sides),
+            Self::Right => preferences.margin_right.or(preferences.margin_sides),
+            Self::Top => preferences.margin_top,
+            Self::Bottom => preferences.margin_bottom,
+        }
+        .unwrap_or(inherited)
+    }
+
+    fn set(self, preferences: &mut BookPreferences, value: u32) {
+        match self {
+            Self::Left => preferences.margin_left = Some(value),
+            Self::Right => preferences.margin_right = Some(value),
+            _ if preferences.link_vertical_margins => {
+                preferences.margin_top = Some(value);
+                preferences.margin_bottom = Some(value);
+            }
+            Self::Top => preferences.margin_top = Some(value),
+            Self::Bottom => preferences.margin_bottom = Some(value),
+        }
+    }
+}
+
 impl ValueField {
+    pub(crate) const MARGINS: [Self; 4] = [
+        Self::Margin(MarginEdge::Left),
+        Self::Margin(MarginEdge::Right),
+        Self::Margin(MarginEdge::Top),
+        Self::Margin(MarginEdge::Bottom),
+    ];
+
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::FontSize => "Font size",
             Self::ContentZoom => "Content zoom",
             Self::LineSpacing => "Line spacing",
+            Self::Margin(edge) => edge.label(),
             Self::HorizontalOverlap => "Horizontal overlap",
             Self::VerticalOverlap => "Vertical overlap",
         }
@@ -27,6 +86,7 @@ impl ValueField {
             Self::FontSize => 12.0..=255.0,
             Self::ContentZoom => 0.0..=300.0,
             Self::LineSpacing => 50.0..=200.0,
+            Self::Margin(_) => 0.0..=f64::from(crate::document_defaults::MAX_SAVED_MARGIN),
             Self::HorizontalOverlap | Self::VerticalOverlap => 0.0..=90.0,
         }
     }
@@ -36,6 +96,7 @@ impl ValueField {
             Self::FontSize => crate::logical_font::DEFAULT,
             Self::ContentZoom => f64::from(crate::Settings::default().render_dpi),
             Self::LineSpacing => f64::from(crate::DEFAULT_LINE_SPACING_PERCENT),
+            Self::Margin(_) => f64::from(crate::Settings::default().margin),
             Self::HorizontalOverlap | Self::VerticalOverlap => 36.0,
         }
     }
@@ -56,6 +117,7 @@ impl ValueField {
         match self {
             Self::FontSize => value.to_string(),
             Self::ContentZoom => format!("{value} dpi"),
+            Self::Margin(_) => format!("{value} px"),
             _ => format!("{value}%"),
         }
     }
@@ -88,6 +150,7 @@ impl ValueField {
             Self::FontSize => Field::FontSize,
             Self::ContentZoom => Field::ContentZoom,
             Self::LineSpacing => Field::LineSpacing,
+            Self::Margin(_) => Field::Margins,
             Self::HorizontalOverlap | Self::VerticalOverlap => Field::PanOverlap,
         };
         selection.contains(&field)
@@ -104,6 +167,28 @@ impl Profile {
             ],
             Self::Fixed { .. } => &[ValueField::HorizontalOverlap, ValueField::VerticalOverlap],
         }
+    }
+
+    pub(crate) fn margins_linked(&self) -> Option<bool> {
+        match self {
+            Self::Text { preferences, .. } => Some(preferences.link_vertical_margins),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn toggle_margin_link(&mut self) -> io::Result<()> {
+        let Self::Text { preferences, .. } = self else {
+            return Err(io::Error::other(
+                "Page margins require a reflowable profile",
+            ));
+        };
+        preferences.link_vertical_margins = !preferences.link_vertical_margins;
+        if preferences.link_vertical_margins {
+            let top = MarginEdge::Top.value(preferences);
+            let bottom = MarginEdge::Bottom.value(preferences);
+            MarginEdge::Top.set(preferences, (top + bottom).div_ceil(2));
+        }
+        Ok(())
     }
 
     pub(crate) fn legacy_font_size(&self) -> Option<f32> {
@@ -132,6 +217,9 @@ impl Profile {
                     .apply_to(crate::Settings::default())
                     .effective_line_spacing_percent(),
             )),
+            (Self::Text { preferences, .. }, ValueField::Margin(edge)) => {
+                Some(f64::from(edge.value(preferences)))
+            }
             (Self::Fixed { fixed, .. }, ValueField::HorizontalOverlap) => {
                 Some(f64::from(fixed.values().zoom_overlap_h()))
             }
@@ -158,6 +246,9 @@ impl Profile {
             }
             (Self::Text { preferences, .. }, ValueField::LineSpacing) => {
                 preferences.line_spacing_percent = Some(value as u16);
+            }
+            (Self::Text { preferences, .. }, ValueField::Margin(edge)) => {
+                edge.set(preferences, value as u32);
             }
             (
                 Self::Fixed { fixed, .. },

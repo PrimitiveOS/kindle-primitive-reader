@@ -206,6 +206,31 @@ end
 zoom_choices[4].callback()
 assert(text.render_dpi == 167)
 
+local live_sides = text_live.h_page_margins
+local live_top = text_live.t_page_margin
+local live_bottom = text_live.b_page_margin
+local live_link = text_live.sync_t_b_page_margins
+local sides = value_action(text_commands, section, "l/r margins").sub_item_table_func()
+local margin_choices = {5, 10, 15, 20, 30, 50, 70, 100, 140}
+assert(#sides == #margin_choices)
+for i, value in ipairs(margin_choices) do
+    sides[i].callback()
+    assert(text.h_page_margins[1] == value and text.h_page_margins[2] == value)
+end
+sides[4].callback()
+set_number(value_action(text_commands, section, "top margin"), menu, live_top, 0, 140, 15, 83)
+set_number(value_action(text_commands, section, "bottom margin"), menu, live_bottom, 0, 140, 15, 42)
+assert(text.t_page_margin == 83 and text.b_page_margin == 42)
+local link = value_action(text_commands, section, "sync t/b margins").sub_item_table_func()
+assert(#link == 2 and link[1].checked_func())
+link[2].callback()
+assert(text.sync_t_b_page_margins == true and link[2].checked_func())
+link[1].callback()
+assert(text.sync_t_b_page_margins == false and link[1].checked_func())
+assert(text_live.h_page_margins == live_sides)
+assert(text_live.t_page_margin == live_top and text_live.b_page_margin == live_bottom)
+assert(text_live.sync_t_b_page_margins == live_link)
+
 profiles.ui.rolling = nil
 profiles.document = document("ui/data/koptoptions")
 profiles.document.configurable.zoom_overlap_h = 38
@@ -260,6 +285,10 @@ profiles:onProfileExecute("Text", {qm_show = false})
 assert(sent_setting("embedded_css") ~= nil and sent_setting("zoom_overlap_h") == nil)
 assert(sent_setting("line_spacing") == 137 and sent_setting("zoom_overlap_v") == nil)
 assert(sent_setting("font_size") == 31.5 and sent_setting("render_dpi") == 167)
+local applied_margins = sent_setting("h_page_margins")
+assert(applied_margins[1] == 20 and applied_margins[2] == 20)
+assert(sent_setting("t_page_margin") == 83 and sent_setting("b_page_margin") == 42)
+assert(sent_setting("sync_t_b_page_margins") == 0)
 for _, item in ipairs(profiles:getSubMenuItems()) do
     if item.name == "PDF copy" then commands = item.sub_item_table; break end
 end
@@ -267,6 +296,7 @@ choose(commands, "Delete").callback(menu)
 assert(profiles.data["PDF copy"] and visible.ok_text == "Delete")
 visible.ok_callback()
 assert(profiles.data["PDF copy"] == nil)
+print("Stock saved margins: nine L/R pair presets 5–140, T/B exact 0–140 with default 15 and held step 5, and separate link flag.")
 print("Stock saved font size: 12–44, default 22, step 0.5, held step 5; content zoom presets 0/48/96/167/212/300 dpi.")
 print("Stock saved line spacing: 50–200%, default 100%, held step 5; profile-only change dispatches 137%.")
 print("Stock saved horizontal and vertical overlap: 0–84%, default 36%, held step 5; profile-only values dispatch independently.")

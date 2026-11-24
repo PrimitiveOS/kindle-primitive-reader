@@ -355,3 +355,142 @@ fn saved_font_size_and_content_zoom_keep_legacy_values_and_mask_until_explicit_a
     assert_eq!(app.viewport_request(), Some(ViewportRequest::Fixed(turn)));
     assert_eq!(open(&fixture, &fixture.book).profiles[0], app.profiles[0]);
 }
+
+#[test]
+fn saved_margins_preserve_fallbacks_link_and_mask_until_landscape_apply() {
+    use crate::reading_profiles::MarginEdge;
+
+    let fixture = Fixture::new();
+    let mut app = open(&fixture, &fixture.book);
+    let original = app.active.as_ref().unwrap().reading.config.settings;
+    app.activate(Action::Text(Settings {
+        margin: 63,
+        margin_sides: Some(71),
+        margin_right: Some(85),
+        margin_bottom: Some(42),
+        ..original
+    }))
+    .unwrap();
+    app.save_reading_profile("Harbor margins").unwrap();
+    app.edit_profile_fields(0).unwrap();
+    app.set_profile_fields(false).unwrap();
+    app.toggle_profile_field(Field::LineSpacing).unwrap();
+    app.save_profile_fields(0).unwrap();
+    let old = app.profiles[0].clone();
+    app.activate(Action::Text(original)).unwrap();
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .go_to_page(1, 0)
+        .unwrap();
+    let accepted = draw_test_candidate(&mut app, 1, LogicalTurn::Upright, "", false);
+    app.finish_viewport(accepted, ViewportDecision::Commit);
+    app.set_reading_orientation(ReadingOrientation::LandscapeLeft)
+        .unwrap();
+    let turn = LogicalTurn::Counterclockwise;
+    let accepted = draw_test_candidate(&mut app, 2, turn, "", false);
+    app.finish_viewport(accepted, ViewportDecision::Commit);
+    let before = app.active.as_ref().unwrap().reading.config.settings;
+    let location = app.current_position().unwrap();
+
+    app.show(Screen::ReadingProfile(0));
+    let edit_values = field_buttons(app.navigation_layout()).1;
+    tap(&mut app, edit_values);
+    tap_contents_item(&mut app, "Page margins");
+    assert_eq!(app.screen, Screen::ReadingProfileMargins(0));
+    assert_eq!(app.viewport_request(), Some(ViewportRequest::Fixed(turn)));
+    let rows = app.items();
+    for (row, detail) in rows.iter().zip([71, 85, 63, 42]) {
+        assert_eq!(
+            row.detail.as_deref(),
+            Some(format!("{detail} px · Excluded").as_str())
+        );
+    }
+
+    let left = ValueField::Margin(MarginEdge::Left);
+    let right = ValueField::Margin(MarginEdge::Right);
+    let top = ValueField::Margin(MarginEdge::Top);
+    let bottom = ValueField::Margin(MarginEdge::Bottom);
+    tap_contents_item(&mut app, left.label());
+    assert_eq!(app.editor.string(), "71");
+    type_value(&mut app, "1025");
+    press_key(&mut app, Key::Go);
+    assert!(app.notice.as_deref().unwrap().contains("0 px to 1024 px"));
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(app.profiles[0], old);
+    for (field, value) in [(left, "170"), (right, "90"), (top, "83")] {
+        tap_contents_item(&mut app, field.label());
+        type_value(&mut app, value);
+        press_key(&mut app, Key::Go);
+        assert_eq!(app.screen, Screen::ReadingProfileMargins(0));
+    }
+    tap_contents_item(&mut app, "Link top and bottom");
+    assert_eq!(app.profiles[0].margins_linked(), Some(true));
+    assert_eq!(app.profiles[0].value(top), Some(63.0));
+    assert_eq!(app.profiles[0].value(bottom), Some(63.0));
+
+    tap_contents_item(&mut app, bottom.label());
+    type_value(&mut app, "101");
+    let shown = draw_test_candidate(&mut app, 3, turn, "landscape-profile-bottom-margin", false);
+    app.finish_viewport(shown, ViewportDecision::Commit);
+    press_key(&mut app, Key::Go);
+    assert_eq!(app.profiles[0].value(top), Some(101.0));
+    assert_eq!(app.profiles[0].value(bottom), Some(101.0));
+    tap_contents_item(&mut app, "Link top and bottom");
+    assert_eq!(app.profiles[0].margins_linked(), Some(false));
+    tap_contents_item(&mut app, bottom.label());
+    type_value(&mut app, "33");
+    press_key(&mut app, Key::Go);
+    assert_eq!(app.profiles[0].selection(), [Field::LineSpacing]);
+    let mut expected = old;
+    let Profile::Text { preferences, .. } = &mut expected else {
+        panic!("Expected a reflow profile");
+    };
+    preferences.margin_left = Some(170);
+    preferences.margin_right = Some(90);
+    preferences.margin_top = Some(101);
+    preferences.margin_bottom = Some(33);
+    assert_eq!(app.profiles[0], expected);
+    assert_eq!(app.active.as_ref().unwrap().reading.config.settings, before);
+    assert_eq!(app.current_position(), Some(location.clone()));
+
+    let margins = |settings: Settings| {
+        [
+            settings.left_margin(),
+            settings.right_margin(),
+            settings.top_margin(),
+            settings.bottom_margin(),
+        ]
+    };
+    app.show(Screen::ReadingProfile(0));
+    tap_contents_item(&mut app, "Apply to this book");
+    let excluded = app.active.as_ref().unwrap().reading.config.settings;
+    assert_eq!(margins(excluded), margins(before));
+    assert_eq!(excluded.link_vertical_margins, before.link_vertical_margins);
+    app.edit_profile_fields(0).unwrap();
+    app.toggle_profile_field(Field::Margins).unwrap();
+    app.save_profile_fields(0).unwrap();
+    app.show(Screen::ReadingProfile(0));
+    tap_contents_item(&mut app, "Apply to this book");
+    let reading = &app.active.as_ref().unwrap().reading;
+    let book = reading.config.settings;
+    assert!(!app.viewport_needs_stage(shown));
+    assert_eq!(
+        (reading.probe.settings.width, reading.probe.settings.height),
+        (book.width, book.height)
+    );
+    assert_eq!(
+        [
+            book.left_margin(),
+            book.right_margin(),
+            book.top_margin(),
+            book.bottom_margin()
+        ],
+        [170, 90, 101, 33]
+    );
+    assert_eq!((book.width, book.height), (before.width, before.height));
+    assert_eq!(app.current_position().unwrap().anchor, location.anchor);
+    assert_eq!(app.viewport_request(), Some(ViewportRequest::Fixed(turn)));
+    assert_eq!(open(&fixture, &fixture.book).profiles[0], app.profiles[0]);
+}

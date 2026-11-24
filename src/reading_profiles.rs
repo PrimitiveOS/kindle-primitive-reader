@@ -14,7 +14,7 @@ use crate::library::{BookPreferences, FixedPreferences, FixedTileAxis};
 mod fields;
 mod values;
 pub(crate) use fields::Field;
-pub(crate) use values::ValueField;
+pub(crate) use values::{MarginEdge, ValueField};
 
 const MAX_BYTES: u64 = 32 * 1024;
 const MAX_PROFILES: usize = 16;

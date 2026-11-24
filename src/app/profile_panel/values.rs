@@ -15,8 +15,13 @@ impl Reader {
             return Vec::new();
         };
         let selection = profile.selection();
-        profile
-            .editable_values()
+        let margins = matches!(self.screen, Screen::ReadingProfileMargins(_));
+        let fields = if margins {
+            ValueField::MARGINS.as_slice()
+        } else {
+            profile.editable_values()
+        };
+        let mut items: Vec<_> = fields
             .iter()
             .filter_map(|&field| {
                 let value = profile.value(field)?;
@@ -41,7 +46,44 @@ impl Reader {
                     .detail(detail),
                 )
             })
-            .collect()
+            .collect();
+        if let Some(linked) = profile.margins_linked() {
+            if margins {
+                items.push(
+                    Item::new(
+                        "Link top and bottom",
+                        Action::ToggleProfileMarginLink(index),
+                    )
+                    .detail(if linked { "Linked" } else { "Independent" }),
+                );
+            } else {
+                items.push(
+                    Item::new(
+                        "Page margins",
+                        Action::Show(Screen::ReadingProfileMargins(index)),
+                    )
+                    .detail(
+                        if selection.contains(&crate::reading_profiles::Field::Margins) {
+                            "Left, right, top and bottom"
+                        } else {
+                            "Excluded"
+                        },
+                    ),
+                );
+            }
+        }
+        items
+    }
+
+    pub(in crate::app) fn toggle_profile_margin_link(&mut self, index: usize) -> Result<()> {
+        let mut profiles = self.profiles.clone();
+        profiles
+            .get_mut(index)
+            .ok_or("That profile is unavailable")?
+            .toggle_margin_link()?;
+        self.commit_profiles(profiles)?;
+        self.notice = None;
+        Ok(())
     }
 
     pub(in crate::app) fn draw_profile_values_button(&self, canvas: &mut Canvas) {
@@ -145,7 +187,7 @@ impl Reader {
             .ok_or("That profile is unavailable")?
             .set_value(field, value)?;
         self.commit_profiles(profiles)?;
-        self.show(Screen::ReadingProfileValues(index));
+        self.show(NumberField::ProfileValue(index, field).parent());
         Ok(())
     }
 
@@ -176,6 +218,11 @@ impl Reader {
         );
         if legacy {
             details.push_str("\nSet converts the saved pixel size to a logical size.");
+        }
+        if matches!(field, ValueField::Margin(edge) if edge.is_vertical())
+            && self.profiles.get(index).and_then(Profile::margins_linked) == Some(true)
+        {
+            details.push_str("\nTop and bottom margins are linked.");
         }
         canvas.text(
             layout.detail(Rect::new(48, LIST_Y + 428, 1168, 150), false),
