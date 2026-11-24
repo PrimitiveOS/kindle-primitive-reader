@@ -419,3 +419,95 @@ fn page_buttons_browse_long_day_lists_before_changing_the_day() {
         Screen::ReadingHistory(Page::Day(today.add_days(-1).unwrap()))
     );
 }
+
+#[test]
+fn stock_time_ranges_drill_down_and_return_to_the_same_date_list() {
+    let fixture = Fixture::new();
+    let mut app = setup(&fixture);
+    app.open_path(&fixture.book).unwrap();
+    let id = app.open_book_id().unwrap();
+    let title = app.active.as_ref().unwrap().entry.title.clone();
+    let position = app.current_position();
+    let today = Date::today();
+    for day in 0..20 {
+        seed(
+            &mut app,
+            id,
+            &title,
+            today.add_days(-day).unwrap(),
+            40 + day as u64 * 2,
+        );
+    }
+    seed(&mut app, 57, "Archive notebook", today, 65);
+    app.save().unwrap();
+    let journal = fixture.root.join("reading-history.json");
+    let persisted = fs::read(&journal).unwrap();
+
+    let tap = |app: &mut Reader, label: &str| {
+        let index = app
+            .list_window()
+            .1
+            .iter()
+            .position(|row| row.title == label)
+            .unwrap();
+        let rect = app.list_geometry().row(index);
+        assert_eq!(
+            app.input(Input::Tap((rect.x + 20) as f32, (rect.y + 20) as f32)),
+            Change::Partial
+        );
+    };
+    app.activate_reading_history(Command::Open(Some(id)))
+        .unwrap();
+    tap(&mut app, "Time range");
+    capture_test_screen(&app, &app.fonts, "READER_STATS_ROLLING_MENU", false);
+    for range in [
+        "Last week",
+        "Last month by day",
+        "Last year by day",
+        "Last year by week",
+        "All stats by month",
+    ] {
+        assert!(app.items().iter().any(|row| row.title == range));
+    }
+    tap(&mut app, "Last month by day");
+    assert_eq!(app.list_window().0, 20);
+    capture_test_screen(&app, &app.fonts, "READER_STATS_ROLLING_DAYS", false);
+    assert_eq!(app.input(Input::PageForward), Change::Partial);
+    let day = app.list_window().1[0].title.clone();
+    tap(&mut app, &day);
+    tap(&mut app, &title);
+    assert!(
+        app.items()
+            .iter()
+            .any(|row| row.title == "Continue reading")
+    );
+    app.history_back();
+    app.history_back();
+    assert_eq!(app.list_page, 1);
+    assert_eq!(app.list_window().1[0].title, day);
+    app.history_back();
+
+    tap(&mut app, "Last year by week");
+    let week = app.list_window().1[0].title.clone();
+    tap(&mut app, &week);
+    tap(&mut app, &today.label());
+    assert_eq!(app.items().len(), 2);
+    app.history_back();
+    app.history_back();
+    app.history_back();
+    tap(&mut app, "All books");
+    assert!(
+        app.items()
+            .iter()
+            .any(|row| row.title == "Archive notebook")
+    );
+    tap(&mut app, "Archive notebook");
+    assert_eq!(app.items()[1].detail.as_deref(), Some("1m 5s"));
+    for _ in 0..4 {
+        app.history_back();
+    }
+    assert_eq!(app.screen, Screen::Book);
+    assert_eq!(app.current_position(), position);
+    app.save().unwrap();
+    assert_eq!(fs::read(journal).unwrap(), persisted);
+}

@@ -18,19 +18,30 @@ Open **Tools › Reading statistics**, **Reading data › Reading statistics**, 
 
 ## Time range reports
 
-Choose **Time range › Books by week** or **Books by month**. Each period
-shows recorded reading time, distinct reading screens and the number of
-books. Tap a period to see its books, ordered by their last visit within
-that period. Open a book to see its totals and resume from its saved
-position if it is in the library. Back returns to the same report page.
-The existing book filter applies to both reports.
-[Weekly report](screenshots/reading-statistics-weekly.png) · [Monthly report](screenshots/reading-statistics-monthly.png) · [Books in a week](screenshots/reading-statistics-period-books.png)
+**Time range** shows the eight stock report choices. **All books** shows
+recorded time across the library. **Books by week** and **Books by month**
+open a period and its individual books. The last week, last month, and
+last year offer daily reports. The last year also offers weekly groups,
+and **All stats by month** includes every recorded month. Select a weekly
+or monthly total to see its days, then select a day to see the books read.
+Back restores the list and page. Continue reading resumes the selected book.
+The book filter applies to dated reports. All books uses the entire library.
+[Report menu](screenshots/reading-statistics-range-menu.png) · [Last month by day](screenshots/reading-statistics-range-days.png) · [Weekly report](screenshots/reading-statistics-weekly.png) · [Books in a week](screenshots/reading-statistics-period-books.png)
 
-Reports use each visit's local start date. Weeks run from Monday through
-Sunday, including across a year boundary. Each reread contributes time.
-A recurring screen counts once per book within the selected period.
-Undated time remains visible in the main statistics summary. These reports
-query the existing journal. [Pinned KOReader time range menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L1280-L1359) · [Pinned grouping queries](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L1793-L1836) · [Pinned books-in-period query](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L2079-L2131)
+Reports use each visit's local start date and count repeat visits toward
+elapsed time. Each screen counts once per book within the displayed group.
+Rolling cutoffs follow the stock 7-, 30-, or 365-day calculation and include
+the cutoff instant. Weekly groups follow SQLite's calendar year and Monday
+week numbering, including Week 00. Drill-down uses the dates included in
+the selected report, including a partial first week or a year boundary.
+Earlier undated time remains in the summary. [Pinned Time range callbacks](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L1303-L1448) · [Pinned SQL grouping and cutoff](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L1793-L1998)
+
+The executable Lua comparison runs the pinned menu callbacks and extracts
+its SQLite queries. An authored UTC fixture checks a visit one second before
+and exactly at the cutoff, rereads, and the New Year weekly split. Mac tests
+exercise nested reports, saved positions, screenshots and the unchanged
+history journal. Kindle verification is pending.
+[Stock comparison](../scripts/koreader-statistics-time-ranges-check.lua) · [History aggregation tests](../src/reading_stats/history/report.rs) · [Reader interaction tests](../src/app/reading_history/tests.rs)
 
 ## Reset statistics
 
@@ -76,8 +87,7 @@ Deterministic tests cover min/max boundaries, rereads, capped and uncapped total
 Reflow uses source-position reading-screen identities, so page numbers
 and totals need separate layout-change comparisons with KOReader's
 rescaling view. Reader's pace estimator has its own sample policy.
-Rolling time ranges, additional day and week breakdowns, minute-level
-day-origin editing, configurable book-span labels, local database import
-and day- or period-specific reset remain separate work. Reader records the
+Minute-level day-origin editing, configurable book-span labels, local
+statistics database import and day- or period-specific reset remain open. Reader records the
 actual pre- and post-pause portions of each visit.
 [Stock layout rescaling](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L439-L441) · [Stock pause and resume timestamps](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2694-L2732)

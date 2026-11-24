@@ -361,6 +361,7 @@ impl Screen {
             Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
             Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
             Self::NumberingValue(NumberField::FixedTileZoom(axis)) => axis.label(),
+            Self::NumberingValue(NumberField::CropMargin) => "Crop margin",
             Self::NumberingValue(NumberField::AutoTurnOverlapVertical) => "Vertical overlap",
             Self::NumberingValue(NumberField::FooterTrackMinimumWidth) => "Progress bar width",
             Self::NumberingValue(NumberField::FooterTrackMarginWidth) => "Progress bar margins",
@@ -586,6 +587,7 @@ enum Action {
     ReversePageDirection,
     CropPage,
     SemiAutoCrop,
+    SetCropMargin(u8),
     RecognizeText,
     RecognizeLanguage(String),
     ReadFixedText,
@@ -1658,6 +1660,13 @@ impl Reader {
                 .filter(|tile| tile.axis == axis)
                 .map_or(1.0, |tile| f32::from(tile.count_tenths) / 10.0);
             self.editor.text = format!("{count:.1}").chars().collect();
+            self.editor.caret = self.editor.text.len();
+        }
+        if screen == Screen::NumberingValue(NumberField::CropMargin)
+            && let Some(fixed) = &self.fixed
+        {
+            let margin = f32::from(fixed.reading.preferences().crop_margin()) / 100.0;
+            self.editor.text = format!("{margin:.2}").chars().collect();
             self.editor.caret = self.editor.text.len();
         }
         if screen == Screen::GoToPage {
@@ -3740,6 +3749,12 @@ impl Reader {
                 }
             }
             Action::SemiAutoCrop => self.start_native_pdf_crop(false)?,
+            Action::SetCropMargin(hundredths) => {
+                let fixed = self.fixed.as_mut().ok_or("Open a PDF first")?;
+                fixed.reading.set_crop_margin(hundredths)?;
+                self.show(Screen::Fixed);
+                self.record_position();
+            }
             Action::RecognizeText => self.start_ocr(None)?,
             Action::RecognizeLanguage(language) => self.start_ocr(Some(&language))?,
             Action::ReadFixedText => self.read_fixed_text(false)?,
@@ -7508,6 +7523,9 @@ impl Reader {
                 ) => ("Zoom overlap: 0 to 90%", "Set"),
                 Screen::NumberingValue(NumberField::FixedTileZoom(_)) => {
                     ("Choose 0.1 to 8.0, in steps of 0.1", "Set")
+                }
+                Screen::NumberingValue(NumberField::CropMargin) => {
+                    ("Choose 0.00 to 1.50 inches", "Set")
                 }
                 Screen::NumberingValue(NumberField::FooterTrackMinimumWidth) => {
                     ("Minimum progress bar width: 5 to 90%, in 5% steps", "Set")

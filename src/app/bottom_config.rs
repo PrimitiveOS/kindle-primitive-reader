@@ -1081,6 +1081,24 @@ impl Reader {
                         }
                         rows.push(ConfigRow::new(format!("Limit · {limit}°"), fine));
                     }
+                    if reading.crop_margin_applies() {
+                        let current = prefs.crop_margin();
+                        let presets = [5, 10, 25, 40, 55, 70, 85, 100].map(|margin| {
+                            Choice::option(
+                                format!("{:.2}", f32::from(margin) / 100.0),
+                                Action::SetCropMargin(margin),
+                                current == margin,
+                            )
+                        });
+                        let custom = Choice::link(
+                            "Custom",
+                            Action::Show(Screen::NumberingValue(NumberField::CropMargin)),
+                        );
+                        rows.push(ConfigRow::new(
+                            format!("Margin · {:.2} in", f32::from(current) / 100.0),
+                            presets.into_iter().chain([custom]),
+                        ));
+                    }
                     let tools = self
                         .scan_items()
                         .into_iter()

@@ -343,3 +343,124 @@ fn continuous_manual_and_auto_crop_switch_without_losing_source_geometry() {
     };
     assert_eq!(draft.seed.normalized(draft.size), Some(expected_seed));
 }
+
+#[test]
+fn crop_margin_adjusts_independent_strips_and_retains_source_annotations() {
+    let paths = Fixture::new();
+    let document = paths.root.join("Margin calibration.pdf");
+    fs::write(&document, authored_pdf()).unwrap();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let mut app = Reader::open(&paths.root, &paths.state, fonts.clone()).unwrap();
+    app.open_path(&document).unwrap();
+    assert_eq!(reading(&app).preferences().crop_margin(), 10);
+    let full_page = reading(&app).page_viewport();
+    app.activate(Action::SetCropMargin(55)).unwrap();
+    assert_eq!(reading(&app).page_viewport(), full_page);
+    assert!(reading(&app).preferences().crop.is_none());
+    app.activate(Action::SetCropMargin(10)).unwrap();
+
+    app.activate(Action::FixedScroll(true)).unwrap();
+    app.activate(Action::FixedGap(24)).unwrap();
+    let odd = bounds(0.13, 0.05, 0.67, 0.95);
+    let even = bounds(0.47, 0.05, 0.88, 0.95);
+    apply_seed(&mut app, odd);
+    let first = reading(&app).preferences().crop.unwrap();
+    app.activate(Action::FixedPage(1)).unwrap();
+    apply_seed(&mut app, even);
+    app.activate(Action::FixedPage(0)).unwrap();
+    let first_height =
+        (first.y1 - first.y0) * 800.0 * reading(&app).page_viewport().unwrap().1.scale;
+    for delta in [1200.0, first_height - 1200.0 - 465.0] {
+        app.input(Input::Swipe {
+            dx: 0.0,
+            dy: -delta,
+            start_y: 1000.0,
+        });
+        app.tick(Instant::now() + Duration::from_secs(1));
+    }
+    assert_eq!(reading(&app).visible_pages().collect::<Vec<_>>(), [0, 1]);
+    let source_before = reading(&app).history_point().unwrap();
+    let first_before = reading(&app).page_viewport().unwrap().1.scale;
+
+    app.open_reading_edge(false, 520.0);
+    if app.reading_panel != Some(BarPanel::Scan) {
+        app.input(tap(app.reading_button("Scan")));
+    }
+    assert_eq!(app.reading_panel, Some(BarPanel::Scan));
+    let changed = app.reading_button_in_row("Margin · 0.10 in", "0.55");
+    assert_eq!(app.input(tap(changed)), Change::Partial);
+    assert_eq!(reading(&app).visible_pages().collect::<Vec<_>>(), [0, 1]);
+    assert!(reading(&app).page_viewport().unwrap().1.scale < first_before);
+    assert!((reading(&app).history_point().unwrap().y - source_before.y).abs() < 0.03);
+    capture_test_screen(&app, &fonts, "READER_CROP_MARGIN_FRAME", false);
+
+    let custom = app.reading_button_in_row("Margin · 0.55 in", "Custom");
+    assert_eq!(app.input(tap(custom)), Change::Partial);
+    assert_eq!(app.screen, Screen::NumberingValue(NumberField::CropMargin));
+    assert_eq!(app.editor.string(), "0.55");
+    app.editor.text = "1.501".chars().collect();
+    assert!(app.apply_numbering_input(NumberField::CropMargin).is_err());
+    assert_eq!(reading(&app).preferences().crop_margin(), 55);
+    app.editor.text = "0.37".chars().collect();
+    app.apply_numbering_input(NumberField::CropMargin).unwrap();
+    assert_eq!(app.screen, Screen::Fixed);
+    assert_eq!(reading(&app).preferences().crop_margin(), 37);
+    assert_eq!(reading(&app).visible_pages().collect::<Vec<_>>(), [0, 1]);
+    capture_test_screen(&app, &fonts, "READER_CROP_MARGIN_STRIPS", false);
+
+    let retained = bounds(0.69, 0.22, 0.76, 0.24);
+    let clipped = bounds(0.075, 0.1675, 0.115, 0.188);
+    let active = app.fixed.as_ref().unwrap();
+    app.library
+        .remember(&active.entry, active.id, &active.entry.title)
+        .pdf_highlights
+        .push(PdfHighlight {
+            created_at: None,
+            style: Default::default(),
+            color: Default::default(),
+            page: 1,
+            bounds: vec![retained],
+            text: "Source note".into(),
+            note: Some("Eastern basin".into()),
+            continuation: Vec::new(),
+        });
+    let saved_view = reading(&app).preferences();
+    app.save().unwrap();
+    drop(app);
+    let mut reopened = Reader::open(&paths.root, &paths.state, fonts).unwrap();
+    reopened.open_path(&document).unwrap();
+    assert_eq!(reading(&reopened).preferences(), saved_view);
+    assert_eq!(
+        reading(&reopened).visible_pages().collect::<Vec<_>>(),
+        [0, 1]
+    );
+    assert!(reading(&reopened).visible_rectangle(1, clipped).is_none());
+    let note = reading(&reopened)
+        .visible_rectangle(1, retained)
+        .unwrap()
+        .center();
+    reopened.input(Input::Tap(note.x as f32, note.y as f32));
+    assert!(reopened.saved_popup.take().is_some());
+    let links = reading(&reopened).visible_links();
+    assert_eq!(links.len(), 1);
+    let link = reading(&reopened)
+        .visible_rectangle(1, links[0].bounds)
+        .unwrap()
+        .center();
+    reopened.input(Input::Tap(link.x as f32, link.y as f32));
+    assert_eq!(reading(&reopened).page(), 2);
+    reopened.activate(Action::ReturnToLocation).unwrap();
+
+    reopened.activate(Action::CropPage).unwrap();
+    let draft = reopened.semi_auto_crop.as_mut().unwrap();
+    draft.seed = Seed::from_normalized(odd, draft.size);
+    reopened.input(tap(APPLY));
+    let manual = reading(&reopened).page_viewport();
+    reopened.activate(Action::SetCropMargin(100)).unwrap();
+    assert_eq!(reading(&reopened).page_viewport(), manual);
+    assert_eq!(reading(&reopened).preferences().crop, Some(odd));
+    assert_eq!(reading(&reopened).preferences().crop_margin(), 100);
+}

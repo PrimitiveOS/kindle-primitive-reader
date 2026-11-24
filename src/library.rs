@@ -47,6 +47,8 @@ pub const MAX_SCAN_WHITE_LEVEL: u8 = 254;
 pub(crate) const SCAN_GAMMA_DEFAULT: u16 = 10;
 pub(crate) const SCAN_GAMMA_MIN: u16 = 8;
 pub(crate) const SCAN_GAMMA_MAX: u16 = 500;
+pub(crate) const DEFAULT_CROP_MARGIN: u8 = 10;
+pub(crate) const MAX_CROP_MARGIN: u8 = 150;
 const MIN_CROP_SIZE: f32 = 0.025;
 const BACKUP_VERSION: u32 = 1;
 const MAX_BACKUP_BOOKS: usize = 16_384;
@@ -715,6 +717,8 @@ pub struct FixedPreferences {
     pub epub_right_to_left: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crop: Option<PdfTextRect>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crop_margin_hundredths: Option<u8>,
     #[serde(skip_serializing_if = "is_false")]
     pub semi_auto_crop: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -729,6 +733,10 @@ pub enum ContinuousCrop {
 }
 
 impl FixedPreferences {
+    pub(crate) fn crop_margin(self) -> u8 {
+        self.crop_margin_hundredths.unwrap_or(DEFAULT_CROP_MARGIN)
+    }
+
     pub fn zoom_overlap_h(self) -> u8 {
         self.zoom_overlap_h.unwrap_or(40)
     }
@@ -775,6 +783,9 @@ impl FixedPreferences {
             offset_x: normalized_offset(f64::from(self.offset_x)),
             offset_y: normalized_offset(f64::from(self.offset_y)),
             continuous_crop: self.continuous_crop.filter(|_| !self.semi_auto_crop),
+            crop_margin_hundredths: self
+                .crop_margin_hundredths
+                .filter(|&value| value != DEFAULT_CROP_MARGIN && value <= MAX_CROP_MARGIN),
             crop: if self.continuous_crop.is_some()
                 && !self.semi_auto_crop
                 && !(width_fit && self.continuous)
@@ -849,6 +860,10 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                 .get("crop")
                 .and_then(|value| serde_json::from_value(value.clone()).ok())
                 .filter(valid_crop),
+            crop_margin_hundredths: values
+                .get("crop_margin_hundredths")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u8::try_from(value).ok()),
             semi_auto_crop: switch("semi_auto_crop"),
             continuous_crop: values
                 .get("continuous_crop")
@@ -3616,6 +3631,7 @@ mod tests {
                 epub_spread: None,
                 epub_right_to_left: None,
                 crop: None,
+                crop_margin_hundredths: None,
                 semi_auto_crop: false,
                 continuous_crop: None,
             }

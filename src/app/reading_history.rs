@@ -1,5 +1,6 @@
 //! Reading statistics, reports, a month calendar and clipped day timelines.
 mod calendar;
+mod ranges;
 mod report;
 mod reset;
 use super::{Action, Canvas, Change, HEIGHT, Input, Item, Reader, Rect, Result, Screen, WIDTH};
@@ -26,6 +27,7 @@ pub(super) enum Page {
     Summary,
     Daily,
     TimeRange,
+    Range(ranges::Page),
     Periods(Period),
     PeriodBooks(Period, Date),
     PeriodBook(Period, Date, u64),
@@ -44,6 +46,8 @@ impl Page {
             Self::Summary => "Reading statistics",
             Self::Daily => "Daily reading history",
             Self::TimeRange => "Time range",
+            Self::Range(page) => page.title(),
+            Self::Periods(Period::Day) => "Books by day",
             Self::Periods(Period::Week) => "Books by week",
             Self::Periods(Period::Month) => "Books by month",
             Self::PeriodBooks(_, _) => "Books read",
@@ -79,6 +83,7 @@ pub(super) struct View {
     day_back: Page,
     run_page: usize,
     report: report::ReportView,
+    ranges: ranges::View,
     reset_list_page: usize,
 }
 impl Default for View {
@@ -90,6 +95,7 @@ impl Default for View {
             day_back: Page::Calendar,
             run_page: 0,
             report: Default::default(),
+            ranges: Default::default(),
             reset_list_page: 0,
         }
     }
@@ -262,6 +268,7 @@ impl Reader {
             Page::Summary => (self.history_view.back, None),
             Page::Day(_) => (Screen::ReadingHistory(self.history_view.day_back), None),
             Page::BookDay(day, _) => (Screen::ReadingHistory(Page::Day(day)), None),
+            Page::Range(page) => self.history_view.ranges.back(page),
             Page::Periods(_) => (Screen::ReadingHistory(Page::TimeRange), None),
             Page::Resets => (Screen::ReadingHistory(Page::Options), None),
             Page::ResetBooks => (Screen::ReadingHistory(Page::Resets), None),
@@ -519,6 +526,7 @@ impl Reader {
                 );
             }
             Page::TimeRange
+            | Page::Range(_)
             | Page::Periods(_)
             | Page::PeriodBooks(_, _)
             | Page::PeriodBook(_, _, _) => {

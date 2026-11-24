@@ -126,7 +126,7 @@ fn scan_margin_specks_match_the_source_geometry_controls_from_the_stock_runtime(
         }
         let pdf = Pdf::open(bytes).unwrap();
         assert_eq!(pdf.page_size(0).unwrap(), case.size, "{}", case.name);
-        let area = detect(&pdf, 0, Some(seed(case.size)), 1264).unwrap();
+        let area = detect(&pdf, 0, Some(seed(case.size)), 1264, 10).unwrap();
         let native = Seed::from_normalized(area, case.size);
         let edges = [native.x0, native.y0, native.x1, native.y1];
         let max_difference = edges

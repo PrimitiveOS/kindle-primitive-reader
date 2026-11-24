@@ -100,13 +100,22 @@ pub(crate) fn detect(
     page: usize,
     seed: Option<Seed>,
     screen_width: u32,
+    margin_hundredths: u8,
 ) -> crate::Result<PdfTextRect> {
     let size = pdf.page_size(page)?;
     let area = seed
         .and_then(|seed| seed.normalized(size))
         .unwrap_or(FULL_PAGE);
     Ok(detect_ink(pdf, page, area, size, true)?
-        .and_then(|ink| padded_native_bounds(ink, size, screen_width))
+        .and_then(|ink| {
+            padded_native_bounds(
+                ink,
+                size,
+                screen_width,
+                margin_hundredths,
+                BoundsMode::Seeded,
+            )
+        })
         .unwrap_or(area))
 }
 
@@ -115,10 +124,19 @@ pub(crate) fn full_auto(
     page: usize,
     seed: Option<Seed>,
     screen_width: u32,
+    margin_hundredths: u8,
 ) -> crate::Result<PdfTextRect> {
     let size = pdf.page_size(page)?;
     let detected = detect_ink(pdf, page, FULL_PAGE, size, true)?
-        .and_then(|ink| padded_native_bounds(ink, size, screen_width))
+        .and_then(|ink| {
+            padded_native_bounds(
+                ink,
+                size,
+                screen_width,
+                margin_hundredths,
+                BoundsMode::FullPage,
+            )
+        })
         .filter(|crop| crop.x1 - crop.x0 > 0.1 || crop.y1 - crop.y0 > 0.1);
     match detected {
         Some(area) => Ok(area),
@@ -271,10 +289,17 @@ fn bounds(pixels: &[u8], width: usize, area: PdfTextRect) -> Option<PdfTextRect>
     })
 }
 
+enum BoundsMode {
+    Seeded,
+    FullPage,
+}
+
 fn padded_native_bounds(
     ink: PdfTextRect,
     size: (f32, f32),
     screen_width: u32,
+    margin_hundredths: u8,
+    mode: BoundsMode,
 ) -> Option<PdfTextRect> {
     let mut points = Seed::from_normalized(ink, size);
     // Use the centers of the first and last native samples.
@@ -285,15 +310,29 @@ fn padded_native_bounds(
     if points.x0 >= points.x1 || points.y0 >= points.y1 {
         return None;
     }
-    // On the 300-dpi reference display, 0.1 inch of reserved screen
-    // width fits across both margins after the content scales up.
-    const SCREEN_MARGIN: f32 = 30.0;
-    let screen_fraction = SCREEN_MARGIN / (screen_width as f32 - SCREEN_MARGIN);
+    // The Oasis 3 has a 300-dpi display. Convert inches to the total width
+    // reserved across both sides, then project that width back to source points.
+    const OASIS_DPI: f32 = 300.0;
+    let margin = f32::from(margin_hundredths) * OASIS_DPI / 100.0;
+    let screen_fraction = margin / (screen_width as f32 - margin).max(1.0);
     let half_margin = (points.x1 - points.x0) * screen_fraction * 0.5;
     points.x0 -= half_margin;
     points.x1 += half_margin;
     points.y0 -= half_margin;
     points.y1 += half_margin;
+    match mode {
+        BoundsMode::FullPage => {
+            points.x1 = points.x1.min(size.0 - 1.0);
+            points.y1 = points.y1.min(size.1 - 1.0);
+        }
+        BoundsMode::Seeded => {
+            let width = points.x1 - points.x0.max(0.0);
+            let height = points.y1 - points.y0.max(0.0);
+            if width > size.0 || height > size.1 {
+                return Some(FULL_PAGE);
+            }
+        }
+    }
     let rect = points.normalized(size)?;
     let (w, h) = (rect.x1 - rect.x0, rect.y1 - rect.y0);
     (!(w < 0.1 && h < 0.1)).then_some(rect)
@@ -348,6 +387,54 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn configurable_crop_margin_matches_stock_padding_and_clipped_fit() {
+        let pdf = Pdf::open(fixture()).unwrap();
+        let assert_points = |rect: PdfTextRect, expected: [f32; 4]| {
+            let b = Seed::from_normalized(rect, SIZE);
+            for (actual, expected) in [b.x0, b.y0, b.x1, b.y1].into_iter().zip(expected) {
+                assert!((actual - expected).abs() < 0.002, "{actual} != {expected}");
+            }
+        };
+        let tight = Seed {
+            x0: 165.0,
+            y0: 145.0,
+            x1: 412.0,
+            y1: 655.0,
+        };
+        for (margin, expected) in [
+            (0, [170.0, 150.0, 409.0, 649.0]),
+            (10, [167.09481, 147.09481, 411.90518, 651.90521]),
+            (55, [152.05869, 132.05869, 426.94131, 666.94128]),
+            (150, [103.93735, 83.93735, 475.06265, 715.06262]),
+        ] {
+            assert_points(
+                detect(&pdf, 0, Some(odd_seed()), 1264, margin).unwrap(),
+                expected,
+            );
+            assert_points(
+                detect(&pdf, 0, Some(tight), 1264, margin).unwrap(),
+                expected,
+            );
+        }
+        for (margin, expected) in [
+            (0, [120.0, 120.0, 589.0, 685.0]),
+            (10, [114.29903, 114.29903, 594.70099, 690.70099]),
+            (55, [84.79300, 84.79300, 599.0, 720.20703]),
+            (150, [0.0, 0.0, 599.0, 799.0]),
+        ] {
+            assert_points(
+                full_auto(&pdf, 1, Some(even_seed()), 1264, margin).unwrap(),
+                expected,
+            );
+        }
+        let full_seed = Seed::from_normalized(FULL_PAGE, SIZE);
+        assert_eq!(
+            detect(&pdf, 1, Some(full_seed), 1264, 150).unwrap(),
+            FULL_PAGE
+        );
+    }
+
+    #[test]
     fn continuous_manual_and_auto_match_stock_native_bounds() {
         let pdf = Pdf::open(fixture()).unwrap();
         let mut seeds = Seeds::default();
@@ -372,15 +459,15 @@ pub(crate) mod tests {
             [60.0, 70.0, 550.0, 740.0],
         );
         check(
-            full_auto(&pdf, 0, seeds.get(0), 1264).unwrap(),
+            full_auto(&pdf, 0, seeds.get(0), 1264, 10).unwrap(),
             [9.199, 103.199, 413.801, 653.801],
         );
         check(
-            full_auto(&pdf, 1, seeds.get(1), 1264).unwrap(),
+            full_auto(&pdf, 1, seeds.get(1), 1264, 10).unwrap(),
             [114.299, 114.299, 594.701, 690.701],
         );
         check(
-            full_auto(&pdf, 3, seeds.get(3), 1264).unwrap(),
+            full_auto(&pdf, 3, seeds.get(3), 1264, 10).unwrap(),
             [80.0, 80.0, 530.0, 745.0],
         );
         check(manual(&pdf, 1, None).unwrap(), [120.0, 120.0, 590.0, 686.0]);
@@ -423,7 +510,7 @@ pub(crate) mod tests {
             (2, odd_seed(), [197.70259, 217.70259, 391.2974, 581.2974]),
             (3, even_seed(), [80.0, 80.0, 530.0, 745.0]),
         ] {
-            let bounds = detect(&pdf, page, Some(seed), 1264).unwrap();
+            let bounds = detect(&pdf, page, Some(seed), 1264, 10).unwrap();
             let bounds = Seed::from_normalized(bounds, SIZE);
             let edges = [bounds.x0, bounds.y0, bounds.x1, bounds.y1];
             eprintln!("semi-auto-source-bounds page={} {edges:?}", page + 1);
@@ -489,8 +576,14 @@ pub(crate) mod tests {
         let area = seed
             .normalized(size)
             .expect("The seed needs a usable width and height");
-        let crop = detect(&pdf, 0, Some(seed), 1264)
-            .unwrap_or_else(|_| panic!("Could not crop the selected PDF's first page"));
+        let crop = detect(
+            &pdf,
+            0,
+            Some(seed),
+            1264,
+            crate::library::DEFAULT_CROP_MARGIN,
+        )
+        .unwrap_or_else(|_| panic!("Could not crop the selected PDF's first page"));
         let width = crop.x1 - crop.x0;
         let height = crop.y1 - crop.y0;
         assert!((0.025..=1.0).contains(&width) && (0.025..=1.0).contains(&height));

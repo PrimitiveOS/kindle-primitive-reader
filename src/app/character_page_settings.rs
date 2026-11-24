@@ -2,7 +2,7 @@
 use super::{
     Action, ActiveBook, Change, Item, Reader, SEARCH_DELAY, SEARCH_REFRESH, Screen, position,
 };
-use crate::library::FixedTileAxis;
+use crate::library::{FixedTileAxis, MAX_CROP_MARGIN};
 use crate::{Result, epub::Book, library::DocumentFormat, synthetic_pages::CharacterPages};
 use primitive_app::with_storage;
 use std::{borrow::Cow, io, path::PathBuf, time::Instant};
@@ -20,6 +20,7 @@ pub(super) enum NumberField {
     AutoTurnOverlapHorizontal,
     AutoTurnOverlapVertical,
     FixedTileZoom(FixedTileAxis),
+    CropMargin,
     FooterTrackMinimumWidth,
     FooterTrackMarginWidth,
     FooterBatteryHideThreshold,
@@ -27,6 +28,24 @@ pub(super) enum NumberField {
     FooterContainerHeight,
     FooterContainerBottomMargin,
     FooterCustomTextRepetitions,
+}
+
+fn parse_crop_margin(value: &str) -> Option<u8> {
+    let value = value.trim();
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    let whole: u8 = if whole.is_empty() && !fraction.is_empty() {
+        0
+    } else {
+        whole.parse().ok()?
+    };
+    let fraction = match fraction.as_bytes() {
+        [] => 0,
+        [tens @ b'0'..=b'9'] => (tens - b'0') * 10,
+        [tens @ b'0'..=b'9', units @ b'0'..=b'9'] => (tens - b'0') * 10 + units - b'0',
+        _ => return None,
+    };
+    let hundredths = whole.checked_mul(100)?.checked_add(fraction)?;
+    (hundredths <= MAX_CROP_MARGIN).then_some(hundredths)
 }
 
 impl NumberField {
@@ -40,7 +59,7 @@ impl NumberField {
             | Self::WordSpacing(_) => Screen::Book,
             Self::AutoTurn => Screen::AutoTurn,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
-            Self::FixedTileZoom(_) => Screen::Fixed,
+            Self::FixedTileZoom(_) | Self::CropMargin => Screen::Fixed,
             Self::FooterTrackMinimumWidth
             | Self::FooterTrackMarginWidth
             | Self::FooterBatteryHideThreshold
@@ -214,6 +233,11 @@ impl Reader {
             };
             return self.activate(Action::SetFixedTileZoom(axis, count));
         }
+        if field == NumberField::CropMargin {
+            let margin = parse_crop_margin(&value)
+                .ok_or("Enter 0.00 to 1.50 inches with up to two decimal places")?;
+            return self.activate(Action::SetCropMargin(margin));
+        }
         if field == NumberField::AutoTurn {
             let seconds = value
                 .trim()
@@ -341,7 +365,9 @@ impl Reader {
             NumberField::LineSpacing(owner) => return self.apply_line_spacing_input(owner),
             NumberField::WordSpacing(draft) => return self.apply_word_spacing_input(draft),
             NumberField::AutoTurn => unreachable!("handled above"),
-            NumberField::FixedTileZoom(_) => unreachable!("handled above"),
+            NumberField::FixedTileZoom(_) | NumberField::CropMargin => {
+                unreachable!("handled above")
+            }
             NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical => {
                 unreachable!("handled above")
             }
