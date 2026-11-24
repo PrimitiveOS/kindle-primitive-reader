@@ -107,6 +107,12 @@ impl Reader {
             )
             .detail(if !levels.has_ignored() {
                 "Turn off a level to enable this option"
+            } else if self.has_whole_book_marker_coordinates() {
+                if self.chapter_pages_use_edition_labels() {
+                    "Chapter jumps and reading time use the included levels"
+                } else {
+                    "Chapter jumps, pages left, and reading time use the included levels"
+                }
             } else {
                 "Previous and next chapter use the included levels"
             }),

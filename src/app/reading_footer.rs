@@ -1,9 +1,11 @@
 //! Reading status shares the existing compact page footer with document controls.
 use super::character_page_settings::NumberField;
+use super::progress_markers::MarkerPages;
 use super::{Action, ActiveFixed, Item, Reader, Screen};
 use crate::Probe;
 use crate::fixed_session::FixedReading;
 use crate::library::Bookmark;
+use crate::library::hidden_flows::PageFlows;
 use crate::reading_controls::{
     FooterAlignment, FooterItem, FooterSymbolStyle, FooterTrackPosition, HeaderBattery,
     ProgressScope, ReadingControls, StatusBar, TopHeader,
@@ -173,6 +175,7 @@ struct Progress<'a> {
     section_name: &'a str,
     section_page: usize,
     section_len: usize,
+    bound_screen_pages_left: Option<usize>,
     book_pages_left: usize,
     future_pages_estimated: bool,
     // Fixed documents use physical pages. Reflow estimates weight spine items by source size.
@@ -256,6 +259,7 @@ impl<'a> Progress<'a> {
             section_name: name,
             section_page: page - start + 1,
             section_len: end - start,
+            bound_screen_pages_left: None,
             book_pages_left: count - page - 1,
             future_pages_estimated: false,
             book_fraction: (page + 1) as f64 / count as f64,
@@ -296,6 +300,43 @@ impl<'a> Progress<'a> {
 
     fn pages_left(&self) -> usize {
         self.section_len - self.section_page
+    }
+
+    fn screen_pages_left(&self) -> usize {
+        self.bound_screen_pages_left
+            .unwrap_or_else(|| self.pages_left())
+    }
+}
+
+fn bound_chapter_pages_left(
+    markers: &MarkerPages,
+    page: usize,
+    flows: Option<&PageFlows>,
+) -> usize {
+    let next = markers
+        .starts
+        .get(markers.starts.partition_point(|&at| at <= page));
+    let unread = page.saturating_add(1)..next.copied().unwrap_or(markers.count);
+    let Some(flows) = flows else {
+        return unread.len();
+    };
+    let flow = flows.flow(page);
+    if next.is_some() {
+        // A real next chapter counts only regular pages when reading the
+        // regular flow. Inside a hidden flow, use the full screen-page range.
+        return if flow == 0 {
+            flows.count_in(0, unread)
+        } else {
+            unread.len()
+        };
+    }
+    // With no subsequent marker, use the document's remaining reading flow.
+    // The current hidden section can be finished before rejoining regular pages.
+    let in_current = flows.count_in(flow, unread.clone());
+    if flow == 0 {
+        in_current
+    } else {
+        in_current + flows.count_in(0, unread)
     }
 }
 
@@ -770,6 +811,7 @@ impl Reader {
                     sections,
                 );
             }
+            progress.bound_screen_pages_left = self.selected_chapter_pages_left(&progress, last);
             return Some(progress);
         }
         let reading = &self.active.as_ref()?.reading;
@@ -817,8 +859,43 @@ impl Reader {
                 }
                 _ => (ch as f64 + progress.book_fraction) / probe.chapter_count() as f64,
             };
+        } else {
+            progress.bound_screen_pages_left =
+                self.selected_chapter_pages_left(&progress, reading.last_visible_page());
         }
         Some(progress)
+    }
+
+    fn selected_chapter_pages_left(&self, progress: &Progress<'_>, page: usize) -> Option<usize> {
+        let state = self.library.state(self.open_book_id()?)?;
+        let levels = &state.contents_depths;
+        if !levels.bind_navigation || !levels.has_ignored() {
+            return None;
+        }
+        let markers = self.whole_book_marker_pages(true)?;
+        let flows = match &progress.book_ticks {
+            Ticks::FlowPages(_, flows, _) => Some(flows),
+            _ => None,
+        };
+        Some(bound_chapter_pages_left(&markers, page, flows))
+    }
+
+    pub(super) fn chapter_pages_use_edition_labels(&self) -> bool {
+        self.publisher_footer_enabled()
+            && self
+                .active
+                .as_ref()
+                .is_some_and(|book| book.page_labels() > 0)
+    }
+
+    fn displayed_chapter_pages_left(&self, progress: &Progress<'_>) -> usize {
+        // Printed and character-count indices need their own section mapping.
+        // Duration still uses the exactly resolved screen-page count.
+        if self.chapter_pages_use_edition_labels() {
+            progress.pages_left()
+        } else {
+            progress.screen_pages_left()
+        }
     }
 
     pub(super) fn status_caption(&self) -> Option<String> {
@@ -1021,7 +1098,7 @@ impl Reader {
     pub(super) fn alarm_progress(&self, token: char) -> Option<String> {
         let progress = self.footer_progress()?;
         match token {
-            'l' => Some(progress.pages_left().to_string()),
+            'l' => Some(self.displayed_chapter_pages_left(&progress).to_string()),
             'C' => Some(progress.section_name.to_owned()),
             'P' => Some(format!(
                 "{:.0}",
@@ -1037,7 +1114,7 @@ impl Reader {
                 let pages = if token == 'H' {
                     progress.book_pages_left
                 } else {
-                    progress.pages_left()
+                    progress.screen_pages_left()
                 };
                 Some(super::reading_time(
                     (self.pace.rate(id) * pages as f64).round() as u64,
@@ -1083,7 +1160,7 @@ impl Reader {
             let (pages, unit) = if scope == ProgressScope::Book {
                 (p.book_pages_left, "book")
             } else {
-                (p.pages_left(), "chapter")
+                (p.screen_pages_left(), "chapter")
             };
             let id = self
                 .fixed
@@ -1117,7 +1194,7 @@ impl Reader {
                 "{percentage} of book{separator}{}{separator}{} left",
                 printed().unwrap_or_else(|| format!("{} / {}", p.section_page, p.section_len)),
                 pages_left_display(
-                    p.pages_left(),
+                    self.displayed_chapter_pages_left(&p),
                     self.controls.footer_pages_left_include_current,
                 )
             ));
@@ -1130,23 +1207,17 @@ impl Reader {
                 "Chapter {} of {} - Page {} of {}",
                 p.section_index, p.section_count, p.section_page, p.section_len,
             )),
-            StatusBar::Remaining => Some(format!(
-                "{}{separator}{} {} left",
-                p.section_name,
-                pages_left_display(
-                    p.pages_left(),
+            StatusBar::Remaining => {
+                let pages_left = pages_left_display(
+                    self.displayed_chapter_pages_left(&p),
                     self.controls.footer_pages_left_include_current,
-                ),
-                if pages_left_display(
-                    p.pages_left(),
-                    self.controls.footer_pages_left_include_current,
-                ) == 1
-                {
-                    "page"
-                } else {
-                    "pages"
-                }
-            )),
+                );
+                let unit = if pages_left == 1 { "page" } else { "pages" };
+                Some(format!(
+                    "{}{separator}{pages_left} {unit} left",
+                    p.section_name
+                ))
+            }
             _ => None,
         }
     }
@@ -1163,13 +1234,13 @@ impl Reader {
             let pages = if scope == ProgressScope::Book {
                 progress.book_pages_left
             } else {
-                progress.pages_left()
+                progress.screen_pages_left()
             };
             let seconds = (self.pace.rate(id) * pages as f64).round() as u64;
             super::reading_time(seconds)
         };
         let left_in_chapter = pages_left_display(
-            progress.pages_left(),
+            self.displayed_chapter_pages_left(progress),
             self.controls.footer_pages_left_include_current,
         );
         let left_in_book = pages_left_display(
@@ -1217,7 +1288,7 @@ impl Reader {
                     .to_string()
             });
         let book_time_left = time_left_for(self.pace.rate(id), progress.book_pages_left);
-        let chapter_time_left = time_left_for(self.pace.rate(id), progress.pages_left());
+        let chapter_time_left = time_left_for(self.pace.rate(id), progress.screen_pages_left());
         let battery = std::cell::OnceCell::new();
         let battery = || battery.get_or_init(primitive_device::battery_status);
         let clock = std::cell::OnceCell::new();
@@ -1240,13 +1311,7 @@ impl Reader {
                 }),
                 't' => Some(page_count_label.clone()),
                 'c' => Some(current_page_label.clone()),
-                'l' => Some(
-                    pages_left_display(
-                        progress.pages_left(),
-                        self.controls.footer_pages_left_include_current,
-                    )
-                    .to_string(),
-                ),
+                'l' => Some(left_in_chapter.to_string()),
                 'p' => Some((progress.book_fraction * 100.0).round().to_string()),
                 'H' => Some(book_time_left.clone()),
                 'C' => Some(progress.section_name.to_owned()),
@@ -2344,6 +2409,14 @@ mod tests {
             .book_ticks
             .draw(Some(&[3, 5, 9]), |position| ticks.push(position));
         assert_eq!(ticks, [2. / 7.]);
+        let selected = MarkerPages {
+            starts: vec![8],
+            count: 12,
+        };
+        assert_eq!(bound_chapter_pages_left(&selected, 0, Some(&flows)), 4);
+        assert_eq!(bound_chapter_pages_left(&selected, 3, Some(&flows)), 4);
+        assert_eq!(bound_chapter_pages_left(&selected, 8, Some(&flows)), 3);
+        assert_eq!(bound_chapter_pages_left(&selected, 11, Some(&flows)), 0);
         let mut note = Progress::from_pages(3, 12, sections, "Book");
         note.apply_flows(flows, 3, 3, 12, sections);
         assert_eq!(

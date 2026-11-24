@@ -1,6 +1,8 @@
 use super::*;
+use crate::app::chapter_navigation::LevelSetting;
 use crate::app::tests::{Fixture, capture_test_screen};
 use crate::app::{Action, HEIGHT, ReadingPosition, WIDTH};
+use crate::epub::{Destination, TocEntry};
 use crate::reading_controls::{FooterTrackPosition, ProgressScope, StatusBar};
 use primitive_ui::Canvas;
 use std::{fs, io::Write, path::Path};
@@ -99,6 +101,64 @@ fn pdf_progress_markers_filter_before_deduplication_and_keep_the_footer_layout()
     assert_eq!(frame(&app), baseline);
 }
 
+#[test]
+fn pdf_chapter_pages_and_time_follow_the_binding_without_replacing_the_title() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Field guide to the coast.pdf");
+    write_pdf(&path);
+    let mut app = open(&fixture, &path);
+    app.follow_fixed(3, None).unwrap();
+    app.controls.status_bar = StatusBar::Chapter;
+    app.controls.footer_pages_left_include_current = false;
+    let chapter_caption = app.status_caption().unwrap();
+    let track = app.footer_track_rect(0);
+    assert_eq!(app.alarm_progress('C').as_deref(), Some("Salt marsh"));
+    assert_eq!(app.alarm_progress('l').as_deref(), Some("0"));
+
+    app.set_chapter_level(LevelSetting::ToggleLevel(0)).unwrap();
+    assert_eq!(app.alarm_progress('l').as_deref(), Some("0"));
+    app.set_chapter_level(LevelSetting::BindNavigation).unwrap();
+    assert_eq!(
+        app.status_caption().as_deref(),
+        Some(chapter_caption.as_str())
+    );
+    assert_eq!(app.footer_track_rect(0), track);
+    assert_eq!(app.alarm_progress('C').as_deref(), Some("Salt marsh"));
+    assert_eq!(app.alarm_progress('l').as_deref(), Some("2"));
+    assert_eq!(app.alarm_progress('h').as_deref(), Some("2 min"));
+
+    app.controls.status_bar = StatusBar::Remaining;
+    assert_eq!(
+        app.status_caption().as_deref(),
+        Some("Salt marsh - 2 pages left")
+    );
+    capture_test_screen(
+        &app,
+        &app.fonts,
+        "READER_CHAPTER_REMAINDER_PAGES_FRAME",
+        false,
+    );
+    app.controls.footer_pages_left_include_current = true;
+    assert_eq!(
+        app.status_caption().as_deref(),
+        Some("Salt marsh - 3 pages left")
+    );
+    app.controls.status_bar = StatusBar::ChapterTime;
+    assert_eq!(
+        app.status_caption().as_deref(),
+        Some("2 min left in chapter")
+    );
+    capture_test_screen(
+        &app,
+        &app.fonts,
+        "READER_CHAPTER_REMAINDER_TIME_FRAME",
+        false,
+    );
+
+    app.set_chapter_level(LevelSetting::BindNavigation).unwrap();
+    assert_eq!(app.alarm_progress('l').as_deref(), Some("0"));
+}
+
 fn write_epub(path: &Path, extra_spine: bool) {
     let mut archive = zip::ZipWriter::new(fs::File::create(path).unwrap());
     let options =
@@ -170,12 +230,55 @@ fn reflow_progress_markers_reuse_local_layout_and_custom_source_anchors() {
 }
 
 #[test]
+fn single_section_chapter_metrics_bind_screen_pages_and_keep_edition_label_mode() {
+    let fixture = Fixture::new();
+    write_epub(&fixture.book, false);
+    let mut app = open(&fixture, &fixture.book);
+    let probe = &app.active.as_ref().unwrap().reading.probe;
+    let [marsh, end] = ["marsh", "end"]
+        .map(|fragment| probe.page_for(&probe.fragment(fragment).unwrap()).unwrap());
+    let count = probe.page_count();
+    app.follow_reflow_page(0, marsh).unwrap();
+    let original = (end - marsh - 1).to_string();
+    let bound = (count - marsh - 1).to_string();
+    assert_ne!(original, bound);
+    assert_eq!(app.alarm_progress('l').as_deref(), Some(original.as_str()));
+    let original_time = app.alarm_progress('h');
+    app.set_chapter_level(LevelSetting::ToggleLevel(0)).unwrap();
+    app.set_chapter_level(LevelSetting::BindNavigation).unwrap();
+    assert_eq!(app.alarm_progress('l').as_deref(), Some(bound.as_str()));
+    let bound_time = app.alarm_progress('h');
+    assert_ne!(original_time, bound_time);
+
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .probe
+        .printed_pages
+        .push(TocEntry {
+            depth: 0,
+            label: "i".into(),
+            destination: Some(Destination {
+                path: "text.xhtml".into(),
+                fragment: None,
+            }),
+        });
+    state_mut(&mut app).publisher_page_footer = true;
+    assert_eq!(app.alarm_progress('l').as_deref(), Some(original.as_str()));
+    assert_eq!(app.alarm_progress('h'), bound_time);
+}
+
+#[test]
 fn multispine_books_only_filter_the_existing_local_header_marks() {
     let fixture = Fixture::new();
     write_epub(&fixture.book, true);
     let mut app = open(&fixture, &fixture.book);
     let before = frame(&app);
+    let counters = (app.alarm_progress('l'), app.alarm_progress('h'));
     state_mut(&mut app).contents_depths.toggle(0);
+    app.set_chapter_level(LevelSetting::BindNavigation).unwrap();
+    assert_eq!((app.alarm_progress('l'), app.alarm_progress('h')), counters);
     assert!(app.whole_book_marker_pages(false).is_none());
     let active = app.active.as_ref().unwrap();
     let probe = &active.reading.probe;
