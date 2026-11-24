@@ -1092,6 +1092,39 @@ fn read_percent<'de, D: serde::Deserializer<'de>>(input: D) -> Result<Option<u8>
         .map(|number| number as u8))
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DictionaryFuzzySearch {
+    #[default]
+    Legacy,
+    Inherit,
+    Enabled,
+    Disabled,
+}
+
+impl DictionaryFuzzySearch {
+    fn is_legacy(&self) -> bool {
+        *self == Self::Legacy
+    }
+
+    pub(crate) fn from_override(value: Option<bool>) -> Self {
+        match value {
+            None => Self::Inherit,
+            Some(true) => Self::Enabled,
+            Some(false) => Self::Disabled,
+        }
+    }
+
+    pub(crate) fn override_for(self, old_word_forms: Option<bool>) -> Option<bool> {
+        match self {
+            Self::Legacy => old_word_forms,
+            Self::Inherit => None,
+            Self::Enabled => Some(true),
+            Self::Disabled => Some(false),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BookState {
     #[serde(default, skip_serializing_if = "hidden_flows::HiddenFlows::is_default")]
@@ -1157,6 +1190,8 @@ pub struct BookState {
     pub(crate) preferred_dictionaries: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) dictionary_word_forms: Option<bool>,
+    #[serde(default, skip_serializing_if = "DictionaryFuzzySearch::is_legacy")]
+    pub(crate) dictionary_fuzzy_search: DictionaryFuzzySearch,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -1237,6 +1272,7 @@ impl BookState {
             pdf_crop_seeds: Default::default(),
             preferred_dictionaries: Vec::new(),
             dictionary_word_forms: None,
+            dictionary_fuzzy_search: DictionaryFuzzySearch::Legacy,
             ocr_language: None,
             menus: Default::default(),
             bookmarks: Vec::new(),

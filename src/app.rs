@@ -7609,6 +7609,18 @@ impl Reader {
                         Action::DictionarySource(SourceAction::JustifyText) => {
                             RowAccessory::Toggle(self.dictionary_settings.justify_text)
                         }
+                        Action::DictionarySource(SourceAction::DefaultWordForms) => {
+                            RowAccessory::Toggle(self.dictionary_settings.word_forms_default())
+                        }
+                        Action::DictionarySource(SourceAction::BookWordForms) => {
+                            RowAccessory::Toggle(self.word_forms_enabled())
+                        }
+                        Action::DictionarySource(SourceAction::DefaultFuzzySearch) => {
+                            RowAccessory::Toggle(self.dictionary_settings.fuzzy_search_default())
+                        }
+                        Action::DictionarySource(SourceAction::BookFuzzySearch) => {
+                            RowAccessory::Toggle(self.fuzzy_search_enabled())
+                        }
                         Action::ChapterLevel(setting) => {
                             RowAccessory::Toggle(self.chapter_level_checked(setting))
                         }

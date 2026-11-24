@@ -1,4 +1,5 @@
 use super::*;
+use crate::library::DictionaryFuzzySearch;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -6,6 +7,8 @@ pub(super) struct SourcePreferences {
     order: Vec<PathBuf>,
     disabled: Vec<PathBuf>,
     disable_word_forms: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enable_fuzzy_search: Option<bool>,
     pub(super) large_window: bool,
     pub(super) justify_text: bool,
 }
@@ -16,6 +19,7 @@ impl Default for SourcePreferences {
             order: Vec::new(),
             disabled: Vec::new(),
             disable_word_forms: false,
+            enable_fuzzy_search: None,
             large_window: false,
             justify_text: true,
         }
@@ -23,6 +27,15 @@ impl Default for SourcePreferences {
 }
 
 impl SourcePreferences {
+    pub(super) fn word_forms_default(&self) -> bool {
+        !self.disable_word_forms
+    }
+
+    pub(super) fn fuzzy_search_default(&self) -> bool {
+        self.enable_fuzzy_search
+            .unwrap_or_else(|| self.word_forms_default())
+    }
+
     pub(super) fn paths(&self) -> (&[PathBuf], &[PathBuf]) {
         (&self.order, &self.disabled)
     }
@@ -90,6 +103,9 @@ pub(super) enum SourceAction {
     DefaultWordForms,
     BookWordForms,
     ResetBookWordForms,
+    DefaultFuzzySearch,
+    BookFuzzySearch,
+    ResetBookFuzzySearch,
     LargeWindow,
     JustifyText,
 }
@@ -117,7 +133,19 @@ impl Reader {
 
     pub(super) fn word_forms_enabled(&self) -> bool {
         self.book_word_forms()
-            .unwrap_or(!self.dictionary_settings.disable_word_forms)
+            .unwrap_or_else(|| self.dictionary_settings.word_forms_default())
+    }
+
+    fn book_fuzzy_search(&self) -> Option<bool> {
+        let state = self.library.state(self.open_book_id()?)?;
+        state
+            .dictionary_fuzzy_search
+            .override_for(state.dictionary_word_forms)
+    }
+
+    pub(super) fn fuzzy_search_enabled(&self) -> bool {
+        self.book_fuzzy_search()
+            .unwrap_or_else(|| self.dictionary_settings.fuzzy_search_default())
     }
 
     pub(super) fn lookup_sources(&self, word: &str) -> io::Result<Vec<dictionary::LookupEntry>> {
@@ -134,7 +162,7 @@ impl Reader {
     pub(super) fn start_spelling_lookup(&mut self, word: &str) {
         self.spelling_lookup = None;
         if !self.definitions.is_empty()
-            || !self.word_forms_enabled()
+            || !self.fuzzy_search_enabled()
             || !dictionary::spelling_eligible(word)
         {
             return;
@@ -242,7 +270,7 @@ impl Reader {
                 .detail(if self.dictionary_settings.disable_word_forms {
                     "Off"
                 } else {
-                    "On · inflections and similar words"
+                    "On · inflections"
                 }),
             );
             if self.open_book_id().is_some() {
@@ -263,6 +291,41 @@ impl Reader {
                     rows.push(Item::new(
                         "Use the default word forms setting",
                         Action::DictionarySource(SourceAction::ResetBookWordForms),
+                    ));
+                }
+            }
+            rows.push(
+                Item::new(
+                    "Fuzzy search by default",
+                    Action::DictionarySource(SourceAction::DefaultFuzzySearch),
+                )
+                .detail(if self.dictionary_settings.fuzzy_search_default() {
+                    "On · similar spellings"
+                } else {
+                    "Off"
+                }),
+            );
+            if self.open_book_id().is_some() {
+                let state = match (
+                    self.fuzzy_search_enabled(),
+                    self.book_fuzzy_search().is_none(),
+                ) {
+                    (true, true) => "On · default",
+                    (false, true) => "Off · default",
+                    (true, false) => "On",
+                    (false, false) => "Off",
+                };
+                rows.push(
+                    Item::new(
+                        "Fuzzy search in this book",
+                        Action::DictionarySource(SourceAction::BookFuzzySearch),
+                    )
+                    .detail(state),
+                );
+                if self.book_fuzzy_search().is_some() {
+                    rows.push(Item::new(
+                        "Use the default fuzzy search setting",
+                        Action::DictionarySource(SourceAction::ResetBookFuzzySearch),
                     ));
                 }
             }
@@ -339,19 +402,36 @@ impl Reader {
         }
         if matches!(
             action,
-            SourceAction::BookWordForms | SourceAction::ResetBookWordForms
+            SourceAction::BookWordForms
+                | SourceAction::ResetBookWordForms
+                | SourceAction::BookFuzzySearch
+                | SourceAction::ResetBookFuzzySearch
         ) {
             let id = self.open_book_id().ok_or("Open a book first")?;
-            let new =
-                matches!(action, SourceAction::BookWordForms).then(|| !self.word_forms_enabled());
-            let old = self.book_word_forms();
-            self.library
-                .state_mut(id)
-                .ok_or("Book unavailable")?
-                .dictionary_word_forms = new;
+            let word_forms = self.word_forms_enabled();
+            let fuzzy_search = self.fuzzy_search_enabled();
+            let state = self.library.state_mut(id).ok_or("Book unavailable")?;
+            let old = (state.dictionary_word_forms, state.dictionary_fuzzy_search);
+            match action {
+                SourceAction::BookWordForms | SourceAction::ResetBookWordForms => {
+                    // Freeze an old coupled override before changing just Word forms.
+                    if state.dictionary_fuzzy_search == DictionaryFuzzySearch::Legacy {
+                        state.dictionary_fuzzy_search = DictionaryFuzzySearch::from_override(old.0);
+                    }
+                    state.dictionary_word_forms =
+                        matches!(action, SourceAction::BookWordForms).then_some(!word_forms);
+                }
+                SourceAction::BookFuzzySearch | SourceAction::ResetBookFuzzySearch => {
+                    state.dictionary_fuzzy_search = DictionaryFuzzySearch::from_override(
+                        matches!(action, SourceAction::BookFuzzySearch).then_some(!fuzzy_search),
+                    );
+                }
+                _ => unreachable!(),
+            }
             self.mark_dirty();
             if let Err(error) = self.save_library() {
-                self.library.state_mut(id).unwrap().dictionary_word_forms = old;
+                let state = self.library.state_mut(id).unwrap();
+                (state.dictionary_word_forms, state.dictionary_fuzzy_search) = old;
                 return Err(error.into());
             }
             return Ok(());
@@ -359,7 +439,10 @@ impl Reader {
         let mut next = self.dictionary_settings.clone();
         let mut selected_key = None;
         if matches!(action, SourceAction::DefaultWordForms) {
+            next.enable_fuzzy_search = Some(next.fuzzy_search_default());
             next.disable_word_forms = !next.disable_word_forms;
+        } else if matches!(action, SourceAction::DefaultFuzzySearch) {
+            next.enable_fuzzy_search = Some(!next.fuzzy_search_default());
         } else if matches!(action, SourceAction::ResetOrder) {
             next.order.clear();
         } else if matches!(action, SourceAction::LargeWindow) {
@@ -437,6 +520,9 @@ impl Reader {
                 | SourceAction::DefaultWordForms
                 | SourceAction::BookWordForms
                 | SourceAction::ResetBookWordForms
+                | SourceAction::DefaultFuzzySearch
+                | SourceAction::BookFuzzySearch
+                | SourceAction::ResetBookFuzzySearch
                 | SourceAction::LargeWindow
                 | SourceAction::JustifyText => unreachable!(),
             }
@@ -642,6 +728,183 @@ mod tests {
         ));
         assert_eq!(app.screen, Screen::Book);
         assert_eq!(app.current_history_location(), passage);
+    }
+
+    #[test]
+    fn independent_fuzzy_search_in_reflow_and_pdf() {
+        let fixture = Fixture::new();
+        let dictionaries = fixture.root.join("dictionaries");
+        fs::create_dir(&dictionaries).unwrap();
+        crate::dictionary::tests::write_dictionary(
+            &dictionaries,
+            "Harbour Dictionary",
+            "sametypesequence=m\n",
+            &[
+                ("carry", b"To transport."),
+                ("stone", b"A fragment of rock."),
+            ],
+        );
+        let pdf = fixture.root.join("Cliff Survey.pdf");
+        let content = "BT /F1 14 Tf 55 60 Td (sotne carried stone) Tj ET";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Count 1 /Kids [3 0 R] /Resources << /Font << /F1 5 0 R >> >> >>"
+                .to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 120] /Contents 4 0 R >>".to_owned(),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        ];
+        fs::write(&pdf, crate::fixed::tests::pdf_objects(&objects)).unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let open = || Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        let mut app = open();
+        app.open_path(&fixture.book).unwrap();
+        let epub_origin = app.current_history_location();
+        assert!(app.fuzzy_search_enabled() && app.word_forms_enabled());
+        app.activate(Action::ShowDictionaries).unwrap();
+        row(&mut app, "Word forms in this book");
+        assert!(app.fuzzy_search_enabled());
+        assert!(app.lookup_sources("carried").unwrap().is_empty());
+        back(&mut app);
+        app.look_up("sotne").unwrap();
+        assert!(app.spelling_lookup.is_some());
+        dismiss_definition(&mut app);
+        assert!(app.spelling_lookup.is_none());
+        app.activate(Action::ShowDictionaries).unwrap();
+        row(&mut app, "Fuzzy search in this book");
+        assert!(!app.fuzzy_search_enabled());
+        back(&mut app);
+        app.look_up("sotne").unwrap();
+        assert!(app.spelling_lookup.is_none() && app.definitions.is_empty());
+        dismiss_definition(&mut app);
+        assert_eq!(app.current_history_location(), epub_origin);
+
+        app.open_path(&pdf).unwrap();
+        let pdf_origin = app.current_history_location();
+        assert!(app.fuzzy_search_enabled() && app.word_forms_enabled());
+        app.activate(Action::ShowDictionaries).unwrap();
+        row(&mut app, "Fuzzy search by default");
+        assert!(!app.fuzzy_search_enabled());
+        assert_eq!(app.lookup_sources("carried").unwrap()[0].word, "carry");
+        back(&mut app);
+        let layer = app.fixed.as_ref().unwrap().reading.page_text(0).unwrap();
+        let bounds = layer.words[0].bounds;
+        let point = hayro::kurbo::Point::new(
+            f64::from((bounds.x0 + bounds.x1) / 2.0),
+            f64::from((bounds.y0 + bounds.y1) / 2.0),
+        );
+        let selection = PdfSelection::at(0, point, layer).unwrap();
+        assert_eq!(selection.text(), "sotne");
+        app.pdf_selection = Some(selection.clone());
+        app.look_up_selection().unwrap();
+        assert!(app.spelling_lookup.is_none() && app.definitions.is_empty());
+        dismiss_definition(&mut app);
+        assert_eq!(app.current_history_location(), pdf_origin);
+
+        app.activate(Action::ShowDictionaries).unwrap();
+        row(&mut app, "Fuzzy search in this book");
+        assert!(app.fuzzy_search_enabled());
+        crate::app::tests::capture_test_screen(
+            &app,
+            &fonts,
+            "READER_FUZZY_SETTINGS_CAPTURE",
+            false,
+        );
+        back(&mut app);
+        app.pdf_selection = Some(selection);
+        app.look_up_selection().unwrap();
+        assert!(app.spelling_lookup.is_some());
+        let until = Instant::now() + Duration::from_secs(10);
+        while app.spelling_lookup.is_some() && Instant::now() < until {
+            app.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(app.definitions[0].word, "stone");
+        crate::app::tests::capture_test_screen(&app, &fonts, "READER_FUZZY_RESULT_CAPTURE", false);
+        dismiss_definition(&mut app);
+        app.look_up("stone").unwrap();
+        assert!(app.spelling_lookup.is_none());
+        assert_eq!(app.definitions[0].word, "stone");
+        dismiss_definition(&mut app);
+        app.look_up("読めなかった").unwrap();
+        assert!(app.spelling_lookup.is_none() && app.definitions.is_empty());
+        dismiss_definition(&mut app);
+        assert_eq!(app.current_history_location(), pdf_origin);
+        app.save().unwrap();
+        drop(app);
+
+        let mut app = open();
+        app.open_path(&fixture.book).unwrap();
+        assert!(!app.fuzzy_search_enabled() && !app.word_forms_enabled());
+        assert_eq!(app.current_history_location(), epub_origin);
+        app.open_path(&pdf).unwrap();
+        assert!(app.fuzzy_search_enabled() && app.word_forms_enabled());
+        assert_eq!(app.current_history_location(), pdf_origin);
+        app.activate(Action::ShowDictionaries).unwrap();
+        row(&mut app, "Use the default fuzzy search setting");
+        assert!(!app.fuzzy_search_enabled());
+        assert!(app.word_forms_enabled());
+    }
+
+    #[test]
+    fn independent_fuzzy_search_migrates_the_original_paired_choices() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        let edition = app.open_book_id().unwrap();
+        app.library
+            .state_mut(edition)
+            .unwrap()
+            .dictionary_word_forms = Some(true);
+        app.mark_dirty();
+        app.save_library().unwrap();
+        fs::write(&app.dictionary_preference, r#"{"disable_word_forms":true}"#).unwrap();
+        drop(app);
+
+        let mut app = fixture.app();
+        assert!(!app.fuzzy_search_enabled() && !app.word_forms_enabled());
+        app.open_path(&fixture.book).unwrap();
+        assert_eq!(
+            app.library.state(edition).unwrap().dictionary_fuzzy_search,
+            DictionaryFuzzySearch::Legacy
+        );
+        assert!(app.fuzzy_search_enabled() && app.word_forms_enabled());
+        app.change_source(SourceAction::BookWordForms).unwrap();
+        assert!(app.fuzzy_search_enabled() && !app.word_forms_enabled());
+        app.change_source(SourceAction::DefaultWordForms).unwrap();
+        assert!(!app.dictionary_settings.fuzzy_search_default());
+        assert!(app.dictionary_settings.word_forms_default());
+        drop(app);
+
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        assert!(app.fuzzy_search_enabled() && !app.word_forms_enabled());
+        app.change_source(SourceAction::ResetBookFuzzySearch)
+            .unwrap();
+        drop(app);
+
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        assert!(!app.fuzzy_search_enabled() && !app.word_forms_enabled());
+        app.change_source(SourceAction::ResetBookWordForms).unwrap();
+        assert!(!app.fuzzy_search_enabled() && app.word_forms_enabled());
+    }
+
+    fn dismiss_definition(app: &mut Reader) {
+        let done = app.definition_layout().1;
+        assert_eq!(
+            app.input(Input::Tap(
+                (done.x + done.w / 2) as f32,
+                (done.y + done.h / 2) as f32,
+            )),
+            Change::Partial,
+        );
     }
 
     #[test]
