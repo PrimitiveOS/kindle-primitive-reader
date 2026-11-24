@@ -258,7 +258,7 @@ impl Reader {
             .and_then(|state| state.highlight_color)
             .unwrap_or(self.controls.highlight_color)
     }
-    fn mark_color(&self, index: usize) -> Option<HighlightColor> {
+    pub(super) fn mark_color(&self, index: usize) -> Option<HighlightColor> {
         let state = self.library.state(self.open_book_id()?)?;
         if self.fixed.is_some() {
             state.pdf_highlights.get(index).map(|mark| mark.color)

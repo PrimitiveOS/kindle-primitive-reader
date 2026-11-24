@@ -6,6 +6,7 @@ use primitive_ui::{BLACK, HAIRLINE, PAPER, RowAccessory, Rows, SECONDARY, TextSt
 use super::list_density::{Geometry, fit_logical_font, list_text_pixels};
 use super::{Action, Canvas, Item, Reader, Rect, Screen};
 
+mod appearance;
 mod fit;
 mod flexible;
 use fit::TitleFit;
@@ -191,12 +192,13 @@ impl Reader {
                 );
             }
             if let Some(detail) = item.detail {
-                canvas.text(
+                appearance::draw_caption(
+                    canvas,
                     detail_bounds,
                     detail,
-                    TextStyle::new(detail_size)
-                        .break_long_words()
-                        .ink(detail_ink),
+                    detail_size,
+                    detail_ink,
+                    self.bookmark_row_color(&action.action),
                 );
             }
             if link {
@@ -211,7 +213,7 @@ impl Reader {
                     ink,
                 );
             }
-            if index + 1 < group.rows.len() {
+            if self.controls.bookmark_list_separators && index + 1 < group.rows.len() {
                 canvas.fill(
                     Rect::new(row.x + pad, row.bottom() - 2, row.w - 2 * pad, 2),
                     HAIRLINE,
