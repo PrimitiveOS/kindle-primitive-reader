@@ -182,3 +182,164 @@ fn continuous_semi_auto_crop_resolves_each_strip_and_preserves_original_taps() {
     assert!(reading(&reopened).is_continuous());
     assert_eq!(reading(&reopened).preferences().crop, Some(crop));
 }
+
+#[test]
+fn continuous_manual_and_auto_crop_switch_without_losing_source_geometry() {
+    use crate::library::ContinuousCrop;
+    let paths = Fixture::new();
+    let document = paths.root.join("Alternating crop modes.pdf");
+    fs::write(&document, authored_pdf()).unwrap();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let mut app = Reader::open(&paths.root, &paths.state, fonts.clone()).unwrap();
+    app.open_path(&document).unwrap();
+    app.activate(Action::FixedScroll(true)).unwrap();
+    app.activate(Action::FixedGap(24)).unwrap();
+    let odd = bounds(0.12, 0.12, 0.69, 0.84);
+    let even = bounds(0.45, 0.1, 0.87, 0.76);
+    for (page, rect) in [(0, odd), (1, even)] {
+        app.activate(Action::FixedPage(page)).unwrap();
+        app.activate(Action::CropPage).unwrap();
+        let draft = app.semi_auto_crop.as_mut().unwrap();
+        assert!(draft.manual);
+        draft.seed = Seed::from_normalized(rect, draft.size);
+        assert_eq!(app.input(tap(APPLY)), Change::Partial);
+        assert_eq!(app.screen, Screen::Fixed);
+        let view = reading(&app).preferences();
+        assert_eq!(view.continuous_crop, Some(ContinuousCrop::Manual));
+        assert_eq!(view.crop, Some(rect));
+        assert_eq!(view.straighten_limit, 0);
+    }
+    app.activate(Action::FixedPage(2)).unwrap();
+    assert_eq!(reading(&app).preferences().crop, Some(odd));
+    app.activate(Action::FixedPage(0)).unwrap();
+    let first_height = (odd.y1 - odd.y0) * 800.0 * reading(&app).page_viewport().unwrap().1.scale;
+    for delta in [1200.0, first_height - 1200.0 - 470.0] {
+        app.input(Input::Swipe {
+            dx: 0.0,
+            dy: -delta,
+            start_y: 1000.0,
+        });
+        app.tick(Instant::now() + Duration::from_secs(1));
+    }
+    assert_eq!(reading(&app).visible_pages().collect::<Vec<_>>(), [0, 1]);
+    capture_test_screen(&app, &fonts, "READER_CONTINUOUS_MANUAL_CROP_FRAME", false);
+    let old_view = reading(&app).preferences();
+    let old_location = app.current_history_location();
+    let font_paths = fonts
+        .iter()
+        .map(|font| font.display().to_string())
+        .collect::<Vec<_>>();
+    let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+    let old_frame = primitive_app::frame(&app, &mut canvas, false);
+    app.activate(Action::CropPage).unwrap();
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(reading(&app).preferences(), old_view);
+    assert_eq!(app.current_history_location(), old_location);
+    assert_eq!(primitive_app::frame(&app, &mut canvas, false), old_frame);
+
+    let retained = bounds(0.69, 0.22, 0.76, 0.24);
+    let clipped = bounds(0.075, 0.1675, 0.115, 0.188);
+    assert!(reading(&app).visible_rectangle(1, clipped).is_none());
+    let note = reading(&app)
+        .visible_rectangle(1, retained)
+        .unwrap()
+        .center();
+    let active = app.fixed.as_ref().unwrap();
+    app.library
+        .remember(&active.entry, active.id, &active.entry.title)
+        .pdf_highlights
+        .push(PdfHighlight {
+            created_at: None,
+            style: Default::default(),
+            color: Default::default(),
+            page: 1,
+            bounds: vec![retained],
+            text: "Eastern references".into(),
+            note: Some("An original source-page note".into()),
+            continuation: Vec::new(),
+        });
+    app.input(Input::Tap(note.x as f32, note.y as f32));
+    assert!(app.saved_popup.take().is_some());
+    let links = reading(&app).visible_links();
+    assert_eq!(links.len(), 1);
+    let link = reading(&app)
+        .visible_rectangle(1, links[0].bounds)
+        .unwrap()
+        .center();
+    app.input(Input::Tap(link.x as f32, link.y as f32));
+    assert_eq!(reading(&app).page(), 2);
+    app.activate(Action::ReturnToLocation).unwrap();
+    assert_eq!(app.current_history_location(), old_location);
+
+    app.activate(Action::CropPage).unwrap();
+    assert_eq!(app.input(tap(AUTO)), Change::Partial);
+    assert_eq!(
+        reading(&app).preferences().continuous_crop,
+        Some(ContinuousCrop::Auto)
+    );
+    assert_ne!(reading(&app).preferences().crop, Some(odd));
+    app.activate(Action::FixedPage(1)).unwrap();
+    let auto_even = reading(&app).preferences().crop.unwrap();
+    assert!(auto_even.x0 < 0.1);
+    assert!(reading(&app).visible_rectangle(1, clipped).is_some());
+    assert!(reading(&app).visible_links().len() >= 2);
+    app.save().unwrap();
+    drop(app);
+
+    let mut reopened = Reader::open(&paths.root, &paths.state, fonts).unwrap();
+    reopened.open_path(&document).unwrap();
+    assert_eq!(
+        reading(&reopened).preferences().continuous_crop,
+        Some(ContinuousCrop::Auto)
+    );
+    assert_eq!(reading(&reopened).preferences().crop, Some(auto_even));
+    reopened.activate(Action::CropPage).unwrap();
+    let draft = reopened.semi_auto_crop.unwrap();
+    assert_eq!(draft.seed.normalized(draft.size), Some(even));
+    assert_eq!(reopened.input(tap(APPLY)), Change::Partial);
+    assert_eq!(reading(&reopened).preferences().crop, Some(even));
+    reopened.activate(Action::SetFixedRotation(1)).unwrap();
+    reopened.activate(Action::SetFixedZoom(1)).unwrap();
+    let viewport = reading(&reopened).page_viewport().unwrap().1;
+    assert_eq!(viewport.turns, 1);
+    assert_eq!(reading(&reopened).preferences().straighten_limit, 0);
+    let active_page = reading(&reopened).page();
+    let active_crop = if active_page % 2 == 0 { odd } else { even };
+    assert_eq!(reading(&reopened).preferences().crop, Some(active_crop));
+    let expected_scale = WIDTH as f32 / (800.0 * (active_crop.y1 - active_crop.y0)) * 1.25;
+    assert!((viewport.scale - expected_scale).abs() < 0.001);
+    reopened.activate(Action::FixedScroll(false)).unwrap();
+    assert_eq!(reading(&reopened).preferences().zoom, 1);
+    assert_eq!(reading(&reopened).preferences().crop, None);
+    reopened.activate(Action::FixedScroll(true)).unwrap();
+    assert_eq!(
+        reading(&reopened).preferences().continuous_crop,
+        Some(ContinuousCrop::Manual)
+    );
+    let active_crop = if reading(&reopened).page() % 2 == 0 {
+        odd
+    } else {
+        even
+    };
+    assert_eq!(reading(&reopened).preferences().crop, Some(active_crop));
+    reopened.activate(Action::StraightenScan(5)).unwrap();
+    reopened.activate(Action::CropPage).unwrap();
+    assert_eq!(reading(&reopened).preferences().straighten_limit, 0);
+    assert_eq!(reopened.input(tap(RESET)), Change::Partial);
+    let reset = reading(&reopened).preferences();
+    assert_eq!(reset.continuous_crop, None);
+    assert_eq!(reset.crop, None);
+    assert!(reset.continuous);
+    assert_eq!((reset.zoom, reset.turns, reset.straighten_limit), (1, 1, 5));
+    reopened.activate(Action::CropPage).unwrap();
+    let draft = reopened.semi_auto_crop.unwrap();
+    let expected_seed = if reading(&reopened).page() % 2 == 0 {
+        odd
+    } else {
+        even
+    };
+    assert_eq!(draft.seed.normalized(draft.size), Some(expected_seed));
+}

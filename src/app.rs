@@ -3708,10 +3708,14 @@ impl Reader {
             }
             Action::CropPage => {
                 let fixed = self.fixed.as_mut().ok_or("No open document")?;
-                self.crop_dialog = Some((fixed.reading.start_crop()?, None));
-                self.show(Screen::FixedCrop);
+                if fixed.reading.is_continuous() {
+                    self.start_native_pdf_crop(true)?;
+                } else {
+                    self.crop_dialog = Some((fixed.reading.start_crop()?, None));
+                    self.show(Screen::FixedCrop);
+                }
             }
-            Action::SemiAutoCrop => self.start_semi_auto_crop()?,
+            Action::SemiAutoCrop => self.start_native_pdf_crop(false)?,
             Action::RecognizeText => self.start_ocr(None)?,
             Action::RecognizeLanguage(language) => self.start_ocr(Some(&language))?,
             Action::ReadFixedText => self.read_fixed_text(false)?,
@@ -6118,6 +6122,7 @@ impl Reader {
                 FixedPreferences {
                     crop: None,
                     semi_auto_crop: false,
+                    continuous_crop: None,
                     offset_x: 0.0,
                     offset_y: 0.0,
                     ..original
@@ -6151,6 +6156,7 @@ impl Reader {
                     FixedPreferences {
                         crop: Some(region),
                         semi_auto_crop: false,
+                        continuous_crop: None,
                         offset_x: 0.0,
                         offset_y: 0.0,
                         ..original

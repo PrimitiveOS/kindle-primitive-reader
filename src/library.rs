@@ -613,6 +613,15 @@ pub struct FixedPreferences {
     pub crop: Option<PdfTextRect>,
     #[serde(skip_serializing_if = "is_false")]
     pub semi_auto_crop: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub continuous_crop: Option<ContinuousCrop>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContinuousCrop {
+    Manual,
+    Auto,
 }
 
 impl FixedPreferences {
@@ -658,7 +667,15 @@ impl FixedPreferences {
             zoom_overlap_v: self.zoom_overlap_v.filter(|value| *value <= 90),
             offset_x: normalized_offset(f64::from(self.offset_x)),
             offset_y: normalized_offset(f64::from(self.offset_y)),
-            crop: self.crop.filter(valid_crop),
+            continuous_crop: self.continuous_crop.filter(|_| !self.semi_auto_crop),
+            crop: if self.continuous_crop.is_some()
+                && !self.semi_auto_crop
+                && !(width_fit && self.continuous)
+            {
+                None
+            } else {
+                self.crop.filter(valid_crop)
+            },
             ..self
         }
     }
@@ -725,6 +742,9 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                 .and_then(|value| serde_json::from_value(value.clone()).ok())
                 .filter(valid_crop),
             semi_auto_crop: switch("semi_auto_crop"),
+            continuous_crop: values
+                .get("continuous_crop")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
         }
         .normalized())
     }
@@ -3407,6 +3427,7 @@ mod tests {
                 epub_right_to_left: None,
                 crop: None,
                 semi_auto_crop: false,
+                continuous_crop: None,
             }
         );
         assert!(state.fixed_preferences.is_valid());

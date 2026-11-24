@@ -127,6 +127,7 @@ impl FixedDefaults {
             epub_right_to_left: self.epub_right_to_left,
             crop: geometry.crop,
             semi_auto_crop: geometry.semi_auto_crop,
+            continuous_crop: geometry.continuous_crop,
             offset_x: geometry.offset_x,
             offset_y: geometry.offset_y,
         }

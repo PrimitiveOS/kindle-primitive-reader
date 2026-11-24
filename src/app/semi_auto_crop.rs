@@ -1,10 +1,13 @@
 use super::*;
+use crate::fixed_session::CropEdit;
 use crate::pdf_crop::Seed;
 use primitive_ui::GrayImage;
 
 #[cfg(test)]
 mod continuous_tests;
 
+const AUTO: Rect = Rect::new(489, PAGE_HEIGHT as i32 + 5, 170, 60);
+const RESET: Rect = Rect::new(671, PAGE_HEIGHT as i32 + 5, 170, 60);
 const APPLY: Rect = Rect::new(853, PAGE_HEIGHT as i32 + 5, 180, 60);
 
 #[derive(Clone, Copy)]
@@ -14,16 +17,17 @@ pub(super) struct Draft {
     anchor: Option<hayro::kurbo::Point>,
     seed: Seed,
     size: (f32, f32),
+    manual: bool,
 }
 
 impl Reader {
-    pub(super) fn start_semi_auto_crop(&mut self) -> Result<()> {
+    pub(super) fn start_native_pdf_crop(&mut self, manual: bool) -> Result<()> {
         self.close_fixed_search_fit()?;
         let fixed = self.fixed.as_mut().ok_or("Open a PDF first")?;
         if !fixed.reading.supports_semi_auto_crop() {
             return Err("Semi-auto crop is available for PDF".into());
         }
-        let (seed, size) = fixed.reading.initial_crop_seed()?;
+        let (seed, size) = fixed.reading.initial_crop_seed(manual)?;
         let anchor = fixed.reading.history_point();
         let (original, viewport_height) = fixed.reading.start_crop_preview()?;
         self.crop_dialog = None;
@@ -33,6 +37,7 @@ impl Reader {
             anchor,
             seed,
             size,
+            manual,
         });
         self.show(Screen::FixedCrop);
         Ok(())
@@ -43,7 +48,20 @@ impl Reader {
         let action = match input {
             Input::PageBack => self.cancel_semi_auto_crop(draft),
             Input::Tap(x, y) if CANCEL_CROP.contains(x, y) => self.cancel_semi_auto_crop(draft),
-            Input::Tap(x, y) if APPLY.contains(x, y) => self.apply_semi_auto_crop(draft),
+            Input::Tap(x, y) if draft.manual && AUTO.contains(x, y) => {
+                self.apply_native_pdf_crop(draft, CropEdit::Auto)
+            }
+            Input::Tap(x, y) if draft.manual && RESET.contains(x, y) => {
+                self.apply_native_pdf_crop(draft, CropEdit::Reset)
+            }
+            Input::Tap(x, y) if APPLY.contains(x, y) => {
+                let edit = if draft.manual {
+                    CropEdit::Manual(draft.seed)
+                } else {
+                    CropEdit::SemiAuto(draft.seed)
+                };
+                self.apply_native_pdf_crop(draft, edit)
+            }
             Input::Tap(x, y) => self.adjust_semi_auto_crop(draft, x, y),
             _ => return Some(Change::None),
         };
@@ -78,13 +96,13 @@ impl Reader {
         Ok(())
     }
 
-    fn apply_semi_auto_crop(&mut self, draft: Draft) -> Result<()> {
+    fn apply_native_pdf_crop(&mut self, draft: Draft, edit: CropEdit) -> Result<()> {
         let fixed = self.fixed.as_mut().ok_or("Open a PDF first")?;
         let library = &mut self.library;
-        fixed.reading.apply_crop_seed(
+        fixed.reading.apply_crop(
             draft.original,
             draft.viewport_height,
-            draft.seed,
+            edit,
             draft.anchor,
             |page, view, seeds| {
                 let state = library.remember(&fixed.entry, fixed.id, &fixed.entry.title);
@@ -175,11 +193,16 @@ impl Reader {
             ),
             255,
         );
+        let (label_width, help) = if draft.manual {
+            draw_toolbar_button(canvas, AUTO, "Auto crop");
+            draw_toolbar_button(canvas, RESET, "Reset");
+            (445, "Adjust the crop handles")
+        } else {
+            (798, "Tap near an edge or corner to adjust the crop")
+        };
         canvas.text(
-            Rect::new(28, PAGE_HEIGHT as i32 + 12, 798, 52),
-            self.notice
-                .as_deref()
-                .unwrap_or("Tap near an edge or corner to adjust the crop"),
+            Rect::new(28, PAGE_HEIGHT as i32 + 12, label_width, 52),
+            self.notice.as_deref().unwrap_or(help),
             CAPTION,
         );
         draw_toolbar_button(canvas, APPLY, "Apply");
@@ -279,22 +302,32 @@ mod tests {
         let reading = &mut app.fixed.as_mut().unwrap().reading;
         let (original, height) = reading.start_crop_preview().unwrap();
         reading
-            .apply_crop_seed(original, height, odd_seed(), None, |_, _, _| Ok(()))
+            .apply_crop(
+                original,
+                height,
+                CropEdit::SemiAuto(odd_seed()),
+                None,
+                |_, _, _| Ok(()),
+            )
             .unwrap();
         let applied = reading.preferences();
         let (original, height) = reading.start_crop_preview().unwrap();
         let preview = reading.preferences();
         assert!(
             reading
-                .apply_crop_seed(original, height, even_seed(), None, |_, _, _| {
-                    Err(io::Error::other("mock storage failure"))
-                })
+                .apply_crop(
+                    original,
+                    height,
+                    CropEdit::SemiAuto(even_seed()),
+                    None,
+                    |_, _, _| { Err(io::Error::other("mock storage failure")) }
+                )
                 .is_err()
         );
         assert_eq!(reading.preferences(), preview);
         assert!(
             reading
-                .initial_crop_seed()
+                .initial_crop_seed(false)
                 .unwrap()
                 .0
                 .normalized(SIZE)

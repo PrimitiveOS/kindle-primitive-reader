@@ -105,6 +105,53 @@ pub(crate) fn detect(
     let area = seed
         .and_then(|seed| seed.normalized(size))
         .unwrap_or(FULL_PAGE);
+    Ok(detect_ink(pdf, page, area, size, true)?
+        .and_then(|ink| padded_native_bounds(ink, size, screen_width))
+        .unwrap_or(area))
+}
+
+pub(crate) fn full_auto(
+    pdf: &Pdf,
+    page: usize,
+    seed: Option<Seed>,
+    screen_width: u32,
+) -> crate::Result<PdfTextRect> {
+    let size = pdf.page_size(page)?;
+    let detected = detect_ink(pdf, page, FULL_PAGE, size, true)?
+        .and_then(|ink| padded_native_bounds(ink, size, screen_width))
+        .filter(|crop| crop.x1 - crop.x0 > 0.1 || crop.y1 - crop.y0 > 0.1);
+    match detected {
+        Some(area) => Ok(area),
+        None => manual(pdf, page, seed),
+    }
+}
+
+pub(crate) fn manual(pdf: &Pdf, page: usize, seed: Option<Seed>) -> crate::Result<PdfTextRect> {
+    let size = pdf.page_size(page)?;
+    if let Some(area) = seed.and_then(|seed| seed.normalized(size)) {
+        return Ok(area);
+    }
+    // Estimate the native used bounds from the untrimmed raster when there is no saved box.
+    let area = detect_ink(pdf, page, FULL_PAGE, size, false)?.and_then(|ink| {
+        let points = Seed::from_normalized(ink, size);
+        Seed {
+            x0: points.x0.round(),
+            y0: points.y0.round(),
+            x1: points.x1.round(),
+            y1: points.y1.round(),
+        }
+        .normalized(size)
+    });
+    Ok(area.unwrap_or(FULL_PAGE))
+}
+
+fn detect_ink(
+    pdf: &Pdf,
+    page: usize,
+    area: PdfTextRect,
+    size: (f32, f32),
+    filter_specks: bool,
+) -> crate::Result<Option<PdfTextRect>> {
     let area_width = (area.x1 - area.x0) * size.0;
     let area_height = (area.y1 - area.y0) * size.1;
     let scale = 1536.0 / area_width.max(area_height);
@@ -121,10 +168,10 @@ pub(crate) fn detect(
             turns: 0,
         },
     )?;
-    discard_isolated_specks(&mut pixels, width as usize, scale);
-    let crop = bounds(&pixels, width as usize, area)
-        .and_then(|ink| padded_native_bounds(ink, size, screen_width));
-    Ok(crop.unwrap_or(area))
+    if filter_specks {
+        discard_isolated_specks(&mut pixels, width as usize, scale);
+    }
+    Ok(bounds(&pixels, width as usize, area))
 }
 
 const INK_THRESHOLD: u8 = 192;
@@ -298,6 +345,45 @@ pub(crate) mod tests {
             x1: 530.0,
             y1: 745.0,
         }
+    }
+
+    #[test]
+    fn continuous_manual_and_auto_match_stock_native_bounds() {
+        let pdf = Pdf::open(fixture()).unwrap();
+        let mut seeds = Seeds::default();
+        seeds.record(0, odd_seed());
+        seeds.record(1, even_seed());
+        let check = |crop: PdfTextRect, expected: [f32; 4]| {
+            let points = Seed::from_normalized(crop, SIZE);
+            for (found, expected) in [points.x0, points.y0, points.x1, points.y1]
+                .into_iter()
+                .zip(expected)
+            {
+                assert!((found - expected).abs() < 0.002, "{found} != {expected}");
+            }
+        };
+        // Pinned KOReader's getPageBBox with fixed-page wrapping and deskew disabled.
+        check(
+            manual(&pdf, 0, seeds.get(0)).unwrap(),
+            [60.0, 70.0, 550.0, 740.0],
+        );
+        check(
+            manual(&pdf, 2, seeds.get(2)).unwrap(),
+            [60.0, 70.0, 550.0, 740.0],
+        );
+        check(
+            full_auto(&pdf, 0, seeds.get(0), 1264).unwrap(),
+            [9.199, 103.199, 413.801, 653.801],
+        );
+        check(
+            full_auto(&pdf, 1, seeds.get(1), 1264).unwrap(),
+            [114.299, 114.299, 594.701, 690.701],
+        );
+        check(
+            full_auto(&pdf, 3, seeds.get(3), 1264).unwrap(),
+            [80.0, 80.0, 530.0, 745.0],
+        );
+        check(manual(&pdf, 1, None).unwrap(), [120.0, 120.0, 590.0, 686.0]);
     }
 
     #[test]
