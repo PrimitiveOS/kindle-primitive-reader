@@ -605,6 +605,25 @@ always_text.callback()
 assert(not require("util").tableGetValue(profiles.autoexec, "ReaderReadyAll", "Text"))
 always_text.callback()
 
+if arg[3] then
+    -- Only load the authored output of koreader-custom-metadata-check.lua.
+    profiles.ui.doc_props = dofile(arg[3])
+    set_metadata(1, "coastal ledger")
+    conditional_open("/documents/Field Notes.epub", 0, false, true)
+    set_metadata(1, "publisher title, stale title")
+    conditional_open("/documents/Field Notes.epub", 0, false, false)
+    set_metadata(5, "en")
+    conditional_open("/documents/Field Notes.epub", 0, false, true)
+    metadata[1].callback(menu)
+    visible.input = ""
+    visible.buttons[1][1].callback()
+    assert(visible.input == "Coastal Ledger")
+    choose(visible.buttons[#visible.buttons], "Cancel").callback()
+    always_text.callback()
+    always_text.callback()
+    print("Stock Profiles matched effective custom metadata and live publisher fallback, with Current book.")
+end
+
 -- Drive the stock time editor and event at each minute through a full day.
 profiles.external_autoexec_triggers = {}
 local interval = profiles:genAutoExecMenu("Text", profiles.data.Text)[3]

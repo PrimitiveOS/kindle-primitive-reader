@@ -1,5 +1,6 @@
-//! Resolve publisher properties before applying a compatible opening profile.
+//! Resolve effective book properties before applying a compatible opening profile.
 use super::{BookConfig, FixedReading, Profile, Reader};
+use crate::koreader_sidecar::custom_metadata;
 use crate::reading_profiles::opening::{Metadata, MetadataField::*};
 use std::path::Path;
 
@@ -10,7 +11,7 @@ impl Reader {
         is_new: bool,
     ) -> Option<Metadata> {
         self.opening_needs_metadata(is_new, |profile| matches!(profile, Profile::Text { .. }))
-            .then(|| text_metadata(&config.book))
+            .then(|| self.effective_opening_metadata(&config.book, text_metadata(&config.book)))
     }
 
     pub(in crate::app) fn opening_fixed_metadata(
@@ -24,7 +25,7 @@ impl Reader {
             is_new,
             |profile| matches!(profile, Profile::Fixed { fixed, .. } if fixed.provider == provider),
         )
-        .then(|| fixed_metadata(reading, path))
+        .then(|| self.effective_opening_metadata(path, fixed_metadata(reading, path)))
     }
 
     fn opening_needs_metadata(&self, is_new: bool, compatible: impl Fn(&Profile) -> bool) -> bool {
@@ -38,14 +39,46 @@ impl Reader {
 
     pub(super) fn current_opening_metadata(&self) -> Option<Metadata> {
         if let Some(active) = &self.active {
-            Some(text_metadata(&active.reading.config.book))
+            Some(self.effective_opening_metadata(
+                active.entry.library_path(),
+                text_metadata(&active.reading.config.book),
+            ))
         } else if let Some(fixed) = &self.fixed {
-            Some(fixed_metadata(&fixed.reading, fixed.entry.library_path()))
+            let path = fixed.entry.library_path();
+            Some(self.effective_opening_metadata(path, fixed_metadata(&fixed.reading, path)))
         } else {
             None
         }
     }
+
+    fn effective_opening_metadata(&self, path: &Path, mut publisher: Metadata) -> Metadata {
+        let custom =
+            primitive_app::with_storage(|| self.library.nearby_koreader_custom_metadata(path))
+                .ok()
+                .flatten()
+                .and_then(|bytes| custom_metadata::parse(&bytes).ok());
+        if let Some(custom) = custom {
+            for (field, value) in [
+                (Title, custom.title),
+                (Authors, custom.authors),
+                (Series, custom.series),
+                (SeriesIndex, custom.series_index),
+                (Language, custom.language),
+                (Keywords, custom.keywords),
+                (Description, custom.description),
+            ] {
+                if let Some(value) = value {
+                    publisher.replace(field, &value);
+                }
+            }
+        }
+        publisher
+    }
 }
+
+#[cfg(test)]
+#[path = "opening_custom_metadata_tests.rs"]
+mod tests;
 
 fn text_metadata(path: &Path) -> Metadata {
     let mut metadata = Metadata::default();

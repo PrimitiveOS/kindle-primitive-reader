@@ -5,6 +5,8 @@ pub(crate) mod archive;
 pub(crate) mod contents_depths;
 pub(crate) mod custom_contents;
 pub(crate) mod hidden_flows;
+#[cfg(feature = "kindle")]
+mod nearby_custom_metadata;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};

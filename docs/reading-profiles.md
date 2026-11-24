@@ -77,6 +77,23 @@ language. DjVu uses recognized document metadata. Comic archives use the
 filename stem as their title. A missing title falls back to the filename
 where the provider supplies no title, and other missing fields do not match.
 
+If a KOReader `custom_metadata.lua` sits in the book's adjacent `.sdr`
+folder, Reader uses its custom values for opening rules and the metadata
+editor's **Current book** shortcut. For `Novels/Atlas.epub` the source is
+`Novels/Atlas.sdr/custom_metadata.lua`. A book named `Atlas.pdf` in the
+same location uses that same sidecar, as in KOReader. The rule uses fresh
+publisher values for fields absent from `custom_props`. Library titles,
+publisher metadata and book files keep their original values.
+
+Reader opens the exact adjacent table from Documents, validates its
+literal data and reads it as a bounded snapshot. A missing, invalid,
+linked or oversized table leaves publisher values in use. The file limit
+is 256 KiB, with 16 KiB per text field. The lookup covers beside-book files
+and leaves KOReader's centralized `docsettings` and `hashdocsettings`
+directories to KOReader.
+
+[Custom title in the Mac simulator](screenshots/landscape-profile-koreader-custom-title.png)
+
 Reader combines matching profiles in the
 alphabetical order shown in the profile list. If two profiles include the
 same setting, the later profile supplies that value. Renaming a profile
@@ -97,9 +114,10 @@ passage after restart. The PDF test checks the exact physical page,
 tiled zoom and overlap after combining two profiles.
 
 The pinned comparison exercises Always, orientation, path, collection,
-all seven metadata fields, and the separate new-book gate. Stock
-reader-ready metadata may include KOReader custom sidecar overrides.
-Reader uses publisher data and its filename fallback. On the same authored
+all seven metadata fields, and the separate new-book gate. The native
+custom metadata tests run KOReader's sidecar writer and effective-property
+lookup, then verify the resulting title and publisher fallback through
+the Profiles callbacks. On the same authored
 PDF the pinned MuPDF interface leaves catalog language unavailable.
 On a numeric series index its matching utility raises a Lua error. Reader
 matches a published index as text and rejects empty comma alternatives.
@@ -109,8 +127,8 @@ rules, byte-identical staged and accepted frames, and a PDF's position
 through a rejected turn. The legacy display path still uses the preferred
 orientation. The native comparison exercises the stock shortcut guide,
 preview, path expansion and reader-ready matching against Reader's own
-folder locations. Importing KOReader's custom folder settings and metadata,
-execution confirmation, and dispatch delay remain open.
+folder locations. Importing KOReader's custom folder settings, centralized
+metadata lookup, execution confirmation, and dispatch delay remain open.
 [Landscape simulator capture](screenshots/landscape-profile-apply-on-opening.png) ·
 [Opening conditions in the legacy display path](screenshots/landscape-profile-opening-conditions.png) ·
 [Current book path shortcut](screenshots/landscape-profile-current-book-path.png) ·
@@ -120,6 +138,12 @@ execution confirmation, and dispatch delay remain open.
 [Pinned ReaderReady callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L1217-L1287) ·
 [Executable stock comparison](../scripts/koreader-reading-profiles-check.lua) ·
 [Native provider comparison](../scripts/koreader-profile-metadata-providers.lua)
+
+Run `koreader-custom-metadata-check.lua` from the same pinned runtime with
+an empty absolute scratch directory. It produces an authored `custom_metadata.lua`
+and `effective-props.lua`. Pass the latter as the third argument to the native
+profile harness to compare the subsequent reader-ready matching and shortcut.
+[Native custom metadata comparison](../scripts/koreader-custom-metadata-check.lua)
 
 Run the stock profile harness from the pinned native runtime with
 `./luajit <checkout>/scripts/koreader-reading-profiles-check.lua <stock-source> native`

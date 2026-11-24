@@ -67,6 +67,11 @@ impl Metadata {
         }
     }
 
+    pub(crate) fn replace(&mut self, field: MetadataField, value: &str) {
+        self.0.remove(&field);
+        self.add(field, value);
+    }
+
     pub(crate) fn current_phrase(&self, field: MetadataField) -> Option<String> {
         self.0.get(&field)?.iter().find_map(|value| {
             value

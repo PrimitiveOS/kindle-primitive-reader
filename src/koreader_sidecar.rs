@@ -9,6 +9,8 @@
 //! https://www.lua.org/manual/5.1/manual.html#2.1
 
 mod annotations;
+#[cfg(feature = "kindle")]
+pub(crate) mod custom_metadata;
 pub use annotations::{SidecarAnnotations, SidecarMark, parse_annotations};
 
 use std::borrow::Cow;
