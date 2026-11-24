@@ -132,7 +132,7 @@ fn chapter_path<'a, T, K: Ord>(
 
 /// Keep the matched word on screen even when its preceding CJK or wide text
 /// would fill a complete row. All cuts are at extended grapheme boundaries.
-fn row_excerpt(
+pub(super) fn row_excerpt(
     text: &str,
     matched: Range<usize>,
     expand: bool,
@@ -158,11 +158,14 @@ fn row_excerpt(
             }
         }
     }
+    if prefix_graphemes == usize::MAX {
+        return (Cow::Borrowed(text), range);
+    }
     let prefix = &text[..range.start];
     let breaks: Vec<_> = icu_segmenter::GraphemeClusterSegmenter::new()
         .segment_str(prefix)
         .collect();
-    if breaks.len() <= prefix_graphemes + 1 {
+    if breaks.len().saturating_sub(1) <= prefix_graphemes {
         return (Cow::Borrowed(text), range);
     }
     let tail = &breaks[breaks.len() - (prefix_graphemes + 1)..];

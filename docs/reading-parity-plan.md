@@ -49,13 +49,16 @@ device-system evidence. This count tracks plan milestones, not overall feature
 parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
-**Control evidence snapshot:** 200 of 536 in-scope reading-control rows have
-an implemented workflow, 237 are partial, 66 are gaps, and 33 need audit.
+**Control evidence snapshot:** 201 of 536 in-scope reading-control rows have
+an implemented workflow, 237 are partial, 66 are gaps, and 32 need audit.
 Reader 0.1.32 adds [search from selection](selection-search.md),
 [results density and context](search-result-presentation.md),
 [temporary PDF fit](fixed-search-fit.md),
 [bookmark appearance](bookmark-list-appearance.md), and
 [help for the top status header](top-header-about.md).
+Reader 0.1.33 adds [flexible search-result rows](flexible-search-results.md),
+[focus and return from the results list](search-result-navigation.md), and
+[a full-page preview of fixed-layout matches](fixed-search-result-preview.md).
 Exact whole-book rendered reflow counts and foreground Kindle checks remain
 separate gates.
 
@@ -122,15 +125,14 @@ and battery refresh on the panel remain open. [Behavior and screenshots](top-sta
 
 ## Search result navigation still to compare
 
-The stock result-list menu has independent actions for **All results**,
-**Results in current chapter**, the current reading page, and the original
-search position. Filter the displayed hit sequence while preserving the
-original provider indices for opening a hit. Compare nested headings, headings
+The result list can focus the current reading page or return to the original
+search position. The fixed-page preview uses the same result list and restores
+the earlier zoom, rotation, and pan when closed. **All results** and **Results
+in current chapter** are the remaining menu actions. Filter the displayed hit
+sequence while preserving its provider indices. Test nested headings, headings
 sharing a page, front matter, duplicate titles, and empty result sets. Verify
-that the list, physical paging, Previous/Next, first/last shortcuts, counts,
-and return to the original position all refer to that sequence. Fixed-page
-result previews also need checks for a rotated, panned reading view and for
-restoring it after closing the preview. [Pinned KOReader result menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L781-L982)
+that the list, physical paging, Previous/Next, first/last shortcuts, and counts
+all refer to that sequence, even when new results arrive. [Pinned KOReader result menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L781-L982)
 
 ## Implementation checkpoint
 

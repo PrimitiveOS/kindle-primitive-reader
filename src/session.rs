@@ -1184,6 +1184,14 @@ impl Reading {
         !self.turns.pending.is_empty()
     }
 
+    #[cfg(test)]
+    pub(crate) fn queue_page_turns(&mut self, directions: [isize; 2]) {
+        self.prefetch = None;
+        self.turns
+            .pending
+            .extend(directions.map(ReadingMotion::Page));
+    }
+
     pub(crate) fn take_end_attempt(&mut self) -> bool {
         std::mem::take(&mut self.end_attempt)
     }

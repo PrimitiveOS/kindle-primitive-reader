@@ -967,7 +967,11 @@ impl FixedReading {
     }
 
     pub(crate) fn restore_view(&mut self, preferences: View) -> Result<()> {
-        self.present(self.page, preferences.normalized())
+        self.restore_view_at(self.page, preferences)
+    }
+
+    pub(crate) fn restore_view_at(&mut self, page: usize, preferences: View) -> Result<()> {
+        self.present(page, preferences.normalized())
     }
 
     pub(crate) fn show_search_fit_page(&mut self, page: usize) -> Result<()> {
