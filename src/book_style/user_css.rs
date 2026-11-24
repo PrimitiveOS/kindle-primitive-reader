@@ -133,7 +133,10 @@ impl<'i> DeclarationParser<'i> for StrictProperties {
         let before = input.state();
         let reset = input.try_parse(Parser::expect_ident_cloned).ok();
         input.reset(&before);
-        if name.eq_ignore_ascii_case("display") || name.eq_ignore_ascii_case("visibility") {
+        if matches!(
+            name.to_ascii_lowercase().as_str(),
+            "display" | "visibility" | "margin" | "margin-top" | "margin-bottom"
+        ) {
             return Err(error(
                 input,
                 format!("Unsupported user CSS until reading consumers are migrated: {name}"),

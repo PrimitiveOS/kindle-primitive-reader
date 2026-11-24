@@ -260,7 +260,7 @@ impl ParleyChapter {
             ),
         };
         let mut context = LayoutContext::new();
-        let mut lines = Vec::new();
+        let mut lines: Vec<Line> = Vec::new();
         let mut y = 0.0_f32;
         let mut image_budget = MAX_IMAGE_PIXELS;
         let fallback = Arc::new(GrayImage::from_pixel(
@@ -350,6 +350,12 @@ impl ParleyChapter {
             publisher_boxes.as_deref(),
             settings,
             &table_flow,
+        );
+        let block_margins = crate::block_margins::before_blocks(
+            source,
+            styles,
+            publisher_boxes.as_deref(),
+            settings,
         );
         let column_for = |block: &Block| {
             if let Some(boxes) = &publisher_boxes {
@@ -464,10 +470,21 @@ impl ParleyChapter {
             let padding = vertical_padding
                 .as_ref()
                 .map_or_else(Default::default, |g| g[index]);
+            let margin = block_margins.as_ref().map_or(0.0, |g| g[index]);
             if padding.before_grid > 0 {
                 y = row_flow.end(y) + padding.before_grid as f32;
             }
+            if margin > 0.0 && cell.is_some() {
+                y = row_flow.end(y) + margin;
+            }
             y = row_flow.enter(cell, y);
+            if margin != 0.0 && cell.is_none() {
+                // A large negative margin may overlap its previous box, but
+                // cannot reverse the layout's line and paragraph origins.
+                let floor = lines.last().map_or(0.0, |line| line.top + 1.0);
+                let floor = chapter.paragraphs.last().map_or(floor, |p| floor.max(p.y));
+                y = (y + margin).max(if margin < 0.0 { floor } else { 0.0 });
+            }
             let start_of_cell = y;
             let decorated = cell.and_then(|cell| Some((cell, borders.as_ref()?.cells.get(&cell)?)));
             if let Some((c, _)) = decorated

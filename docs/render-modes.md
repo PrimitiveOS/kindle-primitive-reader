@@ -79,14 +79,55 @@ source-selection rectangles use the Parley or vertical engines.
 
 | Mechanism | Reader work required for the observed mode behavior |
 | --- | --- |
-| Legacy | Preserve a consistent legacy block and inline model, including uncollapsed publisher margins and the old handling of incomplete CSS tables |
-| Flat | Add a source-owned block margin model with CSS collapse, individual signed margins, a nonnegative final gap, prepared inline float boxes, anonymous box repair, and page-break coalescing through empty boxes |
+| Legacy | Match the legacy inline model and the old handling of incomplete CSS tables. Separate publisher margins are measured below. |
+| Flat | Extend source-owned margin collapse to parent and empty boxes, and add prepared inline float boxes, anonymous box repair, and page-break coalescing through empty boxes. |
 | Book | Add anchored float exclusion geometry and clearing to the Flat model, with applicable style-width and auto-margin behavior |
 | Web | Add signed final margins, full publisher box sizing and automatic placement, overflow-aware painting and hit-testing, and consecutive forced breaks through empty content |
 
 The four options depend on independent box geometry, pagination and
 source mappings. A Reader renderer choice would currently change several
 of these behaviors together. The **Render Mode** matrix item remains open.
+
+## Horizontal block spacing
+
+The horizontal Parley provider now has three internal margin policies. A
+fourth policy, `Ignore`, remains the Reader default. The policies use the
+cascaded top and bottom margins of source elements, resolve relative units
+with the existing font and box metrics, and assign each outer edge once. A
+section with several paragraphs receives its margin at the edges of the
+section. Suppressed elements contribute no spacing, while
+`visibility:hidden` still occupies space.
+
+| Stock workflow | Reader policy | Added pitch for positive / mixed / net-negative pairs | Reader measured pitch | Pinned stock pitch |
+| --- | --- | ---: | ---: | ---: |
+| Legacy | `Separate` | 120 / 72 / 7 px | 187.8 / 139.8 / 74.8 px | 184 / 136 / 71 px |
+| Flat or Book | `Collapse` | 80 / 39 / 0 px | 147.8 / 106.8 / 67.8 px | 144 / 103 / 64 px |
+| Web | `CollapseNegative` | 80 / 39 / −18 px | 147.8 / 106.8 / 49.8 px | 144 / 103 / 46 px |
+
+The margin contributions match the pinned executable for each pair.
+Parley measures 67.8 pixels between the control lines at this font size.
+CREngine measures 64 pixels. The provider preserves Parley’s existing
+ordinary text metrics.
+[Separate margins capture](screenshots/render-modes-reader-separate-margin.png) ·
+[Signed collapse capture](screenshots/render-modes-reader-collapsed-margin.png)
+
+Collapse combines the largest positive edge and the most negative edge of
+adjacent sibling blocks. `Collapse` floors a net negative result at zero.
+`CollapseNegative` allows that gap to reduce the pitch. Parent and child
+edges in the current provider remain independent. An intervening visible
+empty element or a table ends a sibling pair. Table cell tracks retain
+their existing layout, and a positive boundary gap can push the entire
+following grid down. The provider bounds a gap to half a viewport, prevents
+extreme negative values from reversing text origins, and drops terminal
+spine margins. Collapsing through empty or nested boxes, float and overflow
+layout, and vertical writing remain pending. Reader has no saved Render
+Mode preference or control yet.
+
+The tests reopen a serialized text selection in all policies, hit-test the
+same word at its new geometry, compare the default frames, and resolve a
+saved source range after it moves to a later screen page. The margin
+projection preserves source revisions and text offsets.
+[Provider and tests](../src/block_margins.rs)
 
 ## Reproduce
 
@@ -109,3 +150,7 @@ cargo run --locked --example verify_render_modes -- \
 Pass a final directory argument to write the two Reader viewport captures
 as grayscale PGM. [Fixture](../tests/fixtures/render-modes.epub) ·
 [Reader verifier](../examples/verify_render_modes.rs)
+
+Run `cargo test --locked --lib block_margins -- --nocapture` for the block
+spacing and resume assertions. Set `READER_BLOCK_MARGINS_CAPTURE_DIR` to an
+existing directory to write all four Parley viewport captures as PNG.
