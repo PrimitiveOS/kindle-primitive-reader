@@ -32,7 +32,13 @@ provider-specific targets and restore the original reading frame.
 | --- | --- | --- |
 | <img src="screenshots/contents-tree-collapsed.png" alt="Collapsed Contents with chapter branches and page count" width="260"> | <img src="screenshots/contents-tree-expanded.png" alt="Contents opens the current chapter and displays its child headings" width="260"> | <img src="screenshots/contents-tree-filtered.png" alt="Search results preserve parent chapters and show Search and Clear" width="260"> |
 
-The full-screen simulator captures use the authored EPUB. The foreground
-Kindle and physical E Ink behavior remain unverified for this change.
+The full-screen captures use the authored EPUB. All three rendered frames
+matched byte for byte between the Mac simulator and the ARMHF executable
+running on the Oasis 3. The Mac run passed 994 Reader library tests, one
+Reader binary test, 14 EPUB package tests and four layout checks. The native
+run passed 998 Reader library tests, 14 EPUB package tests and four layout
+checks. Both runs skipped 62 optional Reader tests. The native run used an
+isolated profile and exercised page-button input through the app harness.
+Physical E Ink behavior and foreground interaction remain separate checks.
 
 [Reader list and input](../src/app/contents_view.rs) · [Tree and title matching](../src/app/contents_tree.rs) · [EPUB and PDF workflow tests](../src/app/contents_view/tests.rs) · [KOReader source](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L770-L1182)

@@ -142,6 +142,34 @@ exact release binary on the Oasis with an authored EPUB and offscreen rendering.
 It shows the hyphenated caption, progress track and Exit control. E Ink refresh
 timing and a foreground Reader session remain separate checks.
 
+## Reader 0.1.28 release on the Oasis
+
+The [0.1.28 GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.28)
+passed the release workflow on 24 November 2026. The ARMHF package contained
+both licenses and matched its published SHA-256
+`d47fffe805057883fd5cbcec6bc8c47348766d7936976750b9eecc0261b11789`
+(21,281,448 bytes). The verified Store install transaction completed on the
+Oasis 3. Its installed executable matched the published binary SHA-256
+`8fe18ac477ef3006d47a825bd3bc42294bda48cd0ab9efc2248bf9dcbc16bf7f`.
+
+The installed binary selected one existing book of each format through the
+ordinary picker. Each file opened, rendered a visible page, advanced and
+resumed after reopening. Reader used an isolated profile for each format and
+the original file checksums matched before and after.
+
+| Format | First frame |
+| --- | ---: |
+| EPUB | 1,535 ms |
+| PDF | 18,970 ms |
+| AZW3 | 1,675 ms |
+| MOBI | 1,933 ms |
+
+A separate ARMHF test bundle passed 998 Reader library tests, 14 EPUB package
+tests and four layout tests on the Oasis. It skipped 62 optional tests. The
+three [Contents captures](searchable-contents.md#evidence) were identical to
+the desktop simulator. These checks ran offscreen with the foreground
+Browser session open. Physical input and E Ink refresh are separate checks.
+
 For a single file under an authorized Documents root, run the example with a fresh
 scratch directory and the same Noto Sans fonts as Launcher.
 

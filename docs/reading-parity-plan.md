@@ -49,35 +49,15 @@ device-system evidence. This count tracks plan milestones, not overall feature
 parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
-**Control evidence snapshot:** 195 of 535 in-scope reading-control rows are
-marked as complete workflows; 224 are partial, 67 are gaps, and 49 need audit.
-The saved, opt-in Google romanization setting and response display close the
-matching KOReader control. Global physical page-turn inversion and its
-custom-footer status indicator close one button control and one footer control;
-the saved, default-Off footer separator closes one more footer control. Named
-status-bar presets move one footer control from gap to partial; their CRUD flow
-is host-tested, with freeform footer text and Kindle acceptance still open.
-KOReader's container height and bottom margin are now saved footer settings,
-closing two more control rows with EPUB/PDF simulator evidence.
-Footer font-face selection now offers local TTF/OTF files, persists the choice,
-restores it in status-bar presets, and measures/draws EPUB and PDF footers with
-the same face. Desktop workflow coverage and simulator captures pass; the
-source-matrix row remains partial while Kindle appearance and acceptance are
-open. Eight legacy stylesheet rows were corrected from gaps to partial after
-reviewing the current base-style implementation: Reader supplies per-book
-Auto/None/Traditional/HTML/FB2 choices but does not reproduce the old KOReader
-CSS files or complete legacy stylesheet catalog.
-Foreground Kindle acceptance remains open. Adjustable footer text size
-(8–36, default 14) and optional bold text (default Off), half-logical font
-steps for legacy pixel settings, and the custom footer's Icons/Letters/Compact
-symbol styles and left/center/right alignment each move one control from gap to
-partial. Foreground Kindle appearance remains open.
-Six Kindle display/runtime controls were reclassified as Launcher-owned
-or outside reading scope. Six D-pad crosshair-acceleration controls are also
-excluded for the current Oasis 3 target, which has touch and previous/next page
-buttons but no D-pad. This unweighted inventory is a status breakdown, not
-a feature-weighted completion score. Current Kindle acceptance and publication
-remain separate gates.
+**Control evidence snapshot:** 185 of 536 in-scope reading-control rows have
+an implemented workflow, 235 are partial, 67 are gaps, and 49 need audit.
+Reader 0.1.28 covers collapsible, searchable Contents, including separate
+expand and jump actions, result context, and return history. The top status
+header has its own settings and desktop and native suite evidence. The
+matrix distinguishes these controls from their remaining stock differences,
+including per-book header activation and document-wide page labels. These
+unweighted rows do not represent a percentage of feature parity. Foreground
+Kindle checks remain a separate gate.
 
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.
 - [x] Keep general extension/plugin systems, Terminal/shell, unrelated utilities, book acquisition, and remote services out of implementation, parity counts, test requirements, and release gates. Reading-specific capabilities remain eligible when implemented as native Reader features.

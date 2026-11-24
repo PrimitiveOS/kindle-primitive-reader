@@ -5,7 +5,7 @@ reflowable document in page-turn mode. Reader now has the same reading
 information in a separate, optional header. It is off by default and is
 available from **Controls → Reading status bar**. The pinned implementation
 disables the header in continuous-scroll mode and refreshes it when the clock or
-battery can change. [KOReader source](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readercoptlistener.lua#L1323-L1399) · [Header options](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readercoptlistener.lua#L1893-L2248)
+battery can change. [KOReader source](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readercoptlistener.lua#L246-L319) · [Header options](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readercoptlistener.lua#L372-L552)
 
 Reader reserves a 48 px strip for the header, keeps the current source anchor
 when it is enabled or disabled, and clips the page bitmap so its white margin
@@ -36,6 +36,12 @@ battery choices, reflow from the current anchor, visible header pixels in the
 simulator, continuous-scroll suppression and restoration in page mode, the
 charging icon, and minute-boundary clock scheduling across sleep and wake.
 Kindle visual and battery acceptance remain open.
+
+Current and total page values come from the active reflow layout. In a book
+with several sections they can differ from KOReader's document-wide values
+or publisher labels. Reader uses a global show switch and a font-size cycle.
+Stock also offers a per-document show switch and a size picker with Reset.
+Reader's 24-hour clock uses the Kindle time zone. [Clock details](device-local-time.md)
 
 The KOReader **About alt status bar** information dialog is still a checklist
 gap; the display and configuration behavior are implemented independently.
