@@ -1,6 +1,6 @@
 //! Exercise a real v2 restore across global defaults, known editions and new editions.
 use super::*;
-use crate::app::tests::Fixture;
+use crate::app::tests::{Fixture, tap_contents_item};
 use std::io::{Cursor, Read, Write};
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -256,7 +256,7 @@ fn backup_restore_reloads_defaults_for_unseen_editions_and_keeps_known_reading_d
         .unwrap()
         .title
         .clone();
-    row(&mut app, &dusk);
+    tap_contents_item(&mut app, &dusk);
     assert_eq!(app.active.as_ref().unwrap().reading.chapter, 1);
     add_note(&mut app);
     app.activate(Action::ToggleBookmark).unwrap();

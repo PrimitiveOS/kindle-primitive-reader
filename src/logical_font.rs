@@ -59,11 +59,15 @@ impl ScaleContext {
         (size_scale + dpi_scale) / 2.0
     }
 
+    pub(crate) fn scaled_pixels(self, logical: f64) -> u32 {
+        (logical * self.scale_factor()).ceil() as u32
+    }
+
     pub fn requested(self, logical: f64) -> Result<u32> {
         if !valid(logical) || !(160..=4096).contains(&self.short_side) {
             return Err("Enter a font size from 12 to 255".into());
         }
-        Ok((logical * self.scale_factor()).ceil() as u32)
+        Ok(self.scaled_pixels(logical))
     }
     pub fn effective(self, logical: f64) -> Result<f32> {
         Ok(self.requested(logical)?.clamp(12, 340) as f32)
