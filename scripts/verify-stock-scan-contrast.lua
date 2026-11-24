@@ -3,7 +3,9 @@ G_defaults = require("luadefaults"):open()
 local DataStorage = require("datastorage")
 G_reader_settings = require("luasettings"):open(DataStorage:getDataDir() .. "/settings.reader.lua")
 local Device = require("device")
-require("document/canvascontext"):init(Device)
+local CanvasContext = require("document/canvascontext")
+CanvasContext:init(Device)
+CanvasContext:setColorRenderingEnabled(false)
 local Registry = require("document/documentregistry")
 local levels = {0.8, 1.0, 1.5, 2.0, 2.3, 4.0, 6.0, 10.0, 50.0}
 
@@ -92,4 +94,28 @@ for _, gamma in ipairs(levels) do
     print(string.format("DjVu gamma %.1f | %d sampled tones unchanged", gamma, count))
 end
 djvu:close()
+
+-- Optional authored comic archives with the same sixteen-band grayscale ramp.
+for index = 2, #arg do
+    local comic = open("mupdf", arg[index])
+    local original = render(comic, 1, 1)
+    local x = math.floor(original:getWidth() / 2)
+    local height = original:getHeight()
+    local changed = 0
+    for _, gamma in ipairs(levels) do
+        local frame = render(comic, 1, gamma)
+        for row = 0, 15 do
+            local y = math.floor((row + 0.5) * height / 16)
+            local tone = sample(original, x, y)
+            local adjusted = sample(frame, x, y)
+            assert(adjusted == math.floor(255 * (tone / 255) ^ gamma))
+            if adjusted ~= tone then
+                changed = changed + 1
+            end
+        end
+    end
+    assert(changed > 0)
+    print(string.format("%s: %d gamma comparisons, %d changed tones", arg[index], #levels * 16, changed))
+    comic:close()
+end
 Device:exit()

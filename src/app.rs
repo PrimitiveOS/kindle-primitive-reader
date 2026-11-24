@@ -17249,6 +17249,44 @@ mod tests {
     }
 
     #[test]
+    fn scan_gamma_djvu_panel_uses_adaptive_contrast_and_reopens_it() {
+        let fixture = Fixture::new();
+        let document = fixture.root.join("Beacon atlas.djvu");
+        fs::write(&document, crate::djvu::tests::grayscale_document()).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&document).unwrap();
+        let location = app.current_history_location();
+        app.open_reading_edge(false, 500.0);
+        assert_eq!(tap_reading_control(&mut app, "Scan"), Change::Partial);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Contrast", "Normal contrast"),
+            Change::None
+        );
+        assert!(!app.fixed.as_ref().unwrap().reading.scan_contrast());
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Contrast", "Higher contrast"),
+            Change::Partial
+        );
+        assert!(app.fixed.as_ref().unwrap().reading.scan_contrast());
+        assert!(app.activate(Action::ScanGamma(10)).is_err());
+        assert!(app.fixed.as_ref().unwrap().reading.scan_contrast());
+        assert_eq!(app.current_history_location(), location);
+        let fonts = [
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        capture_test_screen(&app, &fonts, "READER_DJVU_SCAN_CONTRAST_FRAME", false);
+        app.save().unwrap();
+
+        let mut reopened = fixture.app();
+        reopened.open_path(&document).unwrap();
+        let reading = &reopened.fixed.as_ref().unwrap().reading;
+        assert!(reading.scan_contrast());
+        assert_eq!(reading.preferences().scan_gamma_tenths, None);
+        assert_eq!(reopened.current_history_location(), location);
+    }
+
+    #[test]
     fn pdf_reading_bars_route_view_scan_and_navigation() {
         let fixture = Fixture::new();
         let pdf = fixture.root.join("Reading sample.pdf");

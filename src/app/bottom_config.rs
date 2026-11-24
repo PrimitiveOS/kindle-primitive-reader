@@ -971,7 +971,7 @@ impl Reader {
                             )
                         }),
                     ));
-                    if reading.supports_scan_contrast() {
+                    if reading.supports_scan_gamma() {
                         let gamma = prefs.scan_gamma_tenths.unwrap_or(SCAN_GAMMA_DEFAULT);
                         rows.push(ConfigRow::new(
                             "Contrast",
@@ -1003,6 +1003,21 @@ impl Reader {
                             format!("Fine · {}", format_scan_gamma(gamma))
                         };
                         rows.push(ConfigRow::new(label, steps.chain([adaptive])));
+                    } else if reading.supports_scan_contrast() {
+                        rows.push(ConfigRow::new(
+                            "Contrast",
+                            [("Normal contrast", false), ("Higher contrast", true)].map(
+                                |(title, higher)| {
+                                    Choice::option(
+                                        title,
+                                        Action::ScanContrast(higher),
+                                        prefs.scan_contrast == higher,
+                                    )
+                                },
+                            ),
+                        ));
+                    }
+                    if reading.supports_scan_contrast() {
                         rows.push(ConfigRow::new(
                             "Scan white level",
                             [

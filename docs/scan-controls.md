@@ -1,24 +1,30 @@
 # Scan controls
 
-Open a PDF or DjVu, open the bottom reading controls, and choose **Scan**. Reader saves the scan controls for that book. Source pages, OCR word rectangles, bookmarks and exported annotation coordinates retain their original coordinate system.
+Open a PDF, DjVu, or comic archive, open the bottom reading controls, and choose **Scan**. Reader saves the scan controls for that book. Source pages, OCR word rectangles, bookmarks and exported annotation coordinates retain their original coordinate system.
 
 ## Contrast
 
-The **Contrast** presets are 0.8, 1.0, 1.5, 2.0, 4.0, 6.0, 10.0 and 50.0.
-Choose 1.0 for the original tones, 0.8 to lighten midtones, or a higher setting to darken faint ink.
-The **Fine** row adjusts contrast in steps of 0.1 or 1.0.
-The **Adaptive** button uses Reader’s existing Higher contrast adjustment for paper and ink.
-Books that already had Higher contrast enabled keep that adjustment.
+PDF and CBZ, CBT and CBR comic archives offer **Contrast** presets of
+0.8, 1.0, 1.5, 2.0, 4.0, 6.0, 10.0 and 50.0. Choose 1.0 for the original
+tones, 0.8 to lighten midtones, or a higher setting to darken faint ink.
+The **Fine** row adjusts contrast in steps of 0.1 or 1.0. **Adaptive**
+selects Reader’s automatic paper and ink adjustment.
 
-Reader adjusts the visible grayscale image before scan white level and dithering.
-Word selection, links and saved annotations still use the original page coordinates.
-The same controls affect PDF, DjVu and comics in Reader.
+DjVu offers **Normal contrast** and **Higher contrast**. Higher contrast
+uses the adaptive adjustment, including for books with that setting already
+saved. Reader discards numeric values carried into a DjVu view by a saved
+fixed-page default. Word selection, links and annotation coordinates use the
+original page geometry. The display applies contrast before white level and
+dithering.
 
-Reader’s contrast lookup matches the pinned KOReader PDF renderer at all 16 sampled input tones for each preset and custom 2.3.
-On the authored DjVu fixture, its renderer kept the same output at all 132 sampled tones.
-Reader applies its numeric settings to DjVu pixels as well.
-The comparison used fixed pages with reflow, rotation and background cleanup disabled.
-[Simulator capture](screenshots/scan-contrast-levels.png) · [Executable comparison](../scripts/verify-stock-scan-contrast.lua) · [KOReader contrast settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L486-L507)
+The pinned KOReader MuPDF renderer matched the contrast curve at 16 tones
+for each preset and custom 2.3, in the authored PDF and in each of the three
+comic archive formats. The same renderer options left all 132 sampled DjVu
+tones unchanged at every tested level. The executable check uses grayscale
+fixed-page rendering with reflow, rotation and background cleanup disabled.
+Pass the authored DjVu fixture first, then any authored comic archives
+containing a sixteen-band grayscale ramp as optional arguments.
+[PDF controls](screenshots/scan-contrast-levels.png) · [DjVu controls](screenshots/scan-contrast-djvu.png) · [Executable comparison](../scripts/verify-stock-scan-contrast.lua) · [KOReader MuPDF archive providers](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L360-L387) · [Contrast presets](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L486-L507)
 
 ## Auto straighten
 

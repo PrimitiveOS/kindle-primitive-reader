@@ -914,6 +914,10 @@ impl FixedReading {
         self.source.supports_scan_contrast()
     }
 
+    pub(crate) fn supports_scan_gamma(&self) -> bool {
+        self.source.supports_scan_gamma()
+    }
+
     pub(crate) fn scan_contrast(&self) -> bool {
         self.view.scan_contrast
     }
@@ -931,8 +935,8 @@ impl FixedReading {
         if !valid_scan_gamma(&tenths) {
             return Err("Contrast must be between 0.8 and 50.0".into());
         }
-        if tenths != SCAN_GAMMA_DEFAULT && !self.supports_scan_contrast() {
-            return Err("Contrast adjustment is available for PDF, DjVu, and comics".into());
+        if !self.supports_scan_gamma() {
+            return Err("Numeric contrast is available for PDF and comic archives".into());
         }
         self.view.scan_contrast = false;
         self.view.scan_gamma_tenths = (tenths != SCAN_GAMMA_DEFAULT).then_some(tenths);
@@ -2652,6 +2656,10 @@ impl FixedDocument {
         matches!(self, Self::Pdf(_) | Self::Djvu(_) | Self::Comic(_))
     }
 
+    fn supports_scan_gamma(&self) -> bool {
+        matches!(self, Self::Pdf(_) | Self::Comic(_))
+    }
+
     fn presentation(
         &self,
         page: usize,
@@ -2668,9 +2676,11 @@ impl FixedDocument {
         } else {
             view.spread &= self.supports_comic_spreads();
         }
+        if !self.supports_scan_gamma() {
+            view.scan_gamma_tenths = None;
+        }
         if !self.supports_scan_contrast() {
             view.scan_contrast = false;
-            view.scan_gamma_tenths = None;
             view.scan_white_level = None;
         }
         if view.continuous
@@ -4486,59 +4496,107 @@ pub(crate) mod tests {
         }
     }
 
+    fn scan_word_point(reading: &FixedReading) -> Point {
+        let text = reading.page_text(0).unwrap();
+        text.words
+            .iter()
+            .find_map(|word| {
+                reading
+                    .visible_rectangle(0, word.bounds)
+                    .map(|rect| rect.center())
+            })
+            .expect("authored page contains visible words")
+    }
+
+    fn scan_word(reading: &FixedReading, point: Point) -> (String, Option<Rect>) {
+        let WordAtTouch::Ready(Some(word)) =
+            reading.select_word(point.x as f32, point.y as f32).unwrap()
+        else {
+            panic!("Expected a word at its original source coordinates");
+        };
+        (word.text().to_owned(), reading.selection_bounds(&word))
+    }
+
     #[test]
-    fn scan_gamma_repaints_pdf_and_djvu_without_changing_selection_geometry() {
-        let mut pdf = reading(
+    fn scan_gamma_repaints_pdf_without_changing_selection_geometry() {
+        let mut reader = reading(
             Pdf::open(crate::fixed::tests::document()).unwrap(),
             View::default(),
         );
+        let original = reader.frame.pixels.clone();
+        let viewport = reader.page_viewport();
+        let point = scan_word_point(&reader);
+        let original_selection = scan_word(&reader, point);
+        reader.set_scan_gamma(23).unwrap();
+        assert!(!reader.scan_contrast());
+        assert_eq!(reader.preferences().scan_gamma_tenths, Some(23));
+        assert_ne!(reader.display_frame(0..PAGE_HEIGHT).pixels, original);
+        assert_eq!(reader.frame.pixels, original);
+        assert_eq!(reader.page_viewport(), viewport);
+        assert_eq!(scan_word(&reader, point), original_selection);
+        reader.set_scan_white_level(Some(220)).unwrap();
+        reader.set_dither(true);
+        assert_eq!(scan_word(&reader, point), original_selection);
+        assert!(reader.set_scan_gamma(7).is_err());
+        assert!(reader.set_scan_gamma(501).is_err());
+        assert_eq!(reader.preferences().scan_gamma_tenths, Some(23));
+        reader.set_scan_contrast(true).unwrap();
+        assert!(reader.scan_contrast());
+        assert_eq!(reader.preferences().scan_gamma_tenths, None);
+        reader.set_scan_white_level(None).unwrap();
+        reader.set_dither(false);
+        reader.set_scan_gamma(10).unwrap();
+        assert_eq!(reader.display_frame(0..PAGE_HEIGHT).pixels, original);
+    }
+
+    #[test]
+    fn scan_gamma_discards_djvu_defaults_and_preserves_adaptive_contrast_and_geometry() {
+        let inherited = crate::document_defaults::FixedDefaults::from_view(View {
+            scan_gamma_tenths: Some(23),
+            ..View::default()
+        })
+        .apply(View::default());
+        assert_eq!(inherited.scan_gamma_tenths, Some(23));
         let djvu = Djvu::open(crate::djvu::tests::grayscale_document()).unwrap();
-        let mut djvu =
-            FixedReading::with_source(FixedDocument::Djvu(Box::new(djvu)), 0, View::default())
-                .unwrap();
-        for reader in [&mut pdf, &mut djvu] {
-            let original = reader.frame.pixels.clone();
-            let viewport = reader.page_viewport();
-            let text = reader.page_text(0).unwrap();
-            let point = text
-                .words
-                .iter()
-                .find_map(|word| {
-                    reader
-                        .visible_rectangle(0, word.bounds)
-                        .map(|rect| rect.center())
-                })
-                .expect("authored page contains visible words");
-            let choose = |reading: &FixedReading| {
-                let WordAtTouch::Ready(Some(word)) =
-                    reading.select_word(point.x as f32, point.y as f32).unwrap()
-                else {
-                    panic!("Expected a word at its original source coordinates");
-                };
-                (word.text().to_owned(), reading.selection_bounds(&word))
-            };
-            let original_selection = choose(reader);
-            reader.set_scan_gamma(23).unwrap();
-            assert!(!reader.scan_contrast());
-            assert_eq!(reader.preferences().scan_gamma_tenths, Some(23));
-            assert_ne!(reader.display_frame(0..PAGE_HEIGHT).pixels, original);
-            assert_eq!(reader.frame.pixels, original);
-            assert_eq!(reader.page_viewport(), viewport);
-            assert_eq!(choose(reader), original_selection);
-            reader.set_scan_white_level(Some(220)).unwrap();
-            reader.set_dither(true);
-            assert_eq!(choose(reader), original_selection);
-            assert!(reader.set_scan_gamma(7).is_err());
-            assert!(reader.set_scan_gamma(501).is_err());
-            assert_eq!(reader.preferences().scan_gamma_tenths, Some(23));
-            reader.set_scan_contrast(true).unwrap();
+        let mut reader =
+            FixedReading::with_source(FixedDocument::Djvu(Box::new(djvu)), 0, inherited).unwrap();
+        let original = reader.frame.pixels.clone();
+        let viewport = reader.page_viewport();
+        let point = scan_word_point(&reader);
+        let original_selection = scan_word(&reader, point);
+        assert!(reader.supports_scan_contrast());
+        assert!(!reader.supports_scan_gamma());
+        assert_eq!(reader.preferences().scan_gamma_tenths, None);
+        assert_eq!(reader.display_frame(0..PAGE_HEIGHT).pixels, original);
+
+        let legacy: View = serde_json::from_str(r#"{"scan_contrast":true}"#).unwrap();
+        reader.restore_view(legacy).unwrap();
+        assert!(reader.scan_contrast());
+        assert_ne!(reader.display_frame(0..PAGE_HEIGHT).pixels, original);
+        for value in [10, 23] {
+            assert!(reader.set_scan_gamma(value).is_err());
             assert!(reader.scan_contrast());
             assert_eq!(reader.preferences().scan_gamma_tenths, None);
-            reader.set_scan_white_level(None).unwrap();
-            reader.set_dither(false);
-            reader.set_scan_gamma(10).unwrap();
-            assert_eq!(reader.display_frame(0..PAGE_HEIGHT).pixels, original);
         }
+        assert_eq!(reader.page_viewport(), viewport);
+        assert_eq!(scan_word(&reader, point), original_selection);
+        reader.set_scan_contrast(false).unwrap();
+        assert_eq!(reader.display_frame(0..PAGE_HEIGHT).pixels, original);
+    }
+
+    #[test]
+    fn scan_gamma_repaints_comic_archives_without_changing_navigation_geometry() {
+        let comic = Comic::open(&crate::test_fixture("harbor-signals.cbz")).unwrap();
+        let mut reader =
+            FixedReading::with_source(FixedDocument::Comic(comic), 0, View::default()).unwrap();
+        let original = reader.frame.pixels.clone();
+        let viewport = reader.page_viewport();
+        assert!(reader.supports_scan_gamma());
+        reader.set_scan_gamma(23).unwrap();
+        assert_eq!(reader.preferences().scan_gamma_tenths, Some(23));
+        assert_ne!(reader.display_frame(0..PAGE_HEIGHT).pixels, original);
+        assert_eq!(reader.frame.pixels, original);
+        assert_eq!(reader.page_viewport(), viewport);
     }
 
     #[test]
