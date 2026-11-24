@@ -45,6 +45,18 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.47 verification plan
+
+Compare article image settings, contextual wrapping and caption actions with
+the pinned KOReader lookup. Verify that images arriving after the article
+preserve the visible paragraph and that failed requests leave the article
+readable. Check optional Parley margin collapse and float placement against
+the pinned CREngine fixtures. Verify that preparing new reflow geometry
+preserves the source passage, selection, and portrait rendering on return.
+Landscape support still requires the coordinated Launcher handoff and
+foreground Kindle verification.
+[Wikipedia lookups](online-lookups.md) · [Render modes](render-modes.md)
+
 ## Reader 0.1.46 verification plan
 
 Compare the restored opening-page callback and all three Skim positions

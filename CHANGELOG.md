@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.47
+
+- Show optional images inside Wikipedia articles, with text wrapped around the image and tap-to-show captions.
+- Add opt-in publisher layout support for collapsing adjacent margins and flowing text around floated images.
+
 ## 0.1.46
 
 - Choose Top, Center or Bottom for the Skim preview and jump ten pages in either direction.
