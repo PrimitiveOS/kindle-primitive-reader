@@ -826,6 +826,7 @@ pub struct Reader {
     quick_display: QuickDisplay,
     /// Opened from Primitive Launcher: the launcher's theme, which the whole Reader follows. `None` standalone.
     system_theme: Option<SystemTheme>,
+    launcher_orientation_handoff: bool,
     refresh_display: bool,
     auto_turn: AutoTurn,
     read_alarm: read_alarm::ReadAlarm,
@@ -1040,6 +1041,7 @@ impl Reader {
             gestures: GestureBindings::load(data),
             quick_display: QuickDisplay::read(),
             system_theme: SystemTheme::from_env(),
+            launcher_orientation_handoff: false,
             refresh_display: false,
             auto_turn: AutoTurn::default(),
             read_alarm: read_alarm::ReadAlarm::open(data.join("read-timer.json")),
@@ -9553,12 +9555,37 @@ pub fn run_reader(
     let data = home.join("data");
     with_storage(|| fs::create_dir_all(&data))?;
     let mut app = Reader::open(documents, &data.join("library.json"), fonts)?;
+    let run =
+        std::env::var_os("KL_RUN").map_or_else(|| PathBuf::from("/var/tmp/kl"), PathBuf::from);
+    let turn_file = std::env::var_os("KL_APP_TURN_FILE").map(PathBuf::from);
+    app.launcher_orientation_handoff = has_launcher_orientation_handoff(&run, turn_file.as_deref());
     if let Some(file) = file
         && let Err(error) = app.open_path(file)
     {
         app.report(error);
     }
     primitive_app::run(ReaderRuntime(app), home).map_err(Into::into)
+}
+
+fn has_launcher_orientation_handoff(run: &Path, offered: Option<&Path>) -> bool {
+    let Some(path) = offered.filter(|path| path.file_name().is_some_and(|name| name == "turn"))
+    else {
+        return false;
+    };
+    // The supervisor creates the directory before launch. The turn file appears after the first draw.
+    let Some(parent) = path
+        .parent()
+        .filter(|parent| parent.parent() == Some(run) && parent.is_dir())
+    else {
+        return false;
+    };
+    parent
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("app-turn."))
+        .is_some_and(|token| {
+            token.len() == 6 && token.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
 }
 
 /// The device runtime receives physical page keys as `PageForward`/`PageBack`.
@@ -9580,6 +9607,9 @@ impl App for ReaderRuntime {
     }
 
     fn preferred_rotation(&self) -> Option<primitive_app::Rotation> {
+        if self.0.under_launcher() && !self.0.launcher_orientation_handoff {
+            return None;
+        }
         self.0.preferred_rotation()
     }
 
@@ -14730,10 +14760,30 @@ mod tests {
         let settings = fixture.root.join("launcher-settings.txt");
         fs::write(&settings, "dark_mode=off\n").unwrap();
         runtime.0.system_theme = Some(SystemTheme::new(settings));
-        assert_eq!(runtime.preferred_dark_mode(), None);
-        assert!(!runtime.0.uses_night_pages());
-        assert_eq!(runtime.preferred_rotation(), Some(Rotation::UpsideDown));
-        assert_eq!(runtime.0.current_position().unwrap(), before);
+        let run = fixture.root.join("run");
+        let scoped_dir = run.join("app-turn.ABC123");
+        fs::create_dir_all(&scoped_dir).unwrap();
+        let scoped = scoped_dir.join("turn");
+        let legacy = run.join("orientation");
+        fs::write(&legacy, "U").unwrap();
+        let lost = run.join("app-turn.DEF456/turn");
+        for (offered, expected) in [
+            (None, None),
+            (Some(legacy.as_path()), None),
+            (Some(lost.as_path()), None),
+            (Some(scoped.as_path()), Some(Rotation::UpsideDown)),
+        ] {
+            runtime.0.launcher_orientation_handoff =
+                has_launcher_orientation_handoff(&run, offered);
+            assert_eq!(runtime.preferred_rotation(), expected);
+            assert_eq!(runtime.preferred_dark_mode(), None);
+            assert!(!runtime.0.uses_night_pages());
+            assert_eq!(
+                runtime.0.controls.orientation,
+                ReadingOrientation::UpsideDown
+            );
+            assert_eq!(runtime.0.current_position().unwrap(), before);
+        }
     }
 
     #[test]
