@@ -199,6 +199,10 @@ impl Reader {
             return None;
         }
         let start_y = self.leftward_link_swipe(input, start_x)?;
+        self.follow_nearest_link_at(start_x, start_y)
+    }
+
+    pub(super) fn follow_nearest_link_at(&mut self, start_x: f32, start_y: f32) -> Option<Change> {
         let internal_only = LinkPreference::SwipeIgnoreExternal.checked(self.controls);
         match self.screen {
             Screen::Book => {
@@ -228,6 +232,10 @@ impl Reader {
             return None;
         }
         self.leftward_link_swipe(input, start_x)?;
+        self.jump_to_latest_bookmark()
+    }
+
+    pub(super) fn jump_to_latest_bookmark(&mut self) -> Option<Change> {
         let state = self.library.state(self.open_book_id()?)?;
         let fixed = self.screen == Screen::Fixed;
         let (_, action) = state

@@ -1,5 +1,7 @@
 //! Assign single-contact gestures to existing Reader actions. The SDK owns system gestures.
-use super::{Action, DisplayLevel, Item, Reader, Screen, read_import_file};
+use super::{Action, BookList, DisplayLevel, Item, Reader, Screen, TopGroup, read_import_file};
+
+pub(super) mod multiswipes;
 use crate::{Result, reading_controls::ReadingControls, session::ReadingViewport};
 use primitive_app::{App, Change};
 use primitive_ui::Input;
@@ -160,6 +162,7 @@ impl Gesture {
 pub(super) enum Binding {
     Default,
     Ignore,
+    PassThrough,
     Next,
     Previous,
     Contents,
@@ -177,12 +180,24 @@ pub(super) enum Binding {
     Refresh,
     Controls,
     PauseCornerHolds,
+    LatestBookmark,
+    NearestLink,
+    FrontLight,
+    RecentBooks,
+    BookDetails,
+    PreviousChapter,
+    NextChapter,
+    PreviousBook,
+    FavoriteBooks,
+    FitPageWidth,
+    FitPageHeight,
 }
 
 impl Binding {
-    const ALL: [(Self, &'static str); 19] = [
+    const ALL: [(Self, &'static str); 31] = [
         (Self::Default, "Default behavior"),
         (Self::Ignore, "Do nothing"),
+        (Self::PassThrough, "Pass through"),
         (Self::Next, "Next page"),
         (Self::Previous, "Previous page"),
         (Self::Contents, "Contents"),
@@ -203,6 +218,17 @@ impl Binding {
         (Self::Refresh, "Refresh screen"),
         (Self::Controls, "Reading controls"),
         (Self::PauseCornerHolds, "Pause corner holds"),
+        (Self::LatestBookmark, "Go to latest bookmark"),
+        (Self::NearestLink, "Follow nearest link"),
+        (Self::FrontLight, "Front light controls"),
+        (Self::RecentBooks, "Recent books"),
+        (Self::BookDetails, "Book details"),
+        (Self::PreviousChapter, "Previous chapter"),
+        (Self::NextChapter, "Next chapter"),
+        (Self::PreviousBook, "Open previous book"),
+        (Self::FavoriteBooks, "Favorite books"),
+        (Self::FitPageWidth, "Fit page width"),
+        (Self::FitPageHeight, "Fit page height"),
     ];
     fn label(self) -> &'static str {
         Self::ALL.iter().find(|entry| entry.0 == self).unwrap().1
@@ -215,6 +241,7 @@ pub(super) struct GestureBindings {
     corner_pause_until: Option<Instant>,
     claimed_corner_hold: bool,
     replaying_hold_release: bool,
+    pub(super) multiswipes: multiswipes::Multiswipes,
 }
 
 impl GestureBindings {
@@ -230,6 +257,7 @@ impl GestureBindings {
             corner_pause_until: None,
             claimed_corner_hold: false,
             replaying_hold_release: false,
+            multiswipes: multiswipes::Multiswipes::load(data),
         }
     }
     fn get(&self, gesture: Gesture) -> Binding {
@@ -262,6 +290,7 @@ impl GestureBindings {
         let current = self.get(gesture);
         Binding::ALL
             .iter()
+            .filter(|(binding, _)| *binding != Binding::PassThrough)
             .map(|&(b, title)| {
                 let item = Item::new(title, Action::BindGesture(gesture, b));
                 if b == current {
@@ -334,7 +363,22 @@ impl GestureBindings {
 
 impl Reader {
     pub(super) fn reading_gesture_items(&self) -> Vec<Item> {
-        let mut items = self.gestures.gestures();
+        let multiswipes_enabled = self.gestures.multiswipes.enabled();
+        let toggle = Action::Multiswipe(multiswipes::Command::Toggle);
+        let submenu = |screen| {
+            if multiswipes_enabled {
+                Action::Show(screen)
+            } else {
+                Action::Heading
+            }
+        };
+        let mut items = vec![
+            Item::new("Multiswipes", toggle).detail("Draw a shape with one finger"),
+            Item::new("Preset multiswipes", submenu(Screen::Multiswipes)),
+            Item::new("Custom multiswipes", submenu(Screen::CustomMultiswipes)),
+            Item::new("Gesture overview", Action::Show(Screen::GestureOverview)),
+        ];
+        items.extend(self.gestures.gestures());
         items.extend([
             Item::new(
                 "Ignore long-press on corners",
@@ -351,6 +395,15 @@ impl Reader {
             self.scroll_settings_item(),
         ]);
         items
+    }
+
+    pub(super) fn return_to_gesture_list(&mut self, gesture: Gesture) {
+        self.show(Screen::Gestures);
+        if let Some(index) = self.reading_gesture_items().iter().position(
+            |item| matches!(item.action, Action::Show(Screen::GestureBinding(item_gesture)) if item_gesture == gesture),
+        ) {
+            self.list_page = index / self.list_geometry().rows;
+        }
     }
 
     pub(super) fn start_assigned_corner_hold(&mut self, x: f32, y: f32) -> Option<Change> {
@@ -401,10 +454,7 @@ impl Reader {
             None => Gesture::touch(input, viewport)?,
         };
         let binding = self.gestures.get(gesture);
-        if binding == Binding::NavigationBack {
-            return Some(self.navigation_back());
-        }
-        if self.screen == Screen::Library {
+        if self.screen == Screen::Library && binding != Binding::NavigationBack {
             return None;
         }
         if let (Binding::Default, Input::Swipe { dy, .. }) = (binding, input) {
@@ -434,15 +484,29 @@ impl Reader {
             }
             return None;
         }
+        let location = match input {
+            Input::Tap(x, y) | Input::LongTap(x, y) => Some((x, y)),
+            Input::Swipe { start_y, .. } => swipe_x.map(|x| (x, start_y)),
+            _ => None,
+        };
+        self.dispatch_gesture_binding(binding, location)
+    }
+
+    fn dispatch_gesture_binding(
+        &mut self,
+        binding: Binding,
+        location: Option<(f32, f32)>,
+    ) -> Option<Change> {
         self.auto_turn.activity(Instant::now());
         let fixed = self.fixed.is_some();
         let action = match binding {
-            Binding::Default => return None,
+            Binding::Default | Binding::PassThrough => return None,
             Binding::Ignore => return Some(Change::None),
             Binding::Next => return Some(self.input(Input::PageForward)),
             Binding::Previous => return Some(self.input(Input::PageBack)),
             Binding::Controls => {
-                return Some(self.open_reading_edge(true, viewport.dimensions().0 as f32 / 2.0));
+                let x = self.reading_viewport().dimensions().0 as f32 / 2.0;
+                return Some(self.open_reading_edge(true, x));
             }
             Binding::PauseCornerHolds => {
                 if !self
@@ -479,7 +543,27 @@ impl Reader {
             Binding::Back => Action::ReturnToLocation,
             Binding::Forward => Action::NextLocation,
             Binding::Refresh => Action::RefreshDisplay,
-            Binding::NavigationBack => unreachable!("Back is handled before reading-only actions"),
+            Binding::NavigationBack => return Some(self.navigation_back()),
+            Binding::LatestBookmark => return self.jump_to_latest_bookmark(),
+            Binding::NearestLink => {
+                let (x, y) = location?;
+                return self.follow_nearest_link_at(x, y);
+            }
+            Binding::FrontLight => {
+                let x = self.reading_viewport().dimensions().0 as f32 / 2.0;
+                let change = self.open_reading_edge(true, x);
+                self.top_group = Some(TopGroup::Settings);
+                return Some(change);
+            }
+            Binding::RecentBooks => Action::ListBooks(BookList::Recent),
+            Binding::BookDetails => Action::OrganizeCurrent,
+            Binding::PreviousChapter => Action::Chapter(super::chapter_navigation::Direction::Previous),
+            Binding::NextChapter => Action::Chapter(super::chapter_navigation::Direction::Next),
+            Binding::PreviousBook => Action::OpenPreviousDocument,
+            Binding::FavoriteBooks => Action::ListBooks(BookList::Favorites),
+            Binding::FitPageWidth if fixed => Action::FitPage(true),
+            Binding::FitPageHeight if fixed => Action::FitHeight,
+            Binding::FitPageWidth | Binding::FitPageHeight => return None,
         };
         Some(match self.activate(action) {
             Ok(()) => {

@@ -167,7 +167,7 @@ use crate::{Engine, Probe, Result, Settings, TextAlignment};
 
 use self::custom_contents::CustomAction;
 use self::footer_presets::Preset as FooterPreset;
-use self::gestures::{Binding, Gesture, GestureBindings};
+use self::gestures::{Binding, Gesture, GestureBindings, multiswipes};
 use self::library_view::{FileBrowser, file_type};
 use self::lookup_history::{LookupHistory, SearchQuery};
 use self::page_overview::PageOverview;
@@ -255,6 +255,12 @@ enum Screen {
     Gestures,
     Scrolling,
     GestureBinding(Gesture),
+    Multiswipes,
+    CustomMultiswipes,
+    RecordMultiswipe,
+    MultiswipeBinding(multiswipes::Shape),
+    RemoveMultiswipe(multiswipes::Shape),
+    GestureOverview,
     ReadingData,
     LibraryExport(library_export::Page),
     ClearOcr,
@@ -428,6 +434,12 @@ impl Screen {
             Self::Gestures => "Reading gestures",
             Self::Scrolling => "Scrolling",
             Self::GestureBinding(gesture) => gesture.label(),
+            Self::Multiswipes => "Preset multiswipes",
+            Self::CustomMultiswipes => "Custom multiswipes",
+            Self::RecordMultiswipe => "Record a multiswipe",
+            Self::MultiswipeBinding(_) => "Multiswipe action",
+            Self::RemoveMultiswipe(_) => "Remove multiswipe?",
+            Self::GestureOverview => "Gesture overview",
             Self::ReadingData => "Reading data",
             Self::LibraryExport(page) => page.title(),
             Self::ClearOcr => "Clear recognized text?",
@@ -630,6 +642,8 @@ enum Action {
     EditListDensity(list_density::Scope, list_density::Field),
     EditSearchPresentation(search_presentation::Field),
     BindGesture(Gesture, Binding),
+    Multiswipe(multiswipes::Command),
+    MultiswipePreview(multiswipes::Shape),
     SetDisplayLevel(DisplayLevel, u32),
     RefreshDisplay,
     AutoTurn(Option<Duration>),
@@ -1841,6 +1855,10 @@ impl Reader {
         self.menu_search.clear_overlays();
         self.embedded_font_report = None;
         self.finish_interrupted_scroll();
+        self.gestures.multiswipes.clear_contact();
+        if screen != Screen::RecordMultiswipe {
+            self.gestures.multiswipes.clear_draft();
+        }
         self.opening_path_overlay = None;
         if !matches!(
             screen,
@@ -2906,6 +2924,14 @@ impl Reader {
             Screen::Gestures => return self.reading_gesture_items(),
             Screen::Scrolling => return self.scroll_settings_items(),
             Screen::GestureBinding(gesture) => return self.gestures.choices(gesture),
+            Screen::Multiswipes
+            | Screen::CustomMultiswipes
+            | Screen::RecordMultiswipe
+            | Screen::MultiswipeBinding(_)
+            | Screen::RemoveMultiswipe(_) => {
+                return self.gestures.multiswipes.items(screen);
+            }
+            Screen::GestureOverview => return self.gesture_overview_items(),
             Screen::BookMap => return self.book_map_items(),
             Screen::AutoTurn => {
                 let selected = self.auto_turn.interval();
@@ -4154,13 +4180,9 @@ impl Reader {
             }
             Action::BindGesture(gesture, binding) => {
                 self.gestures.set(gesture, binding)?;
-                self.show(Screen::Gestures);
-                self.list_page = Gesture::ALL
-                    .iter()
-                    .position(|entry| entry.0 == gesture)
-                    .unwrap()
-                    / self.list_geometry().rows;
+                self.return_to_gesture_list(gesture);
             }
+            Action::Multiswipe(command) => self.activate_multiswipe(command)?,
             Action::SetDisplayLevel(control, level) => self.quick_display.set(control, level)?,
             Action::RefreshDisplay => {
                 self.pages_since_refresh = 0;
@@ -4465,7 +4487,7 @@ impl Reader {
             Action::FixedPage(page) => {
                 self.follow_fixed(page, None)?;
             }
-            Action::Heading => {}
+            Action::Heading | Action::MultiswipePreview(_) => {}
             Action::Bookmark(index) if self.fixed.is_some() => {
                 let fixed = self.fixed.as_mut().ok_or("No open document")?;
                 let page = self
@@ -8380,18 +8402,23 @@ impl Reader {
         let rows: Vec<_> = items
             .iter()
             .map(|item| Row {
-                title: if self.screen == Screen::Matches {
+                title: if self.screen == Screen::Matches
+                    || multiswipes::Shape::for_row(&item.action).is_some()
+                {
                     ""
                 } else {
                     &item.title
                 },
                 detail: item.detail.as_deref(),
                 accessory: if self.screen == Screen::MetadataSaveSettings
-                    || matches!(&item.action, Action::Heading)
+                    || matches!(&item.action, Action::Heading | Action::MultiswipePreview(_))
                 {
                     RowAccessory::None
                 } else {
                     match &item.action {
+                        Action::Multiswipe(multiswipes::Command::Toggle) => {
+                            RowAccessory::Toggle(self.gestures.multiswipes.enabled())
+                        }
                         Action::ToggleNotificationSource(source) => {
                             RowAccessory::Toggle(source.enabled(self.controls.notification_sources))
                         }
@@ -8563,6 +8590,13 @@ impl Reader {
             self.draw_mirrored_chapter_rows(canvas, &group);
         } else {
             group.draw(canvas, None);
+        }
+        for (index, item) in items.iter().enumerate() {
+            if let Some(shape) = multiswipes::Shape::for_row(&item.action)
+                && let Some(rect) = group.row_rect(index)
+            {
+                shape.draw(canvas, rect);
+            }
         }
         if self.screen == Screen::BookMap
             && let Some(active) = &self.active
@@ -9032,6 +9066,7 @@ impl App for Reader {
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
         self.notifications.handle_input(input);
+        self.gestures.multiswipes.clear_contact();
         self.finish_interrupted_scroll();
         if let Some(change) = self.embedded_font_report_input(input) {
             return change;
@@ -9152,7 +9187,8 @@ impl App for Reader {
 
     fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
         self.notifications.dismiss();
-        self.continuous_touch_pan(pan)
+        self.recognize_multiswipe(pan)
+            .unwrap_or_else(|| self.continuous_touch_pan(pan))
     }
 
     fn preferred_rotation(&self) -> Option<primitive_app::Rotation> {
@@ -9196,6 +9232,7 @@ impl App for Reader {
         use crate::session::ReadingViewport;
 
         self.finish_interrupted_scroll();
+        self.gestures.multiswipes.clear_contact();
         self.staged_viewport = Some((candidate, None));
         let target = match candidate.logical_size {
             (WIDTH, HEIGHT) => ReadingViewport::PORTRAIT,
@@ -9279,6 +9316,7 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        self.gestures.multiswipes.clear_contact();
         if let Some(change) = self.menu_search_input(input) {
             return change;
         }
@@ -9751,13 +9789,12 @@ impl App for Reader {
                     }
                     Screen::BookList => self.show(Screen::OrganizeLibrary),
                     Screen::RemoveCollection => self.show(Screen::BookList),
-                    Screen::GestureBinding(gesture) => {
+                    Screen::GestureBinding(gesture) => self.return_to_gesture_list(gesture),
+                    Screen::MultiswipeBinding(shape) => self.return_to_multiswipe_list(shape),
+                    Screen::RemoveMultiswipe(shape) => self.show(Screen::MultiswipeBinding(shape)),
+                    Screen::RecordMultiswipe => self.show(Screen::CustomMultiswipes),
+                    Screen::Multiswipes | Screen::CustomMultiswipes | Screen::GestureOverview => {
                         self.show(Screen::Gestures);
-                        self.list_page = Gesture::ALL
-                            .iter()
-                            .position(|entry| entry.0 == gesture)
-                            .unwrap()
-                            / self.list_geometry().rows;
                     }
                     Screen::Scrolling => self.show(Screen::Gestures),
                     Screen::ReadingNotifications => self.show(Screen::ReadingControls),
@@ -10327,6 +10364,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.gestures.multiswipes.clear_contact();
         self.finish_interrupted_scroll();
         self.embedded_font_report = None;
         self.gestures.clear_assigned_corner_hold();
