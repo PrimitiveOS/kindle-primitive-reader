@@ -22,6 +22,7 @@ pub(crate) mod publisher_pages;
 mod reading_history;
 mod saved_marks_view;
 mod search_presentation;
+mod search_results_navigation;
 mod word_spacing;
 use character_page_settings::NumberField;
 mod cjk_selection;
@@ -796,6 +797,7 @@ pub struct Reader {
     result_context: Option<result_context::ResultContext>,
     flexible_results: std::cell::RefCell<Option<flexible_results::FlexibleResults>>,
     focused_result: Option<usize>,
+    search_results_navigation: search_results_navigation::Navigation,
     current_contents_row: Option<usize>,
     contents_view: Option<contents_view::ContentsView>,
     list_density_picker: Option<list_density::Picker>,
@@ -1001,6 +1003,7 @@ impl Reader {
             result_context: None,
             flexible_results: Default::default(),
             focused_result: None,
+            search_results_navigation: search_results_navigation::Navigation::default(),
             current_contents_row: None,
             contents_view: None,
             list_density_picker: None,
@@ -1164,6 +1167,7 @@ impl Reader {
         self.ocr = None;
         self.hits.clear();
         self.pdf_hits.clear();
+        self.search_results_navigation = Default::default();
         self.cancel_search();
         self.search_result = None;
         self.result_selection = None;
@@ -1372,6 +1376,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.search_results_navigation.menu_open = false;
         self.top_header_about = false;
         self.top_header_font_picker = None;
         let previous = self.screen;
@@ -4416,6 +4421,11 @@ impl Reader {
             scan_point: fixed.reading.history_point(),
         };
         fixed.reading.jump_to(page, target.as_ref())?;
+        self.finish_fixed_jump(page, target);
+        Ok(previous)
+    }
+
+    fn finish_fixed_jump(&mut self, page: usize, target: Option<FixedJump>) {
         self.search_result = None;
         self.pdf_selection = None;
         self.pdf_result_regions.clear();
@@ -4425,7 +4435,6 @@ impl Reader {
         }
         self.show(Screen::Fixed);
         self.record_position();
-        Ok(previous)
     }
 
     fn restore_position(&mut self, new_position: &ReadingPosition) -> Result<()> {
@@ -4785,6 +4794,7 @@ impl Reader {
         })?;
         self.clear_flexible_results();
         self.matches_from_selection = false;
+        self.remember_all_results_origin();
         self.nearby.clear();
         self.search_result = None;
         self.matches_page = 0;
@@ -7199,6 +7209,7 @@ impl Reader {
             _ => self.screen.title(),
         };
         header(canvas, title, "Back");
+        self.draw_search_results_options(canvas);
         if self.screen == Screen::Matches && self.draw_flexible_results(canvas) {
             return;
         }
@@ -7831,6 +7842,7 @@ impl App for Reader {
         }
         self.draw_flow_popup(canvas);
         self.draw_list_density_picker(canvas);
+        self.draw_search_results_navigation(canvas);
         self.draw_top_header_default_prompt(canvas);
         self.draw_top_header_about(canvas);
         self.draw_header_font_picker(canvas);
@@ -7879,6 +7891,9 @@ impl App for Reader {
             return change;
         }
         if let Some(change) = self.header_font_picker_input(input) {
+            return change;
+        }
+        if let Some(change) = self.search_results_navigation_input(input) {
             return change;
         }
         if let Some(change) = self.style_editor_input(input) {
@@ -8021,6 +8036,9 @@ impl App for Reader {
             return change;
         }
         if let Some(change) = self.header_font_picker_input(input) {
+            return change;
+        }
+        if let Some(change) = self.search_results_navigation_input(input) {
             return change;
         }
         if let Some(change) = self.style_editor_input(input) {
