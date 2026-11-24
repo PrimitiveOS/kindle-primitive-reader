@@ -207,6 +207,13 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   its language. Long-press the word and tap Hyphenate.
   [Compare both page layouts](docs/english-hyphenation.md) · [Word break editor](docs/screenshots/custom-hyphenation.png)
 - Save a named preset in Text › Reading profiles and apply it to another book.
+- The optional top status header counts rendered pages across supported EPUBs.
+  [Page numbering and supported layouts](docs/whole-book-screen-pages.md)
+- Open Settings › Link taps to change direct link taps or enlarge the tap area
+  around local links in reflowable books. Navigation › Links on this page also
+  opens a list of links on the visible page. [Link controls](docs/link-taps.md)
+- Choose Large window or Justify text in Search › Dictionaries to change the
+  dictionary popup. [Dictionary settings and screenshots](docs/dictionary-popup-display.md)
 
 Open Contents from either reading bar to see your current section in a long EPUB or PDF. Following a PDF link with an authored position brings that point into view when zoomed. [Current section](docs/screenshots/current-contents.png) · [PDF link target](docs/screenshots/pdf-link-destination.png)
 

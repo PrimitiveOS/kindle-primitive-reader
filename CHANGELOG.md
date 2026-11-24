@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.35
+
+- Count whole-book screen pages for supported EPUBs in the optional top status header.
+- Save the dictionary popup size and text justification preferences.
+- Choose when taps follow links and enlarge the tap area around local links in reflowable books.
+
 ## 0.1.34
 
 - Show only matches in the current chapter, or return to all results. Paging, previews and result navigation use the selected scope as matches arrive.

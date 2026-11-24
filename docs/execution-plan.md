@@ -45,6 +45,19 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.35 verification plan
+
+Compare the optional EPUB screen-page header with the pinned KOReader
+page count and preserve the default chapter footer in Kindle-sized renders.
+Test the first frame and completed count on an authored EPUB and an authorized
+original, including positioning and refresh when typography or the viewport
+changes. Record elapsed time and peak memory. [Screen page checks](whole-book-screen-pages.md)
+
+Verify narrow and large dictionary popups, justification and nested lookup
+backtracking in EPUB and PDF. Exercise link-tap changes in both formats and
+check explicit link access after disabling direct taps.
+[Dictionary popup comparisons](dictionary-popup-display.md) · [Link tap settings](link-taps.md)
+
 ## Current host and device integration gate
 
 On 23 November 2026, legacy pixel-size font taps were aligned to KOReader's
