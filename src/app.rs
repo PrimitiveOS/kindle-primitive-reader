@@ -7422,7 +7422,9 @@ impl Reader {
                 Screen::CollectionName => ("Collection name", "Save"),
                 Screen::ProfileName(_) => ("Profile name", "Save"),
                 Screen::FooterPresetName(_) => ("Status bar preset name", "Save"),
-                Screen::DictionaryPresets(dictionary_presets::Page::Name(_)) => ("Dictionary preset name", "Save"),
+                Screen::DictionaryPresets(dictionary_presets::Page::Name(_)) => {
+                    ("Dictionary preset name", "Save")
+                }
                 Screen::FooterCustomText => (
                     "Use %T title, %A author, %c page, and %t total pages",
                     "Save",
