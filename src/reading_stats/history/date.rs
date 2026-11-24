@@ -1,4 +1,4 @@
-//! Civil calendar arithmetic; local boundaries use mktime so DST days may be 23/25 hours.
+//! Civil calendar arithmetic and local boundaries for reading history.
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 pub(crate) struct Date {
@@ -12,6 +12,13 @@ pub(crate) enum Zone {
     #[cfg(test)]
     Fixed(i32),
 }
+
+/// Resolve every lookup in one history query from the same time zone.
+pub(super) struct Calendar {
+    zone: Zone,
+    #[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]
+    device: Option<primitive_device::DeviceTimeZone>,
+}
 impl Date {
     pub(crate) fn new(year: i32, month: u8, day: u8) -> Option<Self> {
         let date = Self { year, month, day };
@@ -23,7 +30,7 @@ impl Date {
     }
     pub(crate) fn today() -> Self {
         crate::mark_time::now()
-            .and_then(|s| Zone::Local.date(s))
+            .and_then(|s| Zone::Local.calendar().date(s))
             .unwrap_or(Self {
                 year: 2000,
                 month: 1,
@@ -101,55 +108,94 @@ impl Date {
     }
 }
 impl Zone {
-    pub(crate) fn date(self, time: i64) -> Option<Date> {
+    pub(super) fn calendar(self) -> Calendar {
+        Calendar {
+            zone: self,
+            #[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]
+            device: matches!(self, Self::Local).then(primitive_device::DeviceTimeZone::load),
+        }
+    }
+
+    pub(crate) fn clock(self, time: i64) -> Option<(u32, u32, u32)> {
+        self.calendar().clock(time)
+    }
+
+    pub(crate) fn range(self, date: Date, minutes: u16) -> Option<(i64, i64)> {
+        self.calendar().range(date, minutes)
+    }
+}
+
+impl Calendar {
+    pub(super) fn date(&self, time: i64) -> Option<Date> {
         self.parts(time).map(|(d, _, _, _)| d)
     }
-    pub(crate) fn clock(self, time: i64) -> Option<(u32, u32, u32)> {
+
+    pub(super) fn clock(&self, time: i64) -> Option<(u32, u32, u32)> {
         self.parts(time).map(|(_, h, m, s)| (h, m, s))
     }
-    fn parts(self, time: i64) -> Option<(Date, u32, u32, u32)> {
-        match self {
+
+    fn parts(&self, time: i64) -> Option<(Date, u32, u32, u32)> {
+        #[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]
+        if let Some(device) = &self.device {
+            let time = device.local_time_at(time)?;
+            return Some((
+                Date::new(
+                    time.year,
+                    time.month.try_into().ok()?,
+                    time.day.try_into().ok()?,
+                )?,
+                time.hour.try_into().ok()?,
+                time.minute.try_into().ok()?,
+                time.second.try_into().ok()?,
+            ));
+        }
+        match self.zone {
             #[cfg(test)]
-            Self::Fixed(offset) => {
+            Zone::Fixed(offset) => {
                 let shifted = time.checked_add(i64::from(offset))?;
                 let day = Date::from_ordinal(shifted.div_euclid(86400))?;
                 let secs = shifted.rem_euclid(86400) as u32;
                 Some((day, secs / 3600, secs / 60 % 60, secs % 60))
             }
-            Self::Local => {
-                let time: libc::time_t = time.try_into().ok()?;
-                let mut tm = std::mem::MaybeUninit::uninit();
-                // localtime_r initializes this caller-owned tm, including its platform fields.
-                let tm = unsafe {
-                    if libc::localtime_r(&time, tm.as_mut_ptr()).is_null() {
-                        return None;
-                    }
-                    tm.assume_init()
-                };
+            Zone::Local => {
+                let time = crate::mark_time::local_parts(time)?;
                 Some((
-                    Date::new(tm.tm_year + 1900, (tm.tm_mon + 1) as u8, tm.tm_mday as u8)?,
-                    tm.tm_hour as u32,
-                    tm.tm_min as u32,
-                    tm.tm_sec as u32,
+                    Date::new(
+                        time.year,
+                        time.month.try_into().ok()?,
+                        time.day.try_into().ok()?,
+                    )?,
+                    time.hour.try_into().ok()?,
+                    time.minute.try_into().ok()?,
+                    time.second.try_into().ok()?,
                 ))
             }
         }
     }
-    pub(crate) fn range(self, date: Date, minutes: u16) -> Option<(i64, i64)> {
-        Some((
-            self.start(date, minutes)?,
-            self.start(date.add_days(1)?, minutes)?,
-        ))
+    pub(super) fn range(&self, date: Date, minutes: u16) -> Option<(i64, i64)> {
+        let start = self.start(date, minutes)?;
+        let end = self.start(date.add_days(1)?, minutes)?;
+        // A zone can skip an entire civil date. No visit belongs to an
+        // empty or reversed interval, even if it crosses that instant.
+        (start < end).then_some((start, end))
     }
-    fn start(self, date: Date, minutes: u16) -> Option<i64> {
-        match self {
+    fn start(&self, date: Date, minutes: u16) -> Option<i64> {
+        #[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]
+        if let Some(device) = &self.device {
+            let civil_second = date
+                .ordinal()
+                .checked_mul(86_400)?
+                .checked_add(i64::from(minutes) * 60)?;
+            return device.resolve_local_boundary(civil_second);
+        }
+        match self.zone {
             #[cfg(test)]
-            Self::Fixed(offset) => date
+            Zone::Fixed(offset) => date
                 .ordinal()
                 .checked_mul(86400)?
                 .checked_add(i64::from(minutes) * 60)?
                 .checked_sub(i64::from(offset)),
-            Self::Local => {
+            Zone::Local => {
                 // Zero initialization is valid for tm. mktime resolves the local DST offset.
                 let mut tm: libc::tm = unsafe { std::mem::zeroed() };
                 tm.tm_year = date.year - 1900;

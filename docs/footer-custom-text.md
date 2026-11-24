@@ -45,10 +45,8 @@ items without adding an outer separator, matching KOReader's spacer behavior.
 Repeated text is appended without an inserted separator. The Reader uses
 KOReader's battery glyphs for ten percent bands, charging, and fully charged
 state; the symbol font is bundled with the Kindle package.
-Clock tokens use 24-hour formatting. On the tested Oasis, a static ARM musl
-probe using the same local-time conversion showed UTC while the Kindle clock
-showed UTC+07:00. Reader still needs the system's TZif offset for these tokens.
-The KOReader 12-hour preference for `%m` also remains open.
+Clock tokens use 24-hour formatting and the Kindle's configured time zone.
+KOReader's 12-hour preference for `%m` remains separate. [Device clock and comparisons](device-local-time.md)
 
 ## Persistence and safeguards
 

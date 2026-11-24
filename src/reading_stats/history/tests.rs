@@ -78,6 +78,73 @@ fn daily_start_totals_and_midnight_clipped_calendar_match_separate_reference_que
     assert_eq!(h.day_seconds(feb, None, Zone::Fixed(0)), 0);
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn shifted_calendar_windows_split_visits_at_a_fractional_zone_boundary() {
+    let (mut history, t, _, dir) = fixture("fractional-zone");
+    let zone = Zone::Fixed(5 * 3600 + 45 * 60);
+    let wall = stamp("2026-01-31T22:14:50Z");
+    let jan = Date::new(2026, 1, 31).unwrap();
+    let feb = jan.add_days(1).unwrap();
+    history.data.options.day_start = 4 * 60;
+    history.set_page_at(Some((1, 1)), t, Some(wall));
+    history.set_page_at(None, t + Duration::from_secs(90), Some(wall + 90));
+
+    // The visit begins at 03:59:50 on February 1, before the configured
+    // 04:00 boundary. Daily history retains the start date, while the
+    // calendar, timeline and hourly histogram split the same saved interval.
+    assert_eq!(history.days(None, zone)[&feb].seconds, 90);
+    assert_eq!(history.calendar_month(jan.first(), None, zone)[&jan].0, 10);
+    assert_eq!(history.calendar_month(feb, None, zone)[&feb].0, 80);
+    assert_eq!(history.day_seconds(jan, None, zone), 10);
+    assert_eq!(history.day_seconds(feb, None, zone), 80);
+    assert_eq!(history.hourly(jan, None, zone)[3], 10);
+    assert_eq!(history.hourly(feb, None, zone)[4], 80);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]
+#[test]
+fn kindle_calendar_groups_a_visit_by_the_system_clock_date() {
+    let output = std::process::Command::new("date")
+        .arg("+%s %Y-%m-%d %H:%M:%S")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let system_clock = std::str::from_utf8(&output.stdout).unwrap().trim_end();
+    let (epoch, system_clock) = system_clock.split_once(' ').unwrap();
+    let epoch: i64 = epoch.parse().unwrap();
+
+    let zone = Zone::Local;
+    let calendar = zone.calendar();
+    let day = calendar.date(epoch).unwrap();
+    let (hours, minutes, seconds) = calendar.clock(epoch).unwrap();
+    assert_eq!(
+        format!("{} {hours:02}:{minutes:02}:{seconds:02}", day.label()),
+        system_clock
+    );
+    let (start, end) = calendar.range(day, 0).unwrap();
+    assert!((start..end).contains(&epoch));
+    assert_eq!(calendar.date(start), Some(day));
+    assert_eq!(calendar.date(end - 1), Some(day));
+
+    let (mut history, t, _, dir) = fixture("kindle-zone");
+    history.set_page_at(Some((1, 1)), t, Some(epoch));
+    history.set_page_at(None, t + Duration::from_secs(90), Some(epoch + 90));
+    assert_eq!(history.days(None, zone)[&day].seconds, 90);
+    let expected_day_seconds = (end - epoch).min(90) as u64;
+    assert_eq!(history.day_seconds(day, None, zone), expected_day_seconds);
+    assert_eq!(
+        history
+            .hourly(day, None, zone)
+            .iter()
+            .copied()
+            .map(u64::from)
+            .sum::<u64>(),
+        expected_day_seconds
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
 #[test]
 fn sleep_and_clock_corrections_cannot_create_paused_or_invented_dated_time() {
     let (mut h, t, w, dir) = fixture("clock");

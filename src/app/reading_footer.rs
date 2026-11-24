@@ -1184,7 +1184,6 @@ impl Reader {
             self.controls.footer_pages_left_include_current,
         );
         let percentage = progress.percentage_with_digits(self.controls.footer_percentage_digits);
-        let current_time = local_footer_time();
         let page_count = self
             .fixed
             .as_ref()
@@ -1226,53 +1225,64 @@ impl Reader {
             });
         let book_time_left = time_left_for(self.pace.rate(id), progress.book_pages_left);
         let chapter_time_left = time_left_for(self.pace.rate(id), progress.pages_left());
-        let battery = primitive_device::battery_status();
-        let percent = battery.percent.map(|percent| percent.min(100));
-        let clock = super::footer_custom_text::local_clock();
-        let custom_text = self.footer_custom_text.expand(|token| match token {
-            'T' => Some(entry.title.clone()),
-            'A' => entry.author.clone(),
-            'S' => self.active.as_ref().and_then(|book| {
-                book.reading.probe.first_series.as_ref().map(|series| {
-                    series.position.as_ref().map_or_else(
-                        || series.name.clone(),
-                        |position| format!("{} #{position}", series.name),
+        let battery = std::cell::OnceCell::new();
+        let battery = || battery.get_or_init(primitive_device::battery_status);
+        let clock = std::cell::OnceCell::new();
+        let clock = || {
+            clock
+                .get_or_init(super::footer_custom_text::local_clock)
+                .as_ref()
+        };
+        let custom_text = || {
+            self.footer_custom_text.expand(|token| match token {
+                'T' => Some(entry.title.clone()),
+                'A' => entry.author.clone(),
+                'S' => self.active.as_ref().and_then(|book| {
+                    book.reading.probe.first_series.as_ref().map(|series| {
+                        series.position.as_ref().map_or_else(
+                            || series.name.clone(),
+                            |position| format!("{} #{position}", series.name),
+                        )
+                    })
+                }),
+                't' => Some(page_count_label.clone()),
+                'c' => Some(current_page_label.clone()),
+                'l' => Some(
+                    pages_left_display(
+                        progress.pages_left(),
+                        self.controls.footer_pages_left_include_current,
                     )
-                })
-            }),
-            't' => Some(page_count_label.clone()),
-            'c' => Some(current_page_label.clone()),
-            'l' => Some(
-                pages_left_display(
-                    progress.pages_left(),
-                    self.controls.footer_pages_left_include_current,
-                )
-                .to_string(),
-            ),
-            'p' => Some((progress.book_fraction * 100.0).round().to_string()),
-            'H' => Some(book_time_left.clone()),
-            'C' => Some(progress.section_name.to_owned()),
-            'P' => Some(
-                (progress.section_page as f64 * 100.0 / progress.section_len.max(1) as f64)
-                    .round()
                     .to_string(),
-            ),
-            'h' => Some(chapter_time_left.clone()),
-            'F' => Some(entry.path.to_string_lossy().into_owned()),
-            'f' => entry
-                .path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned()),
-            'b' => percent.map(|percent| percent.to_string()),
-            'B' => percent
-                .map(|percent| battery_symbol(percent, battery.charging, battery.fully_charged)),
-            'r' => Some(self.controls.footer_separator.text().to_owned()),
-            'D' => clock.as_ref().map(|clock| clock.date.clone()),
-            'd' => clock.as_ref().map(|clock| clock.short_date.clone()),
-            'm' => clock.as_ref().map(|clock| clock.time.clone()),
-            'M' => clock.as_ref().map(|clock| clock.time_with_seconds.clone()),
-            _ => None,
-        });
+                ),
+                'p' => Some((progress.book_fraction * 100.0).round().to_string()),
+                'H' => Some(book_time_left.clone()),
+                'C' => Some(progress.section_name.to_owned()),
+                'P' => Some(
+                    (progress.section_page as f64 * 100.0 / progress.section_len.max(1) as f64)
+                        .round()
+                        .to_string(),
+                ),
+                'h' => Some(chapter_time_left.clone()),
+                'F' => Some(entry.path.to_string_lossy().into_owned()),
+                'f' => entry
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned()),
+                'b' => battery().percent.map(|percent| percent.to_string()),
+                'B' => {
+                    let status = battery();
+                    status.percent.map(|percent| {
+                        battery_symbol(percent, status.charging, status.fully_charged)
+                    })
+                }
+                'r' => Some(self.controls.footer_separator.text().to_owned()),
+                'D' => clock().map(|clock| clock.date.clone()),
+                'd' => clock().map(|clock| clock.short_date.clone()),
+                'm' => clock().map(|clock| clock.time.clone()),
+                'M' => clock().map(|clock| clock.time_with_seconds.clone()),
+                _ => None,
+            })
+        };
         let current_page = || {
             if let Some(book) = &self.fixed {
                 let pages: Vec<_> = book.reading.visible_pages().collect();
@@ -1351,14 +1361,17 @@ impl Reader {
                         .state(id)
                         .map_or(0, |state| state.bookmarks.len())
                 )),
-                FooterItem::CurrentTime => current_time.clone(),
-                FooterItem::BatteryPercentage => primitive_device::battery().and_then(|percent| {
-                    battery_footer_text(
-                        percent,
-                        primitive_device::charging(),
-                        self.controls.footer_battery_hide_threshold.unwrap_or(100),
-                    )
-                }),
+                FooterItem::CurrentTime => clock().map(|time| format!("Time {}", time.time)),
+                FooterItem::BatteryPercentage => {
+                    let status = battery();
+                    status.percent.and_then(|percent| {
+                        battery_footer_text(
+                            percent,
+                            status.charging,
+                            self.controls.footer_battery_hide_threshold.unwrap_or(100),
+                        )
+                    })
+                }
                 FooterItem::PageTurningInverted => match self.controls.footer_symbol_style {
                     FooterSymbolStyle::Icons | FooterSymbolStyle::Compact => Some(String::new()),
                     FooterSymbolStyle::Letters => Some(if self.page_turning_inverted() {
@@ -1367,7 +1380,7 @@ impl Reader {
                         "Off".to_owned()
                     }),
                 },
-                FooterItem::CustomText => Some(custom_text.clone()),
+                FooterItem::CustomText => Some(custom_text()),
             };
             if let Some(text) = text {
                 items.push((

@@ -31,9 +31,11 @@ impl ClockTokens {
 }
 
 pub(crate) fn local_clock() -> Option<ClockTokens> {
-    Some(ClockTokens::from_time(primitive_device::local_time_at(
-        crate::mark_time::now()?,
-    )?))
+    clock_at(crate::mark_time::now()?)
+}
+
+fn clock_at(epoch_seconds: i64) -> Option<ClockTokens> {
+    primitive_device::local_time_at(epoch_seconds).map(ClockTokens::from_time)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -218,6 +220,26 @@ mod tests {
         assert_eq!(clock.short_date, "11-25");
         assert_eq!(clock.time, "01:09");
         assert_eq!(clock.time_with_seconds, "01-09-04");
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]
+    #[test]
+    fn kindle_footer_clock_tokens_match_the_system_clock() {
+        let output = std::process::Command::new("date")
+            .arg("+%s %Y-%m-%d %H:%M:%S")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let expected = std::str::from_utf8(&output.stdout).unwrap();
+        let mut fields = expected.split_whitespace();
+        let instant = fields.next().unwrap().parse().unwrap();
+        let date = fields.next().unwrap();
+        let time = fields.next().unwrap();
+        let tokens = clock_at(instant).unwrap();
+        assert_eq!(tokens.date, date);
+        assert_eq!(tokens.short_date, &date[5..]);
+        assert_eq!(tokens.time, &time[..5]);
+        assert_eq!(tokens.time_with_seconds, time.replace(':', "-"));
     }
 
     #[test]

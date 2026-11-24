@@ -23,7 +23,7 @@ impl Reader {
         let mut values = HashMap::new();
         let mut chars = message.chars().peekable();
         let mut out = String::new();
-        let local = local_clock(wall).map(|(_, civil)| civil);
+        let local = local_clock(wall);
         let entry = self
             .active
             .as_ref()
@@ -116,15 +116,10 @@ impl Reader {
                         }
                     }),
                     'D' | 'd' | 'm' | 'M' => local.map(|dt| match token {
-                        'D' => format!(
-                            "{:04}-{:02}-{:02}",
-                            dt.tm_year + 1900,
-                            dt.tm_mon + 1,
-                            dt.tm_mday
-                        ),
-                        'd' => format!("{:02}-{:02}", dt.tm_mon + 1, dt.tm_mday),
-                        'm' => format!("{:02}:{:02}", dt.tm_hour, dt.tm_min),
-                        _ => format!("{:02}-{:02}-{:02}", dt.tm_hour, dt.tm_min, dt.tm_sec),
+                        'D' => format!("{:04}-{:02}-{:02}", dt.year, dt.month, dt.day),
+                        'd' => format!("{:02}-{:02}", dt.month, dt.day),
+                        'm' => format!("{:02}:{:02}", dt.hour, dt.minute),
+                        _ => format!("{:02}-{:02}-{:02}", dt.hour, dt.minute, dt.second),
                     }),
                     _ => None,
                 };

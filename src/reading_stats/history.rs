@@ -445,12 +445,13 @@ impl History {
         }
     }
     pub(crate) fn days(&self, book: Option<u64>, zone: Zone) -> BTreeMap<Date, Summary> {
+        let calendar = zone.calendar();
         let mut grouped = BTreeMap::<Date, (u64, BTreeMap<(u64, u64), u64>, BTreeSet<u64>)>::new();
         for visit in &self.data.visits {
             if book.is_some_and(|b| b != visit.book) {
                 continue;
             }
-            let Some(date) = visit.start.and_then(|start| zone.date(start)) else {
+            let Some(date) = visit.start.and_then(|start| calendar.date(start)) else {
                 continue;
             };
             let (seconds, pages, books) = grouped.entry(date).or_default();
@@ -483,10 +484,11 @@ impl History {
         book: Option<u64>,
         zone: Zone,
     ) -> BTreeMap<Date, (u64, BTreeSet<u64>)> {
+        let calendar = zone.calendar();
         let ranges: Vec<_> = (1..=month.month_days())
             .filter_map(|day| {
                 let date = Date { day, ..month };
-                let (start, end) = zone.range(date, self.data.options.day_start)?;
+                let (start, end) = calendar.range(date, self.data.options.day_start)?;
                 Some((date, start, end))
             })
             .collect();
@@ -521,22 +523,27 @@ impl History {
         let Some((start, end)) = zone.range(date, self.data.options.day_start) else {
             return Vec::new();
         };
-        self.data
-            .visits
-            .iter()
-            .filter(|v| {
-                book.is_none_or(|b| b == v.book)
-                    && v.start
-                        .is_some_and(|s| s < end && s.saturating_add(i64::from(v.seconds)) > start)
-            })
-            .collect()
+        self.visits_in_window(book, start, end).collect()
     }
+
+    fn visits_in_window(
+        &self,
+        book: Option<u64>,
+        start: i64,
+        end: i64,
+    ) -> impl Iterator<Item = &Visit> {
+        self.data.visits.iter().filter(move |v| {
+            book.is_none_or(|b| b == v.book)
+                && v.start
+                    .is_some_and(|s| s < end && s.saturating_add(i64::from(v.seconds)) > start)
+        })
+    }
+
     pub(crate) fn day_seconds(&self, date: Date, book: Option<u64>, zone: Zone) -> u64 {
         let Some((start, end)) = zone.range(date, self.data.options.day_start) else {
             return 0;
         };
-        self.timeline(date, book, zone)
-            .iter()
+        self.visits_in_window(book, start, end)
             .map(|v| {
                 let s = v.start.unwrap();
                 (s.saturating_add(i64::from(v.seconds)).min(end) - s.max(start)).max(0) as u64
@@ -545,14 +552,15 @@ impl History {
     }
     pub(crate) fn hourly(&self, date: Date, book: Option<u64>, zone: Zone) -> [u32; 24] {
         let mut bins = [0u32; 24];
-        let Some((start, end)) = zone.range(date, self.data.options.day_start) else {
+        let calendar = zone.calendar();
+        let Some((start, end)) = calendar.range(date, self.data.options.day_start) else {
             return bins;
         };
-        for v in self.timeline(date, book, zone) {
+        for v in self.visits_in_window(book, start, end) {
             let mut at = v.start.unwrap().max(start);
             let end = (v.start.unwrap() + i64::from(v.seconds)).min(end);
             while at < end {
-                let Some((h, m, s)) = zone.clock(at) else {
+                let Some((h, m, s)) = calendar.clock(at) else {
                     break;
                 };
                 let step = (3600 - i64::from(m * 60 + s)).min(end - at).max(1);
