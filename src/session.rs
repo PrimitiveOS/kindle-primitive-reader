@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 #[cfg(test)]
 mod css_flow_tests;
 mod hidden_flows;
+pub(crate) mod screen_pages;
 #[cfg(test)]
 mod viewport_tests;
-pub(crate) mod screen_pages;
 
 use crate::epub::{Book, Destination};
 use crate::selection::{HighlightRect, TextSelection};
@@ -127,7 +127,12 @@ impl PagePaint {
                 *pixel = 255 - *pixel;
             }
         }
-        let rect = Rect::new(0, visible.start as i32, page.width as i32, page.height as i32);
+        let rect = Rect::new(
+            0,
+            visible.start as i32,
+            page.width as i32,
+            page.height as i32,
+        );
         (rect, page)
     }
 }
@@ -1825,8 +1830,12 @@ impl App for Reading {
                     -advance
                 }
             }
-            Input::Tap(x, y) if y < self.frame.height as f32 && x < viewport.width as f32 / 3.0 => -advance,
-            Input::Tap(x, y) if y < self.frame.height as f32 && x > viewport.width as f32 * 2.0 / 3.0 => {
+            Input::Tap(x, y) if y < self.frame.height as f32 && x < viewport.width as f32 / 3.0 => {
+                -advance
+            }
+            Input::Tap(x, y)
+                if y < self.frame.height as f32 && x > viewport.width as f32 * 2.0 / 3.0 =>
+            {
                 advance
             }
             _ => return Change::None,

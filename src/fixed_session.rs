@@ -28,7 +28,8 @@ use crate::library::{
 };
 use crate::pdf_crop::{self, Seed, Seeds};
 use crate::session::{
-    DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, ReadingViewport, draw_document_and_footer,
+    DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, ReadingViewport,
+    draw_document_and_footer,
 };
 
 #[path = "fixed_selection_range.rs"]
