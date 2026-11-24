@@ -542,6 +542,10 @@ impl Reader {
         let mut items = Vec::new();
         if self.searchable_document() {
             items.push(Item::new("Find in document", Action::Show(Screen::Find)));
+            items.push(Item::new(
+                "Search settings",
+                Action::Show(Screen::SearchSettings),
+            ));
             items.push(Item::new("Translate page", Action::TranslatePage));
             let has_matches = if self.fixed.is_some() {
                 !self.pdf_hits.is_empty()

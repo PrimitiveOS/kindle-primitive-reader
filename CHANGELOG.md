@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.32
+
+- Choose what Find does with selected text, how many search results appear per page, and how many context words each result shows.
+- Optionally fit the whole fixed-layout page when stepping through search matches, then restore the previous view.
+- Add bookmark separators, named grayscale highlight cues, and an explanation of the optional top header.
+
 ## 0.1.31
 
 - Let bookmarks show more text with automatic font fitting or a saved maximum of 1–10 lines per bookmark.

@@ -44,5 +44,5 @@ when enabled and resolved. The fallback is the current reflow section.
 The [font picker](top-header-font-picker.md) includes a 14 px Reset choice.
 Reader's 24-hour clock uses the Kindle time zone. [Clock details](device-local-time.md)
 
-The KOReader **About alt status bar** information dialog is still a checklist
-gap; the display and configuration behavior are implemented independently.
+**About the top status header** explains when the header appears and how to
+set it for the book or by default. [About panel](top-header-about.md)

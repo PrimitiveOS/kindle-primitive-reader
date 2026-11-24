@@ -22,6 +22,10 @@ pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct ReadingControls {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_rows: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_context_words: Option<u8>,
     pub hide_nonlinear_default: bool,
     #[serde(skip_serializing_if = "crate::highlight_style::HighlightStyle::is_default")]
     pub highlight_style: crate::highlight_style::HighlightStyle,
@@ -51,6 +55,12 @@ pub(crate) struct ReadingControls {
     pub night_pages: bool,
     pub footnote_popups: bool,
     pub prefer_footnotes: bool,
+    /// Show the all-results list when Find is used on selected text.
+    #[serde(skip_serializing_if = "is_false")]
+    pub selection_search_all: bool,
+    /// Temporarily fit fixed pages during directional text search.
+    #[serde(skip_serializing_if = "is_false")]
+    pub fixed_search_full_page: bool,
     pub left_touch: bool,
     pub large_toolbar: bool,
     pub disable_page_taps: bool,
@@ -83,6 +93,13 @@ pub(crate) struct ReadingControls {
     /// Flexible in-book mark rows are disabled when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bookmark_max_lines: Option<u8>,
+    /// A saved profile from before this switch keeps its existing separators.
+    #[serde(default = "legacy_bookmark_separators")]
+    pub bookmark_list_separators: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub bookmark_show_highlight_colors: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub bookmark_show_default_color: bool,
     /// Reader-wide appearance of the Contents list.
     #[serde(skip_serializing_if = "ListDensity::is_default")]
     pub contents_density: ListDensity,
@@ -1315,6 +1332,10 @@ impl ReadingControls {
             other => other,
         }
     }
+}
+
+fn legacy_bookmark_separators() -> bool {
+    true
 }
 
 #[cfg(test)]

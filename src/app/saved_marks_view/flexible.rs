@@ -1,11 +1,14 @@
 //! Measured bookmark rows shared by drawing, hit testing and page movement.
-use primitive_ui::{BLACK, HAIRLINE, PAPER, SECONDARY, TextStyle, chevron};
+use primitive_ui::{BLACK, HAIRLINE, PAPER, SECONDARY, chevron};
+
+use crate::highlight_style::HighlightColor;
 
 use super::super::list_density::{LIST_HEIGHT, font_pixels};
 use super::super::{
     Action, BODY, CAPTION, Canvas, Change, HEIGHT, Input, Item, LIST_X, LIST_Y, NEXT, PREV, Reader,
     Rect, WIDTH,
 };
+use super::appearance::draw_caption;
 use super::fit::TitleFit;
 
 const CARD_WIDTH: i32 = WIDTH as i32 - 2 * LIST_X;
@@ -95,7 +98,13 @@ impl MarkRow {
         }
     }
 
-    fn draw(&self, canvas: &mut Canvas, item: &Item, has_separator: bool) {
+    fn draw(
+        &self,
+        canvas: &mut Canvas,
+        item: &Item,
+        has_separator: bool,
+        color: Option<HighlightColor>,
+    ) {
         let row = self.rect;
         let pressed = canvas.control_pressed(row, false);
         if pressed {
@@ -117,7 +126,8 @@ impl MarkRow {
             ink,
         );
         if let Some(caption) = &item.detail {
-            canvas.text(
+            draw_caption(
+                canvas,
                 Rect::new(
                     text_x,
                     title_y + title_height,
@@ -125,9 +135,9 @@ impl MarkRow {
                     self.caption_height,
                 ),
                 caption,
-                TextStyle::new(self.caption_size)
-                    .break_long_words()
-                    .ink(detail_ink),
+                self.caption_size,
+                detail_ink,
+                color,
             );
         }
         chevron(
@@ -248,10 +258,12 @@ impl Reader {
             ));
         }
         for (index, row) in page.rows.iter().enumerate() {
+            let item = &view.items[page.first + index];
             row.draw(
                 canvas,
-                &view.items[page.first + index],
-                index + 1 < page.rows.len(),
+                item,
+                self.controls.bookmark_list_separators && index + 1 < page.rows.len(),
+                self.bookmark_row_color(&item.action),
             );
         }
         let previous = self.list_page > 0;
@@ -385,5 +397,7 @@ fn pager_button(canvas: &mut Canvas, face: Rect, label: &str) {
     canvas.button(face, label, false, pressed);
 }
 
+#[cfg(test)]
+mod appearance_tests;
 #[cfg(test)]
 mod tests;
