@@ -5503,6 +5503,16 @@ impl Reader {
     }
 
     fn handle_fixed(&mut self, input: Input) -> Change {
+        if self.ocr.is_some()
+            && self.pdf_selection.is_none()
+            && (input == Input::PageBack
+                || matches!(input, Input::Tap(x, y)
+                    if self.reading_viewport().bottom_right(CANCEL_OCR).contains(x, y)))
+        {
+            self.ocr = None;
+            self.notice = Some("Text recognition cancelled".into());
+            return Change::Partial;
+        }
         let show_zoom = !self.hidden_overlap_footer();
         if let Input::LongTap(x, y) = input
             && self.pdf_selection.is_none()
@@ -5563,11 +5573,6 @@ impl Reader {
             };
         }
         if let Input::Tap(x, y) = input {
-            if self.ocr.is_some() && self.pdf_selection.is_none() && CANCEL_OCR.contains(x, y) {
-                self.ocr = None;
-                self.notice = Some("Text recognition cancelled".into());
-                return Change::Partial;
-            }
             if self.pdf_selection.is_some() {
                 if let Some(change) = self.selection_popup_input(x, y) {
                     return change;
@@ -7079,7 +7084,12 @@ impl Reader {
             } else if self.touch_locked {
                 draw_locked_footer(canvas, self.reading_viewport(), self.notice.as_deref());
             } else if self.ocr.is_some() && selection.is_empty() {
-                canvas.button(CANCEL_OCR, "Cancel OCR", false, false);
+                canvas.button(
+                    self.reading_viewport().bottom_right(CANCEL_OCR),
+                    "Cancel",
+                    false,
+                    false,
+                );
             } else if self.screen == Screen::Fixed
                 && selection.is_empty()
                 && self.next_comic().is_some()
@@ -17021,6 +17031,50 @@ mod tests {
         assert_eq!(app.screen, Screen::Book);
         assert_eq!(app.reading_panel, None);
         assert_eq!(reading(&app).page, before.page + 1);
+    }
+
+    #[test]
+    fn landscape_ocr_cancels_with_touch_or_the_back_button_without_moving_the_page() {
+        use crate::app::selection_viewport_tests::{adopt, capture, press, tap};
+        use crate::session::ReadingViewport;
+        use std::os::unix::fs::PermissionsExt;
+
+        let fixture = Fixture::new();
+        let pdf = fixture.root.join("Scan.pdf");
+        fs::copy(crate::test_fixture("tilted-scan.pdf"), &pdf).unwrap();
+        let pack = fixture.root.join("language-pack");
+        fs::create_dir_all(pack.join("ocr/tessdata")).unwrap();
+        fs::write(pack.join("ocr/tessdata/eng.traineddata"), b"fixture").unwrap();
+        let engine = pack.join("ocr/tesseract");
+        fs::write(&engine, "#!/bin/sh\ncat >/dev/null\nexec sleep 20\n").unwrap();
+        fs::set_permissions(&engine, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&pdf).unwrap();
+        app.ocr_assets = OcrAssets::discover(&pack);
+        let mut canvas = adopt(&mut app, ReadingViewport::LANDSCAPE, 1);
+        let position = app.current_position();
+        let cancel = app.reading_viewport().bottom_right(CANCEL_OCR);
+        assert!(cancel.y >= 1190 && cancel.bottom() <= 1264);
+
+        app.recognize_page(0, None, None).unwrap();
+        assert!(app.ocr.is_some());
+        press(&app, &mut canvas, cancel, false);
+        capture(&app, &mut canvas, "landscape-ocr-cancel.png", false);
+        tap(&mut app, cancel);
+        assert!(app.ocr.is_none());
+        assert_eq!(app.current_position(), position);
+
+        app.recognize_page(0, None, None).unwrap();
+        assert_eq!(app.input(Input::PageBack), Change::Partial);
+        assert!(app.ocr.is_none());
+        assert_eq!(app.notice.as_deref(), Some("Text recognition cancelled"));
+        assert_eq!(app.current_position(), position);
+        assert!(app.fixed.as_ref().unwrap().reading.cached_ocr(0).is_none());
     }
 
     #[test]
