@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.40
+
+- Hold a page thumbnail to add or remove its bookmark.
+- Apply publisher maximum illustration dimensions in EPUB and other horizontal reflow documents.
+- Keep isolated scan specks out of semi-automatic PDF crop bounds.
+
 ## 0.1.39
 
 - Tap the status bar to cycle through enabled custom items.

@@ -45,6 +45,16 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.40 verification plan
+
+Add and remove bookmarks from PDF and EPUB thumbnails. Keep the reading
+location and jump history, including when an EPUB bookmark repaginates.
+Check publisher image maximum dimensions in portrait and landscape; follow
+an inline passage through the change and open the full illustration. Compare
+PDF crop bounds for edge specks, rotated pages, shaded paper and sparse ink
+with the pinned KOReader detector. Retest the existing default reading footer.
+[Thumbnail bookmarks](bookmark-browser.md) · [Publisher illustrations](publisher-image-maxima.md) · [Scan crop sample](scan-margin-specks.md)
+
 ## Reader 0.1.39 verification plan
 
 Cycle enabled custom footer items through the hidden step in EPUB and PDF.
