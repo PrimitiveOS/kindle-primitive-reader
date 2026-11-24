@@ -101,8 +101,8 @@ The centralized path mirrors the book's canonical absolute path under
 the original `/mnt/us/documents` path. If both centralized paths exist,
 Reader treats the source as ambiguous. The fingerprint location is
 `koreader/hashdocsettings/<first two hex digits>/<fingerprint>.sdr`.
-It uses KOReader's sampled file hash, which can follow a renamed edition
-and does not cover every source byte.
+It samples sections of the file using KOReader's algorithm, so a rename
+can retain the same fingerprint.
 
 Reader validates the settings and sidecar as bounded literal data. It
 rejects links and changed files during lookup. Missing locations fall

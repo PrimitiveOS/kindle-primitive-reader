@@ -215,7 +215,9 @@ The native fixture checks ten horizontal paint bands in all four stock modes.
 Reader checks the Book and Web positions and widths with up to two pixels of
 tolerance for text advance on four samples. Line wrapping and line height
 still differ. Reader restores all ten source quotes and exercises link and
-word taps in the left user margin in Web. Coverage is limited to plain
+word taps in the left user margin in Web. A separate 50% indent test adds
+30 pixels to the measured width at a 60-pixel paragraph font, matching
+the stock intrinsic measurement. Coverage is limited to plain
 paragraphs in the body or width-neutral wrappers. Decorated boxes, negative
 and hanging indents, and extremely narrow width constraints use the ordinary
 layout path. The complete Render Mode control remains open.

@@ -2,6 +2,55 @@
 
 ## Current Mac simulator checkpoint
 
+Opening profiles read KOReader custom metadata by adjacent sidecar,
+centralized path, or sampled fingerprint. The pinned KOReader runtime
+verified the location preference and settings backup, source paths, and
+EPUB and PDF fingerprints. Reader's tests exercise the effective value,
+publisher fallback, and retained EPUB and PDF reading positions.
+[Metadata comparison](reading-profiles.md#apply-a-profile-on-book-opening)
+
+Saved profiles can also run when a book closes. The Mac simulator checked
+confirmation, a rejected font, cross-book bookmark navigation, and an
+encrypted PDF opened from the same folder. The outgoing book retains its
+saved position through password retries and Cancel. USB return cancels a
+pending close or protected switch. Reader asks before releasing the outgoing
+book so confirmed formatting can still be applied to that book.
+[Closing profile comparison](reading-profiles.md#apply-a-profile-on-book-closing)
+
+The Page Browser changes columns with an edge swipe across the top of the
+grid and rows with a vertical swipe along the left edge. The Mac simulator
+checked both viewport orientations, physical page keys, and saved source
+focus in a right-to-left EPUB. Blank space on either side moves one full
+grid at a time, including empty slots in the final grid. The pinned Lua
+comparison checks gesture directions, touch targets, and tap precedence.
+[Page Browser controls and captures](reading-orientation-contract.md#thumbnail-grid)
+
+The internal EPUB Book and Web policies size ordinary `fit-content`
+paragraphs to their text. The pinned native test covers ten horizontal paint
+bands in each of the four stock modes. The Reader comparison restores all
+ten quotes and checks an active link in the left user margin. Line wrapping,
+decorated paragraph boxes, and the general Render Mode control remain open.
+[Intrinsic widths and captures](render-modes.md#paragraphs-that-fit-their-text)
+
+The four-thread Mac suite passed 1,427 library tests, one Kindle entry
+test, 14 EPUB package tests, and four layout tests. Sixty-seven opt-in
+tests were skipped in the main run. The normal file picker opened original
+EPUB, PDF, AZW3 and MOBI documents,
+turned a page and resumed at the same saved position with identical central
+page pixels and matching source hashes. The separate original-file reading
+statistics and positive margin checks passed. Eight Page Browser, profile and
+intrinsic-width frames from the combined simulator matched the reviewed PNGs
+byte for byte.
+
+The local ARMHF stage verified a stripped, statically linked 37,549,644-byte
+executable with SHA-256
+`ec35ce82aef307f60ca984d82467aeac7e0d513c759ddc0f8ba0b689a96d3129`.
+The stage assembled 28 files totaling 47,123,493 bytes uncompressed and checked
+the SQLite notices, embedded Launcher icon and OCR model. Kindle foreground
+acceptance and the Store release remain open.
+
+## Adjacent metadata, profile timing, grids and signed widths checkpoint
+
 The experimental EPUB layout combines explicit and constrained widths
 with signed side margins. The pinned Mac runtime covers eight measured
 boxes across all four stock modes. Reader matches Web's visible paint
