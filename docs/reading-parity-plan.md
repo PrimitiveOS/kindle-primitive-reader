@@ -48,8 +48,8 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 249 of 537 in-scope reading-control rows have
-an implemented workflow, 226 are partial, 44 are gaps, and 18 need audit. The
+**Pinned control inventory:** 250 of 537 in-scope reading-control rows have
+an implemented workflow, 225 are partial, 44 are gaps, and 18 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The
 [corner hold comparison](corner-hold-gestures.md) covers the ignore toggle,
@@ -182,6 +182,7 @@ other typography controls and broader publication types remains open.
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.
 - [x] Save per-book typography language and the embedded-tag switch. Compare the stock 53 choices and default/fallback precedence, real English line breaks, and source-anchor preservation. Broader language rules remain open. [Typography language](english-hyphenation.md#typography-language)
 - [x] Expose per-book hyphenation enable, dictionary, algorithmic and soft-only modes, fitting publisher-mark precedence, and global minimum letters. Verify defaults, anchored reflow and failed-save rollback. [Hyphenation options](english-hyphenation.md#hyphenation-options)
+- [x] Report used and unused font families across eligible KF8 books using the real publisher resources and layout. Compare the authored report and five original AZW3s, including later-only fonts and damaged resources. [KF8 font reports](kf8-publication-fonts.md)
 - [x] Match the hanging-punctuation workflow for the main text column. Check physical margin paint, source ranges, RTL, selection and link hits, new-book defaults and original EPUB anchors. [Hanging punctuation](english-hyphenation.md#hanging-punctuation)
 - [x] Verify the existing bounded custom content DPI picker and initial preset behavior against the control inventory. [Content scaling](render-dpi.md)
 - [x] Compose current page in chapter and flexible spacing in the custom footer while retaining the default caption, progress ticks and Exit. [Footer composition](footer-composition.md)
