@@ -49,13 +49,14 @@ device-system evidence. This count tracks plan milestones, not overall feature
 parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
-**Control evidence snapshot:** 200 of 536 in-scope reading-control rows have
-an implemented workflow, 237 are partial, 66 are gaps, and 33 need audit.
+**Control evidence snapshot:** 201 of 536 in-scope reading-control rows have
+an implemented workflow, 237 are partial, 66 are gaps, and 32 need audit.
 Reader 0.1.32 adds [search from selection](selection-search.md),
 [results density and context](search-result-presentation.md),
 [temporary PDF fit](fixed-search-fit.md),
 [bookmark appearance](bookmark-list-appearance.md), and
 [help for the top status header](top-header-about.md).
+The next build adds [flexible search-result rows](flexible-search-results.md).
 Exact whole-book rendered reflow counts and foreground Kindle checks remain
 separate gates.
 
