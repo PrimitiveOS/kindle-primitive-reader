@@ -2008,14 +2008,8 @@ impl Reader {
                     ..c
                 },
             ),
-            Item::new(
-                "Header font size",
-                Action::SetReadingControls(ReadingControls {
-                    top_header: header.next_font_size(),
-                    ..c
-                }),
-            )
-            .detail(format!("{} px", header.font_size())),
+            Item::new("Header font size", Action::EditHeaderFontSize)
+                .detail(format!("{} px", header.font_size())),
         ]);
         if c.status_bar != StatusBar::Custom {
             items.insert(

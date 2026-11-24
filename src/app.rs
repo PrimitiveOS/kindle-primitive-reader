@@ -62,9 +62,11 @@ mod saved_highlight_popup;
 mod selection_popup;
 mod sidecar_marks;
 mod skim;
+mod step_buttons;
 mod style_tweaks;
 mod top_config;
 mod top_header;
+mod top_header_font;
 mod user_hyphenation;
 mod vocabulary;
 #[cfg(test)]
@@ -503,6 +505,7 @@ enum Action {
     ResetText,
     ReadingMode(bool),
     TopStatusHeader(bool),
+    EditHeaderFontSize,
     ConfirmTopStatusHeaderDefault(bool),
     FacingPages(bool),
     SearchHit(usize),
@@ -761,6 +764,7 @@ pub struct Reader {
     auto_turn: AutoTurn,
     read_alarm: read_alarm::ReadAlarm,
     top_header_default_prompt: Option<bool>,
+    top_header_font_picker: Option<top_header_font::Picker>,
     list_page: usize,
     matches_page: usize,
     result_context: Option<result_context::ResultContext>,
@@ -960,6 +964,7 @@ impl Reader {
             auto_turn: AutoTurn::default(),
             read_alarm: read_alarm::ReadAlarm::open(data.join("read-timer.json")),
             top_header_default_prompt: None,
+            top_header_font_picker: None,
             list_page: 0,
             matches_page: 0,
             result_context: None,
@@ -1330,6 +1335,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.top_header_font_picker = None;
         let previous = self.screen;
         if !matches!(screen, Screen::Book | Screen::Fixed) {
             self.touch_hold = None;
@@ -3677,6 +3683,7 @@ impl Reader {
             Action::DocumentDefaults(command) => self.activate_document_defaults(command)?,
             Action::Style(command) => self.activate_style(command)?,
             Action::TopStatusHeader(enabled) => self.set_book_top_header(enabled)?,
+            Action::EditHeaderFontSize => self.open_header_font_picker(),
             Action::ConfirmTopStatusHeaderDefault(enabled) => {
                 self.top_header_default_prompt = Some(enabled);
             }
@@ -7643,6 +7650,7 @@ impl App for Reader {
         }
         self.draw_flow_popup(canvas);
         self.draw_top_header_default_prompt(canvas);
+        self.draw_header_font_picker(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
         self.draw_vocabulary_dialog(canvas);
         self.draw_logical_recovery(canvas);
@@ -7673,6 +7681,9 @@ impl App for Reader {
             return self.read_alarm_input(input);
         }
         if let Some(change) = self.top_header_default_input(input) {
+            return change;
+        }
+        if let Some(change) = self.header_font_picker_input(input) {
             return change;
         }
         if let Some(change) = self.style_editor_input(input) {
@@ -7806,6 +7817,9 @@ impl App for Reader {
             return self.read_alarm_input(input);
         }
         if let Some(change) = self.top_header_default_input(input) {
+            return change;
+        }
+        if let Some(change) = self.header_font_picker_input(input) {
             return change;
         }
         if let Some(change) = self.style_editor_input(input) {
