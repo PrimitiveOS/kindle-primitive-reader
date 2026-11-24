@@ -485,4 +485,23 @@ fn document_search_viewport_epub_keyboard_pagers_context_and_return_follow_the_v
     let page = app.list_page;
     assert!(page > 0);
     assert!((page * portrait_rows..(page + 1) * portrait_rows).contains(&first));
+
+    let original = page * portrait_rows;
+    let candidate = primitive_app::viewport::Viewport {
+        generation: 4,
+        turn: primitive_app::viewport::LogicalTurn::Clockwise,
+        logical_size: (1680, 1264),
+    };
+    app.stage_viewport(candidate).unwrap();
+    canvas.begin();
+    app.draw_staged_viewport(&mut canvas).unwrap();
+    assert_eq!(app.list_page, page);
+    app.finish_viewport(candidate, primitive_app::viewport::ViewportDecision::Abort);
+    assert_eq!(app.list_page, page);
+    assert_eq!(app.reading_viewport(), ReadingViewport::PORTRAIT);
+    let _landscape = adopt(&mut app, ReadingViewport::LANDSCAPE, 5);
+    assert_eq!(app.screen, Screen::Matches);
+    let active = app.list_page * geometry.rows;
+    assert!((active..active + geometry.rows).contains(&original));
+    assert_eq!(app.current_history_location(), origin);
 }

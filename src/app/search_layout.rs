@@ -128,6 +128,56 @@ pub(super) struct MatchWindow {
     ordinal: usize,
 }
 
+pub(super) struct MatchStage {
+    from_page: usize,
+    ordinal: usize,
+    prepared: Option<(usize, Option<super::flexible_results::FlexibleResults>)>,
+}
+
+impl MatchStage {
+    pub(super) fn capture(reader: &Reader) -> Self {
+        let page = reader.list_page;
+        let ordinal = reader
+            .flexible_result_range()
+            .map_or_else(|| page * reader.match_geometry().rows, |range| range.start);
+        Self {
+            from_page: page,
+            ordinal,
+            prepared: None,
+        }
+    }
+
+    pub(super) fn matches(&self, reader: &Reader) -> bool {
+        reader.list_page == self.from_page
+    }
+
+    pub(super) fn draw(&mut self, reader: &mut Reader, canvas: &mut super::Canvas) {
+        use primitive_app::App;
+
+        let previous = reader.flexible_results.replace(None);
+        let page = reader
+            .search_result_order()
+            .provider_index(self.ordinal)
+            .map_or(0, |index| reader.match_page_for_index(index));
+        reader.list_page = page;
+        reader.draw(canvas);
+        reader.list_page = self.from_page;
+        self.prepared = Some((page, reader.flexible_results.replace(previous)));
+    }
+
+    pub(super) fn commit(self, reader: &mut Reader) {
+        if let Some((page, view)) = self.prepared {
+            reader.list_page = page;
+            reader.matches_page = page;
+            reader.match_window = Some(MatchWindow {
+                viewport: reader.reading_viewport(),
+                ordinal: self.ordinal,
+            });
+            reader.flexible_results.replace(view);
+        }
+    }
+}
+
 impl Reader {
     pub(super) fn search_layout(&self) -> SearchLayout {
         SearchLayout {

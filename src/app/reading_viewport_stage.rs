@@ -16,7 +16,6 @@ enum Candidate {
 
 pub(super) struct Stage {
     book: Option<u64>,
-    screen: super::Screen,
     position: Option<ReadingPosition>,
     from: ReadingViewport,
     target: ReadingViewport,
@@ -26,6 +25,7 @@ pub(super) struct Stage {
     selection_html: Option<Inspector>,
     marks: Option<(super::saved_marks_view::FlexibleMarks, usize)>,
     visual_navigation: super::visual_navigation::VisualNavigation,
+    matches: Option<super::search_layout::MatchStage>,
 }
 
 impl Reader {
@@ -42,7 +42,6 @@ impl Reader {
         };
         Ok(Stage {
             book: self.open_book_id(),
-            screen: self.screen,
             position: self.current_position(),
             from,
             target,
@@ -55,6 +54,8 @@ impl Reader {
                 .and_then(|inspector| inspector.resized(target)),
             marks: None,
             visual_navigation: super::visual_navigation::VisualNavigation::capture(self),
+            matches: (target != from && self.screen == Screen::Matches)
+                .then(|| super::search_layout::MatchStage::capture(self)),
         })
     }
 
@@ -77,6 +78,10 @@ impl Reader {
     }
 
     fn draw_staged_content(&mut self, staged: &mut Stage, canvas: &mut Canvas) -> Result<()> {
+        if let Some(matches) = &mut staged.matches {
+            matches.draw(self, canvas);
+            return Ok(());
+        }
         if staged.from != staged.target && staged.visual_navigation.draw(self, canvas)? {
             return Ok(());
         }
@@ -125,6 +130,9 @@ impl Reader {
             self.list_page = page;
         }
         staged.visual_navigation.commit(self);
+        if let Some(matches) = staged.matches {
+            matches.commit(self);
+        }
         self.screen_page_worker.cancel();
         self.pages_since_refresh = 0;
         self.record_position();
@@ -171,6 +179,10 @@ impl Stage {
             || reader.current_position() != self.position
             || reader.reading_viewport() != self.from
             || !self.visual_navigation.matches(reader)
+            || self
+                .matches
+                .as_ref()
+                .is_some_and(|matches| !matches.matches(reader))
         {
             return Err("The document changed before the viewport was presented".into());
         }
