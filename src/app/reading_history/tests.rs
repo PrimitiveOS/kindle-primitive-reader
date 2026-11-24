@@ -511,3 +511,78 @@ fn stock_time_ranges_drill_down_and_return_to_the_same_date_list() {
     app.save().unwrap();
     assert_eq!(fs::read(journal).unwrap(), persisted);
 }
+
+#[test]
+fn period_statistics_reset_holds_book_rows_confirms_and_refreshes_the_report() {
+    let fixture = Fixture::new();
+    let mut app = setup(&fixture);
+    app.open_path(&fixture.book).unwrap();
+    let original = fs::read(&fixture.book).unwrap();
+    let position = app.current_position();
+    let id = app.open_book_id().unwrap();
+    let title = app.active.as_ref().unwrap().entry.title.clone();
+    let today = Date::today();
+    let yesterday = today.add_days(-1).unwrap();
+    seed(&mut app, id, &title, yesterday, 70);
+    seed(&mut app, id, &title, today, 45);
+    seed(&mut app, 57, "Archive notebook", today, 65);
+    app.save().unwrap();
+    let journal = fixture.root.join("reading-history.json");
+    let persisted = fs::read(&journal).unwrap();
+    let press = |app: &mut Reader, label: &str, held| {
+        let index = app
+            .list_window()
+            .1
+            .iter()
+            .position(|row| row.title == label)
+            .unwrap();
+        let rect = app.list_geometry().row(index);
+        let point = ((rect.x + 20) as f32, (rect.y + 20) as f32);
+        let input = if held {
+            Input::LongTap(point.0, point.1)
+        } else {
+            Input::Tap(point.0, point.1)
+        };
+        assert_eq!(app.input(input), Change::Partial);
+    };
+    app.activate_reading_history(Command::Open(None)).unwrap();
+    press(&mut app, "Time range", false);
+    press(&mut app, "Last week", false);
+    let label = crate::reading_stats::history::report::Range::LastWeek.date_label(today);
+    press(&mut app, &label, false);
+    press(&mut app, &title, true);
+    assert_eq!(app.screen, Screen::ReadingHistory(Page::ConfirmPeriodReset));
+    capture_test_screen(&app, &app.fonts, "READER_STATS_PERIOD_RESET", false);
+    press(&mut app, "Cancel", false);
+    assert_eq!(fs::read(&journal).unwrap(), persisted);
+    press(&mut app, &title, true);
+    press(&mut app, "Reset statistics for this period", false);
+    assert!(!app.items().iter().any(|row| row.title == title));
+    assert!(
+        app.items()
+            .iter()
+            .any(|row| row.title == "Archive notebook")
+    );
+    assert_eq!(app.reading_history.summary(Some(id), None).seconds, 70);
+    app.history_back();
+    assert_eq!(
+        app.list_window().1[0].detail.as_deref(),
+        Some("1m 5s · 1 screen")
+    );
+    app.history_back();
+    press(&mut app, "Books by month", false);
+    press(&mut app, &yesterday.month_label(), false);
+    press(&mut app, &title, true);
+    press(&mut app, "Reset statistics for this period", false);
+    assert_eq!(app.reading_history.summary(Some(id), None).seconds, 0);
+    assert_eq!(app.reading_history.summary(Some(57), None).seconds, 65);
+    for _ in 0..4 {
+        app.history_back();
+    }
+    assert_eq!(app.screen, Screen::Book);
+    assert_eq!(app.current_position(), position);
+    app.save().unwrap();
+    let restored = setup(&fixture);
+    assert_eq!(restored.reading_history.summary(None, None).seconds, 65);
+    assert_eq!(fs::read(&fixture.book).unwrap(), original);
+}

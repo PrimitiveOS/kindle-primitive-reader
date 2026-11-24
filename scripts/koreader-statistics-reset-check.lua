@@ -3,7 +3,10 @@ local file = assert(io.open(assert(arg[1])))
 local source = file:read("*a")
 file:close()
 ReaderStatistics = {}
-for _, name in ipairs({"genResetBookSubItemTable", "resetPerBook", "resetCurrentBook", "deleteBooksByTotalDuration"}) do
+for _, name in ipairs({
+    "genResetBookSubItemTable", "resetPerBook", "resetCurrentBook",
+    "deleteBooksByTotalDuration", "resetStatsForBookForPeriod",
+}) do
     local start = assert(source:find("function ReaderStatistics:" .. name .. "(", 1, true))
     local finish = assert(source:find("\nend", start, true))
     assert(loadstring(source:sub(start, finish + 3)))()
@@ -85,3 +88,33 @@ assert(deleted[2] == 7 and statistics.id_curr_book == 10)
 assert(statistics.book_read_pages == 0 and statistics.book_read_time == 0)
 assert(statistics.avg_time == 60 and duration_resets == 1)
 print("Pinned statistics reset scopes, strict cutoffs, confirmation and current-book pace passed")
+
+C_ = function(_, text) return text end
+local writes, refreshes = 0, 0
+local period_sql
+local period_stmt = {
+    reset = function(self) return self end,
+    bind = function(self, id, first, last)
+        assert(id == 8 and first == 100 and last == 199)
+        return self
+    end,
+    step = function() writes = writes + 1 end,
+    close = function() end,
+}
+db.prepare = function(_, sql)
+    assert(sql:find("DELETE FROM page_stat_data", 1, true))
+    assert(sql:find("id_book = ?", 1, true) and sql:find("start_time between ? and ?", 1, true))
+    period_sql = sql
+    return period_stmt
+end
+local function refresh() refreshes = refreshes + 1 end
+statistics:resetStatsForBookForPeriod(8, 100, 199, nil, refresh)
+assert(shown.text:find("Book 8", 1, true) and shown.ok_text == "Reset")
+shown.cancel_callback()
+assert(writes == 0 and refreshes == 0)
+statistics:resetStatsForBookForPeriod(8, 100, 199, "2026-01-01", refresh)
+assert(shown.text:find("2026-01-01", 1, true))
+shown.ok_callback()
+assert(writes == 1 and refreshes == 1)
+if run_period_sql then run_period_sql(period_sql) end
+print("Pinned period reset checks the selected book and dates, confirmation and refresh")

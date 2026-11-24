@@ -43,6 +43,10 @@ pub(super) struct View {
 }
 
 impl View {
+    pub(super) fn cutoff(&self) -> i64 {
+        self.cutoff
+    }
+
     pub(super) fn back(&self, page: Page) -> (Screen, Option<usize>) {
         let child = |page| Screen::ReadingHistory(super::Page::Range(page));
         match page {
@@ -92,6 +96,18 @@ impl Reader {
             }
             Page::Book(_, _) => view.books_page = previous,
         }
+    }
+
+    pub(super) fn refresh_range_books(&mut self, range: Range, day: Date, period: Option<Date>) {
+        let view = &mut self.history_view.ranges;
+        let book = self.history_view.book;
+        let history = &self.reading_history;
+        view.periods = history.periods_since(range.period(), book, Zone::Local, view.cutoff);
+        if let Some(period) = period {
+            view.days =
+                history.days_in_period(range.period(), period, book, Zone::Local, view.cutoff);
+        }
+        view.books = history.books_on_report_day(day, book, Zone::Local, view.cutoff);
     }
 
     pub(super) fn range_report_window(
@@ -170,7 +186,8 @@ impl Reader {
                         .detail(short_time(
                             view.books.iter().map(|(_, totals)| totals.seconds).sum(),
                         )),
-                    BookGroup::Day { day, .. } => Item::new(day.label(), Action::Heading),
+                    BookGroup::Day { day, .. } => Item::new(day.label(), Action::Heading)
+                        .detail("Hold a book to reset its reading time for this day"),
                 };
                 let rows = view.books.iter().map(|&(book, totals)| {
                     show(self.history_title(book), Page::Book(group, book)).detail(counts(totals))
