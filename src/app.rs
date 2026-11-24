@@ -29,6 +29,7 @@ use character_page_settings::NumberField;
 mod cjk_selection;
 mod default_settings;
 mod dictionary_panel;
+use dictionary_panel::buttons as dictionary_buttons;
 mod dictionary_presets;
 mod dictionary_sources;
 use dictionary_sources::{SourceAction, SourcePreferences};
@@ -329,6 +330,7 @@ enum Screen {
     VocabularySearch,
     Dictionaries,
     DictionaryOptions(usize),
+    DictionaryButtons(dictionary_buttons::Page),
     DictionaryPresets(dictionary_presets::Page),
 }
 
@@ -519,6 +521,7 @@ impl Screen {
             Self::VocabularySearch => "Find a saved word",
             Self::Dictionaries => "Dictionaries",
             Self::DictionaryOptions(_) => "Dictionary settings",
+            Self::DictionaryButtons(page) => page.title(),
             Self::DictionaryPresets(page) => page.title(),
         }
     }
@@ -611,6 +614,7 @@ enum Action {
     ShowDictionaries,
     DictionaryPreset(dictionary_presets::Command),
     DictionarySource(SourceAction),
+    DictionaryButtons(dictionary_buttons::Command),
     DocumentDefaults(default_settings::Command),
     Style(style_tweaks::Command),
     LookUp(String),
@@ -1780,6 +1784,9 @@ impl Reader {
         self.close_dictionary_preset_picker();
         if screen != Screen::Dictionaries {
             self.close_dictionary_font_size();
+        }
+        if !matches!(screen, Screen::DictionaryButtons(_)) {
+            self.close_dictionary_button_editor();
         }
         if screen != Screen::Definition {
             self.spelling_lookup = None;
@@ -2971,6 +2978,9 @@ impl Reader {
         }
         if let Screen::DictionaryOptions(i) = self.screen {
             return self.source_options(i);
+        }
+        if let Screen::DictionaryButtons(page) = self.screen {
+            return self.dictionary_button_items(page);
         }
         if let Screen::DictionaryPresets(page) = self.screen {
             return self.dictionary_preset_items(page);
@@ -4306,6 +4316,7 @@ impl Reader {
             Action::ShowDictionaries => self.open_sources()?,
             Action::DictionaryPreset(command) => self.dictionary_preset_command(command)?,
             Action::DictionarySource(action) => self.change_source(action)?,
+            Action::DictionaryButtons(action) => self.change_dictionary_buttons(action)?,
             Action::SetFont(font) => {
                 let fonts = self.fonts_for(font.as_deref())?;
                 let active = self.active.as_mut().ok_or("Open a book first")?;
@@ -7162,6 +7173,10 @@ impl Reader {
 
 impl Reader {
     fn draw_content(&self, canvas: &mut Canvas) {
+        if self.screen == Screen::DictionaryButtons(dictionary_buttons::Page::Preview) {
+            self.draw_dictionary_button_preview(canvas);
+            return;
+        }
         if self.dictionary_editor_fullscreen() {
             self.draw_definition_popup(canvas);
             return;
@@ -9026,6 +9041,9 @@ impl App for Reader {
         if self.screen == Screen::Definition {
             return self.definition_input(input);
         }
+        if self.screen == Screen::DictionaryButtons(dictionary_buttons::Page::Preview) {
+            return self.dictionary_button_preview_input(input);
+        }
         if self.screen == Screen::VocabularyContext {
             return self.vocabulary_context_input(input);
         }
@@ -9200,6 +9218,7 @@ impl App for Reader {
                         }
                     }
                     Screen::Dictionaries => self.show(self.dictionary_origin),
+                    Screen::DictionaryButtons(page) => self.dictionary_button_editor_back(page),
                     Screen::DictionaryPresets(page) => self.back_from_dictionary_presets(page),
                     Screen::FooterSettings
                     | Screen::BookmarkListSettings
@@ -9690,6 +9709,9 @@ impl App for Reader {
 
     fn storage_returned(&mut self) -> io::Result<()> {
         self.close_dictionary_font_size();
+        if matches!(self.screen, Screen::DictionaryButtons(_)) {
+            self.show(Screen::Dictionaries);
+        }
         self.closing_profile = None;
         if self.closing_before_switch.is_some() && self.screen == Screen::PdfPassword {
             self.handle_pdf_password(Input::PageBack);

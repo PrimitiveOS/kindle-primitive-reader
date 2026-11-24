@@ -61,7 +61,7 @@ impl Reader {
                     Some(Rect::new(panel.right() - 425, panel.y + 219, 395, 100))
                 }
                 None if self.can_retry_with_preset() => {
-                    let rect = body(self.definition_layout().0);
+                    let rect = self.definition_body(self.definition_layout().0);
                     Some(Rect::new(rect.x, rect.y + 70, 395, 100))
                 }
                 None => None,

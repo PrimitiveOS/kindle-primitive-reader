@@ -5,7 +5,9 @@ use std::ops::Range;
 
 mod preset_lookup;
 use preset_lookup::PresetPicker;
+pub(super) mod buttons;
 pub(super) mod font_size;
+use buttons::{Button, Grid};
 
 const FONT_SIZE: i32 = 36;
 const LINE: i32 = 47;
@@ -61,6 +63,7 @@ pub(super) struct Navigation {
     online_return: Option<usize>,
     preset_picker: Option<PresetPicker>,
     font_size_draft: Option<i32>,
+    button_draft: Option<buttons::Draft>,
 }
 struct Previous {
     word: String,
@@ -72,6 +75,7 @@ struct Previous {
 }
 #[derive(Default)]
 struct View {
+    action_page: usize,
     line: usize,
     start_at_end: bool,
     layout: OnceCell<Vec<TextLine>>,
@@ -177,8 +181,17 @@ impl DefinitionTypography {
     }
 }
 
+const DEFINITION_TOP: i32 = 108;
+const STANDARD_FOOTER: i32 = 165;
+
+#[cfg(test)]
 fn body(popup: Rect) -> Rect {
-    Rect::new(popup.x + 32, popup.y + 108, popup.w - 84, popup.h - 273)
+    Rect::new(
+        popup.x + 32,
+        popup.y + DEFINITION_TOP,
+        popup.w - 84,
+        popup.h - DEFINITION_TOP - STANDARD_FOOTER,
+    )
 }
 pub(super) fn action_row(popup: Rect) -> [Rect; 5] {
     let save = definition_vocabulary(popup);
@@ -195,20 +208,69 @@ fn action_button(
 ) {
     canvas.button(rect, "", selected, false);
     let filled = selected != canvas.is_control_pressed(rect);
+    let ink = if filled { 255 } else { 0 };
+    if rect.h >= 100 {
+        let label_size = 32;
+        let icon_size = 36;
+        let gap = 12;
+        let width = canvas
+            .measure(label, label_size)
+            .min(rect.w - icon_size - gap - 24)
+            + 4;
+        let x = rect.x + (rect.w - width - icon_size - gap) / 2;
+        canvas.icon(Rect::new(x, rect.y + 32, icon_size, icon_size), icon, ink);
+        canvas.text(
+            Rect::new(x + icon_size + gap, rect.y + 27, width, 46),
+            label,
+            primitive_ui::TextStyle::new(label_size).ink(ink),
+        );
+        return;
+    }
     let size = 30;
     canvas.icon(
         Rect::new(rect.x + 12, rect.y + (rect.h - size) / 2, size, size),
         icon,
-        if filled { 255 } else { 0 },
+        ink,
     );
     let label_size = if label.chars().count() > 9 { 24 } else { 28 };
     canvas.text(
         Rect::new(rect.x + 50, rect.y + 2, rect.w - 56, rect.h - 4),
         label,
-        primitive_ui::TextStyle::new(label_size)
-            .center()
-            .ink(if filled { 255 } else { 0 }),
+        primitive_ui::TextStyle::new(label_size).center().ink(ink),
     );
+}
+
+fn popup_button_label(button: Button) -> &'static str {
+    match button {
+        Button::Previous => "Previous",
+        Button::Next => "Next",
+        _ => button.label(),
+    }
+}
+
+fn draw_action_button(
+    canvas: &mut Canvas,
+    button: Button,
+    rect: Rect,
+    label: &str,
+    selected: bool,
+) {
+    let icon = match button {
+        Button::SaveWord => bar_icons::action_icon(&Action::AddBookmark),
+        Button::Find | Button::SearchBook => bar_icons::SEARCH,
+        Button::Wikipedia => bar_icons::LINK,
+        Button::Highlight => bar_icons::HIGHLIGHT,
+        Button::Translate => bar_icons::action_icon(&Action::TranslatePage),
+        Button::Previous | Button::Next | Button::Close | Button::Expand => {
+            canvas.button(rect, label, selected, false);
+            return;
+        }
+    };
+    action_button(canvas, rect, label, icon, selected);
+}
+
+fn draw_preview_button(canvas: &mut Canvas, button: Button, rect: Rect) {
+    draw_action_button(canvas, button, rect, popup_button_label(button), false);
 }
 
 fn layout(
@@ -690,20 +752,147 @@ impl Reader {
         !self.definition_word.is_empty()
     }
 
-    fn draw_vocabulary_action(&self, canvas: &mut Canvas, rect: Rect) {
-        if self.vocabulary_available() {
-            let saved = self
-                .lookup_history
-                .vocabulary
-                .contains(&self.definition_word);
-            let label = if saved { "Remove word" } else { "Save word" };
-            action_button(
-                canvas,
-                rect,
+    fn definition_counter(&self) -> (usize, usize) {
+        self.dictionary_navigation
+            .view
+            .find
+            .as_ref()
+            .map_or((self.list_page, self.definitions.len()), |find| {
+                (find.index, find.hits.len())
+            })
+    }
+
+    fn dictionary_button_enabled(&self, button: Button) -> bool {
+        let (index, count) = self.definition_counter();
+        match button {
+            Button::SaveWord | Button::Wikipedia => self.vocabulary_available(),
+            Button::Translate => self.vocabulary_available() && self.open_book_id().is_some(),
+            Button::Find | Button::Expand => !self.definitions.is_empty(),
+            Button::SearchBook | Button::Highlight => self.selected_passage().is_ok(),
+            Button::Previous => index > 0,
+            Button::Next => index + 1 < count,
+            Button::Close => true,
+        }
+    }
+
+    fn draw_dictionary_button(&self, canvas: &mut Canvas, button: Button, rect: Rect) {
+        let view = &self.dictionary_navigation.view;
+        let found = view.find.is_some();
+        let (label, selected) = match button {
+            Button::SaveWord
+                if self
+                    .lookup_history
+                    .vocabulary
+                    .contains(&self.definition_word) =>
+            {
+                ("Remove word", true)
+            }
+            Button::Highlight if view.save_highlight => ("Unhighlight", true),
+            Button::Find if found && self.dictionary_settings.popup_buttons.is_some() => {
+                ("End find", true)
+            }
+            Button::Expand if found && self.dictionary_settings.popup_buttons.is_none() => {
+                ("End find", false)
+            }
+            Button::Expand if self.definition_expanded => ("Collapse", false),
+            _ => (popup_button_label(button), false),
+        };
+        if self.dictionary_button_enabled(button) {
+            draw_action_button(canvas, button, rect, label, selected);
+        } else if self.dictionary_settings.popup_buttons.is_some() {
+            canvas.panel(rect, 16, 2, 255);
+            canvas.text(
+                Rect::new(rect.x, rect.y + (rect.h - 44) / 2, rect.w, 44),
                 label,
-                bar_icons::action_icon(&Action::AddBookmark),
-                saved,
+                CAPTION.center(),
             );
+        }
+    }
+
+    fn use_dictionary_button(&mut self, button: Button) -> Change {
+        if !self.dictionary_button_enabled(button) {
+            return Change::None;
+        }
+        let found = self.dictionary_navigation.view.find.is_some();
+        match button {
+            Button::Previous | Button::Next => {
+                let step = if button == Button::Previous { -1 } else { 1 };
+                if found {
+                    self.find_step(step)
+                } else {
+                    self.result_step(step, false)
+                }
+            }
+            Button::Expand => {
+                if found && self.dictionary_settings.popup_buttons.is_none() {
+                    self.dictionary_navigation.view.find = None;
+                } else {
+                    self.definition_expanded = !self.definition_expanded;
+                }
+                Change::Partial
+            }
+            Button::Find => {
+                if found && self.dictionary_settings.popup_buttons.is_some() {
+                    self.dictionary_navigation.view.find = None;
+                } else {
+                    self.begin_find();
+                }
+                Change::Partial
+            }
+            Button::Wikipedia | Button::Translate => {
+                let wiki = button == Button::Wikipedia;
+                let topic = if wiki {
+                    self.definitions
+                        .get(self.list_page)
+                        .map_or(&self.definition_word, |result| &result.word)
+                } else {
+                    &self.definition_word
+                }
+                .clone();
+                self.dictionary_navigation.online_return = Some(self.list_page);
+                match self.prepare_online_text(wiki, &topic) {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                }
+            }
+            Button::SaveWord => self.save_vocabulary_from_definition(),
+            Button::SearchBook => match self.find_selection(SelectionSearchOrigin::Dictionary) {
+                Ok(()) => Change::Partial,
+                Err(error) => self.report(error),
+            },
+            Button::Highlight => {
+                self.dictionary_navigation.view.save_highlight =
+                    !self.dictionary_navigation.view.save_highlight;
+                Change::Partial
+            }
+            Button::Close => {
+                self.return_from_definition(false);
+                Change::Partial
+            }
+        }
+    }
+
+    fn save_vocabulary_from_definition(&mut self) -> Change {
+        let word = self.definition_word.clone();
+        if self.lookup_history.review.words.contains_key(&word) {
+            self.vocabulary_view.word = Some(word);
+            return match self.vocabulary_command(super::vocabulary::Command::ConfirmRemove) {
+                Ok(()) => Change::Partial,
+                Err(error) => self.report(error),
+            };
+        }
+        let entry = self.vocabulary_entry(&word);
+        match self.update_lookup_history(|history| {
+            let added = history.save_word(&word);
+            if added {
+                history
+                    .review
+                    .remember(&word, entry, super::vocabulary::now());
+            }
+            added
+        }) {
+            Ok(_) => Change::Partial,
+            Err(error) => self.report(error),
         }
     }
 
@@ -975,7 +1164,7 @@ impl Reader {
         }
     }
     fn dictionary_row_at(&self, popup: Rect, x: f32, y: f32) -> Option<(&TextLine, i32)> {
-        let rect = body(popup);
+        let rect = self.definition_body(popup);
         if !rect.contains(x, y) {
             return None;
         }
@@ -1230,16 +1419,19 @@ impl Reader {
             }
             return self.definition_results_input(input, popup, page);
         }
-        let [prev, expand, next] = definition_actions(popup);
+        let grid = self.definition_button_grid(popup);
         let found = self.dictionary_navigation.view.find.is_some();
         if let Input::LongTap(x, y) = input {
-            if !found {
-                if prev.contains(x, y) {
-                    return self.jump_to_definition(0);
+            match grid.at(x, y) {
+                Some(Button::Close) => {
+                    self.return_from_definition(true);
+                    return Change::Partial;
                 }
-                if next.contains(x, y) {
+                Some(Button::Previous) if !found => return self.jump_to_definition(0),
+                Some(Button::Next) if !found => {
                     return self.jump_to_definition(self.definitions.len().saturating_sub(1));
                 }
+                _ => {}
             }
             if let Some(word) = self.dictionary_word_at(popup, x, y) {
                 return match self.look_up(&word) {
@@ -1275,83 +1467,19 @@ impl Reader {
                     self.definition_results_page = Some(self.list_page / RESULTS_PER_PAGE);
                     return Change::Partial;
                 }
-                if prev.contains(x, y) {
-                    return if found {
-                        self.find_step(-1)
-                    } else {
-                        self.result_step(-1, false)
-                    };
-                }
-                if next.contains(x, y) {
-                    return if found {
-                        self.find_step(1)
-                    } else {
-                        self.result_step(1, false)
-                    };
-                }
-                if expand.contains(x, y) && !self.definitions.is_empty() {
-                    if found {
-                        self.dictionary_navigation.view.find = None;
-                    } else {
-                        self.definition_expanded = !self.definition_expanded;
-                    }
+                if let Some(page) =
+                    grid.page_after_tap(x, y, self.dictionary_navigation.view.action_page)
+                {
+                    self.dictionary_navigation.view.action_page = page;
                     return Change::Partial;
                 }
                 if let Some(change) = self.open_dictionary_preset_picker(x, y) {
                     return change;
                 }
-                let [save, find, wiki, search_book, highlight] = action_row(popup);
-                if self.vocabulary_available() && save.contains(x, y) {
-                    let word = self.definition_word.clone();
-                    if self.lookup_history.review.words.contains_key(&word) {
-                        self.vocabulary_view.word = Some(word);
-                        return match self
-                            .vocabulary_command(super::vocabulary::Command::ConfirmRemove)
-                        {
-                            Ok(()) => Change::Partial,
-                            Err(error) => self.report(error),
-                        };
-                    }
-                    let entry = self.vocabulary_entry(&word);
-                    return match self.update_lookup_history(|h| {
-                        let added = h.save_word(&word);
-                        if added {
-                            h.review.remember(&word, entry, super::vocabulary::now());
-                        }
-                        added
-                    }) {
-                        Ok(_) => Change::Partial,
-                        Err(e) => self.report(e),
-                    };
+                if let Some(button) = grid.at(x, y) {
+                    return self.use_dictionary_button(button);
                 }
-                if find.contains(x, y) && !self.definitions.is_empty() {
-                    self.begin_find();
-                    return Change::Partial;
-                }
-                if wiki.contains(x, y) {
-                    let word = self
-                        .definitions
-                        .get(self.list_page)
-                        .map_or(&self.definition_word, |result| &result.word)
-                        .clone();
-                    self.dictionary_navigation.online_return = Some(self.list_page);
-                    return match self.prepare_online_text(true, &word) {
-                        Ok(()) => Change::Partial,
-                        Err(e) => self.report(e),
-                    };
-                }
-                if search_book.contains(x, y) && self.selected_passage().is_ok() {
-                    return match self.find_selection(SelectionSearchOrigin::Dictionary) {
-                        Ok(()) => Change::Partial,
-                        Err(error) => self.report(error),
-                    };
-                }
-                if highlight.contains(x, y) && self.selected_passage().is_ok() {
-                    self.dictionary_navigation.view.save_highlight =
-                        !self.dictionary_navigation.view.save_highlight;
-                    return Change::Partial;
-                }
-                if body(popup).contains(x, y) {
+                if self.definition_body(popup).contains(x, y) {
                     if let Some((source, reference)) = self.dictionary_reference_at(popup, x, y) {
                         let Some(target) = reference.target.clone() else {
                             return Change::None;
@@ -1397,6 +1525,29 @@ impl Reader {
         DefinitionTypography(self.dictionary_settings.definition_font_size)
     }
 
+    fn definition_footer_height(&self) -> i32 {
+        self.dictionary_settings
+            .popup_buttons
+            .as_ref()
+            .map_or(STANDARD_FOOTER, buttons::Settings::footer_height)
+    }
+
+    pub(super) fn definition_body(&self, popup: Rect) -> Rect {
+        Rect::new(
+            popup.x + 32,
+            popup.y + DEFINITION_TOP,
+            popup.w - 84,
+            popup.h - DEFINITION_TOP - self.definition_footer_height(),
+        )
+    }
+
+    fn definition_button_grid(&self, popup: Rect) -> Grid {
+        self.dictionary_settings.popup_buttons.as_ref().map_or_else(
+            || Grid::standard(popup),
+            |config| Grid::configured(popup, config, self.dictionary_navigation.view.action_page),
+        )
+    }
+
     pub(super) fn definition_layout(&self) -> (Rect, Rect, usize) {
         let viewport = self.reading_viewport();
         let (screen_width, screen_height) = viewport.dimensions();
@@ -1435,7 +1586,17 @@ impl Reader {
                         .sum::<usize>()
                         .clamp(3, 8)
                 });
-            (273 + line_height * lines as i32).min(screen_height as i32 - 146)
+            // The miss message and retry control keep their own readable size.
+            let minimum_body = if self.can_retry_with_preset() {
+                188
+            } else if self.definitions.is_empty() {
+                94
+            } else {
+                0
+            };
+            let body_height = (line_height * lines as i32).max(minimum_body);
+            (DEFINITION_TOP + self.definition_footer_height() + body_height)
+                .min(screen_height as i32 - 146)
         };
         // Keep the column width stable across viewport changes. Nested results
         // retain cached line breaks and text positions within that column.
@@ -1445,7 +1606,11 @@ impl Reader {
             definition_bounds(height, self.selection_bounds(), viewport)
         };
         let back = Rect::new(popup.right() - 190, popup.y + 16, 168, 66);
-        (popup, back, (body(popup).h.max(0) / line_height) as usize)
+        (
+            popup,
+            back,
+            (self.definition_body(popup).h.max(0) / line_height) as usize,
+        )
     }
 
     pub(super) fn draw_definition_popup(&self, canvas: &mut Canvas) {
@@ -1528,8 +1693,6 @@ impl Reader {
             return;
         }
         let (popup, back, rows) = self.definition_layout();
-        let [prev, expand, next] = definition_actions(popup);
-        let [save, find, wiki, search_book, highlight] = action_row(popup);
         let edit = definition_edit_button(popup, self.definitions.len() > 1);
         canvas.popup(popup);
         let choose = definition_results_button(popup);
@@ -1580,7 +1743,7 @@ impl Reader {
             self.draw_definition_results(canvas, popup, page);
             return;
         }
-        let rect = body(popup);
+        let rect = self.definition_body(popup);
         let typography = self.definition_typography();
         let line_height = typography.line();
         if let Some(result) = self.definitions.get(self.list_page) {
@@ -1687,65 +1850,11 @@ impl Reader {
             canvas.text(rect, message, BODY.lines(2));
             self.draw_lookup_preset_button(canvas);
         }
-        self.draw_vocabulary_action(canvas, save);
-        if !self.definitions.is_empty() {
-            action_button(
-                canvas,
-                find,
-                "Find",
-                bar_icons::group_icon(TopGroup::Search),
-                false,
-            );
+        let grid = self.definition_button_grid(popup);
+        for &(button, rect) in &grid.items {
+            self.draw_dictionary_button(canvas, button, rect);
         }
-        if !self.definition_word.is_empty() {
-            action_button(canvas, wiki, "Wikipedia", bar_icons::LINK, false);
-        }
-        if self.selected_passage().is_ok() {
-            action_button(
-                canvas,
-                search_book,
-                "Search book",
-                bar_icons::group_icon(TopGroup::Search),
-                false,
-            );
-            let save_highlight = self.dictionary_navigation.view.save_highlight;
-            action_button(
-                canvas,
-                highlight,
-                if save_highlight {
-                    "Unhighlight"
-                } else {
-                    "Highlight"
-                },
-                bar_icons::HIGHLIGHT,
-                save_highlight,
-            );
-        }
-        let counter = if let Some(f) = &view.find {
-            (f.index, f.hits.len())
-        } else {
-            (self.list_page, self.definitions.len())
-        };
-        if counter.0 > 0 {
-            canvas.button(prev, "Previous", false, false);
-        }
-        if counter.0 + 1 < counter.1 {
-            canvas.button(next, "Next", false, false);
-        }
-        if counter.1 > 0 {
-            canvas.button(
-                expand,
-                if view.find.is_some() {
-                    "End find"
-                } else if self.definition_expanded {
-                    "Collapse"
-                } else {
-                    "Expand"
-                },
-                false,
-                false,
-            );
-        }
+        grid.draw_pager(canvas);
         let status = match &view.find {
             Some(find) => format!(
                 "Match {} of {} · Result {} of {}",

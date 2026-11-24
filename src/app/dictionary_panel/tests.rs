@@ -3,14 +3,14 @@ use crate::app::selection_popup::SelectionAction;
 use crate::app::tests::Fixture;
 use crate::dictionary::tests::write_dictionary;
 
-struct Simulation {
-    fixture: Fixture,
-    app: Reader,
-    canvas: Canvas,
+pub(super) struct Simulation {
+    pub(super) fixture: Fixture,
+    pub(super) app: Reader,
+    pub(super) canvas: Canvas,
 }
 
 impl Simulation {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let fixture = Fixture::new();
         let dictionaries = fixture.root.join("dictionaries");
         fs::create_dir(&dictionaries).unwrap();
@@ -59,7 +59,7 @@ impl Simulation {
         }
     }
 
-    fn draw(&mut self, name: Option<&str>) -> Vec<u8> {
+    pub(super) fn draw(&mut self, name: Option<&str>) -> Vec<u8> {
         self.draw_in_theme(name, false)
     }
 
@@ -71,7 +71,7 @@ impl Simulation {
         pixels
     }
 
-    fn tap(&mut self, rect: Rect) {
+    pub(super) fn tap(&mut self, rect: Rect) {
         assert_eq!(
             self.app.input(Input::Tap(
                 (rect.x + rect.w / 2) as f32,
@@ -136,7 +136,7 @@ impl Simulation {
         self.tap(rect);
     }
 
-    fn open_epub_selection(&mut self) {
+    pub(super) fn open_epub_selection(&mut self) {
         self.app.open_path(&self.fixture.book).unwrap();
         let reading = &self.app.active.as_ref().unwrap().reading;
         self.app

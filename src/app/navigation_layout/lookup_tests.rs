@@ -71,10 +71,10 @@ fn lookup_settings_viewport_keeps_dictionary_preferences_and_the_history_window(
     press(&app, &mut wide, layout.next(), false);
     tap(&mut app, layout.next());
     assert_eq!(app.list_page, 1);
-    let source = "Harbor glossary 05";
+    let source = "Harbor glossary 04";
     assert_eq!(app.list_window().1[0].title, source);
     tap_visible(&mut app, source);
-    assert_eq!(app.screen, Screen::DictionaryOptions(4));
+    assert_eq!(app.screen, Screen::DictionaryOptions(3));
     tap_visible(&mut app, "Prefer for this book");
     tap(&mut app, layout.back());
     assert_eq!(app.list_window().1[0].title, source);

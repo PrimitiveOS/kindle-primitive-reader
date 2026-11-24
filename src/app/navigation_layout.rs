@@ -112,6 +112,7 @@ impl Screen {
                 | Self::LocationHistory
                 | Self::PublisherPages
                 | Self::Dictionaries
+                | Self::DictionaryButtons(_)
                 | Self::DictionaryOptions(_)
                 | Self::DictionaryPresets(
                     super::dictionary_presets::Page::List

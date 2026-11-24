@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::dictionary_panel::font_size;
+use crate::app::dictionary_panel::{buttons, font_size};
 use crate::library::DictionaryFuzzySearch;
 
 const MAX_PREFERENCES_BYTES: usize = 64 * 1024;
@@ -32,6 +32,8 @@ pub(super) struct SourcePreferences {
     pub(super) justify_text: bool,
     #[serde(skip_serializing_if = "font_size::is_default")]
     pub(super) definition_font_size: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) popup_buttons: Option<buttons::Settings>,
 }
 
 impl Default for SourcePreferences {
@@ -47,6 +49,7 @@ impl Default for SourcePreferences {
             large_window: false,
             justify_text: true,
             definition_font_size: font_size::DEFAULT,
+            popup_buttons: None,
         }
     }
 }
@@ -85,6 +88,10 @@ impl SourcePreferences {
             || !settings.presets.is_valid()
             || !font_size::RANGE.contains(&settings.definition_font_size)
             || settings
+                .popup_buttons
+                .as_ref()
+                .is_some_and(|layout| !layout.is_valid())
+            || settings
                 .preset_cycle_after
                 .as_deref()
                 .is_some_and(|name| !dictionary_presets::valid_name(name))
@@ -102,6 +109,13 @@ impl SourcePreferences {
             return Self::default();
         };
         if let Ok(mut settings) = serde_json::from_slice::<Self>(&bytes) {
+            if settings
+                .popup_buttons
+                .as_ref()
+                .is_some_and(|layout| !layout.is_valid())
+            {
+                settings.popup_buttons = None;
+            }
             if !font_size::RANGE.contains(&settings.definition_font_size) {
                 settings.definition_font_size = font_size::DEFAULT;
             }
@@ -283,6 +297,10 @@ impl Reader {
         if bytes.len() > MAX_PREFERENCES_BYTES
             || !next.presets.is_valid()
             || !font_size::RANGE.contains(&next.definition_font_size)
+            || next
+                .popup_buttons
+                .as_ref()
+                .is_some_and(|layout| !layout.is_valid())
         {
             return Err("Dictionary preferences exceed Reader's limits".into());
         }
@@ -324,6 +342,10 @@ impl Reader {
                 Action::DictionarySource(SourceAction::FontSize),
             )
             .detail(self.dictionary_settings.definition_font_size.to_string()),
+            Item::new(
+                "Customize buttons",
+                Action::DictionaryButtons(buttons::Command::Open),
+            ),
         ];
         rows.extend(
             self.installed_dictionaries

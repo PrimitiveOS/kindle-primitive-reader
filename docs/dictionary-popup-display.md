@@ -41,6 +41,33 @@ handler, clamping and popup font selection at both limits.
 [Size 32](screenshots/dictionary-font-size-large.png) ·
 [Size 8](screenshots/dictionary-font-size-small.png)
 
+## Arrange popup buttons
+
+Open **Search › Dictionaries › Customize buttons**. In **Sort and toggle
+buttons**, select an action to show or hide it and to move it earlier or
+later. Set **Max buttons in row** to a value from one to four. **Test button
+layout** shows the arrangement over a sample definition. **Apply layout**
+saves the draft for future lookups, and **Restore default layout** returns
+to Reader's usual controls.
+
+The supported actions include navigating results, saving a word, Find,
+highlighting, searching the book, Wikipedia, Translate, expanding the
+definition, and closing it. Previous and Next get narrower when paired in
+a four-button row. Layouts that use more than three rows have action pages
+to leave room for the definition. The top Done or Back control remains
+reachable. Translate opens the usual confirmation before sending the word
+to a provider.
+
+The pinned Lua comparison runs KOReader's sort and toggle callbacks, row
+limits, preview, paired arrow sizing and reset. Reader tests exercise the
+saved draft and reopening, the reordered controls, action paging, the
+translation confirmation and return to the original reading passage.
+[Stock layout editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L504-L734) · [Stock button geometry](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/dictquicklookup.lua#L1019-L1134) · [Executable comparison](../scripts/compare-dictionary-button-layout.py)
+
+[Layout settings](screenshots/landscape-dictionary-customize-buttons.png) ·
+[Dark preview](screenshots/landscape-dictionary-button-layout-preview.png) ·
+[Paged actions during a lookup](screenshots/dictionary-popup-custom-buttons.png)
+
 ## Closing nested lookups
 
 Tap **Back** to return to the previous definition. Hold the same control to close
