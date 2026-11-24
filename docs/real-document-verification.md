@@ -223,6 +223,23 @@ file hashes matched before and after. The first frames took 1,504 ms,
 12,955 ms, 1,296 ms and 1,954 ms respectively. [Bookmark and header
 verification](bookmark-max-lines.md) records native and simulator evidence.
 
+## Reader 0.1.32 release on the Oasis
+
+The [0.1.32 GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.32)
+passed CI. Both licenses were present in the verified ARMHF package
+(SHA-256 `cd4e41a4fc711f305062c85426eb8daf46d6d4ffbc591af48d17aae26de04147`,
+21,383,487 bytes). The Store transaction installed it on the Oasis 3.
+The installed executable matched release SHA-256
+`8eab44d0fe74640acae718e2416dfb4396357d03d6ddefd2d5abbfeede728d67`.
+
+One original EPUB, PDF, AZW3 and MOBI opened through the normal picker,
+advanced, and resumed. The original file hashes matched before and after.
+First frames took 1,497 ms, 14,338 ms, 1,715 ms and 1,996 ms respectively.
+The Mac run passed 1,040 Reader library tests, one Kindle binary test,
+14 EPUB package tests and four layout checks. It skipped 62 optional
+Reader tests. The [stock search callback check](fixed-search-fit.md)
+also passed in the installed KOReader's runtime on the Oasis.
+
 For a single file under an authorized Documents root, run the example with a fresh
 scratch directory and the same Noto Sans fonts as Launcher.
 
