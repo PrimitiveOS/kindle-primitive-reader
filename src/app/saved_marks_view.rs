@@ -61,7 +61,8 @@ impl Reader {
         } else if matches!(
             self.screen,
             Screen::BookmarkMatches | Screen::BookmarkBrowser(_) | Screen::BookMap
-        ) {
+        ) || self.screen.uses_contents_list_viewport()
+        {
             Geometry::STANDARD.in_navigation(self.navigation_layout())
         } else {
             Geometry::STANDARD

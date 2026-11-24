@@ -8747,7 +8747,10 @@ impl App for Reader {
                     }
                     Screen::FixedBookmarks | Screen::OcrLanguage => self.show(Screen::FixedTools),
                     Screen::ContentsSettings => {
-                        self.open_reading_edge(true, WIDTH as f32 * 0.5);
+                        self.open_reading_edge(
+                            true,
+                            self.reading_viewport().dimensions().0 as f32 * 0.5,
+                        );
                     }
                     Screen::Highlights | Screen::LocationHistory if self.fixed.is_some() => {
                         self.show(Screen::FixedTools)

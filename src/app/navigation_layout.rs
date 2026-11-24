@@ -51,6 +51,15 @@ impl NavigationLayout {
         )
     }
 
+    pub(super) fn centered(self, rect: Rect) -> Rect {
+        Rect::new(
+            rect.x + (self.width - Self::PORTRAIT.width) / 2,
+            rect.y + (self.height - Self::PORTRAIT.height) / 2,
+            rect.w,
+            rect.h,
+        )
+    }
+
     pub(super) fn centered_footer(self, face: Rect) -> Rect {
         Rect::new(
             face.x + (self.width - WIDTH as i32) / 2,
@@ -70,14 +79,28 @@ impl NavigationLayout {
 }
 
 impl Screen {
+    pub(super) fn uses_contents_list_viewport(self) -> bool {
+        matches!(
+            self,
+            Self::CustomContents
+                | Self::CustomEdits
+                | Self::CustomBookmarks
+                | Self::ContentsSettings
+                | Self::ChapterNavigation
+                | Self::GeneratedContents
+        )
+    }
+
     pub(super) fn uses_navigation_viewport(self) -> bool {
         self.is_contents()
+            || self.uses_contents_list_viewport()
             || self.uses_reading_text_editor()
             || self.is_bookmark_list()
             || matches!(
                 self,
                 Self::GoToPage
                     | Self::ContentsSearch
+                    | Self::CustomTitle
                     | Self::LibraryFind
                     | Self::PdfPassword
                     | Self::Find

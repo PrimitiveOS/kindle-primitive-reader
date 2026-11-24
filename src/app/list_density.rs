@@ -1,6 +1,7 @@
 //! Shared geometry and transactional density controls for reading lists.
 use primitive_ui::{SECONDARY, TextStyle};
 
+use super::navigation_layout::NavigationLayout;
 use super::{
     Action, Canvas, Change, HEIGHT, Input, Item, LIST_X, LIST_Y, ROW_HEIGHT, ROWS_PER_PAGE, Reader,
     Rect, WIDTH,
@@ -286,78 +287,95 @@ impl Reader {
         });
     }
 
+    fn density_picker_layout(&self, target: PickerTarget) -> NavigationLayout {
+        if matches!(target, PickerTarget::Density(Scope::Contents, _)) {
+            self.navigation_layout()
+        } else {
+            NavigationLayout::PORTRAIT
+        }
+    }
+
     pub(super) fn draw_list_density_picker(&self, canvas: &mut Canvas) {
         let Some(picker) = &self.list_density_picker else {
             return;
         };
         let target = picker.target;
+        let layout = self.density_picker_layout(target);
+        let place = |rect| layout.centered(rect);
         let (min, max) = target.bounds();
-        canvas.popup(PANEL);
+        canvas.popup(place(PANEL));
         canvas.text(
-            Rect::new(244, 534, 776, 68),
+            place(Rect::new(244, 534, 776, 68)),
             target.title(),
             TextStyle::new(50).bold().center(),
         );
         canvas.text(
-            Rect::new(244, 607, 776, 49),
+            place(Rect::new(244, 607, 776, 49)),
             &format!("{min} to {max}"),
             TextStyle::new(30).ink(SECONDARY).center(),
         );
-        canvas.button(DECREASE, "-", false, false);
-        canvas.button(INCREASE, "+", false, false);
+        canvas.button(place(DECREASE), "-", false, false);
+        canvas.button(place(INCREASE), "+", false, false);
         let value = if target.is_lines() && picker.value.is_none() {
             "Disabled".to_owned()
         } else {
             picker.value(&self.controls).to_string()
         };
         canvas.text(
-            Rect::new(371, 686, 522, 105),
+            place(Rect::new(371, 686, 522, 105)),
             &value,
             TextStyle::new(66).bold().center(),
         );
         let default_value = target.default_value(&self.controls);
         if target.is_lines() {
             canvas.button(
-                LINE_DEFAULT,
+                place(LINE_DEFAULT),
                 &format!("Default ({default_value})"),
                 false,
                 false,
             );
-            canvas.button(DISABLE_LINES, "Disable", false, false);
+            canvas.button(place(DISABLE_LINES), "Disable", false, false);
         } else {
             let label = if target.is_font() {
                 "Automatic"
             } else {
                 "Default"
             };
-            canvas.button(DEFAULT, &format!("{label} ({default_value})"), false, false);
+            canvas.button(
+                place(DEFAULT),
+                &format!("{label} ({default_value})"),
+                false,
+                false,
+            );
         }
         if let Some(notice) = &self.notice {
             canvas.text(
-                Rect::new(244, 937, 776, 79),
+                place(Rect::new(244, 937, 776, 79)),
                 notice,
                 TextStyle::new(28).ink(SECONDARY).lines(2).center(),
             );
         }
-        canvas.button(CANCEL, "Cancel", false, false);
-        canvas.button(APPLY, "Apply", true, false);
+        canvas.button(place(CANCEL), "Cancel", false, false);
+        canvas.button(place(APPLY), "Apply", true, false);
     }
 
     pub(super) fn list_density_input(&mut self, input: Input) -> Option<Change> {
+        let target = self.list_density_picker.as_ref()?.target;
+        let layout = self.density_picker_layout(target);
+        let place = |rect| layout.centered(rect);
         let picker = self.list_density_picker.as_mut()?;
-        let target = picker.target;
         let clear_button = if target.is_lines() {
             DISABLE_LINES
         } else {
             DEFAULT
         };
         let step = match input {
-            Input::Tap(x, y) if CANCEL.contains(x, y) || !PANEL.contains(x, y) => {
+            Input::Tap(x, y) if place(CANCEL).contains(x, y) || !place(PANEL).contains(x, y) => {
                 self.list_density_picker = None;
                 self.notice = None;
                 return Some(Change::Partial);
             }
-            Input::Tap(x, y) if APPLY.contains(x, y) => {
+            Input::Tap(x, y) if place(APPLY).contains(x, y) => {
                 let mut controls = self.controls;
                 match target {
                     PickerTarget::Density(scope, Field::Rows) => {
@@ -380,20 +398,20 @@ impl Reader {
                     Err(error) => self.report(error),
                 });
             }
-            Input::Tap(x, y) if target.is_lines() && LINE_DEFAULT.contains(x, y) => {
+            Input::Tap(x, y) if target.is_lines() && place(LINE_DEFAULT).contains(x, y) => {
                 picker.value = Some(target.default_value(&self.controls));
                 self.notice = None;
                 return Some(Change::Partial);
             }
-            Input::Tap(x, y) if clear_button.contains(x, y) => {
+            Input::Tap(x, y) if place(clear_button).contains(x, y) => {
                 picker.value = None;
                 self.notice = None;
                 return Some(Change::Partial);
             }
-            Input::Tap(x, y) if DECREASE.contains(x, y) => -1,
-            Input::Tap(x, y) if INCREASE.contains(x, y) => 1,
-            Input::LongTap(x, y) if DECREASE.contains(x, y) => -target.hold_step(),
-            Input::LongTap(x, y) if INCREASE.contains(x, y) => target.hold_step(),
+            Input::Tap(x, y) if place(DECREASE).contains(x, y) => -1,
+            Input::Tap(x, y) if place(INCREASE).contains(x, y) => 1,
+            Input::LongTap(x, y) if place(DECREASE).contains(x, y) => -target.hold_step(),
+            Input::LongTap(x, y) if place(INCREASE).contains(x, y) => target.hold_step(),
             Input::PageBack => -1,
             Input::PageForward => 1,
             _ => return Some(Change::None),

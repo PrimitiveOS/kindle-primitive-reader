@@ -312,7 +312,8 @@ impl Reader {
         let Some(draft) = &self.chapter_draft else {
             return;
         };
-        header(
+        let layout = self.navigation_layout();
+        layout.header_action(
             canvas,
             if draft.editing {
                 "Edit chapter"
@@ -322,7 +323,7 @@ impl Reader {
             "Cancel",
         );
         canvas.single_line_field(
-            Rect::new(LIST_X, LIST_Y, WIDTH as i32 - 2 * LIST_X, 130),
+            layout.body(LIST_Y, 130),
             &self.editor,
             "Chapter title",
             false,
@@ -336,49 +337,47 @@ impl Reader {
             .as_ref()
             .map(|_| format!("Starts on page {}", draft.position.page + 1));
         if let Some(notice) = self.notice.as_deref().or(page.as_deref()) {
-            canvas.text(
-                Rect::new(LIST_X, LIST_Y + 145, WIDTH as i32 - 2 * LIST_X, 82),
-                notice,
-                CAPTION,
-            );
+            canvas.text(layout.body(LIST_Y + 145, 82), notice, CAPTION);
         }
         if draft.confirm_remove {
-            canvas.popup(CONFIRM);
+            let panel = layout.centered(CONFIRM);
+            canvas.popup(panel);
             canvas.text(
-                Rect::new(CONFIRM.x + 40, CONFIRM.y + 36, CONFIRM.w - 80, 90),
+                Rect::new(panel.x + 40, panel.y + 36, panel.w - 80, 90),
                 "Remove this chapter?",
                 primitive_ui::TextStyle::new(50).bold(),
             );
             canvas.text(
-                Rect::new(CONFIRM.x + 40, CONFIRM.y + 132, CONFIRM.w - 80, 80),
+                Rect::new(panel.x + 40, panel.y + 132, panel.w - 80, 80),
                 "You can add this location again from Contents.",
                 BODY,
             );
-            canvas.button(CANCEL, "Cancel", false, false);
-            canvas.button(DELETE, "Remove", true, false);
+            canvas.button(layout.centered(CANCEL), "Cancel", false, false);
+            canvas.button(layout.centered(DELETE), "Remove", true, false);
         }
     }
 
     pub(super) fn chapter_editor_input(&mut self, input: Input) -> Change {
+        let layout = self.navigation_layout();
         let Some(draft) = &mut self.chapter_draft else {
             return Change::None;
         };
         if draft.confirm_remove {
-            if matches!(input, Input::Tap(x,y) if DELETE.contains(x,y)) {
+            if matches!(input, Input::Tap(x,y) if layout.centered(DELETE).contains(x,y)) {
                 return match self.finish_custom(true) {
                     Ok(()) => Change::Partial,
                     Err(e) => self.report(e),
                 };
             }
             if matches!(input, Input::PageBack)
-                || matches!(input, Input::Tap(x,y) if CANCEL.contains(x,y) || !CONFIRM.contains(x,y))
+                || matches!(input, Input::Tap(x,y) if layout.centered(CANCEL).contains(x,y) || !layout.centered(CONFIRM).contains(x,y))
             {
                 draft.confirm_remove = false;
             }
             return Change::Partial;
         }
         if matches!(input, Input::PageBack)
-            || matches!(input, Input::Tap(x,y) if primitive_ui::back_button(WIDTH as i32).contains(x,y))
+            || matches!(input, Input::Tap(x,y) if layout.back().contains(x,y))
         {
             let back = draft.back;
             self.return_from_chapter_editor(back);
@@ -391,8 +390,7 @@ impl Reader {
             draft.confirm_remove = true;
             return Change::Partial;
         }
-        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
-        let Some(key) = keyboard_key(&layout, &self.editor, "Save", x, y) else {
+        let Some(key) = keyboard_key(&layout.keyboard(), &self.editor, "Save", x, y) else {
             return Change::None;
         };
         if matches!(self.editor.press(key), Press::Go)
@@ -632,3 +630,7 @@ mod tests {
         assert!(matches!(reader.flow_popup, Some(FlowPopup::Mark { .. })));
     }
 }
+
+#[cfg(test)]
+#[path = "custom_contents/viewport_tests.rs"]
+mod viewport_tests;
