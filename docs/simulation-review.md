@@ -17,6 +17,15 @@ checks the confirmed switch, nested touch jumps, publisher restore, and
 preserved source location.
 [Alternative contents and captures](contents-list-settings.md#alternative-table-of-contents)
 
+Typography edits in supported EPUBs repaint the current chapter and rebuild
+whole-book page counts once reading resumes, including with the header off.
+The Mac fixture grows from 32 to 84 screen pages and keeps the saved passage
+visible on page 6. A separate foreground layout agrees with the verified
+count. The pinned CREngine replay compares its own delayed and full render
+states and restores the original source location. The selectable mode to
+render the whole document before returning to reading remains open.
+[Typography pagination comparison and captures](whole-book-screen-pages.md#partial-typography-rendering-comparison)
+
 Fitted EPUB paragraphs in the internal Book and Web policies resolve
 vertical padding and keep its edges with the first and last text lines
 through page turns. The pinned native comparison checks 40 geometry
@@ -24,6 +33,23 @@ and page-position cases. Mac tests verify the text links, selection
 and resume across a forced break and a naturally split paragraph.
 The engines still make different line and page cuts.
 [Vertical padding comparison and captures](render-modes.md#vertical-padding-at-page-boundaries)
+
+The four-thread Mac suite passed 1,450 library tests, one Kindle entry
+test, 14 EPUB package tests and four layout tests. Sixty-seven opt-in
+tests were skipped in that run.
+
+The normal file picker opened original EPUB, PDF, AZW3 and MOBI files. Each
+read through a page turn and resumed at matching positions and central page
+pixels. The source hashes matched. The separate reading-statistics and
+positive EPUB margin checks also passed on original files. Twelve screenshots
+from the combined simulator matched the reviewed PNGs byte for byte.
+
+The local ARMHF stage verified a stripped, statically linked 37,541,620-byte
+executable with SHA-256
+`f26849bd472bc7f7fde1e40edfd0f723aa5e637e2efb358a96dccb97cbafc935`.
+The stage assembled 28 files totaling 47,115,469 bytes uncompressed and
+verified the SQLite notices, embedded Launcher icon and OCR model. Physical
+Kindle verification and the Store release remain open.
 
 ## Dictionary size, ribbon navigation, closing profiles and decorated widths checkpoint
 

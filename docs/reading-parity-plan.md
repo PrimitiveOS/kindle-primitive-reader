@@ -49,7 +49,7 @@ device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
 **Pinned control inventory:** 232 of 536 in-scope reading-control rows have
-an implemented workflow, 237 are partial, 46 are gaps, and 21 need audit. The
+an implemented workflow, 238 are partial, 45 are gaps, and 21 need audit. The
 [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification.
 Reader 0.1.32 adds [search from selection](selection-search.md),
