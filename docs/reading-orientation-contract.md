@@ -68,15 +68,14 @@ The Reader development entry advertises viewport handoff protocol 2 in its
 package header. The foreground test uses a Launcher compiled with
 `viewport-handoff` and a supervisor started with
 `KL_EXPERIMENTAL_VIEWPORT_HANDOFF=1`. Both binaries use Tools revision
-`c8ee49b764c96c013d0fa8e9d79dfdeddbdaaecc`. The setting applies to the
-scratch supervisor. Ordinary launcher sessions keep their existing startup
-policy.
+`c8ee49b764c96c013d0fa8e9d79dfdeddbdaaecc`. Set the opt-in on the
+scratch supervisor.
 
 Start from Amazon’s Library after the installed supervisor has exited.
 Use a scratch Launcher payload, a scratch Documents folder, and the
 supervisor’s runtime entry with `KL_DIR` and `KL_DOCUMENTS` pointing to
-those folders. The manual `Documents/Launcher.sh` entry stays in place.
-The launcher tile starts the scratch Reader through the normal session
+those folders. Record the manual `Documents/Launcher.sh` checksum before
+starting the scratch session. The launcher tile starts the scratch Reader through the normal session
 creation path. Its reader home and document directory contain authored
 fixtures and private test state.
 
@@ -90,3 +89,15 @@ fixtures and private test state.
 The capture helper checks the live fixture process around each awake
 framebuffer read. The hardware evidence additionally records visible panel
 refresh, physical touch and keys, the power cycle, and the USB data session.
+
+
+### Staged ARMHF build
+
+Reader `1e8438d` and Launcher `65e47b5` produced static ARM hard-float
+executables using the locked build. The scratch session passed the staged
+executable, supervisor, launch header and fixture checksums. Reader’s
+package carries both project licenses, the OCR executable and model, and
+the protocol marker in the first ten lines of the installed entry. The
+Mac passed 1,277 library tests, 14 EPUB package tests, and four layout
+probes against this Reader source. Physical foreground checks are pending.
+[Launcher source and handoff notes](https://github.com/PrimitiveOS/kindle-primitive-launcher/blob/65e47b5da8338924932a49f2bb7953efce8f24a7/docs/launcher-viewport-handoff.md)
