@@ -13,4 +13,25 @@ Run `cargo test --locked --lib selection_viewport_`. Set `READER_SELECTION_VIEWP
 - Translate an EPUB selection, change the target language with the landscape keyboard, then page through an authored provider response and return to the selection. The simulation runs offline. [Translation result](screenshots/landscape-translation-result.png)
 - Open an illustrated Wikipedia fixture, tap the painted image to show its caption, hold it to open the gallery, and page through the gallery before returning to the book.
 
-Physical device rotation needs hardware verification. Related surfaces with portrait geometry still include footnote previews, View HTML, the hyphenation editor, full-document search and its matches, and the separate dictionary and online lookup settings and history pages.
+## Lookup settings and history
+
+Dictionary sources, per-book preferences, dictionary history, online history,
+and Wikipedia and translation settings use the active viewport. Landscape
+shows seven full rows at the same font and row height as portrait. Closing
+a lookup opened from history returns to the list window that contained it,
+including when the popup was open during a rotation. Clear online history
+uses a centered confirmation with matching touch targets.
+
+Pinned KOReader opens dictionary and Wikipedia history in a KeyValuePage
+sized to the current screen. Tapping a row opens the saved lookup over that
+list. The preferred dictionary dialog saves the change and refreshes its
+rows. Reader keeps those in-book routes and its own history and dictionary
+preferences. [Dictionary history](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L261-L311) · [Wikipedia history](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerwikipedia.lua#L82-L122) · [List dimensions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/keyvaluepage.lua#L303-L319) · [Book dictionary preference](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L733-L758)
+
+Run `cargo test --locked --lib lookup_settings_viewport` to check a local
+StarDict fixture and an authored EPUB with offline lookup history. The tests
+exercise full rows, page buttons, far-right touch, viewport rollback, saved
+preferences, history return, and clear confirmation in both orientations.
+[Online lookup history](screenshots/landscape-lookup-history.png)
+
+Physical device rotation needs Kindle verification.

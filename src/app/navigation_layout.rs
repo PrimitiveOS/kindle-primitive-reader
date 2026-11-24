@@ -106,7 +106,16 @@ impl Screen {
     pub(super) fn uses_reading_list_viewport(self) -> bool {
         matches!(
             self,
-            Self::Links | Self::LocationHistory | Self::PublisherPages
+            Self::Links
+                | Self::LocationHistory
+                | Self::PublisherPages
+                | Self::Dictionaries
+                | Self::DictionaryOptions(_)
+                | Self::DictionaryHistory
+                | Self::OnlineHistory
+                | Self::ClearOnlineHistory
+                | Self::TranslationSettings
+                | Self::WikipediaSettings
         )
     }
 
@@ -144,6 +153,23 @@ impl Reader {
             height: height as i32,
         }
     }
+
+    pub(super) fn reading_list_ordinal(&self) -> usize {
+        self.reading_list_anchor
+            .as_ref()
+            .filter(|anchor| anchor.page == self.list_page)
+            .map_or_else(|| self.list_page * self.list_geometry().rows, |a| a.ordinal)
+    }
+
+    pub(super) fn restore_reading_list_ordinal(&mut self, ordinal: usize) {
+        let ordinal = ordinal.min(self.items().len().saturating_sub(1));
+        self.list_page = ordinal / self.list_geometry().rows;
+        self.reading_list_anchor = Some(ReadingListAnchor {
+            page: self.list_page,
+            ordinal,
+            link: None,
+        });
+    }
 }
 
 pub(super) struct ReadingListAnchor {
@@ -172,10 +198,7 @@ impl ReadingListStage {
             .reading_list_anchor
             .as_ref()
             .filter(|anchor| anchor.page == reader.list_page);
-        let first = retained.map_or_else(
-            || reader.list_page * reader.list_geometry().rows,
-            |anchor| anchor.ordinal,
-        );
+        let first = reader.reading_list_ordinal();
         let link = retained.and_then(|anchor| anchor.link.clone()).or_else(|| {
             if reader.screen == Screen::Links {
                 reader
@@ -252,3 +275,7 @@ mod tests;
 #[cfg(test)]
 #[path = "navigation_layout/reading_lists_tests.rs"]
 mod reading_lists_tests;
+
+#[cfg(test)]
+#[path = "navigation_layout/lookup_tests.rs"]
+mod lookup_tests;

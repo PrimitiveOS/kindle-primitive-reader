@@ -50,6 +50,7 @@ impl SpellingLookup {
 
 #[derive(Default)]
 pub(super) struct Navigation {
+    // Dictionary history uses a row ordinal; other sources keep their list page.
     origin: Option<(Screen, usize)>,
     origin_editor: Option<Editor>,
     review_word: Option<String>,
@@ -694,8 +695,13 @@ impl Reader {
                 view: std::mem::take(&mut self.dictionary_navigation.view),
             });
         } else {
+            let previous = if self.screen == Screen::DictionaryHistory {
+                self.reading_list_ordinal()
+            } else {
+                self.list_page
+            };
             self.dictionary_navigation = Navigation {
-                origin: Some((self.screen, self.list_page)),
+                origin: Some((self.screen, previous)),
                 origin_editor: (self.screen == Screen::DictionaryEntry)
                     .then(|| self.editor.clone()),
                 review_word: (self.screen == Screen::VocabularyWord)
@@ -778,7 +784,11 @@ impl Reader {
             }
             self.dictionary_navigation = Navigation::default();
             self.show(back.0);
-            self.list_page = back.1;
+            if back.0 == Screen::DictionaryHistory {
+                self.restore_reading_list_ordinal(back.1);
+            } else {
+                self.list_page = back.1;
+            }
             if let Some(editor) = editor {
                 self.editor = editor;
             }

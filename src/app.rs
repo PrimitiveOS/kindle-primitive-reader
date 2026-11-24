@@ -8629,7 +8629,12 @@ impl App for Reader {
                     Screen::ReadingFonts => self.show(Screen::Typography),
                     Screen::DictionaryOptions(i) => {
                         self.show(Screen::Dictionaries);
-                        self.list_page = i / ROWS_PER_PAGE;
+                        let row = self.source_rows().iter().position(|item| {
+                            matches!(item.action, Action::DictionarySource(SourceAction::Open(index)) if index == i)
+                        });
+                        if let Some(row) = row {
+                            self.restore_reading_list_ordinal(row);
+                        }
                     }
                     Screen::Dictionaries => self.show(self.dictionary_origin),
                     Screen::FooterSettings

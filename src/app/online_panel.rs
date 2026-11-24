@@ -35,6 +35,9 @@ const THUMB: Rect = Rect::new(946, 449, 220, 109);
 const GALLERY: Rect = Rect::new(106, 567, 1048, 479);
 const CAPTION_AREA: Rect = Rect::new(106, 1065, 1048, 138);
 const IMAGE_PAGER: Rect = Rect::new(100, 1238, 1066, 110);
+const CLEAR_HISTORY_PANEL: Rect = Rect::new(155, 595, 954, 455);
+const CLEAR_HISTORY_CANCEL: Rect = Rect::new(214, 914, 326, 100);
+const CLEAR_HISTORY_ACCEPT: Rect = Rect::new(632, 914, 400, 100);
 const BODY_LINES: usize = 10;
 // The shared canvas lays out 36 px BODY text at 1.25 em per line.
 const BODY_LINE: i32 = 45;
@@ -149,6 +152,7 @@ struct Introductions {
 pub(super) struct Panel {
     pub request: Request,
     back: Screen,
+    history_ordinal: Option<usize>,
     field: Field,
     pub job: Option<Job>,
     introductions: Option<Introductions>,
@@ -164,6 +168,7 @@ impl Panel {
         Self {
             request,
             back,
+            history_ordinal: None,
             field: Field::Topic,
             job: None,
             introductions: None,
@@ -527,25 +532,36 @@ impl Reader {
     }
 
     pub(super) fn draw_clear_online_history(&self, canvas: &mut Canvas) {
-        let popup = Rect::new(155, 595, 954, 455);
-        canvas.popup(popup);
+        let layout = self.navigation_layout();
+        canvas.popup(layout.centered(CLEAR_HISTORY_PANEL));
         canvas.text(
-            Rect::new(214, 655, 840, 85),
+            layout.centered(Rect::new(214, 655, 840, 85)),
             "Clear online lookup history?",
             BODY.bold(),
         );
         canvas.text(
-            Rect::new(214, 755, 830, 126),
+            layout.centered(Rect::new(214, 755, 830, 126)),
             "This removes the saved Wikipedia searches and translations from this Kindle.",
             BODY.lines(3),
         );
-        canvas.button(Rect::new(214, 914, 326, 100), "Cancel", false, false);
-        canvas.button(Rect::new(632, 914, 400, 100), "Clear history", true, false);
+        canvas.button(
+            layout.centered(CLEAR_HISTORY_CANCEL),
+            "Cancel",
+            false,
+            false,
+        );
+        canvas.button(
+            layout.centered(CLEAR_HISTORY_ACCEPT),
+            "Clear history",
+            true,
+            false,
+        );
     }
 
     pub(super) fn clear_online_history_input(&mut self, input: Input) -> Change {
+        let layout = self.navigation_layout();
         match input {
-            Input::Tap(x, y) if Rect::new(632, 914, 400, 100).contains(x, y) => {
+            Input::Tap(x, y) if layout.centered(CLEAR_HISTORY_ACCEPT).contains(x, y) => {
                 match self.activate(Action::ClearOnlineHistory) {
                     Ok(()) => Change::Partial,
                     Err(e) => self.report(e),
@@ -556,8 +572,8 @@ impl Reader {
                 Change::Partial
             }
             Input::Tap(x, y)
-                if Rect::new(214, 914, 326, 100).contains(x, y)
-                    || !Rect::new(155, 595, 954, 455).contains(x, y) =>
+                if layout.centered(CLEAR_HISTORY_CANCEL).contains(x, y)
+                    || !layout.centered(CLEAR_HISTORY_PANEL).contains(x, y) =>
             {
                 self.show(Screen::OnlineHistory);
                 Change::Partial
@@ -573,7 +589,9 @@ impl Reader {
             .get(index)
             .ok_or("This lookup is no longer in history.")?
             .clone();
-        self.online = Some(Panel::new(r, Screen::OnlineHistory));
+        let mut panel = Panel::new(r, Screen::OnlineHistory);
+        panel.history_ordinal = Some(self.reading_list_ordinal());
+        self.online = Some(panel);
         self.show(Screen::OnlineLookup);
         Ok(())
     }
@@ -708,8 +726,14 @@ impl Reader {
             self.show(Screen::OnlineLookup);
             return;
         }
-        let back = self.online.take().map_or(Screen::Library, |p| p.back);
+        let (back, history_ordinal) = self
+            .online
+            .take()
+            .map_or((Screen::Library, None), |p| (p.back, p.history_ordinal));
         self.show(back);
+        if let Some(ordinal) = history_ordinal {
+            self.restore_reading_list_ordinal(ordinal);
+        }
         if back == Screen::Definition {
             self.restore_dictionary_online_return();
         }
