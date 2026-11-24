@@ -9,7 +9,7 @@ span calculation. An offline dictionary miss offers a one-shot fuzzy retry
 when fuzzy search is disabled. Saved profiles accept word spacing and expansion
 before Apply, and the internal EPUB keep policy uses available space for an
 oversized text group. [Calendar controls](reading-statistics.md#calendar-and-timeline-settings) ·
-[Dictionary word forms](dictionary-word-forms.md) ·
+[One-shot dictionary retry](dictionary-word-forms.md#fuzzy-retry-after-a-miss) ·
 [Saved profile values](reading-profiles.md#editing-saved-values) ·
 [Publisher keep comparison](render-modes.md)
 

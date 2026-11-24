@@ -8,6 +8,20 @@ In Dictionaries, **Word forms by default** sets how Reader handles inflections. 
 
 ![Dictionary settings with Word forms on and a book-specific fuzzy choice](screenshots/dictionary-fuzzy-settings.png)
 
+## Fuzzy retry after a miss
+
+With fuzzy search disabled, an ordinary miss in an enabled dictionary opens a
+prefilled editor. Edit the word if needed and choose **Fuzzy search** for this
+lookup. The original passage remains selected, and the book and library
+preferences retain their saved values. Cancel returns to the passage or the
+typed lookup editor. If the retry finds nothing, the result can be dismissed
+without another prompt. [Pinned miss and retry callbacks](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1465-L1504)
+
+The Mac tests exercise the visible landscape keyboard, an edited query from
+an EPUB selection, and cancelling or exhausting a retry from typed lookup.
+The definition close returns to the original selection and reading position.
+[Simulator capture](screenshots/landscape-dictionary-fuzzy-retry.png)
+
 ## Reference behavior
 
 Pinned KOReader exposes a global fuzzy default and saves a separate option for each edition. Its lookup picker passes `--exact-search` to sdcv when fuzzy is off. With fuzzy enabled, sdcv can try case and English suffix forms and then edit distance. KOReader's language-support plugins can still supply form candidates when fuzzy is off. Reader handles word forms in its own lookup and applies Fuzzy search only to the bounded spelling scan. Both skip edit-distance suggestions for CJK selection. [KOReader setting and dispatch](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L327-L351) · [KOReader candidates](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1341-L1377) · [sdcv word lookup](https://github.com/Dushistov/sdcv/blob/v0.5.5/src/stardict_lib.cpp#L1261-L1355) · [Japanese and Chinese selection](cjk-dictionary-selection.md)
