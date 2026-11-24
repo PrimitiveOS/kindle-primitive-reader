@@ -14,6 +14,7 @@ pub(super) enum FlowAction {
 }
 
 pub(super) enum FlowPopup {
+    FixedPage(super::custom_contents::FixedPageActions),
     Mark {
         position: ReadingPosition,
         existing: Option<usize>,
@@ -50,6 +51,11 @@ impl Reader {
 
     fn hidden_flow_data(&self) -> Option<&HiddenFlows> {
         Some(&self.library.state(self.open_book_id()?)?.hidden_flows)
+    }
+
+    pub(super) fn flow_editing_enabled(&self) -> bool {
+        self.hidden_flow_data()
+            .is_some_and(|data| data.enabled && data.editing)
     }
 
     pub(super) fn hidden_flow_items(&self) -> Vec<Item> {
@@ -272,6 +278,7 @@ impl Reader {
             return;
         };
         let (title, detail, action) = match popup {
+            FlowPopup::FixedPage(actions) => return actions.draw(canvas),
             FlowPopup::ClearInactive => (
                 "Clear inactive markers?",
                 "Remove boundaries that currently have no effect. Other boundaries and your source book stay intact.",
@@ -310,10 +317,14 @@ impl Reader {
     }
 
     pub(super) fn flow_popup_input(&mut self, input: Input) -> Change {
+        let popup = self.flow_popup.take().unwrap();
+        if let FlowPopup::FixedPage(actions) = popup {
+            return actions.input(self, input);
+        }
         let Input::Tap(x, y) = input else {
+            self.flow_popup = Some(popup);
             return Change::None;
         };
-        let popup = self.flow_popup.take().unwrap();
         let sheet = Sheet::centered(Rect::new(0, 0, WIDTH as i32, HEIGHT as i32), "", "", "");
         match sheet.hit(x, y) {
             Some(SheetAction::Cancel) => return Change::Partial,
@@ -327,6 +338,7 @@ impl Reader {
             return self.report("Open a book first");
         };
         let result = match popup {
+            FlowPopup::FixedPage(_) => unreachable!("page actions handled above"),
             FlowPopup::Clear => {
                 data.clear();
                 Ok(())

@@ -5361,7 +5361,12 @@ impl Reader {
                 else {
                     return Change::None;
                 };
-                let result = self.show_flow_page_popup(overview.chapter, overview.first + index);
+                let page = overview.first + index;
+                let result = if overview.chapter.is_none() && self.custom_contents_enabled() {
+                    self.show_fixed_page_actions(page)
+                } else {
+                    self.show_flow_page_popup(overview.chapter, page)
+                };
                 return match result {
                     Ok(()) => Change::Partial,
                     Err(error) => self.report(error),
