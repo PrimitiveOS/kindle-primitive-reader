@@ -14,8 +14,10 @@ local source, cache, font, captures = assert(arg[1]), assert(arg[2]), assert(arg
 local width, height, margin = 720, 480, 32
 local fb2 = arg[5] == "fb2"
 local classic = arg[5] == "classic"
+local wikipedia = arg[5] == "wikipedia"
 local tweak_id = fb2 and "footnote-inpage_fb2"
-    or classic and "footnote-inpage_classic_classnames" or "footnote-inpage_epub"
+    or classic and "footnote-inpage_classic_classnames"
+    or wikipedia and "footnote-inpage_wikipedia" or "footnote-inpage_epub"
 local function find_tweak(items, id)
     for _, item in ipairs(items) do
         if item.tweak_id == (id or tweak_id) then return item end
@@ -148,6 +150,52 @@ local function width_in_canonical_note(view_, text)
     local boxes = assert(view_:getWordBoxesFromPositions(hit.start, hit["end"], true))
     assert(#boxes >= 1, text)
     return boxes[#boxes].x1 - boxes[1].x0, boxes[1].x0
+end
+
+if arg[5] == "cosmetic" then
+    controller:onReadSettings(Settings:wrap({}))
+    local option = assert(find_tweak(menu.style_tweaks.sub_item_table,
+        "inpage_footnote_no_inline_spacing"))
+    local function measure(name)
+        local view = open(assert(controller:getCssText()))
+        local ref = position(view, "The survey record")
+        assert(capture(view, ref, "stock-note-cosmetic-" .. name))
+        local _, note = width_in_canonical_note(view, "reads true")
+        local _, body = width_in_canonical_note(view, "continues today")
+        view:close()
+        return note, body
+    end
+    assert(not option.checked_func())
+    local before, body_before = measure("before")
+    option.callback()
+    assert(option.checked_func())
+    local after, body_after = measure("after")
+    assert(before - after >= 70 and body_before == body_after)
+    print(string.format("Stock cosmetic note spacing x=%d -> %d; body x=%d", before, after, body_after))
+    return
+end
+
+if wikipedia then
+    local view = open(css)
+    local ref = position(view, "The harbor reference")
+    local original = position(view, "First printed register")
+    assert(original > ref)
+    position(view, "Second printed register")
+    position(view, "Nested label stays")
+    position(view, "The appendix is ordinary text")
+    assert(not view:findAllText("Print return one", false, false, 8, true, 0, 255))
+    assert(not view:findAllText("Print return two", false, false, 8, true, 0, 255))
+    assert(capture(view, ref, "stock-wikipedia-note-band"))
+    assert(not capture(view, original, "stock-wikipedia-note-canonical"))
+    view:close()
+    local ordinary = open("")
+    position(ordinary, "Print return one")
+    position(ordinary, "Print return two")
+    local page = position(ordinary, "The harbor reference")
+    assert(not capture(ordinary, page, "stock-wikipedia-notes-off"))
+    ordinary:close()
+    print("Stock Wikipedia list notes, hidden direct backlinks, and nested text verified")
+    return
 end
 
 if classic then

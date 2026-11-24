@@ -1079,12 +1079,21 @@ impl BookStyle {
                 if options.justify {
                     style.alignment = Some(Alignment::Justify);
                 }
-                let remove_block_spacing = options.no_block_spacing && block;
-                if marginless || remove_block_spacing {
+                let inline_like = matches!(
+                    display,
+                    Display::Inline
+                        | Display::Ruby
+                        | Display::RunIn
+                        | Display::InlineBlock
+                        | Display::InlineTable
+                );
+                let remove_spacing = (options.no_block_spacing && block)
+                    || (options.no_inline_spacing && inline_like);
+                if marginless || remove_spacing {
                     style.vertical_margin = Default::default();
                     style.horizontal_margin = Default::default();
                 }
-                if remove_block_spacing {
+                if remove_spacing {
                     style.vertical_padding = Default::default();
                     style.padding = Default::default();
                 }
@@ -1092,6 +1101,9 @@ impl BookStyle {
                     style.line_height = parent.line_height;
                     style.image_align = parley::VerticalAlign::BASELINE;
                 }
+            }
+            if footnotes.is_some_and(|targets| targets.hides_wikipedia_backlink(index)) {
+                style.display = Display::None;
             }
             style.decoration = parent.decoration.including(decoration);
             // CREngine places superscripts a quarter of the parent font height above

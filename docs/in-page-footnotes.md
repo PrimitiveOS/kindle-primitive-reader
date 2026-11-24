@@ -115,8 +115,7 @@ text**, **Remove footnote block spacing**, and **Regularize footnote text**
 apply to the note and its continuation. Regularizing uses the surrounding
 note text’s size, line height and baseline. It removes superscript sizing
 and positioning. The controls save the choice for the edition or as a live
-default. Whole-note flattening, non-linear note flows and some inline
-spacing remain open.
+default.
 
 The stock replay exercises the actual tweak callbacks and the same 80%
 legacy size as Reader. The note’s first word moved from x=96 to x=32 in
@@ -133,6 +132,42 @@ and reopening at the original passage. The authored EPUB remains read-only.
 Run the replay below with `classic` as its fifth argument to exercise this
 chapter. Physical E Ink verification remains pending.
 
+**Remove cosmetic footnote spacing** removes margins and padding on inline
+note elements. Book-mode layouts honor authored inline boxes, so a padded
+label takes up less horizontal and vertical space when the option is on.
+The box keeps its text and backlink hit target. The reference paragraph and
+body inline boxes keep their original geometry. The word after the box
+moves 88 px in both engines. Reader measures x=285→197 using its saved
+legacy note size. KOReader measures x=346→258 using publisher sizes.
+[Reader before](screenshots/reader-note-cosmetic-before.png) ·
+[Reader after](screenshots/reader-note-cosmetic-after.png) ·
+[KOReader before](screenshots/stock-note-cosmetic-before.png) ·
+[KOReader after](screenshots/stock-note-cosmetic-after.png)
+
+## Saved Wikipedia EPUBs
+
+**Style tweaks › More footnote options › In-page Wikipedia footnotes** uses
+the reference pattern from a saved EPUB. A link to a direct ordered list item
+in `ol.references` displays that numbered item in the page band. Direct
+children marked `noprint` or `mw-cite-backlink` are omitted. Nested text and
+other links in the reference stay selectable. The original list stays
+accessible through source links, including after saving and reopening.
+The tests use an authored EPUB with the Wikipedia reference markup. A
+chapter with an unsupported reference table returns to its ordinary layout,
+including its backlinks. Local Wikipedia exports with different structures
+can still be read with ordinary layout.
+[Pinned KOReader selectors](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L945-L960) ·
+[Reader controls](screenshots/advanced-note-options.png) ·
+[Reader reference band](screenshots/reader-wikipedia-note-band.png) ·
+[KOReader reference band](screenshots/stock-wikipedia-note-band.png) ·
+[Reader canonical list](screenshots/reader-wikipedia-note-canonical.png) ·
+[KOReader canonical list](screenshots/stock-wikipedia-note-canonical.png)
+
+Whole-note flattening still needs a text layout that maps a single visual
+line back to multiple original blocks. Non-linear note grouping still needs
+automatic source-backed flow ranges that affect page turns and progress while
+keeping link access to the original notes.
+
 ## Replay on macOS
 
 Run the Reader tests on the [deterministic authored EPUB](../tests/fixtures/in-page-footnotes.epub).
@@ -148,12 +183,18 @@ mkdir -p "$scratch/profile" "$scratch/cache" "$scratch/captures"
 READER_SELECTION_VIEWPORT_CAPTURES="$scratch/captures" \
   READER_IN_PAGE_FOOTNOTE_CAPTURES="$scratch/captures" \
   cargo test --locked --features kindle --lib in_page
+READER_SELECTION_VIEWPORT_CAPTURES="$scratch/captures" \
+  READER_IN_PAGE_FOOTNOTE_CAPTURES="$scratch/captures" \
+  cargo test --locked --features kindle --lib advanced_note
 cd "$stock/runtime/koreader"
 KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
   SDL_VIDEODRIVER=dummy ./luajit "$reader/scripts/koreader-in-page-footnotes-check.lua" \
   "$reader/tests/fixtures/in-page-footnotes.epub" "$scratch/cache" \
   "$reader/tests/fixtures/fonts/NotoSans-Regular.ttf" "$scratch/captures"
 ```
+
+Pass `cosmetic` or `wikipedia` as the fifth argument to select either
+advanced style replay.
 
 For local originals, set `READER_IN_PAGE_FOOTNOTE_ORIGINALS` to a private JSON
 array of book records. Each book record contains its `path` and a `chapters`

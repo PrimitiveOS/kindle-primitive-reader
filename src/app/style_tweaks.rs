@@ -4,7 +4,8 @@ use super::*;
 use crate::user_styles::{
     self, CLASSIC_FOOTNOTES, Data, EPUB_FOOTNOTES, EXTEND_NOTES, EXTEND_NOTES_UNTIL_HEADING,
     FB2_ENDNOTES, FB2_FOOTNOTES, FB2_REGULAR_NOTE_SIZE, FootnoteSize, NOTE_BLOCK_SPACING,
-    NOTE_INDENTATION, NOTE_INLINE_SIZING, NOTE_JUSTIFICATION, PRESETS, Snapshot,
+    NOTE_COSMETIC_SPACING, NOTE_INDENTATION, NOTE_INLINE_SIZING, NOTE_JUSTIFICATION, PRESETS,
+    Snapshot, WIKIPEDIA_FOOTNOTES,
 };
 use primitive_ui::{TextStyle, editor::Multiline};
 #[derive(Clone)]
@@ -47,7 +48,7 @@ const COLUMNS: usize = 40;
 
 fn note_format(preset: &str) -> Option<DocumentFormat> {
     match preset {
-        EPUB_FOOTNOTES | CLASSIC_FOOTNOTES => Some(DocumentFormat::Epub),
+        EPUB_FOOTNOTES | CLASSIC_FOOTNOTES | WIKIPEDIA_FOOTNOTES => Some(DocumentFormat::Epub),
         FB2_FOOTNOTES | FB2_ENDNOTES | FB2_REGULAR_NOTE_SIZE => Some(DocumentFormat::Fb2),
         _ => None,
     }
@@ -57,11 +58,13 @@ fn advanced_note(preset: &str) -> bool {
     matches!(
         preset,
         CLASSIC_FOOTNOTES
+            | WIKIPEDIA_FOOTNOTES
             | EXTEND_NOTES
             | EXTEND_NOTES_UNTIL_HEADING
             | NOTE_INDENTATION
             | NOTE_JUSTIFICATION
             | NOTE_BLOCK_SPACING
+            | NOTE_COSMETIC_SPACING
             | NOTE_INLINE_SIZING
     )
 }
@@ -523,6 +526,7 @@ impl Reader {
                 let description = match p.id {
                     EPUB_FOOTNOTES => "Show marked notes in supported single-page EPUB layouts",
                     CLASSIC_FOOTNOTES => "Use common publisher footnote classes in this EPUB",
+                    WIKIPEDIA_FOOTNOTES => "Use reference lists in a saved Wikipedia EPUB",
                     FB2_FOOTNOTES => "Show linked sections from the FictionBook notes body",
                     FB2_ENDNOTES => "Show linked sections from the FictionBook comments body",
                     FB2_REGULAR_NOTE_SIZE => "Use the reading size for FictionBook note bands",
@@ -533,6 +537,7 @@ impl Reader {
                     NOTE_INDENTATION => "Remove the first-line indent from notes",
                     NOTE_JUSTIFICATION => "Justify the lines of the note text",
                     NOTE_BLOCK_SPACING => "Remove margins and padding around note blocks",
+                    NOTE_COSMETIC_SPACING => "Remove margins and padding on inline note elements",
                     NOTE_INLINE_SIZING => "Use inherited note text size, line height and baseline",
                     _ => "Book choice overrides the live all-books default",
                 };

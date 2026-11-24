@@ -8,6 +8,7 @@ use std::{
 pub(crate) const FILE: &str = "style-tweaks.json";
 pub(crate) const EPUB_FOOTNOTES: &str = "footnote-inpage_epub";
 pub(crate) const CLASSIC_FOOTNOTES: &str = "footnote-inpage_classic_classnames";
+pub(crate) const WIKIPEDIA_FOOTNOTES: &str = "footnote-inpage_wikipedia";
 pub(crate) const FB2_FOOTNOTES: &str = "footnote-inpage_fb2";
 pub(crate) const FB2_ENDNOTES: &str = "footnote-inpage_fb2_comments";
 pub(crate) const FB2_REGULAR_NOTE_SIZE: &str = "fb2_footnotes_regular_font_size";
@@ -16,6 +17,7 @@ pub(crate) const EXTEND_NOTES_UNTIL_HEADING: &str = "extend-footnote-inpage_unti
 pub(crate) const NOTE_INDENTATION: &str = "inpage_footnote_text-indent_0";
 pub(crate) const NOTE_JUSTIFICATION: &str = "inpage_footnote_text_justify";
 pub(crate) const NOTE_BLOCK_SPACING: &str = "inpage_footnote_no_block_spacing";
+pub(crate) const NOTE_COSMETIC_SPACING: &str = "inpage_footnote_no_inline_spacing";
 pub(crate) const NOTE_INLINE_SIZING: &str = "inpage_footnote_regularize_text";
 pub(crate) const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 pub(crate) const MAX_BOOK_CSS: usize = 8 * 1024;
@@ -99,6 +101,7 @@ struct InPageNotes {
     epub_size: Option<FootnoteSize>,
     explicit_epub: bool,
     classic_epub: bool,
+    wikipedia_epub: bool,
     fb2_footnotes: bool,
     fb2_endnotes: bool,
     fb2_regular_size: bool,
@@ -119,6 +122,7 @@ pub(crate) struct NoteFormatting {
     pub(crate) no_indent: bool,
     pub(crate) justify: bool,
     pub(crate) no_block_spacing: bool,
+    pub(crate) no_inline_spacing: bool,
     pub(crate) regularize: bool,
 }
 
@@ -162,6 +166,17 @@ impl Snapshot {
     pub(crate) fn classic_epub_notes(&self) -> bool {
         self.notes.classic_epub
     }
+    pub(crate) fn wikipedia_epub_notes(&self) -> bool {
+        self.notes.wikipedia_epub
+    }
+    pub(crate) fn without_wikipedia_notes(&self) -> Self {
+        let mut snapshot = self.clone();
+        snapshot.notes.wikipedia_epub = false;
+        if !snapshot.notes.explicit_epub && !snapshot.notes.classic_epub {
+            snapshot.notes.epub_size = None;
+        }
+        snapshot
+    }
     pub(crate) fn note_extension(&self) -> NoteExtension {
         self.notes.extension
     }
@@ -198,6 +213,7 @@ pub(crate) enum Effect {
     Css(&'static str),
     InPageEpubFootnotes,
     InPageClassicFootnotes,
+    InPageWikipediaFootnotes,
     InPageFb2Footnotes,
     InPageFb2Endnotes,
     Fb2RegularNoteSize,
@@ -205,6 +221,7 @@ pub(crate) enum Effect {
     RemoveNoteIndentation,
     JustifyNotes,
     RemoveNoteBlockSpacing,
+    RemoveNoteInlineSpacing,
     RegularizeNoteText,
 }
 #[derive(Clone, Copy)]
@@ -230,6 +247,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         group: "in-page-footnotes",
         priority: 0,
         effect: Effect::InPageClassicFootnotes,
+    },
+    Preset {
+        id: WIKIPEDIA_FOOTNOTES,
+        title: "In-page Wikipedia footnotes",
+        group: "in-page-footnotes",
+        priority: 0,
+        effect: Effect::InPageWikipediaFootnotes,
     },
     Preset {
         id: FB2_FOOTNOTES,
@@ -286,6 +310,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         group: "in-page-note-block-spacing",
         priority: 0,
         effect: Effect::RemoveNoteBlockSpacing,
+    },
+    Preset {
+        id: NOTE_COSMETIC_SPACING,
+        title: "Remove cosmetic footnote spacing",
+        group: "in-page-note-cosmetic-spacing",
+        priority: 0,
+        effect: Effect::RemoveNoteInlineSpacing,
     },
     Preset {
         id: NOTE_INLINE_SIZING,
@@ -570,6 +601,10 @@ impl Data {
                     notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
                     notes.classic_epub = true;
                 }
+                Effect::InPageWikipediaFootnotes => {
+                    notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
+                    notes.wikipedia_epub = true;
+                }
                 Effect::InPageFb2Footnotes => notes.fb2_footnotes = true,
                 Effect::InPageFb2Endnotes => notes.fb2_endnotes = true,
                 Effect::Fb2RegularNoteSize => notes.fb2_regular_size = true,
@@ -577,6 +612,7 @@ impl Data {
                 Effect::RemoveNoteIndentation => notes.formatting.no_indent = true,
                 Effect::JustifyNotes => notes.formatting.justify = true,
                 Effect::RemoveNoteBlockSpacing => notes.formatting.no_block_spacing = true,
+                Effect::RemoveNoteInlineSpacing => notes.formatting.no_inline_spacing = true,
                 Effect::RegularizeNoteText => notes.formatting.regularize = true,
             }
         }

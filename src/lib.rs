@@ -1207,7 +1207,7 @@ impl Probe {
         excerpt: Option<String>,
         user_rules: &user_hyphenation::Rules,
         user_styles: &user_styles::Snapshot,
-        load_fonts: impl FnOnce() -> Result<FontContext>,
+        load_fonts: impl Fn() -> Result<FontContext>,
     ) -> Result<Self> {
         Self::layout_opened_book(
             &mut Some(book),
@@ -1232,7 +1232,7 @@ impl Probe {
         excerpt: Option<String>,
         user_rules: &user_hyphenation::Rules,
         user_styles: &user_styles::Snapshot,
-        load_fonts: impl FnOnce() -> Result<FontContext>,
+        load_fonts: impl Fn() -> Result<FontContext>,
     ) -> Result<Self> {
         let book = opened.as_mut().ok_or("Reading source is unavailable")?;
         if book.is_fixed_layout() {
@@ -1549,6 +1549,25 @@ impl Probe {
             }
             _ => None,
         };
+        if in_page_notes.is_none()
+            && footnote_targets
+                .as_ref()
+                .is_some_and(footnotes::in_page::Targets::has_wikipedia_notes)
+        {
+            // Release the failed composition's glyph layouts and text
+            // projections before laying out the ordinary chapter again.
+            drop((renderer, lines, source, pages, reading_flow));
+            return Self::layout_opened_book(
+                opened,
+                engine,
+                settings,
+                chapter,
+                None,
+                user_rules,
+                &user_styles.without_wikipedia_notes(),
+                load_fonts,
+            );
+        }
         Ok(Self {
             title,
             author,

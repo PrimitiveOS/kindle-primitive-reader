@@ -190,6 +190,7 @@ pub(crate) struct Targets {
     starts_note_part: Vec<bool>,
     sizes: Vec<NoteSize>,
     formatting: NoteFormatting,
+    wikipedia_backlinks: BTreeSet<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -198,6 +199,7 @@ enum NoteSize {
         font: FootnoteSize,
         clear_margins: bool,
     },
+    Wikipedia(FootnoteSize),
     Fb2(f32),
 }
 
@@ -278,6 +280,24 @@ impl Targets {
                             clear_margins: true,
                         },
                     );
+                }
+            }
+        }
+        if styles.wikipedia_epub_notes() {
+            for (index, element) in source.elements.iter().enumerate() {
+                if !element.selector_only
+                    && !element.anonymous
+                    && element.tag == "li"
+                    && element.parent.is_some_and(|parent| {
+                        let parent = &source.elements[parent];
+                        parent.tag == "ol"
+                            && parent
+                                .classes
+                                .split_ascii_whitespace()
+                                .any(|c| c == "references")
+                    })
+                {
+                    roots.insert(index, NoteSize::Wikipedia(font));
                 }
             }
         }
@@ -377,6 +397,23 @@ impl Targets {
             .into_iter()
             .map(|root| root.and_then(|root| roots.get(&root).copied()))
             .collect();
+        let wikipedia_backlinks = if styles.wikipedia_epub_notes() {
+            source
+                .elements
+                .iter()
+                .enumerate()
+                .filter_map(|(index, element)| {
+                    let root = *roots.get(&element.parent?)?;
+                    let hidden_class = element
+                        .classes
+                        .split_ascii_whitespace()
+                        .any(|c| matches!(c, "noprint" | "mw-cite-backlink"));
+                    (matches!(sizes[root], NoteSize::Wikipedia(_)) && hidden_class).then_some(index)
+                })
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
         Some(Self {
             roots,
             ids,
@@ -384,13 +421,26 @@ impl Targets {
             starts_note_part,
             sizes,
             formatting: styles.note_formatting(),
+            wikipedia_backlinks,
         })
+    }
+
+    pub(crate) fn has_wikipedia_notes(&self) -> bool {
+        self.sizes
+            .iter()
+            .any(|size| matches!(size, NoteSize::Wikipedia(_)))
+    }
+
+    pub(crate) fn hides_wikipedia_backlink(&self, index: usize) -> bool {
+        self.wikipedia_backlinks.contains(&index)
     }
 
     pub(crate) fn font_scale(&self, index: usize, block: bool) -> Option<f32> {
         let id = self.ancestry[index]?;
         match self.sizes[id] {
-            NoteSize::Epub { font, .. } => font.scale(self.starts_note_part[index], block),
+            NoteSize::Epub { font, .. } | NoteSize::Wikipedia(font) => {
+                font.scale(self.starts_note_part[index], block)
+            }
             NoteSize::Fb2(size) => self.roots.contains_key(&index).then_some(size),
         }
     }
@@ -407,7 +457,7 @@ impl Targets {
                     NoteSize::Epub {
                         clear_margins: true,
                         ..
-                    }
+                    } | NoteSize::Wikipedia(_)
                 ));
         Some((formatting, marginless))
     }
@@ -631,6 +681,147 @@ mod tests {
             .unwrap();
         }
         pixels
+    }
+
+    fn advanced_note_layout(chapter: usize, presets: &[&str]) -> Probe {
+        let mut data = crate::user_styles::Data::default();
+        for preset in presets {
+            data.choose(1, preset, Some(true)).unwrap();
+        }
+        Probe::layout_opened_book(
+            &mut Some(Book::open(&test_fixture("in-page-footnotes.epub")).unwrap()),
+            Engine::Parley,
+            crate::PublisherRenderMode::Book.apply(settings(false)),
+            chapter,
+            None,
+            &Default::default(),
+            &data.snapshot(1).unwrap(),
+            || crate::font_context(&[test_fixture("fonts/NotoSans-Regular.ttf")]),
+        )
+        .unwrap()
+    }
+
+    fn phrase_rects(
+        probe: &Probe,
+        page: usize,
+        phrase: &str,
+    ) -> Vec<crate::selection::HighlightRect> {
+        let start = probe.matches(phrase).remove(0);
+        let end = probe.anchor(start.block, start.offset + phrase.len());
+        probe.selection_rects(page, &probe.select_range(&start, &end).unwrap())
+    }
+
+    #[test]
+    fn advanced_note_cosmetic_spacing_reflows_boxes_and_preserves_source_hits() {
+        use crate::user_styles::{EPUB_FOOTNOTES, NOTE_COSMETIC_SPACING};
+        let mut plain = advanced_note_layout(9, &[EPUB_FOOTNOTES]);
+        let mut fixed = advanced_note_layout(9, &[EPUB_FOOTNOTES, NOTE_COSMETIC_SPACING]);
+        let off = advanced_note_layout(9, &[]);
+        let no_notes = advanced_note_layout(9, &[NOTE_COSMETIC_SPACING]);
+        let reference = plain.fragment("cosmetic-start").unwrap();
+        let note = plain.fragment("cosmetic-note").unwrap();
+        let page = plain.page_for(&reference).unwrap();
+        assert_eq!(fixed.page_for(&reference), Some(page));
+        assert_eq!(fixed.fragment("cosmetic-note"), Some(note.clone()));
+        assert_eq!(fixed.matches("reads true"), plain.matches("reads true"));
+        let x = |probe: &Probe, page| phrase_rects(probe, page, "reads true")[0].x;
+        let before = x(&plain, page);
+        let after = x(&fixed, page);
+        assert!((86..=90).contains(&(before - after)), "{before} -> {after}");
+        assert!(
+            x(&plain, plain.page_for(&note).unwrap()) > x(&fixed, fixed.page_for(&note).unwrap())
+        );
+        assert_eq!(
+            phrase_rects(&plain, page, "continues today"),
+            phrase_rects(&fixed, page, "continues today")
+        );
+        assert_eq!(
+            phrase_rects(&off, page, "continues today"),
+            phrase_rects(&no_notes, page, "continues today")
+        );
+        assert!(no_notes.in_page_notes.is_none());
+        for probe in [&plain, &fixed] {
+            let box_ = phrase_rects(probe, page, "seal mark")[0];
+            assert_eq!(
+                probe
+                    .link_at(
+                        page,
+                        (box_.x + box_.width / 2) as f32,
+                        (box_.y + box_.height / 2) as f32
+                    )
+                    .and_then(|target| target.fragment),
+                Some("cosmetic-ref".into())
+            );
+        }
+        eprintln!("Reader cosmetic note spacing x={before} -> {after}");
+        assert_ne!(
+            capture(&mut plain, page, "reader-note-cosmetic-before.png"),
+            capture(&mut fixed, page, "reader-note-cosmetic-after.png")
+        );
+    }
+
+    #[test]
+    fn advanced_note_wikipedia_owns_list_items_and_restores_ordinary_fallback() {
+        use crate::user_styles::WIKIPEDIA_FOOTNOTES;
+        let ordinary = advanced_note_layout(10, &[]);
+        let mut probe = advanced_note_layout(10, &[WIKIPEDIA_FOOTNOTES]);
+        let start = probe.fragment("wiki-start").unwrap();
+        let page = probe.page_for(&start).unwrap();
+        assert!(
+            probe.in_page_notes.as_ref().unwrap()[page]
+                .separator
+                .is_some()
+        );
+        for phrase in [
+            "First printed register",
+            "Second printed register",
+            "Nested label stays",
+        ] {
+            assert_eq!(probe.matches(phrase), ordinary.matches(phrase));
+            assert_eq!(phrase_rects(&probe, page, phrase).len(), 1);
+        }
+        assert!(phrase_rects(&probe, page, "The appendix is ordinary text").is_empty());
+        for label in ["Print return one", "Print return two"] {
+            assert!(probe.matches(label).is_empty());
+            assert_eq!(ordinary.matches(label).len(), 1);
+        }
+        let note = probe.fragment("cite_note-one").unwrap();
+        let canonical = probe.page_for(&note).unwrap();
+        assert!(canonical > page);
+        assert_eq!(
+            phrase_rects(&probe, canonical, "First printed register").len(),
+            1
+        );
+        let link = phrase_rects(&probe, page, "Read the introduction")[0];
+        assert_eq!(
+            probe
+                .link_at(
+                    page,
+                    (link.x + link.width / 2) as f32,
+                    (link.y + link.height / 2) as f32
+                )
+                .and_then(|target| target.fragment),
+            Some("wiki-start".into())
+        );
+        assert!(
+            probe
+                .links_on_page(page)
+                .iter()
+                .any(|(_, target)| { target.fragment.as_deref() == Some("cite_note-one") })
+        );
+        capture(&mut probe, page, "reader-wikipedia-note-band.png");
+        capture(&mut probe, canonical, "reader-wikipedia-note-canonical.png");
+
+        let mut unsupported = advanced_note_layout(11, &[WIKIPEDIA_FOOTNOTES]);
+        let mut normal = advanced_note_layout(11, &[]);
+        assert!(unsupported.in_page_notes.is_none());
+        assert_eq!(
+            unsupported.matches("Table return"),
+            normal.matches("Table return")
+        );
+        assert_eq!(unsupported.matches("Table return").len(), 1);
+        assert_eq!(unsupported.page_count(), normal.page_count());
+        assert_eq!(unsupported.capture(0).unwrap(), normal.capture(0).unwrap());
     }
 
     #[test]

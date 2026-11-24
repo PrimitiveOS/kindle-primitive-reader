@@ -83,6 +83,26 @@ chapters = {
 <p id="classic-after-heading">Continuation after the heading.</p>
 <p class="fnote" id="classic-second">Another class note begins here.</p>
 <p class="footnote-like" id="not-a-class-note">This class name is a near match.</p>""",
+    "cosmetic": """<p id="cosmetic-start">The survey record<a id="cosmetic-ref" epub:type="noteref" href="#cosmetic-note">1</a> has a wax seal.</p>
+<p>A <span style="display:inline-block; margin:0 18px; padding:9px 26px; background:#ddd">body label</span> continues today.</p>
+<aside id="cosmetic-note" epub:type="footnote">
+<p style="page-break-before:always; margin-left:19px">Survey <a style="display:inline-block; margin:0 18px; padding:9px 26px; background:#ddd" href="#cosmetic-ref">seal mark</a> reads true.</p>
+</aside>""",
+    "wiki": """<p id="wiki-start">The harbor reference cites two editions
+<sup id="cite_ref-one" class="reference"><a href="#cite_note-one">[1]</a></sup>
+<sup id="cite_ref-two" class="reference"><a href="#cite_note-two">[2]</a></sup>.</p>
+<ol class="references small" style="page-break-before:always">
+<li id="cite_note-one"><span class="mw-cite-backlink"><a href="#cite_ref-one">Print return one</a></span>
+<span class="reference-text">First printed register. <a href="#wiki-start">Read the introduction</a>.</span></li>
+<li id="cite_note-two"><span class="noprint"><a href="#cite_ref-two">Print return two</a></span>
+<span class="reference-text">Second printed register. <em class="noprint">Nested label stays.</em></span></li>
+</ol>
+<p>The catalog also names a different <a href="#not-a-wiki-note">appendix</a>.</p>
+<ol class="references-extra"><li id="not-a-wiki-note">The appendix is ordinary text.</li></ol>""",
+    "wiki-fallback": """<p id="fallback-ref">The timetable cites a <a href="#cite_note-grid">grid</a>.</p>
+<ol class="references"><li id="cite_note-grid"><span class="mw-cite-backlink"><a href="#fallback-ref">Table return</a></span>
+<table><tr><td>Inshore readings</td><td>Offshore readings</td></tr></table>
+</li></ol>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)

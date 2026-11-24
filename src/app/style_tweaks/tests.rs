@@ -637,6 +637,50 @@ fn has_note_band(app: &Reader) -> bool {
 }
 
 #[test]
+fn advanced_note_options_reflow_from_controls_keep_position_and_persist() {
+    use crate::user_styles::{NOTE_COSMETIC_SPACING, WIKIPEDIA_FOOTNOTES};
+    let fixture = Fixture::new();
+    let path = footnote_book(&fixture, "Wikipedia references.epub");
+    let original = fs::read(&path).unwrap();
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    app.follow_reflow_page(10, 0).unwrap();
+    let position = app.current_history_location();
+    let history = app.back.clone();
+    let id = app.active.as_ref().unwrap().id;
+    assert!(!has_note_band(&app));
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "More footnote options");
+    for label in [
+        "In-page Wikipedia footnotes",
+        "Remove cosmetic footnote spacing",
+    ] {
+        tap_contents_item(&mut app, label);
+        tap_contents_item(&mut app, "On for this book");
+        assert!(has_note_band(&app));
+        let back = app.navigation_layout().back();
+        tap(&mut app, back);
+        assert_eq!(app.screen, Screen::FootnoteTweaks);
+    }
+    assert_eq!(app.current_history_location(), position);
+    assert_eq!(app.back, history);
+    let mut canvas = crate::app::selection_viewport_tests::canvas(&app, ReadingViewport::PORTRAIT);
+    capture_viewport(&app, &mut canvas, "advanced-note-options.png", false);
+    app.show(Screen::Book);
+    app.save().unwrap();
+    drop(app);
+
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    assert!(has_note_band(&app));
+    assert_eq!(app.current_history_location(), position);
+    for preset in [WIKIPEDIA_FOOTNOTES, NOTE_COSMETIC_SPACING] {
+        assert!(app.style_store.data.enabled(id, preset));
+    }
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
 fn classic_in_page_notes_apply_and_resume_from_the_visible_style_options() {
     let fixture = Fixture::new();
     let path = footnote_book(&fixture, "Classic notes.epub");
