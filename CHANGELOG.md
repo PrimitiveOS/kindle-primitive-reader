@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.50
+
+- Jump to an exact document page or a relative page. PDFs also accept hidden-flow page addresses.
+- Keep DjVu scan pixels aligned with the selectable text when zoomed.
+
 ## 0.1.49
 
 - Skim by chapter or saved mark, bookmark a page and open Go to from the preview.

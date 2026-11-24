@@ -45,6 +45,18 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.50 verification plan
+
+Exercise absolute, relative and hidden-flow page navigation with source
+position and Return. Keep printed-label, percentage and chapter-and-page
+entry working, and cancel stale prepared counts after sleep or geometry
+changes. Compare DjVu's native raster with DjVuLibre, check the same word
+at fractional zoom, and verify the portrait round trip. Confirm that the
+reading footer and toolbar hit areas move with the prepared reflow and
+fixed-page frames in simulation. Rotation enablement still requires the
+negotiated Canvas and the Launcher and device checks.
+[Go to page](go-to-page.md) · [Viewport verification](reading-edition-orientation.md)
+
 ## Reader 0.1.49 verification plan
 
 Verify chapter, saved-mark, bookmark and numeric shortcuts from Skim in each
