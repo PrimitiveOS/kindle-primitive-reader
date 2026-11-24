@@ -1,8 +1,9 @@
 //! Opt-in model for vertical publisher margins on retained horizontal blocks.
 use crate::{
-    BlockMarginMode, Settings,
+    BlockMarginMode, FloatMode, Settings,
     book_style::{ImageLength, Style, WritingMode, borders::Pattern, flow::Display},
-    publisher_padding::BoxArea,
+    publisher_breaks::Edge,
+    publisher_padding::{BoxArea, TextBoxCandidate, text_box_candidates},
     source::Source,
 };
 
@@ -54,12 +55,18 @@ pub(crate) fn collapsible_wrapper(tag: &str) -> bool {
     matches!(tag, "div" | "section" | "article")
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Space {
+    pub before: f32,
+    pub forced_top: Option<f32>,
+}
+
 pub(crate) fn before_blocks(
     source: &Source,
     styles: &[Style],
     boxes: Option<&[BoxArea]>,
     settings: Settings,
-) -> Option<Vec<f32>> {
+) -> Option<Vec<Space>> {
     let mode = settings.block_margins;
     let width = settings.text_width();
     let font = settings.font_size;
@@ -155,13 +162,32 @@ pub(crate) fn before_blocks(
         );
     }
 
-    let mut gaps = vec![0.0; source.blocks.len()];
+    let forced_candidates = if settings.preserve_forced_page_margins
+        && collapse
+        && (settings.float_mode == FloatMode::Ignore
+            || !styles.iter().any(|style| style.float_side.is_some()))
+        && styles.iter().any(|style| {
+            style.page_breaks.before == Edge::Force || style.page_breaks.after == Edge::Force
+        }) {
+        text_box_candidates(source, styles, |style| {
+            style.clear == Default::default()
+                && !style.page_breaks.keep_together
+                && style.borders.is_none()
+                && style
+                    .vertical_padding
+                    .iter()
+                    .all(|edge| edge.box_pixels(width, font) == 0.0)
+        })
+    } else {
+        Vec::new()
+    };
+    let mut gaps = vec![Space::default(); source.blocks.len()];
     for (index, pair) in edges.iter().enumerate() {
         let Some([top, bottom]) = *pair else { continue };
         let span = spans[index].unwrap();
-        gaps[span.first] += top.used(signed);
+        gaps[span.first].before += top.used(signed);
         if let Some(after) = following[span.last] {
-            gaps[after] += bottom.used(signed);
+            gaps[after].before += bottom.used(signed);
         }
 
         // Each edge may already carry adjoining descendant margins. Combine
@@ -173,14 +199,41 @@ pub(crate) fn before_blocks(
             && source.elements[sibling].parent == source.elements[index].parent
             && following[left.last] == Some(span.first)
         {
-            gaps[span.first] +=
+            gaps[span.first].before +=
                 top.joined(other).used(signed) - other.used(signed) - top.used(signed);
+            if forced_candidates.get(index) == Some(&TextBoxCandidate::Simple)
+                && forced_candidates.get(sibling) == Some(&TextBoxCandidate::Simple)
+                && top.negative == 0.0
+                && plain_forced_edge(source, styles, sibling, index)
+            {
+                gaps[span.first].forced_top = Some(top.positive);
+            }
         }
     }
     for gap in &mut gaps {
-        *gap = gap.clamp(-limit, limit);
+        gap.before = gap
+            .forced_top
+            .unwrap_or_else(|| gap.before.clamp(-limit, limit));
     }
     Some(gaps)
+}
+
+fn plain_forced_edge(source: &Source, styles: &[Style], previous: usize, next: usize) -> bool {
+    let before = styles[next].page_breaks.before;
+    let after = styles[previous].page_breaks.after;
+    if (before != Edge::Force && after != Edge::Force)
+        || before == Edge::Avoid
+        || after == Edge::Avoid
+    {
+        return false;
+    }
+    // A local margin change must not outrun an enclosing keep or a separate
+    // source rule that can prevent the physical page break.
+    let body = source.elements[next].parent.unwrap();
+    styles[body].page_breaks == Default::default()
+        && source.elements[body]
+            .parent
+            .is_none_or(|html| styles[html].page_breaks == Default::default())
 }
 
 fn join_child_margins(
@@ -263,12 +316,12 @@ mod tests {
         .unwrap()
         .compute(&source.elements);
         let gaps = before_blocks(&source, &styles, None, settings)
-            .unwrap_or_else(|| vec![0.0; source.blocks.len()]);
+            .unwrap_or_else(|| vec![Space::default(); source.blocks.len()]);
         source
             .blocks
             .into_iter()
             .map(|block| block.text)
-            .zip(gaps)
+            .zip(gaps.into_iter().map(|gap| gap.before))
             .collect()
     }
 

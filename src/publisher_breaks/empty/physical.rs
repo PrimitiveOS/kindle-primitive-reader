@@ -4,6 +4,7 @@ use super::{Chain, Edge, Leaf, Rules};
 use crate::{
     EmptyBreakMode, Settings,
     book_style::{ImageLength, Style, WritingMode, borders::Pattern, flow::Display},
+    publisher_breaks::PositionedRun,
     source::Source,
     vertical_padding::Fill,
 };
@@ -15,11 +16,6 @@ struct Band {
     start: f32,
     end: f32,
     gray: u8,
-}
-
-pub(crate) struct PositionedRun {
-    pub target: usize,
-    pub cuts: Box<[f32]>,
 }
 
 #[derive(Default)]

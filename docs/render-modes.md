@@ -440,6 +440,55 @@ Run `cargo test --locked --lib publisher_breaks` and set
 [Reader default](screenshots/render-text-keeps-reader-default.png) ·
 [Reader with the policy](screenshots/render-text-keeps-reader-bounded.png)
 
+## Incoming margins at forced page breaks
+
+In the pinned renderer, an ordinary forced break keeps the incoming
+paragraph’s top margin on the new page. Flat, Book and Web discard
+the preceding paragraph’s bottom margin at that edge. A normal edge
+between the same paragraphs uses the collapsed margin.
+
+Reader’s internal policy applies this rule to adjacent plain paragraphs
+in the body when collapsed margins are enabled. It uses the incoming
+margin for the document gap and positions the page boundary before
+that space. The first anchor belongs to the paragraph that follows,
+including when the top margin is zero. The ordinary layout continues
+to use its existing page splitting.
+
+| Authored case at 1264 × 720 | Flat, Book and Web | Reader with the policy |
+| --- | --- | --- |
+| Forced before, 94 px outgoing and 68 px incoming | 68 px at the top of page 2. Document pitch is 132 px. | 68 px at the top of page 2. Document pitch is 135.8 px. |
+| Forced after, the same margins | The same top space and pitch. | The same top space and pitch. |
+| Forced before, zero incoming margin | Text begins at the reading edge. Document pitch is 64 px. | Text begins at the reading edge. Document pitch is 67.8 px. |
+| Ordinary edge with the same 94 px and 68 px margins | Both paragraphs share a page. Document pitch is 158 px. | Both paragraphs share a page. Document pitch is 161.8 px. |
+
+The 3.8-pixel pitch difference follows each engine’s ordinary text
+metrics. Reader’s painted band begins at screen y = 126 after the
+68-pixel shift, compared with y = 122 in KOReader. The tests check
+the painted shift, saved quote and touch recovery, and byte-identical
+frames with Publisher styles off or outside the supported scope.
+Reader applies its normal margin cap and resolves the cut between
+complete lines. Legacy takes its own margin path. Nested or competing
+keep rules, padded and bordered boxes, active floats, and negative
+incoming margins use Reader’s existing path.
+
+The stock oracle additionally checks a forced closing edge inside a
+parent keep. Legacy breaks there. Flat, Book and Web retain both
+paragraphs on one page. This is a separate case from the unambiguous
+forced edges above.
+
+Generate the specimen with
+`python3 scripts/generate-render-forced-page-margins-fixture.py`.
+Run the native oracle with the same arguments as the Render Mode probe.
+Run `cargo test --locked --lib forced_page_margins` for Reader and
+set `READER_FORCED_MARGIN_CAPTURES` to an existing folder to capture
+its comparison frames.
+[Forced margin accumulation](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L6240-L6288) ·
+[Native page boundary](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L6374-L6399) ·
+[Native oracle](../scripts/koreader-render-forced-page-margins-check.lua) ·
+[KOReader Web](screenshots/render-forced-margin-stock.png) ·
+[Reader default](screenshots/render-forced-margin-reader-current.png) ·
+[Reader with the policy](screenshots/render-forced-margin-reader-retained.png)
+
 ## Reproduce
 
 The EPUB uses authored CSS and text. Generate it with

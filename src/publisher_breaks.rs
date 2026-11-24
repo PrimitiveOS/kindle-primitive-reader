@@ -4,7 +4,7 @@ use std::ops::Range;
 
 mod empty;
 mod text_keeps;
-pub(crate) use empty::physical::{PositionedRun, plan as plan_empty_geometry};
+pub(crate) use empty::physical::plan as plan_empty_geometry;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Edge {
@@ -20,6 +20,11 @@ pub(crate) struct Rules {
     pub before: Edge,
     pub after: Edge,
     pub keep_together: bool,
+}
+
+pub(crate) struct PositionedRun {
+    pub target: usize,
+    pub cuts: Box<[f32]>,
 }
 
 pub(crate) struct BoxRules {
@@ -476,3 +481,6 @@ fn original_publisher_page_edges_keep_text_positions() {
 #[cfg(test)]
 #[path = "publisher_breaks/line_ends_tests.rs"]
 mod line_ends_tests;
+
+#[cfg(test)]
+mod forced_margin_tests;

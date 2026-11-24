@@ -352,6 +352,9 @@ pub struct Settings {
     /// The default preserves the existing book layout and preference contract.
     #[doc(hidden)]
     pub block_margins: BlockMarginMode,
+    /// Keep the incoming top margin at a supported forced publisher break.
+    #[doc(hidden)]
+    pub preserve_forced_page_margins: bool,
     #[doc(hidden)]
     pub block_width: BlockWidthMode,
     /// Honor definite publisher heights on supported horizontal text boxes.
@@ -426,6 +429,7 @@ impl Default for Settings {
             margin_top: None,
             margin_bottom: None,
             block_margins: BlockMarginMode::Ignore,
+            preserve_forced_page_margins: false,
             block_width: BlockWidthMode::Ignore,
             publisher_block_height: false,
             float_mode: FloatMode::Ignore,
@@ -1187,7 +1191,7 @@ impl Probe {
                             &styles,
                             &lines,
                             settings,
-                            layout.empty_break_runs(),
+                            layout.physical_break_runs(),
                         );
                         (Renderer::Parley(layout), lines, extent)
                     }

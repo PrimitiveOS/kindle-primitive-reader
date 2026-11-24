@@ -196,7 +196,7 @@ pub(crate) struct ParleyChapter {
     markers: Vec<PaintedMarker>,
     table_frames: Vec<crate::table_borders::Frame>,
     padded_backgrounds: Vec<crate::vertical_padding::Fill>,
-    empty_break_runs: Vec<crate::publisher_breaks::PositionedRun>,
+    physical_break_runs: Vec<crate::publisher_breaks::PositionedRun>,
     publisher_height_spaces: Vec<Range<f32>>,
     float_geometry: bool,
     limitations: Vec<String>,
@@ -330,7 +330,7 @@ impl ParleyChapter {
             markers: Vec::new(),
             table_frames: Vec::new(),
             padded_backgrounds: Vec::new(),
-            empty_break_runs: Vec::new(),
+            physical_break_runs: Vec::new(),
             publisher_height_spaces: Vec::new(),
             float_geometry: false,
             limitations: Vec::new(),
@@ -597,7 +597,10 @@ impl ParleyChapter {
             let padding = vertical_padding
                 .as_ref()
                 .map_or_else(Default::default, |g| g[index]);
-            let margin = block_margins.as_ref().map_or(0.0, |g| g[index]);
+            let margin_space = block_margins
+                .as_ref()
+                .map_or_else(Default::default, |g| g[index]);
+            let margin = margin_space.before;
             if padding.before_grid > 0 {
                 y = row_flow.end(y) + padding.before_grid as f32;
             }
@@ -622,7 +625,7 @@ impl ParleyChapter {
                 let (after, positioned) =
                     run.place(block.element, y, outer_width, &mut empty_fills);
                 y = after;
-                chapter.empty_break_runs.push(positioned);
+                chapter.physical_break_runs.push(positioned);
             }
             let start_of_cell = y;
             let decorated = cell.and_then(|cell| Some((cell, borders.as_ref()?.cells.get(&cell)?)));
@@ -817,6 +820,14 @@ impl ParleyChapter {
                     let top = origin + top;
                     let line_bottom = origin + metrics.content_block_max_coord;
                     bottom = bottom.max(line_bottom);
+                    if index == 0
+                        && let Some(space) = margin_space.forced_top.filter(|&space| space > 0.0)
+                    {
+                        chapter.physical_break_runs.push(crate::publisher_breaks::PositionedRun {
+                            target: block.element,
+                            cuts: Box::new([top - space]),
+                        });
+                    }
                     let mut source_line = Line {
                         block: block.key,
                         bytes: line.text_range(),
@@ -1044,8 +1055,8 @@ impl ParleyChapter {
         Ok((chapter, lines, extent))
     }
 
-    pub(crate) fn empty_break_runs(&self) -> &[crate::publisher_breaks::PositionedRun] {
-        &self.empty_break_runs
+    pub(crate) fn physical_break_runs(&self) -> &[crate::publisher_breaks::PositionedRun] {
+        &self.physical_break_runs
     }
 
     pub(crate) fn publisher_height_spaces(&self) -> &[Range<f32>] {

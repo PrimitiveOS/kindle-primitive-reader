@@ -597,6 +597,8 @@ impl BookStyle {
         });
         let keep_group_geometry =
             settings.is_some_and(|config| config.relax_oversized_publisher_keeps);
+        let forced_margin_geometry = nested_margin_collapse
+            && settings.is_some_and(|config| config.preserve_forced_page_margins);
         let logical = settings.filter(|settings| settings.logical_font_size.is_some());
         let relative_font = |scale: f32| {
             logical.map_or_else(
@@ -800,7 +802,8 @@ impl BookStyle {
                                     || crate::block_margins::collapsible_wrapper(
                                         &element.tag,
                                     )))
-                            || (publisher_block_height && element.tag == "p") =>
+                            || ((publisher_block_height || forced_margin_geometry)
+                                && element.tag == "p") =>
                     {
                         let target = style
                             .borders
