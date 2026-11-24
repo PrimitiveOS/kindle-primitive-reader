@@ -45,6 +45,18 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.48 verification plan
+
+Exercise named text and PDF profiles, including updates, duplicate names,
+format gating and changes to a PDF's fit. Verify that applying a profile
+keeps the source position and annotations, and that backups preserve both
+the older text records and the new fixed-page settings. Compare publisher
+breaks around empty elements across the four pinned modes. Keep the same
+source anchor when returning from a blank slot to text. Verify the fixed
+PDF stage with a link, a selected word and the portrait return frame.
+Landscape controls remain gated pending the app-wide viewport handoff.
+[Reading profiles](reading-profiles.md) · [Publisher breaks](render-modes.md#forced-breaks-through-empty-boxes) · [Fixed-page viewports](reading-edition-orientation.md#fixed-page-viewport-preparation)
+
 ## Reader 0.1.47 verification plan
 
 Compare article image settings, contextual wrapping and caption actions with

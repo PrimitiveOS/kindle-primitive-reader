@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.48
+
+- Save and manage named reading profiles for reflowable books and PDFs.
+- Preserve publisher page breaks around empty elements in the optional Parley layout.
+
 ## 0.1.47
 
 - Show optional images inside Wikipedia articles, with text wrapped around the image and tap-to-show captions.
