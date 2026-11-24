@@ -2,6 +2,22 @@
 
 Hold a word and tap **Dictionary**. The results panel stays over the passage. Use **Results** to choose a source or another meaning. Closing the panel restores the selection. Open **Dictionaries** from reading settings or the lookup tools to change the sources. Tap a dictionary to enable or disable it by default or move it in the default order. **Prefer for this book** puts it ahead of the global list, including when it is disabled by default. Each book can have several preferred dictionaries in its own order. Returning to another book restores that book’s choices. [Dictionary settings](screenshots/dictionary-priorities.png)
 
+## Excluding a source for one book
+
+Open a source in **Dictionaries** and choose **Disable for this book**.
+Exact lookup, word forms, fuzzy suggestions, and automatic CJK selection
+all use the book's enabled sources. **Re-enable for this book** restores
+the source to its saved priority. **Reset book dictionary choices** clears
+that edition's source exclusions and priorities and returns it to the library's
+source list. Word forms and fuzzy settings remain separate. These choices
+persist when switching books or reopening Reader. [Simulator capture](screenshots/book-dictionary-exclusions.png)
+
+Reader's checks use authored EPUB and PDF files and exercise the local CJK
+worker. They verify that one edition can exclude a source another edition
+still uses, and that re-enabling restores its previous rank. KOReader also
+saves edition exclusions separately from its preferred order and applies the
+filtered set to the lookup command. [Pinned source controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L733-L825) · [Pinned lookup dispatch](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1454-L1477)
+
 | Location on Kindle user storage | Behavior |
 | --- | --- |
 | `reader/data/dictionaries/` | Reader's own StarDict directory. Existing preferred-dictionary settings continue to work. |

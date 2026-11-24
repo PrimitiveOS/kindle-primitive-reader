@@ -8,13 +8,19 @@ and Reader's portrait and landscape report have reviewed frame captures.
 Reader restores the statistics menu and the same passage when dismissed.
 The saved profile editor adds font weight and contrast. The internal EPUB
 renderer retains the incoming paragraph margin at ordinary forced breaks.
+Per-book dictionary exclusions apply across exact lookup, word forms,
+fuzzy retry, and automatic CJK selection.
 [Seven-day report](reading-statistics.md#seven-day-reading-progress) ·
 [Saved profile values](reading-profiles.md#editing-saved-values) ·
-[Forced-break comparison](render-modes.md)
+[Forced-break comparison](render-modes.md) · [Dictionary exclusions](shared-dictionaries.md#excluding-a-source-for-one-book)
 
 The normal Reader picker opened four cached original files on the Mac in
 EPUB, PDF, AZW3, and MOBI formats. Each turned a page, saved, and resumed with
 the same page pixels. Their source SHA-256 values matched before and after.
+The separate original EPUB/PDF progress workflow passed. The combined Mac
+suite passed 1,326 library tests, one Kindle entry test, 14 EPUB package
+tests, and four layout checks. Sixty-six opt-in tests were skipped by the
+standard run. Kindle foreground testing and the Store release remain open.
 
 ## Previous Mac simulator checkpoint
 
