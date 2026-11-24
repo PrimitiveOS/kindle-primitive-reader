@@ -223,6 +223,32 @@ file hashes matched before and after. The first frames took 1,504 ms,
 12,955 ms, 1,296 ms and 1,954 ms respectively. [Bookmark and header
 verification](bookmark-max-lines.md) records native and simulator evidence.
 
+## Reader 0.1.33 release on the Oasis
+
+The ARMHF package installed through the Store transaction and the installed
+executable matched the GitHub release.
+[Release assets](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.33)
+
+| Verified file | SHA-256 | Bytes |
+| --- | --- | ---: |
+| ARMHF ZIP | `e4ba1aeb4dd099116eb3b5de086a5ede04252d2aeb4582f3b11f3473135fb3a4` | 21,342,490 |
+| Kindle executable | `d14c5d178ddf4e01e2de0d4df362d7770495385327e179edad766249f840306a` | 33,771,872 |
+
+The Mac run passed 1,046 Reader library tests, one Kindle binary test, 14 EPUB
+package tests, and four layout checks. The Oasis ARMHF run passed 1,050 Reader
+library tests, 14 EPUB package tests and four layout checks. Both runs skipped
+62 optional tests. Four of the six software-rendered search frames matched
+the desktop references exactly. The other two now show the integrated options
+icon and the fixed PDF fixture's result text and page numbers.
+[Native EPUB results](screenshots/flexible-epub-search-results.png) · [Native PDF results](screenshots/flexible-pdf-search-results.png) · [Fixed-page match preview](screenshots/fixed-search-result-preview.png)
+
+The installed release opened an original EPUB, PDF, AZW3, and MOBI through the
+picker, rendered a changed frame after forward navigation, and resumed from an
+isolated profile. The original files matched their starting SHA-256 hashes.
+First frames took 1,483 ms, 19,032 ms, 2,968 ms, and 5,910 ms respectively.
+These checks ran offscreen while Primitive Browser was open. Foreground touch,
+physical page buttons and E Ink refresh were outside this run.
+
 ## Reader 0.1.32 release on the Oasis
 
 The [0.1.32 GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.32)
