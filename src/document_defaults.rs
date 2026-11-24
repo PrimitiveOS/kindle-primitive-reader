@@ -40,6 +40,8 @@ pub(crate) struct FixedDefaults {
     scan_contrast: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     scan_gamma_tenths: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    crop_margin_hundredths: Option<u8>,
     straighten_limit: u8,
     force_ocr: bool,
     dither: bool,
@@ -65,6 +67,7 @@ impl Default for FixedDefaults {
             spread: false,
             scan_contrast: false,
             scan_gamma_tenths: None,
+            crop_margin_hundredths: None,
             straighten_limit: 0,
             force_ocr: false,
             dither: false,
@@ -93,6 +96,7 @@ impl FixedDefaults {
             spread: view.spread,
             scan_contrast: view.scan_contrast,
             scan_gamma_tenths: view.scan_gamma_tenths,
+            crop_margin_hundredths: view.crop_margin_hundredths,
             straighten_limit: view.straighten_limit,
             force_ocr: view.force_ocr,
             dither: view.dither,
@@ -118,6 +122,7 @@ impl FixedDefaults {
             spread: self.spread,
             scan_contrast: self.scan_contrast,
             scan_gamma_tenths: self.scan_gamma_tenths,
+            crop_margin_hundredths: self.crop_margin_hundredths,
             straighten_limit: self.straighten_limit,
             force_ocr: self.force_ocr,
             dither: self.dither,

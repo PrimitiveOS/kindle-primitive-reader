@@ -46,3 +46,31 @@ The manual and automatic workflow checks both switching directions,
 an independently scaled page seam, uncropped link recovery in Auto,
 reopen, original note and link coordinates, and retained manual
 settings through rotation and zoom. [Manual crop capture](screenshots/continuous-manual-pdf-crop.png)
+
+
+## Detected crop margins
+
+With Semi-auto crop applied, or Auto crop in continuous width-fit, open
+the bottom **Scan** controls and choose a margin from 0.05, 0.10, 0.25,
+0.40, 0.55, 0.70, 0.85 and 1.00 inches. **Custom** accepts 0.00 through
+1.50 in 0.01-inch increments. Reader saves the value for the current PDF.
+The default 0.10-inch margin reserves 30 pixels across both sides on the
+300-dpi Oasis display, when both sides have room for it.
+
+Auto and Semi-auto include that margin in the detected source rectangle
+before the page fits to the screen. Manual crop uses the exact saved box.
+Full-page fit uses the full page. In continuous reading, every strip
+gets its own effective margin and width-fit scale. Changing the value
+anchors the current source location as far as the new crop allows.
+Hit testing and saved annotations use the original source coordinates.
+
+The pinned executable checks both authored pages at each preset,
+both endpoints and a repeat of the default. KOReader leaves manual
+and full-page fit unchanged. The authored Auto and Semi-auto samples
+agree with Reader within 0.002 PDF point. Auto stops at the last native
+sample on the right and bottom. Oversized Semi-auto boxes fit the full
+page. When a valid Semi-auto fit still extends beyond one edge, Reader
+clips the box to the physical page. KOReader can include the outside
+area in that fit. [Stock comparison](../scripts/verify-stock-continuous-crop.lua) ·
+[Scan margin controls](screenshots/detected-crop-margin.png) ·
+[Split-page capture](screenshots/detected-crop-margin-strips.png)
