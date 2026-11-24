@@ -2,6 +2,50 @@
 
 ## Current Mac simulator checkpoint
 
+**Hanging punctuation** shifts visual glyphs at the margins after line breaking.
+The pinned KOReader replay compares left, right, justified, centered, preformatted
+and Arabic text. The Mac checks preserve line breaks and the screen-page index,
+paint both margins, retain the opening quote's link, and save the per-book or
+new-book setting. The original EPUB check preserved page anchors and bytes.
+[Optical margins and captures](english-hyphenation.md#hanging-punctuation)
+
+**Fast kerning** applies the classic horizontal font pairs in eligible
+left-to-right runs. The pinned FreeType and KOReader runs confirm 18 signed
+size-and-pair adjustments and three caret deltas. The Mac run covers intrinsic
+width, wrapping, hidden soft hyphens, paint, and reopening an original EPUB.
+[Fast kerning comparison](kerning-modes.md#fast-pair-spacing)
+
+**In-page EPUB notes** now compose from interleaved or trailing targets
+and support ordinary body artwork and hard page breaks. Reader and pinned
+KOReader both show note bands in the same eight original chapters, including
+six illustrated chapters. Reader reported 70 bands and retained 63 visible
+canonical anchors. Both engines respected publisher-hidden targets in the
+other six chapters. [Notes and captures](in-page-footnotes.md)
+
+**Embedded Fonts** distinguishes used and unused families in eligible KF8
+whole-book scans. The Mac opened and scanned five original AZW3s in 181
+seconds in the isolated debug run. It found four used entries, two unused
+entries and one empty report. Each original kept its reading position, jump
+history and file bytes. The pinned KOReader callback had no registered
+families for the same KF8 inputs.
+[KF8 reports and capture](kf8-publication-fonts.md)
+
+The exact candidate passed 16 focused Mac tests and reproduced all 12 new or
+updated images. Original EPUB, PDF, AZW3 and MOBI files opened through Reader's
+picker, turned a page, and resumed. Their source bytes matched.
+
+The full Mac suite passed 1,525 library tests, one Kindle entry test, 14 EPUB
+package tests and four layout tests. The standard run skipped 71 opt-in tests.
+
+The local ARMHF stage verified a stripped, statically linked 38,168,652-byte
+executable with SHA-256
+`3c5a912d27e121a933a831b7aef9f37718b2fab9104d6a3f0e0eebb164ac7697`.
+It assembled 30 files totaling 47,768,152 bytes uncompressed. Both project
+licenses, SQLite notices, the Launcher icon and the OCR model passed inspection.
+Physical Kindle verification and Store publication remain open for this build.
+
+## Render modes, hyphenation, in-page style control, and footer checkpoint
+
 The bottom Layout panel changes **Legacy, Flat, Book, or Web** on eligible
 single-page EPUBs. The Mac workflow checks per-book restore, a separate
 new-book default, and the original frame after returning to Reader layout.
@@ -22,8 +66,7 @@ original-EPUB DPI check also passed. [Hyphenation controls and captures](english
 or through the live default. Authored tests check a visible note band,
 continuation, source resume, and the normal Kindle-sized viewport.
 Fourteen chapters from two original EPUBs kept their reading position
-and ordinary layout when the option was changed. Interleaving and
-media-heavy chapters remain open. [Footnote comparison and captures](in-page-footnotes.md)
+and ordinary layout when the option was changed. [Footnote comparison and captures](in-page-footnotes.md)
 
 **Current page in chapter** and **Dynamic filler** are independent custom
 footer items. The default chapter-and-page caption, section ticks, bar,
