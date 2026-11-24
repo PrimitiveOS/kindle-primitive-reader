@@ -2851,18 +2851,44 @@ impl FixedReading {
         }
     }
 
-    pub(crate) fn restore_fixed_profile_with(
+    pub(crate) fn restore_fixed_profiles_with<'a>(
         &mut self,
-        profile: crate::reading_profiles::FixedProfile,
-        fields: &[crate::reading_profiles::Field],
+        profiles: impl IntoIterator<
+            Item = (
+                crate::reading_profiles::FixedProfile,
+                &'a [crate::reading_profiles::Field],
+            ),
+        >,
         save: impl FnOnce(usize, View) -> io::Result<()>,
     ) -> Result<()> {
-        if self.profile_provider() != Some(profile.provider) {
-            return Err("Open a book that matches this profile's format".into());
+        use crate::reading_profiles::{Field, Tile};
+        let mut view = self.view;
+        let original_tile = view.tile_zoom.map(|zoom| Tile {
+            axis: zoom.axis,
+            count_tenths: zoom.count_tenths,
+        });
+        let mut tile = original_tile;
+        let provider = self.profile_provider();
+        for (profile, fields) in profiles {
+            if provider != Some(profile.provider) {
+                return Err("Open a book that matches this profile's format".into());
+            }
+            let (projected, requested_tile) = profile.project(fields, view);
+            view = projected;
+            if fields.contains(&Field::FitAndZoom) {
+                tile = requested_tile;
+            }
         }
-        let (mut view, tile) = profile.project(fields, self.view);
         if view.continuous_crop.is_some() && !(view.continuous && view.width_fit) {
             return Err("This viewing mode conflicts with the PDF's continuous crop".into());
+        }
+        if tile == original_tile
+            && (View {
+                tile_zoom: self.view.tile_zoom,
+                ..view
+            }) == self.view
+        {
+            return save(self.page, self.view).map_err(Into::into);
         }
         if let Some(tile) = tile.filter(|_| {
             view.tile_zoom.is_none()

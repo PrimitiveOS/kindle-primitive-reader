@@ -611,6 +611,7 @@ enum Action {
     EditReadingProfileFields(usize),
     ToggleReadingProfileField(reading_profiles::Field),
     SetReadingProfileFields(bool),
+    ToggleOpeningProfile(usize),
     SetProfileRendering(usize, profile_panel::rendering_choices::Value),
     ToggleProfileMarginLink(usize),
     UpdateFooterPreset(usize),
@@ -1342,6 +1343,7 @@ impl Reader {
                 position.as_ref().map_or(0, |saved| saved.page),
                 fixed_preferences,
             )?;
+            let profile_warning = self.apply_opening_fixed_profiles(&mut reading).err();
             reading.set_ocr_path(self.ocr_root.join(format!("{id:016x}")));
             reading.ocr_language = self
                 .library
@@ -1382,6 +1384,9 @@ impl Reader {
             self.reset_footer_initial_position();
             self.remember_opening_location();
             self.record_position();
+            if let Some(error) = profile_warning {
+                self.notice = Some(format!("Opening profile could not be applied: {error}"));
+            }
             if let Some(fixed) = &self.fixed {
                 self.library.cache_author(id, fixed.entry.author.as_deref());
             }
@@ -1429,7 +1434,21 @@ impl Reader {
                 .unwrap_or_default()
                 .into(),
         };
-        if config.settings.logical_font_size.is_some()
+        let saved_preferences = self
+            .library
+            .state(id)
+            .map_or(&initial_preferences, |state| &state.preferences);
+        let (automatic, profile_warning) = match self.prepare_opening_text_profiles(
+            &config,
+            saved_preferences,
+            position.as_ref(),
+            top_status_header,
+        ) {
+            Ok(prepared) => (prepared, None),
+            Err(error) => (None, Some(error)),
+        };
+        if automatic.is_none()
+            && config.settings.logical_font_size.is_some()
             && config.settings.validate().is_err()
             && (Settings {
                 logical_font_size: None,
@@ -1473,16 +1492,21 @@ impl Reader {
             return Ok(());
         }
         self.logical_recovery = None;
-        let mut reading = if let Some(position) = position {
-            Reading::restore(
-                config.clone(),
-                position.chapter,
-                position.page,
-                position.anchor.as_ref(),
-            )
-            .or_else(|_| Reading::open(config))?
+        let (mut reading, preferences) = if let Some((reading, preferences)) = automatic {
+            (reading, Some(preferences))
         } else {
-            Reading::open(config)?
+            let reading = if let Some(position) = position {
+                Reading::restore(
+                    config.clone(),
+                    position.chapter,
+                    position.page,
+                    position.anchor.as_ref(),
+                )
+                .or_else(|_| Reading::open(config))?
+            } else {
+                Reading::open(config)?
+            };
+            (reading, unseen.then_some(initial_preferences))
         };
         reading.set_status_header_height(crate::reading_controls::TopHeader::height(
             top_status_header,
@@ -1505,8 +1529,9 @@ impl Reader {
         let state = self
             .library
             .remember(&active.entry, id, &active.reading.probe.title);
-        if unseen {
-            state.preferences = initial_preferences;
+        if let Some(preferences) = preferences {
+            default_font_missing &= preferences.font_file.is_none();
+            state.preferences = preferences;
         }
         state.top_status_header = Some(top_status_header);
         let offer_publisher = self.apply_new_numbering_defaults();
@@ -1531,7 +1556,9 @@ impl Reader {
         self.reset_footer_initial_position();
         self.remember_opening_location();
         self.record_position();
-        if default_font_missing {
+        if let Some(error) = profile_warning {
+            self.notice = Some(format!("Opening profile could not be applied: {error}"));
+        } else if default_font_missing {
             self.notice = Some("Default reading font unavailable; using device fonts".into());
         }
         if let Some(active) = &self.active {
@@ -4083,6 +4110,7 @@ impl Reader {
             Action::EditReadingProfileFields(index) => self.edit_profile_fields(index)?,
             Action::ToggleReadingProfileField(field) => self.toggle_profile_field(field)?,
             Action::SetReadingProfileFields(all) => self.set_profile_fields(all)?,
+            Action::ToggleOpeningProfile(index) => self.toggle_opening_profile(index)?,
             Action::SetProfileRendering(index, value) => {
                 self.save_profile_rendering_choice(index, value)?
             }
@@ -7660,6 +7688,11 @@ impl Reader {
                             RowAccessory::Toggle(self.profile_fields.contains(field))
                         }
                         Action::SetReadingProfileFields(_) => RowAccessory::None,
+                        Action::ToggleOpeningProfile(index) => RowAccessory::Toggle(
+                            self.profiles
+                                .get(*index)
+                                .is_some_and(Profile::applies_on_open),
+                        ),
                         Action::SetProfileRendering(_, _) => RowAccessory::None,
                         Action::ToggleProfileMarginLink(index) => RowAccessory::Toggle(
                             self.profiles

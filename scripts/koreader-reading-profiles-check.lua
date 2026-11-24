@@ -49,6 +49,14 @@ mock("util", {
         return n
     end,
     tableDeepCopy = clone,
+    tableSetValue = function(values, value, ...)
+        local keys = {...}
+        for i = 1, #keys - 1 do
+            values[keys[i]] = values[keys[i]] or {}
+            values = values[keys[i]]
+        end
+        values[keys[#keys]] = value
+    end,
     tableRemoveValue = function(values, ...)
         local keys = {...}
         for i = 1, #keys - 1 do
@@ -75,6 +83,7 @@ mock("ui/widget/notification", notifications)
 local profile_ui = {instance = {rolling = true}}
 mock("apps/reader/readerui", profile_ui)
 local events = {}
+local next_tick = {}
 local visible
 mock("ui/uimanager", {
     sendEvent = function(_, event) events[#events + 1] = event end,
@@ -82,6 +91,7 @@ mock("ui/uimanager", {
     setSilentMode = function() end,
     show = function(_, widget) visible = widget end,
     close = function() visible = nil end,
+    nextTick = function(_, callback) table.insert(next_tick, callback) end,
 })
 for _, name in ipairs{"confirmbox", "inputdialog", "infomessage", "datetimewidget", "spinwidget"} do
     mock("ui/widget/" .. name, {new = function(_, widget)
@@ -94,9 +104,10 @@ mock("ui/widget/container/widgetcontainer", {extend = function(_, options) retur
 for _, name in ipairs{"apps/filemanager/filemanager", "apps/reader/modules/readerdictionary",
     "apps/reader/modules/readerfooter", "apps/reader/modules/readerhighlight",
     "apps/reader/modules/readertypography", "apps/reader/modules/readerview",
-    "apps/reader/modules/readerzooming", "device/key", "luasettings", "ui/size", "fontlist", "logger"} do
+    "apps/reader/modules/readerzooming", "device/key", "luasettings", "ui/size", "fontlist"} do
     mock(name, {})
 end
+mock("logger", {dbg = function() end})
 local defaults = dofile(root .. "/defaults.lua")
 G_defaults = {readSetting = function(_, name) return defaults[name] end}
 local dispatcher = require("dispatcher")
@@ -404,6 +415,42 @@ local applied_margins = sent_setting("h_page_margins")
 assert(applied_margins[1] == 20 and applied_margins[2] == 20)
 assert(sent_setting("t_page_margin") == 83 and sent_setting("b_page_margin") == 42)
 assert(sent_setting("sync_t_b_page_margins") == 0)
+
+-- Exercise the actual stock book-opening submenu, ReaderReady event and
+-- deferred format-gated execution on both a text and a fixed-page document.
+local function always_on_open(name)
+    local section = profiles:genAutoExecDocConditionalMenuItem("on book opening", "ReaderReadyAll", name)
+    local always = section.sub_item_table_func()[1]
+    assert(always.text == "always" and not section.checked_func())
+    return section, always
+end
+local text_open, always_text = always_on_open("Text")
+local pdf_open, always_pdf = always_on_open("Scanned pages")
+always_text.callback()
+always_pdf.callback()
+assert(text_open.checked_func() and pdf_open.checked_func())
+local function trigger_open()
+    events, next_tick = {}, {}
+    profiles:onReaderReady()
+    assert(#events == 0 and #next_tick == 2)
+    for _, callback in ipairs(next_tick) do callback() end
+end
+trigger_open()
+assert(sent_setting("font_size") == 31.5 and sent_setting("zoom_overlap_v") == nil)
+profile_ui.instance = {paging = true}
+trigger_open()
+assert(sent_setting("zoom_overlap_v") == 57 and sent_setting("render_dpi") == nil)
+profiles.ui.reloading = true
+next_tick = {}
+profiles:onReaderReady()
+assert(#next_tick == 0)
+profiles.ui.reloading = false
+always_text.callback()
+always_pdf.callback()
+profiles:onReaderReady()
+assert(not text_open.checked_func() and not pdf_open.checked_func() and #next_tick == 0)
+profile_ui.instance = {rolling = true}
+
 for _, item in ipairs(profiles:getSubMenuItems()) do
     if item.name == "PDF copy" then commands = item.sub_item_table; break end
 end
@@ -420,3 +467,4 @@ print("Stock saved line spacing: 50–200%, default 100%, held step 5; profile-o
 print("Stock saved horizontal and vertical overlap: 0–84%, default 36%, held step 5; profile-only values dispatch independently.")
 print("Stock saved scans: eight Margin and Contrast presets, isolated until Apply. Live exact range/steps match the stock option definitions.")
 print("Stock factory, action removal, rename/duplicate/delete, format gate and batched execution verified.")
+print("Stock book opening: Always toggle, ReaderReady dispatch, format gates, reload guard and disable verified.")

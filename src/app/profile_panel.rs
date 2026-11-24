@@ -4,6 +4,7 @@ use primitive_ui::{Sheet, SheetAction};
 use super::{navigation_layout::NavigationLayout, *};
 use crate::reading_profiles::{Field, FixedProfile};
 
+mod on_open;
 pub(super) mod rendering_choices;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +121,7 @@ impl Reader {
                     profile.available().len()
                 ),
             ),
+            Item::new("Apply on book opening", Action::ToggleOpeningProfile(index)),
             Item::new(
                 "Rename",
                 Action::Show(Screen::ProfileName(Name::Rename(index))),
@@ -238,12 +240,14 @@ impl Reader {
                 name: name.into(),
                 fixed: FixedProfile::from_view(provider, book.reading.preferences()),
                 fields: None,
+                apply_on_open: false,
             });
         }
         Ok(Profile::Text {
             name: name.into(),
             preferences: self.current_text_preferences()?,
             fields: None,
+            apply_on_open: false,
         })
     }
 
@@ -276,6 +280,7 @@ impl Reader {
             Name::Duplicate(_) => {
                 let mut copy = profile.clone();
                 copy.set_name(name);
+                copy.set_apply_on_open(false);
                 profiles.push(copy);
             }
             Name::Create => unreachable!(),
@@ -357,7 +362,7 @@ impl Reader {
         let result =
             fixed
                 .reading
-                .restore_fixed_profile_with(profile, fields, |page, effective| {
+                .restore_fixed_profiles_with([(profile, fields)], |page, effective| {
                     if page != original_page {
                         return Err(io::Error::other(
                             "This profile would move to a different page",

@@ -1,4 +1,4 @@
-//! Reader-wide settings snapshots applied explicitly to an individual book.
+//! Reader-wide settings snapshots for open and opening books.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -28,16 +28,34 @@ pub(crate) enum Profile {
         preferences: BookPreferences,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fields: Option<Vec<Field>>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        apply_on_open: bool,
     },
     Fixed {
         name: String,
         fixed: FixedProfile,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fields: Option<Vec<Field>>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        apply_on_open: bool,
     },
 }
 
 impl Profile {
+    pub(crate) fn applies_on_open(&self) -> bool {
+        match self {
+            Self::Text { apply_on_open, .. } | Self::Fixed { apply_on_open, .. } => *apply_on_open,
+        }
+    }
+
+    pub(crate) fn set_apply_on_open(&mut self, enabled: bool) {
+        match self {
+            Self::Text { apply_on_open, .. } | Self::Fixed { apply_on_open, .. } => {
+                *apply_on_open = enabled
+            }
+        }
+    }
+
     pub(crate) fn name(&self) -> &str {
         match self {
             Self::Text { name, .. } | Self::Fixed { name, .. } => name,
@@ -148,6 +166,10 @@ impl Profile {
         }
         Ok(())
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]

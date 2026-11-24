@@ -2,7 +2,7 @@
 
 Open a reflowable book, PDF, DjVu document or comic and choose **Appearance › Reading profiles** from the top bar. The lower **Text** and **View › Layout** controls also lead to the same page. Set up the book as you like, then use **Save current settings** and give the profile a name.
 
-Tap a profile to **Apply to this book**, **Replace with current settings**, **Included settings**, **Rename**, **Duplicate**, or **Delete**. Replacing and deleting ask for confirmation. Reader lists all supported profiles together and enables each Apply or Replace action only in the matching format. Profiles apply to the open book on demand. [Document defaults for new books](document-defaults.md) and [Status bar presets](status-bar-presets.md) are separate.
+Tap a profile to **Apply to this book**, **Replace with current settings**, **Included settings**, **Apply on book opening**, **Rename**, **Duplicate**, or **Delete**. Replacing and deleting ask for confirmation. Reader lists all supported profiles together and enables each Apply or Replace action only in the matching format. [Document defaults for new books](document-defaults.md) and [Status bar presets](status-bar-presets.md) are separate.
 
 Open **Included settings** and use the switches to choose which settings the profile applies. **Clear all** helps you start with a small selection. **Save** requires at least one setting. **Cancel** discards the draft. Applying a profile changes only its selected settings. **Replace with current settings** updates the selected settings in the saved profile. Excluded values stay stored in case you include them again. Earlier snapshots start with all settings included.
 
@@ -17,13 +17,36 @@ Applying a profile preserves the current book's page or source anchor and annota
 
 ## Comparison with KOReader
 
-The pinned stock **Profiles** entry appears in Tools on frame 006 of the SDL reference. **New with current book settings** captures different action lists for rolling and fixed documents. The stock editor can change or remove individual saved actions, and Execute dispatches supported actions for the open format in order. Reader covers the current-book capture, explicit apply, field selection and profile management for reflowable books, PDFs, DjVu and comics. Reader can edit font size, content zoom, line spacing, word spacing and expansion, page margins, font weight and contrast, zoom overlap, and supported scan controls directly. Other values can be copied from the current book with Replace. Stock also offers editable values for additional actions, profiles for other fixed formats, empty profiles, automatic execution and a general action list. [Stock factory and commands](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L98) · [Stock format settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L346) · [Stock action editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L1054) · [Stock apply and format gating](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L1372)
+The pinned stock **Profiles** entry appears in Tools on frame 006 of the SDL reference. **New with current book settings** captures different action lists for rolling and fixed documents. The stock editor can change or remove individual saved actions, and Execute dispatches supported actions for the open format in order. Reader covers current-book capture, on-demand and book-opening apply, field selection and profile management for reflowable books, PDFs, DjVu and comics. Reader can edit font size, content zoom, line spacing, word spacing and expansion, page margins, font weight and contrast, zoom overlap, and supported scan controls directly. Other values can be copied from the current book with Replace. Stock also offers editable values for additional actions, profiles for other fixed formats, empty profiles, further automatic triggers and a general action list. [Stock factory and commands](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L98) · [Stock format settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L346) · [Stock action editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L1054) · [Stock apply and format gating](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L1372)
 
 The executable fixture runs stock snapshot creation, the font size, content zoom, line spacing, word spacing and expansion, page margins, font rendering, and overlap editors with their shipped defaults, action removal, duplicate, rename and confirmed deletion, and batched application with format gating. Run with LuaJIT and the pinned source directory as the sole argument. Desktop Reader tests use the production lists, keyboard submit, confirmation and rendering paths with an authored EPUB and two PDFs of different page sizes. They cover stored-profile compatibility, source and position guards, protected crop geometry, retry after failed saves, typed backup validation, draft cancellation and preservation of excluded fields. The DjVu and CBZ tests use the production providers. [Stock fixture](../scripts/koreader-reading-profiles-check.lua) · [Desktop workflows](../src/app/profile_panel/tests.rs)
 
 [Profile list](screenshots/reading-profiles.png) · [PDF profile options in dark mode](screenshots/reading-profile-pdf-dark.png) · [Delete confirmation](screenshots/reading-profile-delete.png)
 
 [Text setting selection](screenshots/reading-profile-settings.png) · [DjVu setting selection in dark mode](screenshots/reading-profile-settings-djvu-dark.png)
+
+## Apply a profile on book opening
+
+Turn on **Apply on book opening** in a profile to apply its included
+settings whenever Reader opens a matching book. This covers new books and
+books with a saved position. Reader combines enabled profiles in the
+alphabetical order shown in the profile list. If two profiles include the
+same setting, the later profile supplies that value. Renaming a profile
+carries its switch with it. A duplicate starts with the switch off.
+
+Reader prepares the combined settings before showing the book. A missing
+profile font or an incompatible fixed-page view falls back to the book's
+saved settings and shows a notice. The EPUB test checks a saved passage
+after restarting Reader. The PDF test checks the exact physical page,
+tiled zoom and overlap after combining two profiles.
+
+This covers KOReader's **on book opening › always**. Its conditional
+triggers for orientation, metadata, file paths and collections, plus its
+optional confirmation and scheduling, remain separate parity work.
+[Landscape simulator capture](screenshots/landscape-profile-apply-on-opening.png) ·
+[Pinned opening menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L879-L928) ·
+[Pinned ReaderReady callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L1217-L1287) ·
+[Executable stock comparison](../scripts/koreader-reading-profiles-check.lua)
 
 ## Editing saved values
 
