@@ -58,6 +58,25 @@ routes, and Page Browser return to the parent.
 [Stock parent return](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1206-L1223) ·
 [Executable comparison](../scripts/koreader-book-map-tap-check.py)
 
+### Open Book Map from the ribbon
+
+Hold a point on the Page Browser progress ribbon to open Book Map there.
+For fixed-layout books, the map shows the selected page and marks the
+launching browser page with a small square when that page is visible.
+For reflowable books, the ribbon selects a chapter and the map labels that
+chapter. The reflow map lists chapters at present.
+[PDF page focus](screenshots/ribbon-book-map-fixed-landscape.png) ·
+[EPUB chapter focus](screenshots/ribbon-book-map-epub-landscape.png)
+
+**Back** restores the launching browser, including its grid and exact EPUB
+source anchor after a turn. You can open another browser from the map and
+return to each surface in reverse order. The reading position and jump
+history change when you choose a destination to read. For a large fixed
+book, the ribbon opens the 48-page window containing the page you held.
+[Stock ribbon hold and source marker](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1655-L1717) ·
+[Stock Back handling](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/bookmapwidget.lua#L1559-L1575) ·
+[Executable comparison](../scripts/koreader-page-browser-grid-check.py)
+
 ### Thumbnail grid
 
 Open **Grid** in Page Browser to set one to six thumbnail columns and

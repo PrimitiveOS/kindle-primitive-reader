@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run pinned KOReader Page Browser grid controls, edge swipes, and body taps."""
+"""Run pinned KOReader Page Browser grid, navigation, and ribbon callbacks."""
 import argparse
 import hashlib
 from pathlib import Path
@@ -9,6 +9,7 @@ from lupa.lua51 import LuaRuntime
 PIN = "9192014d8bd82a91dc1012473be0f238dedfdb54"
 PINNED_FILES = {
     "ui/widget/pagebrowserwidget.lua": "346e5d56fee159920405e57999a47185fe111e759b9cdff23e6eb59855f0d9cd",
+    "ui/widget/bookmapwidget.lua": "c734c9b928377a42026bb3dd44153e604bb630bd65ea8f607c9776ef02b6dcbc",
     "device/gesturedetector.lua": "3a2d733a66f94e5cb1cc003c7ba736a03006e7c9242211adc243d74bc2c67db8",
     "ui/bidi.lua": "05ca900fd03f930c39ff6cd4667ffa7f397dcd4a13e09eb8a3884111725853b2",
 }
@@ -31,6 +32,7 @@ def main():
         return data.decode()
 
     source = pinned("ui/widget/pagebrowserwidget.lua")
+    book_map = pinned("ui/widget/bookmapwidget.lua")
     detector = pinned("device/gesturedetector.lua")
     bidi = pinned("ui/bidi.lua")
     menu = segment(
@@ -42,6 +44,7 @@ def main():
     lua = LuaRuntime()
     lua.execute("""
         PageBrowserWidget = {}
+        BookMapWidget = {}
         Contact = {}
         Bidi = {_mirrored_ui_layout = false}
         BD = Bidi
@@ -64,7 +67,8 @@ def main():
     lua.execute(segment(source, "function PageBrowserWidget:saveSettings(", "function PageBrowserWidget:updateNbTocSpans("))
     lua.execute(segment(source, "function PageBrowserWidget:updateNbCols(", "function PageBrowserWidget:updateThumbnailPageNumsDisplayType("))
     lua.execute(segment(source, "function PageBrowserWidget:onSwipe(", "function PageBrowserWidget:onPan("))
-    lua.execute(segment(source, "function PageBrowserWidget:onTap(", "function PageBrowserWidget:onHold("))
+    lua.execute(segment(source, "function PageBrowserWidget:onTap(", "function PageBrowserWidget:onThumbnailHold("))
+    lua.execute(segment(book_map, "function BookMapWidget:onClose(", "function BookMapWidget:getMatchingVGroupRow("))
     lua.execute(segment(source, "function PageBrowserWidget:onScrollPageUp(", "function PageBrowserWidget:onScrollRowUp("))
     lua.execute(segment(detector, "function Contact:getPath(", "function Contact:isSwipe("))
     lua.execute(segment(detector, "function Contact:handleSwipe(", "--[[--\nEmits the pan gestures"))
@@ -176,13 +180,15 @@ def main():
             assert(event.handler == "GotoPage" and event.page == 6)
         end
         Event = {new = function(_, handler, page) return {handler = handler, page = page} end}
-        local function tap(x, y)
-            taps.action = nil
-            local pos = {x = x, y = y, intersectWith = function(self, rect)
+        local function gesture_at(x, y)
+            return {pos = {x = x, y = y, intersectWith = function(self, rect)
                 return self.x >= rect.x and self.x < rect.x + rect.w and
                        self.y >= rect.y and self.y < rect.y + rect.h
-            end}
-            assert(taps:onTap(nil, {pos = pos}))
+            end}}
+        end
+        local function tap(x, y)
+            taps.action = nil
+            assert(taps:onTap(nil, gesture_at(x, y)))
             return taps.action
         end
         Bidi._mirrored_ui_layout = false
@@ -195,8 +201,29 @@ def main():
         assert(tap(110, 300) == "jump" and taps.history)
         Bidi._mirrored_ui_layout = true
         assert(tap(30, 220) == "next")
+
+        function BookMapWidget:new(options)
+            return setmetatable(options, {__index = self})
+        end
+        UIManager.show = function(self, widget) self.shown = widget end
+        UIManager.close = function(self, widget) self.closed = widget end
+        UIManager.setDirty = function(self, widget, mode) self.dirty = {widget, mode} end
+        taps.focus_page = 7
+        taps.history = false
+        taps.onThumbnailHold = function(self, page) self.bookmarked = page end
+        assert(taps:onHold(nil, gesture_at(110, 300)) and taps.bookmarked == 6)
+        assert(taps:onHold(nil, gesture_at(1000, 1200)) and UIManager.shown == nil)
+        assert(taps:onHold(nil, gesture_at(600, 1200)))
+        local map = assert(UIManager.shown)
+        assert(map.launcher == taps and map.ui == taps.ui and map.focus_page == 15)
+        assert(map.extra_symbols_pages[7] == 0x25A2)
+        assert(taps.focus_page == 7 and not taps.history)
+        taps.action = nil
+        assert(map:onClose(false) and UIManager.closed == map and taps.action == nil)
+        assert(UIManager.dirty[1] == taps and UIManager.dirty[2] == "ui")
+        assert(map:onClose(true) and taps.action == "jump")
     """)
-    print(f"KOReader {PIN} Lua 5.1: grid bounds, saves, edge swipes, and blank body taps passed")
+    print(f"KOReader {PIN} Lua 5.1: grid controls, edge swipes, body taps, and ribbon map passed")
 
 
 if __name__ == "__main__":
