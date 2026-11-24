@@ -33,6 +33,13 @@ end
 for _, name in ipairs({'confirmbox', 'infomessage', 'inputdialog', 'notification'}) do
     package.preload['ui/widget/' .. name] = widget
 end
+local notifications = {}
+package.preload['ui/widget/notification'] = function()
+    return {
+        notices = notifications,
+        notify = function(self, message) table.insert(self.notices, message) end,
+    }
+end
 package.preload['ui/event'] = function() return {new = function() end} end
 package.preload['ui/uimanager'] = function()
     return {
@@ -82,7 +89,7 @@ available_ifos = {
 """)
 lua.globals().Presets = lua.execute(loaded["ui/presets.lua"])
 source = loaded["apps/reader/modules/readerdictionary.lua"]
-for name in ("updateSdcvDictNamesOptions", "buildPreset", "loadPreset"):
+for name in ("updateSdcvDictNamesOptions", "buildPreset", "loadPreset", "onCycleDictionaryPresets"):
     start = source.index(f"function ReaderDictionary:{name}(")
     end = source.index("\nfunction ", start + 1)
     lua.execute(source[start:end])
@@ -137,5 +144,30 @@ menu.item_table[2].hold_callback(menu, {idx = 2})
 UIManager.last.other_buttons[1][1].callback()
 UIManager.last.ok_callback()
 assert(next(presets.presets) == nil)
+
+local notices = require('ui/widget/notification').notices
+dictionary.preset_obj = presets
+local cycle_save_count = 0
+function presets:saveCycleIndex()
+    cycle_save_count = cycle_save_count + 1
+    G_reader_settings:saveSetting('dict_presets_cycle_index', self.cycle_index)
+end
+assert(dictionary:onCycleDictionaryPresets())
+assert(notices[#notices] == 'No presets available' and cycle_save_count == 0)
+presets.presets.Zulu = {enabled_dict_names = {['New source'] = true}}
+presets.presets.Everyday = {enabled_dict_names = {Reference = true}}
+assert(Presets.onLoadPreset(presets, 'Zulu', true))
+assert(presets.cycle_index == nil and dictionary.enabled_dict_names[1] == 'New source')
+assert(dictionary:onCycleDictionaryPresets())
+assert(presets.cycle_index == 1 and dictionary.enabled_dict_names[1] == 'Reference')
+assert(notices[#notices] == 'Loaded preset: Everyday')
+assert(dictionary:onCycleDictionaryPresets())
+assert(G_reader_settings:readSetting('dict_presets_cycle_index') == 2)
+assert(dictionary.enabled_dict_names[1] == 'New source')
+table.insert(available_ifos, {name = 'Recently installed', file = 'Recent.ifo'})
+assert(dictionary:onCycleDictionaryPresets())
+assert(presets.cycle_index == 1 and dictionary.enabled_dict_names[1] == 'Reference')
+assert(G_reader_settings:readSetting('dicts_disabled')['Recent.ifo'])
+assert(cycle_save_count == 3)
 """)
-print(f"KOReader {PIN} on {lua.lua_implementation}: preset create, apply, missing and new sources, preferred override, empty update, rename and delete passed")
+print(f"KOReader {PIN} on {lua.lua_implementation}: preset create, apply, missing and new sources, preferred override, empty update, rename, delete and cycle passed")

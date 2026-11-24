@@ -36,15 +36,22 @@ rename, or delete it. Applying a preset replaces the library's default
 enabled set with its available members. That makes it possible to switch
 between small groups of dictionaries for different languages or subjects.
 Lookup still uses each edition's preferred sources and exclusions.
-A preset can report how many saved sources are unavailable.
+Applying a set with missing sources lists their saved dictionary titles.
+Older presets show the dictionary's filename without its directory. Refresh
+the saved titles by choosing **Update from enabled dictionaries**. If you
+reinstall a missing dictionary, apply the preset again to include it.
+[Landscape simulator](screenshots/landscape-dictionary-preset-unavailable.png) ·
+[Pinned snapshot and apply](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1970-L2013)
 
-KOReader's named presets also snapshot membership and disable sources added
-after the snapshot. Its missing-source notice lists the source names. Reader's
-Mac workflow covers management, lookup precedence, backup compatibility, and
-failed-write recovery.
-[Landscape simulator](screenshots/landscape-dictionary-preset.png) ·
-[Pinned snapshot and apply](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1970-L2013) ·
-[Executable preset management comparison](../scripts/compare-dictionary-presets.py)
+Choose **Cycle through dictionary presets** from the preset list or assign
+it under **Settings › Reading gestures** to switch sets while reading.
+Cycle applies presets in name order, wraps after the last one, and remembers
+the last preset used by the cycle. A manual Apply or a temporary lookup
+leaves that sequence in place. The gesture keeps the current reading
+location when it confirms a load or reports unavailable dictionaries.
+[Landscape settings](screenshots/landscape-dictionary-preset.png) ·
+[Pinned cycle action](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/presets.lua#L290-L311) ·
+[Executable preset comparison](../scripts/compare-dictionary-presets.py)
 
 ## Searching with a preset once
 
