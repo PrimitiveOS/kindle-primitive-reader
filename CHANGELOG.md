@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.39
+
+- Tap the status bar to cycle through enabled custom items.
+- Choose the folder order used by the library and previous or next file actions.
+- Set footnote preview text to a relative or fixed size.
+
 ## 0.1.38
 
 - Put publisher chapter marks at their whole-book positions in the optional top header.

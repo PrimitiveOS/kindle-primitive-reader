@@ -45,7 +45,16 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
-## Folder order verification
+## Reader 0.1.39 verification plan
+
+Cycle enabled custom footer items through the hidden step in EPUB and PDF.
+Check the default chapter-page label, ticks and Exit, locked taps, and clock
+refresh. Open a footnote with a relative and a fixed size, page through a
+large note, and return to the original passage. Verify saved choices after
+reopen and capture the settings and reading views.
+[Footer items](footer-item-cycle.md) · [Footnote size](footnote-export-roots.md#preview-font-size)
+
+### Folder order
 
 Compare natural name, file name, file type and reverse order with the pinned
 KOReader file chooser. Test the saved choice after reopen, physical pagination,
