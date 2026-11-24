@@ -38,12 +38,38 @@ both readers the seconds token shows the seconds at render time.
 
 Tests exercise 23- and 25-hour days, a fractional UTC offset, a reading day
 starting at 04:00, skipped and repeated hours, and annotation timestamp round
-trips. Native tests compare the footer tokens, alarm picker, saved-mark dates
-and a synthetic calendar visit with the Kindle's own `date` output for the
-same instant. The simulator captures use authored documents and a synthetic
-reading history.
+trips. With the locked Kindle feature set, macOS passed 983 Reader tests,
+the application binary test, 14 EPUB package tests and four layout probes.
+A separate New York test passed both daylight saving boundaries. An independent
+comparison against Python zoneinfo matched 156 offsets and local-time round
+trips using the Oasis's actual TZif file.
+
+On the Oasis 3, the footer tokens, alarm picker, saved-mark dates and a synthetic
+calendar visit all matched the Kindle's own `date` output for the same instant.
+The native suite passed 987 Reader tests, 14 EPUB package tests and four layout
+probes. Both Reader suites skipped 62 tests that require separate inputs.
+The native reader test executable SHA-256 was
+`0ea42ad2dc4e99e34eb965ca93147c3103d11443a3b760393913d29ebc9790b2`.
+The captures use authored documents and synthetic reading history.
+[Oasis footer](screenshots/device-local-footer-clock-oasis.png) ·
+[Oasis alarm picker](screenshots/device-local-alarm-oasis.png)
 
 [Reading footer](screenshots/device-local-footer-clock.png) ·
 [Set alarm](screenshots/device-local-alarm.png) ·
 [Reading calendar](screenshots/device-local-reading-calendar.png) ·
 [Reading day](screenshots/device-local-reading-day.png)
+
+## Release and installation
+
+[Reader 0.1.27](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.27)
+passed the GitHub release workflow. Its ARMHF ZIP contains both project licences
+and matches SHA-256
+`be7545c6fce8554e1b0441f4ae1eb0acaabaefb847c0a566d62167d0c1572f5e`
+(21,243,208 bytes). The Oasis installed this package through Store's verified
+install transaction. The installed executable SHA-256 is
+`e2735705aa1e61e195fb507019a349cf140341f420daf7b42c1b763771887a80`.
+The exact installed binary opened, advanced, and resumed an existing EPUB and
+PDF through the normal picker in scratch profiles. Both source hashes matched
+before and after. First frames took 1.49 and 18.38 seconds respectively. The
+samples were rendered offscreen while Primitive Browser was in the foreground.
+[Store listing](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json)

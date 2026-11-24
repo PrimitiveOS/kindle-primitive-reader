@@ -78,6 +78,8 @@ Tap a PDF web link to inspect its address over the current page. **Copy** makes 
 
 The reading footer shows `Chapter x of y - Page m of n`, with the horizontal progress bar and vertical chapter ticks below and Exit at the far right. Choose a font, adjust the text size, add custom text, or save a status bar preset. [Oasis release capture](docs/screenshots/footer-release-oasis.png) · [Footer appearance](docs/footer-font-size.md) · [Custom footer text](docs/footer-custom-text.md)
 
+Reading clocks, alarms, saved dates and the reading calendar follow the Kindle time zone. [Device clock and Oasis verification](docs/device-local-time.md)
+
 Publisher styling can keep a paragraph’s first or last lines together at a page break. [Paragraph settings and two-page comparison](docs/paragraph-ends.md)
 
 Use **Settings › Style tweaks** for live all-books defaults, per-book overrides and supported custom CSS. Review imported or edited CSS before applying it at the same reading position. [User styles, precedence and limits](docs/style-tweaks.md)
