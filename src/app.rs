@@ -1991,7 +1991,7 @@ impl Reader {
         let rows = self.list_geometry().rows;
         let first = self.list_page * rows;
         if let Screen::BookmarkBrowser(page) = self.screen {
-            return self.bookmark_window(page, first, ROWS_PER_PAGE);
+            return self.bookmark_window(page, first, rows);
         }
         if self.screen == Screen::PublisherPages {
             return self.publisher_page_window(first, ROWS_PER_PAGE);

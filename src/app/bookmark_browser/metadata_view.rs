@@ -1,7 +1,7 @@
 //! Book information and retained descriptions in the cross-book bookmark browser.
 use super::{
-    Action, BODY, CAPTION, Canvas, Change, Command, HEIGHT, Input, Item, NEXT_TEXT, PREV_TEXT,
-    Page, Reader, Rect, Result, Screen, TEXT, WIDTH, author_title, contains, item,
+    Action, BrowserLayout, CAPTION, Canvas, Change, Command, Input, Item, Page, Reader, Rect,
+    Result, Screen, author_title, contains, item,
 };
 
 impl Reader {
@@ -105,6 +105,9 @@ impl Reader {
     }
 
     pub(super) fn draw_bookmark_description(&self, canvas: &mut Canvas) {
+        let layout = BrowserLayout(self.navigation_layout());
+        let prev = layout.control(0, 214, 72);
+        let next = layout.control(2, 214, 72);
         let browser = &self.bookmark_browser;
         let Some(id) = browser.book else {
             return;
@@ -119,44 +122,34 @@ impl Reader {
         else {
             return;
         };
-        canvas.text(
-            Rect::new(40, 154, WIDTH as i32 - 80, 80),
-            &book.title,
-            CAPTION.center().lines(2),
-        );
-        let style = BODY.lines(19).break_long_words();
-        let pages = canvas.text_pages(TEXT, text, style);
-        browser.text_pages.set(pages.len());
-        if let Some(range) = pages.get(browser.text_page.min(pages.len().saturating_sub(1))) {
-            canvas.text(TEXT, &text[range.clone()], style);
+        canvas.text(layout.body(154, 80), &book.title, CAPTION.center().lines(2));
+        let (text_page, count) = self.draw_bookmark_text(canvas, layout.text(), text);
+        if text_page > 0 {
+            let pressed =
+                canvas.control_pressed(Rect::new(prev.x, prev.y - 14, prev.w, 100), false);
+            canvas.button(prev, "Previous text", false, pressed);
         }
-        if browser.text_page > 0 {
-            let pressed = canvas.control_pressed(
-                Rect::new(PREV_TEXT.x, PREV_TEXT.y - 14, PREV_TEXT.w, 100),
-                false,
-            );
-            canvas.button(PREV_TEXT, "Previous text", false, pressed);
-        }
-        if browser.text_page + 1 < pages.len() {
-            let pressed = canvas.control_pressed(
-                Rect::new(NEXT_TEXT.x, NEXT_TEXT.y - 14, NEXT_TEXT.w, 100),
-                false,
-            );
-            canvas.button(NEXT_TEXT, "Next text", false, pressed);
+        if text_page + 1 < count {
+            let pressed =
+                canvas.control_pressed(Rect::new(next.x, next.y - 14, next.w, 100), false);
+            canvas.button(next, "Next text", false, pressed);
         }
         canvas.text(
-            Rect::new(450, HEIGHT as i32 - 198, 364, 55),
-            &format!("{} of {}", browser.text_page + 1, pages.len()),
+            layout.centered_caption(198),
+            &format!("{} of {count}", text_page + 1),
             CAPTION.center(),
         );
     }
 
     pub(super) fn bookmark_description_input(&mut self, input: Input) -> Change {
+        let layout = BrowserLayout(self.navigation_layout());
+        let prev = layout.control(0, 214, 72);
+        let next = layout.control(2, 214, 72);
         let direction = match input {
             Input::PageForward => 1,
             Input::PageBack => -1,
-            Input::Tap(x, y) if contains(PREV_TEXT, x, y) => -1,
-            Input::Tap(x, y) if contains(NEXT_TEXT, x, y) => 1,
+            Input::Tap(x, y) if contains(prev, x, y) => -1,
+            Input::Tap(x, y) if contains(next, x, y) => 1,
             Input::Swipe { dx, dy, .. } if dx.abs() > dy.abs() => {
                 if dx < 0.0 {
                     1

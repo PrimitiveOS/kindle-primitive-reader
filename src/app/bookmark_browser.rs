@@ -2,30 +2,54 @@
 mod metadata;
 mod metadata_view;
 use super::{
-    Action, Book, Canvas, Change, Editor, HEIGHT, Input, Item, Reader, Rect, Result, Screen, WIDTH,
-    with_storage,
+    Action, Book, Canvas, Change, Editor, Input, Item, Reader, Rect, Result, Screen,
+    navigation_layout::NavigationLayout, with_storage,
 };
 use crate::highlight_style::{HighlightColor, HighlightStyle};
 use crate::library::{BookState, BrowseKind, DocumentFormat, Library, fold_search};
 use crate::search::Query;
-use primitive_ui::{BODY, CAPTION, Layout, Press, keyboard_key};
+use primitive_ui::{BODY, CAPTION, Press, keyboard_key};
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::io::Read;
+use std::ops::Range;
 use std::path::PathBuf;
 
-const TEXT: Rect = Rect::new(40, 258, WIDTH as i32 - 80, HEIGHT as i32 - 538);
-const SOURCES: Rect = Rect::new(40, HEIGHT as i32 - 198, 386, 72);
-const FILTERS: Rect = Rect::new(439, HEIGHT as i32 - 198, 386, 72);
-const FIND: Rect = Rect::new(838, HEIGHT as i32 - 198, 386, 72);
-const READ: Rect = Rect::new(439, HEIGHT as i32 - 115, 386, 84);
-const PREV_MARK: Rect = Rect::new(40, HEIGHT as i32 - 115, 386, 84);
-const NEXT_MARK: Rect = Rect::new(838, HEIGHT as i32 - 115, 386, 84);
-const PREV_TEXT: Rect = Rect::new(40, HEIGHT as i32 - 214, 386, 72);
-const NEXT_TEXT: Rect = Rect::new(838, HEIGHT as i32 - 214, 386, 72);
-const FIRST_MARK: Rect = Rect::new(40, 147, 210, 70);
-const LAST_MARK: Rect = Rect::new(WIDTH as i32 - 250, 147, 210, 70);
 const CASE: Rect = Rect::new(40, 314, 386, 72);
+const FIRST_MARK: Rect = Rect::new(40, 147, 210, 70);
+const CONTROL_WIDTH: i32 = 386;
+
+#[derive(Clone, Copy)]
+struct BrowserLayout(NavigationLayout);
+
+impl BrowserLayout {
+    fn body(self, y: i32, height: i32) -> Rect {
+        self.0.body(y, height)
+    }
+
+    fn text(self) -> Rect {
+        self.body(258, self.0.height - 538)
+    }
+
+    fn control(self, column: i32, inset: i32, height: i32) -> Rect {
+        let step = (self.0.width - 80 - CONTROL_WIDTH) / 2;
+        Rect::new(
+            40 + column * step,
+            self.0.height - inset,
+            CONTROL_WIDTH,
+            height,
+        )
+    }
+
+    fn centered_caption(self, inset: i32) -> Rect {
+        Rect::new((self.0.width - 364) / 2, self.0.height - inset, 364, 55)
+    }
+
+    fn last_mark(self) -> Rect {
+        Rect::new(self.0.width - 250, FIRST_MARK.y, FIRST_MARK.w, FIRST_MARK.h)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Page {
@@ -259,9 +283,26 @@ pub(super) struct Browser {
     subfolders: Vec<PathBuf>,
     focus: Option<MarkKey>,
     book: Option<u64>,
-    text_page: usize,
-    text_pages: std::cell::Cell<usize>,
+    text_offset: usize,
+    text_pages: RefCell<Vec<Range<usize>>>,
     pub(super) after_password: Option<MarkKey>,
+}
+
+impl Browser {
+    fn reset_text(&mut self) {
+        self.text_offset = 0;
+        self.text_pages.get_mut().clear();
+    }
+
+    fn text_page(&self, pages: &[Range<usize>]) -> usize {
+        pages
+            .partition_point(|page| page.start <= self.text_offset)
+            .saturating_sub(1)
+    }
+
+    pub(super) fn replace_text_pages(&self, pages: Vec<Range<usize>>) -> Vec<Range<usize>> {
+        self.text_pages.replace(pages)
+    }
 }
 
 impl Default for Browser {
@@ -294,8 +335,8 @@ impl Default for Browser {
             subfolders: Vec::new(),
             focus: None,
             book: None,
-            text_page: 0,
-            text_pages: std::cell::Cell::new(0),
+            text_offset: 0,
+            text_pages: RefCell::default(),
             after_password: None,
         }
     }
@@ -530,7 +571,7 @@ impl Reader {
                     self.queue_bookmark_metadata();
                 }
                 if page == Page::Description {
-                    self.bookmark_browser.text_page = 0;
+                    self.bookmark_browser.reset_text();
                 }
                 self.show(Screen::BookmarkBrowser(page));
             }
@@ -749,7 +790,7 @@ impl Reader {
                     .iter()
                     .position(|r| *r == RowKey::Book(id));
                 self.show(Screen::BookmarkBrowser(Page::Results));
-                self.list_page = page.unwrap_or(0) / super::ROWS_PER_PAGE;
+                self.list_page = page.unwrap_or(0) / self.list_geometry().rows;
             }
             Command::BookInfo(id) => {
                 self.bookmark_browser.book = Some(id);
@@ -770,7 +811,7 @@ impl Reader {
             }
             Command::Inspect(key) => {
                 self.bookmark_browser.focus = Some(key);
-                self.bookmark_browser.text_page = 0;
+                self.bookmark_browser.reset_text();
                 self.show(Screen::BookmarkBrowser(Page::Detail));
             }
             Command::ViewMark(key) => self.view_bookmark_in_book(key)?,
@@ -1175,6 +1216,7 @@ impl Reader {
     }
 
     pub(super) fn draw_bookmark_browser_controls(&self, canvas: &mut Canvas, page: Page) -> bool {
+        let layout = BrowserLayout(self.navigation_layout());
         match page {
             Page::Colors => {
                 super::highlight_palette::draw(
@@ -1184,11 +1226,7 @@ impl Reader {
                     false,
                 );
                 if let Some(notice) = &self.notice {
-                    canvas.text(
-                        Rect::new(40, 944, WIDTH as i32 - 80, 180),
-                        notice,
-                        CAPTION.lines(4),
-                    );
+                    canvas.text(layout.body(944, 180), notice, CAPTION.lines(4));
                 }
                 true
             }
@@ -1202,7 +1240,7 @@ impl Reader {
                 };
                 let book_suffix = if books == 1 { "book" } else { "books" };
                 canvas.text(
-                    Rect::new(40, HEIGHT as i32 - 246, WIDTH as i32 - 80, 40),
+                    layout.0.footer_text(40, 246, 40),
                     &format!(
                         "{} · {} {suffix} in {books} {book_suffix}",
                         browser.source_label,
@@ -1210,14 +1248,14 @@ impl Reader {
                     ),
                     CAPTION,
                 );
-                canvas.button(SOURCES, "Sources", false, false);
-                canvas.button(FILTERS, "Filters", false, false);
-                canvas.button(FIND, "Find", false, false);
+                canvas.button(layout.control(0, 198, 72), "Sources", false, false);
+                canvas.button(layout.control(1, 198, 72), "Filters", false, false);
+                canvas.button(layout.control(2, 198, 72), "Find", false, false);
                 false
             }
             Page::Search => {
                 canvas.single_line_field(
-                    Rect::new(40, 154, WIDTH as i32 - 80, 130),
+                    layout.body(154, 130),
                     &self.editor,
                     "Bookmark, highlighted text or note",
                     false,
@@ -1244,6 +1282,7 @@ impl Reader {
     }
 
     fn draw_bookmark_detail(&self, canvas: &mut Canvas) {
+        let layout = BrowserLayout(self.navigation_layout());
         let browser = &self.bookmark_browser;
         let Some(key) = browser.focus else {
             return;
@@ -1268,51 +1307,62 @@ impl Reader {
             title.push_str(&date);
         }
         canvas.text(
-            Rect::new(272, 152, WIDTH as i32 - 544, 94),
+            Rect::new(272, 152, layout.0.width - 544, 94),
             &title,
             CAPTION.center().lines(2),
         );
         if index > 0 {
             canvas.button(FIRST_MARK, "First", false, false);
-            canvas.button(PREV_MARK, "Previous mark", false, false);
+            canvas.button(layout.control(0, 115, 84), "Previous mark", false, false);
         }
         if index + 1 < browser.marks.len() {
-            canvas.button(LAST_MARK, "Last", false, false);
-            canvas.button(NEXT_MARK, "Next mark", false, false);
+            canvas.button(layout.last_mark(), "Last", false, false);
+            canvas.button(layout.control(2, 115, 84), "Next mark", false, false);
         }
         if self.bookmark_book_available(book.id) {
-            canvas.button(READ, "View in book", true, false);
+            canvas.button(layout.control(1, 115, 84), "View in book", true, false);
         } else {
-            canvas.text(READ, "Archived mark", CAPTION.center());
+            canvas.text(
+                layout.control(1, 115, 84),
+                "Archived mark",
+                CAPTION.center(),
+            );
         }
         let text = mark.note.map_or_else(
             || mark.quote.to_owned(),
             |note| format!("{}\n\n{}", note, mark.quote),
         );
-        let style = BODY.lines(19).break_long_words();
-        let pages = canvas.text_pages(TEXT, &text, style);
-        browser.text_pages.set(pages.len());
-        if let Some(range) = pages.get(browser.text_page.min(pages.len().saturating_sub(1))) {
-            canvas.text(TEXT, &text[range.clone()], style);
-        }
-        if pages.len() > 1 {
-            if browser.text_page > 0 {
-                canvas.button(PREV_TEXT, "Previous text", false, false);
+        let (text_page, count) = self.draw_bookmark_text(canvas, layout.text(), &text);
+        if count > 1 {
+            if text_page > 0 {
+                canvas.button(layout.control(0, 214, 72), "Previous text", false, false);
             }
-            if browser.text_page + 1 < pages.len() {
-                canvas.button(NEXT_TEXT, "Next text", false, false);
+            if text_page + 1 < count {
+                canvas.button(layout.control(2, 214, 72), "Next text", false, false);
             }
             canvas.text(
-                Rect::new(450, PREV_TEXT.y + 15, 364, 55),
-                &format!("{} of {}", browser.text_page + 1, pages.len()),
+                layout.centered_caption(199),
+                &format!("{} of {count}", text_page + 1),
                 CAPTION.center(),
             );
         }
     }
 
+    fn draw_bookmark_text(&self, canvas: &mut Canvas, bounds: Rect, text: &str) -> (usize, usize) {
+        let style = BODY.lines(19).break_long_words();
+        let pages = canvas.text_pages(bounds, text, style);
+        let current = self.bookmark_browser.text_page(&pages);
+        if let Some(range) = pages.get(current) {
+            canvas.text(bounds, &text[range.clone()], style);
+        }
+        let count = pages.len();
+        self.bookmark_browser.replace_text_pages(pages);
+        (current, count)
+    }
+
     pub(super) fn bookmark_browser_input(&mut self, page: Page, input: Input) -> Option<Change> {
-        if matches!(input, Input::Tap(x, y) if primitive_ui::back_button(WIDTH as i32).contains(x, y))
-        {
+        let layout = BrowserLayout(self.navigation_layout());
+        if matches!(input, Input::Tap(x, y) if layout.0.back().contains(x, y)) {
             self.back_from_bookmark_browser(page);
             return Some(Change::Partial);
         }
@@ -1322,7 +1372,7 @@ impl Reader {
                 return Some(Change::Partial);
             }
             return Some(match input {
-                Input::Tap(x, y) => super::highlight_palette::at(x, y)
+                Input::Tap(x, y) => super::highlight_palette::at_width(layout.0.width, x, y)
                     .map_or(Change::None, |color| {
                         self.bookmark_change(Command::SetColor(color))
                     }),
@@ -1340,7 +1390,8 @@ impl Reader {
         }
         if let Input::LongTap(x, y) = input {
             let (count, rows) = self.list_window();
-            let row = super::list_item_at(self.list_page, count, x, y)? % super::ROWS_PER_PAGE;
+            let geometry = self.list_geometry();
+            let row = geometry.item_at(self.list_page, count, x, y)? % geometry.rows;
             let source = match rows.get(row).map(|item| &item.action) {
                 Some(Action::BookmarkBrowser(Command::Use(source))) => Some(source.clone()),
                 Some(Action::BookmarkBrowser(Command::ApplyChoices))
@@ -1362,11 +1413,11 @@ impl Reader {
         if page == Page::Results
             && let Input::Tap(x, y) = input
         {
-            let page = if contains(SOURCES, x, y) {
+            let page = if contains(layout.control(0, 198, 72), x, y) {
                 Page::Sources
-            } else if contains(FILTERS, x, y) {
+            } else if contains(layout.control(1, 198, 72), x, y) {
                 Page::Filters
-            } else if contains(FIND, x, y) {
+            } else if contains(layout.control(2, 198, 72), x, y) {
                 Page::Search
             } else {
                 return None;
@@ -1384,7 +1435,7 @@ impl Reader {
             self.bookmark_browser.case_sensitive = !self.bookmark_browser.case_sensitive;
             return Change::Partial;
         }
-        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+        let layout = self.navigation_layout().keyboard();
         let Some(key) = keyboard_key(&layout, &self.editor, "Find", x, y) else {
             return Change::None;
         };
@@ -1420,7 +1471,7 @@ impl Reader {
                         .position(|value| *value == RowKey::Mark(key))
                 });
                 self.show(Screen::BookmarkBrowser(Page::Results));
-                self.list_page = row.unwrap_or(0) / super::ROWS_PER_PAGE;
+                self.list_page = row.unwrap_or(0) / self.list_geometry().rows;
             }
             Page::ChooseBooks if self.bookmark_browser.picking.take().is_some() => {
                 self.show(Screen::BookmarkBrowser(Page::Filters));
@@ -1438,6 +1489,7 @@ impl Reader {
     }
 
     fn bookmark_detail_input(&mut self, input: Input) -> Change {
+        let layout = BrowserLayout(self.navigation_layout());
         let Some(key) = self.bookmark_browser.focus else {
             return Change::None;
         };
@@ -1464,15 +1516,26 @@ impl Reader {
             Input::Swipe { dy, .. } => {
                 return self.step_bookmark_text(if dy < 0.0 { 1 } else { -1 });
             }
-            Input::Tap(x, y) if contains(READ, x, y) && self.bookmark_book_available(key.book) => {
+            Input::Tap(x, y)
+                if contains(layout.control(1, 115, 84), x, y)
+                    && self.bookmark_book_available(key.book) =>
+            {
                 return self.bookmark_change(Command::ViewMark(key));
             }
-            Input::Tap(x, y) if contains(PREV_MARK, x, y) => target = index.saturating_sub(1),
-            Input::Tap(x, y) if contains(NEXT_MARK, x, y) => target = (index + 1).min(last),
+            Input::Tap(x, y) if contains(layout.control(0, 115, 84), x, y) => {
+                target = index.saturating_sub(1)
+            }
+            Input::Tap(x, y) if contains(layout.control(2, 115, 84), x, y) => {
+                target = (index + 1).min(last)
+            }
             Input::Tap(x, y) if contains(FIRST_MARK, x, y) => target = 0,
-            Input::Tap(x, y) if contains(LAST_MARK, x, y) => target = last,
-            Input::Tap(x, y) if contains(PREV_TEXT, x, y) => return self.step_bookmark_text(-1),
-            Input::Tap(x, y) if contains(NEXT_TEXT, x, y) => return self.step_bookmark_text(1),
+            Input::Tap(x, y) if contains(layout.last_mark(), x, y) => target = last,
+            Input::Tap(x, y) if contains(layout.control(0, 214, 72), x, y) => {
+                return self.step_bookmark_text(-1);
+            }
+            Input::Tap(x, y) if contains(layout.control(2, 214, 72), x, y) => {
+                return self.step_bookmark_text(1);
+            }
             _ => {}
         }
         if target == index {
@@ -1483,14 +1546,18 @@ impl Reader {
 
     fn step_bookmark_text(&mut self, step: isize) -> Change {
         let browser = &mut self.bookmark_browser;
-        let previous = browser.text_page;
-        browser.text_page = previous
+        let pages = browser.text_pages.borrow();
+        let current = browser.text_page(&pages);
+        let target = current
             .saturating_add_signed(step)
-            .min(browser.text_pages.get().saturating_sub(1));
-        if previous == browser.text_page {
-            Change::None
-        } else {
+            .min(pages.len().saturating_sub(1));
+        if target != current
+            && let Some(range) = pages.get(target)
+        {
+            browser.text_offset = range.start;
             Change::Partial
+        } else {
+            Change::None
         }
     }
 

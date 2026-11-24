@@ -85,6 +85,7 @@ impl Screen {
                     | Self::BookmarkMatches
                     | Self::BookMap
                     | Self::PageOverview
+                    | Self::BookmarkBrowser(_)
             )
     }
 }

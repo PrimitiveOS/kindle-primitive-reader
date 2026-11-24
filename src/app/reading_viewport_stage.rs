@@ -1,11 +1,15 @@
 //! Hold a prepared reading view until the runtime verifies its presentation.
 
-use super::{Reader, ReadingPosition, Screen, footnote_popup::Footnote, selection_html::Inspector};
+use super::{
+    Reader, ReadingPosition, Screen, bookmark_browser, footnote_popup::Footnote,
+    list_density::Geometry, navigation_layout::NavigationLayout, selection_html::Inspector,
+};
 use crate::Result;
 use crate::fixed_session::PreparedFixedViewport;
 use crate::session::{Reading, ReadingViewport};
 use primitive_app::App;
 use primitive_ui::Canvas;
+use std::ops::Range;
 
 enum Candidate {
     Current,
@@ -26,6 +30,8 @@ pub(super) struct Stage {
     marks: Option<(super::saved_marks_view::FlexibleMarks, usize)>,
     visual_navigation: super::visual_navigation::VisualNavigation,
     matches: Option<super::search_layout::MatchStage>,
+    bookmark_page: Option<usize>,
+    bookmark_text_pages: Option<Vec<Range<usize>>>,
 }
 
 impl Reader {
@@ -40,6 +46,17 @@ impl Reader {
         } else {
             Candidate::Library(target)
         };
+        let bookmark_page = (target != from && matches!(self.screen, Screen::BookmarkBrowser(_)))
+            .then(|| {
+                let (width, height) = target.dimensions();
+                let new_rows = Geometry::STANDARD
+                    .in_navigation(NavigationLayout {
+                        width: width as i32,
+                        height: height as i32,
+                    })
+                    .rows;
+                self.list_page * self.list_geometry().rows / new_rows
+            });
         Ok(Stage {
             book: self.open_book_id(),
             position: self.current_position(),
@@ -56,6 +73,8 @@ impl Reader {
             visual_navigation: super::visual_navigation::VisualNavigation::capture(self),
             matches: (target != from && self.screen == Screen::Matches)
                 .then(|| super::search_layout::MatchStage::capture(self)),
+            bookmark_page,
+            bookmark_text_pages: None,
         })
     }
 
@@ -71,7 +90,23 @@ impl Reader {
         }
         self.exchange_staged_reading(&mut staged.candidate)?;
         staged.exchange_reading_tools(self);
+        let previous_page = staged
+            .bookmark_page
+            .map(|page| std::mem::replace(&mut self.list_page, page));
+        let previous_text_pages = (staged.from != staged.target
+            && matches!(
+                self.screen,
+                Screen::BookmarkBrowser(
+                    bookmark_browser::Page::Detail | bookmark_browser::Page::Description
+                )
+            ))
+        .then(|| self.bookmark_browser.replace_text_pages(Vec::new()));
         let drawn = self.draw_staged_content(staged, canvas);
+        if let Some(previous_page) = previous_page {
+            self.list_page = previous_page;
+        }
+        staged.bookmark_text_pages =
+            previous_text_pages.map(|pages| self.bookmark_browser.replace_text_pages(pages));
         staged.exchange_reading_tools(self);
         let restored = self.exchange_staged_reading(&mut staged.candidate);
         drawn.and(restored)
@@ -106,7 +141,6 @@ impl Reader {
             Candidate::Current => return Ok(()),
             Candidate::Library(viewport) => {
                 self.library_viewport = viewport;
-                return Ok(());
             }
             Candidate::Reflow(reading) => {
                 self.active.as_mut().ok_or("The book closed")?.reading = *reading;
@@ -132,6 +166,15 @@ impl Reader {
         staged.visual_navigation.commit(self);
         if let Some(matches) = staged.matches {
             matches.commit(self);
+        }
+        if let Some(page) = staged.bookmark_page {
+            self.list_page = page;
+        }
+        if let Some(pages) = staged.bookmark_text_pages {
+            self.bookmark_browser.replace_text_pages(pages);
+        }
+        if staged.book.is_none() {
+            return Ok(());
         }
         self.screen_page_worker.cancel();
         self.pages_since_refresh = 0;

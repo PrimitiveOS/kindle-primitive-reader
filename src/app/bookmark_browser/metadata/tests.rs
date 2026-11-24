@@ -336,13 +336,18 @@ fn long_descriptions_page_without_moving_the_book_and_reverse_their_controls() {
         primitive_ui::Canvas::new(primitive_app::WIDTH, primitive_app::HEIGHT, &font_paths)
             .unwrap();
     primitive_app::frame(&app, &mut canvas, false);
-    assert!(app.bookmark_browser.text_pages.get() > 2);
+    assert!(app.bookmark_browser.text_pages.borrow().len() > 2);
     assert_eq!(app.input(Input::PageForward), Change::Partial);
-    assert_eq!(app.bookmark_browser.text_page, 1);
+    assert_eq!(
+        app.bookmark_browser
+            .text_page(&app.bookmark_browser.text_pages.borrow()),
+        1
+    );
     for dark in [false, true] {
         canvas.clear_press();
         let before = primitive_app::frame(&app, &mut canvas, dark);
-        for rect in [super::super::PREV_TEXT, super::super::NEXT_TEXT] {
+        let layout = super::super::BrowserLayout(app.navigation_layout());
+        for rect in [layout.control(0, 214, 72), layout.control(2, 214, 72)] {
             // The edge falls within the expanded 100 px target above its visible outline.
             assert!(canvas.press_at((rect.x + 20) as f32, (rect.y - 10) as f32));
             let after = primitive_app::frame(&app, &mut canvas, dark);
@@ -362,7 +367,7 @@ fn long_descriptions_page_without_moving_the_book_and_reverse_their_controls() {
         }
     }
     assert_eq!(app.input(Input::PageBack), Change::Partial);
-    assert_eq!(app.bookmark_browser.text_page, 0);
+    assert_eq!(app.bookmark_browser.text_offset, 0);
     assert_eq!(app.current_history_location(), Some(place));
     let cache_path = app.bookmark_browser.catalog.path.clone();
     fs::remove_file(&cache_path).unwrap();

@@ -1,7 +1,8 @@
 use super::*;
 use crate::app::tests::{Fixture, capture_test_screen};
 use crate::library::{Highlight, PdfHighlight};
-use primitive_app::App;
+use primitive_app::{App, HEIGHT, WIDTH};
+use primitive_ui::Layout;
 use std::fs;
 
 fn center(rect: Rect) -> (f32, f32) {
@@ -22,10 +23,7 @@ fn choose(app: &mut Reader, label: &str) {
         .iter()
         .position(|item| item.title == label)
         .unwrap_or_else(|| panic!("Missing row {label:?} on {:?}", app.screen));
-    let layout = super::super::list_rect(rows.len());
-    let x = layout.x as f32 + 80.0;
-    let y = layout.y as f32 + super::super::ROW_HEIGHT as f32 * row as f32 + 30.0;
-    assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+    tap(app, app.list_geometry().row(row));
 }
 
 fn mount_marks(app: &mut Reader, fixture: &Fixture, pdf: &std::path::Path) -> (u64, u64) {
@@ -275,7 +273,10 @@ fn browser_covers_sources_date_text_filters_preview_and_exact_return() {
     assert_eq!(app.input(Input::PageBack), Change::Partial);
     assert_eq!(app.bookmark_browser.focus.unwrap().book, pdf_id);
     capture_test_screen(&app, &fonts, "READER_BOOKMARK_DETAIL_SCREENSHOT", false);
-    tap(&mut app, READ);
+    tap(
+        &mut app,
+        BrowserLayout(NavigationLayout::PORTRAIT).control(1, 115, 84),
+    );
     assert_eq!(app.screen, Screen::Fixed);
     assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
     app.activate(Action::ReturnToLocation).unwrap();
@@ -284,21 +285,33 @@ fn browser_covers_sources_date_text_filters_preview_and_exact_return() {
     activate(&mut app, Command::Open);
     choose(&mut app, "Documents");
     assert_eq!(app.bookmark_browser.marks.len(), 2);
-    tap(&mut app, SOURCES);
+    tap(
+        &mut app,
+        BrowserLayout(NavigationLayout::PORTRAIT).control(0, 198, 72),
+    );
     choose(&mut app, "Documents and subfolders");
     assert_eq!(app.bookmark_browser.marks.len(), 3);
-    tap(&mut app, SOURCES);
+    tap(
+        &mut app,
+        BrowserLayout(NavigationLayout::PORTRAIT).control(0, 198, 72),
+    );
     choose(&mut app, "Choose a folder");
     choose(&mut app, "Surveys");
     choose(&mut app, "Use this folder");
     assert_eq!(app.bookmark_browser.marks.len(), 1);
     assert_eq!(id(&app, 0), pdf_id);
-    tap(&mut app, SOURCES);
+    tap(
+        &mut app,
+        BrowserLayout(NavigationLayout::PORTRAIT).control(0, 198, 72),
+    );
     choose(&mut app, "Collections");
     choose(&mut app, "Field reports");
     choose(&mut app, "Apply collections");
     assert_eq!(app.bookmark_browser.marks.len(), 3);
-    tap(&mut app, FILTERS);
+    tap(
+        &mut app,
+        BrowserLayout(NavigationLayout::PORTRAIT).control(1, 198, 72),
+    );
     choose(&mut app, "Filter by book");
     choose(&mut app, "Select by author");
     choose(&mut app, "Zani Rivers");
@@ -310,7 +323,10 @@ fn browser_covers_sources_date_text_filters_preview_and_exact_return() {
             .iter()
             .all(|mark| mark.book == epub_id)
     );
-    tap(&mut app, FILTERS);
+    tap(
+        &mut app,
+        BrowserLayout(NavigationLayout::PORTRAIT).control(1, 198, 72),
+    );
     choose(&mut app, "Clear filters");
     choose(&mut app, "Date added");
     assert_eq!(app.bookmark_browser.marks[1].locator, Locator::Reflow(0));
@@ -321,7 +337,10 @@ fn browser_covers_sources_date_text_filters_preview_and_exact_return() {
     activate(&mut app, Command::SetStyle(Some(HighlightStyle::Underline)));
     assert_eq!(id(&app, 0), epub_id);
     tap(&mut app, back);
-    tap(&mut app, FIND);
+    tap(
+        &mut app,
+        BrowserLayout(NavigationLayout::PORTRAIT).control(2, 198, 72),
+    );
     let (_, go) = layout
         .keyboard_keys_with(app.editor.layer, "Find")
         .into_iter()
@@ -332,7 +351,10 @@ fn browser_covers_sources_date_text_filters_preview_and_exact_return() {
         app.editor.caret = app.editor.text.len();
         tap(&mut app, go);
         assert_eq!(app.bookmark_browser.marks.len(), count);
-        tap(&mut app, FIND);
+        tap(
+            &mut app,
+            BrowserLayout(NavigationLayout::PORTRAIT).control(2, 198, 72),
+        );
     }
     tap(&mut app, CASE);
     tap(&mut app, go);
@@ -345,10 +367,13 @@ fn browser_covers_sources_date_text_filters_preview_and_exact_return() {
     assert_eq!(app.bookmark_browser.marks.len(), 1);
     assert_eq!(id(&app, 0), pdf_id);
     choose(&mut app, "Harbor sounding");
-    let (x, y) = center(READ);
+    let (x, y) = center(BrowserLayout(NavigationLayout::PORTRAIT).control(1, 115, 84));
     assert_eq!(app.input(Input::Tap(x, y)), Change::None);
     tap(&mut app, back);
-    tap(&mut app, SOURCES);
+    tap(
+        &mut app,
+        BrowserLayout(NavigationLayout::PORTRAIT).control(0, 198, 72),
+    );
     let (x, y) = (130.0, super::super::LIST_Y as f32 + 35.0);
     assert_eq!(app.input(Input::LongTap(x, y)), Change::Partial);
     let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
@@ -387,14 +412,20 @@ fn password_prompt_keeps_the_mark_pending_until_authentication_or_cancel() {
         .unwrap();
     app.activate_bookmark_browser(Command::Inspect(key))
         .unwrap();
-    tap(&mut app, READ);
+    tap(
+        &mut app,
+        BrowserLayout(NavigationLayout::PORTRAIT).control(1, 115, 84),
+    );
     assert_eq!(app.screen, Screen::PdfPassword);
     assert_eq!(app.bookmark_browser.after_password, Some(key));
     app.input(Input::PageBack);
     assert_eq!(app.screen, Screen::BookmarkBrowser(Page::Detail));
     assert_eq!(app.current_history_location(), Some(origin));
     assert_eq!(app.bookmark_browser.after_password, None);
-    tap(&mut app, READ);
+    tap(
+        &mut app,
+        BrowserLayout(NavigationLayout::PORTRAIT).control(1, 115, 84),
+    );
     let go = Layout::new(WIDTH, HEIGHT, 4, 5)
         .keyboard_keys_with(app.editor.layer, "Open")
         .into_iter()
@@ -466,11 +497,112 @@ fn original_documents_restore_bookmarks_through_the_browser() {
         app.activate_bookmark_browser(Command::Inspect(key))
             .unwrap();
         assert_eq!(app.current_history_location(), Some(origin.clone()));
-        tap(&mut app, READ);
+        tap(
+            &mut app,
+            BrowserLayout(NavigationLayout::PORTRAIT).control(1, 115, 84),
+        );
         assert_eq!(app.current_position(), Some(saved));
         app.activate(Action::ReturnToLocation).unwrap();
         assert_eq!(app.current_history_location(), Some(origin));
         app.save().unwrap();
         assert_eq!(fs::read(source).unwrap(), before);
     }
+}
+
+#[test]
+fn landscape_bookmark_browser_retains_a_result_and_exact_text_page_anchor() {
+    use primitive_app::viewport::{LogicalTurn, Viewport, ViewportDecision};
+
+    let fixture = Fixture::new();
+    let pdf = fixture.root.join("Survey.pdf");
+    fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    let (book, _) = mount_marks(&mut app, &fixture, &pdf);
+    let note = (1..=65)
+        .map(|line| format!("Survey entry {line}. Confirm the tide range before returning to the harbor, then check the shallow channel beside the western station."))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let state = app.library.state_mut(book).unwrap();
+    state.highlights[0].note = Some(note);
+    let mark = MarkKey {
+        book,
+        locator: Locator::Reflow(0),
+    };
+    let bookmark = state.bookmarks[0].clone();
+    state
+        .bookmarks
+        .extend((1..=25).map(|index| crate::library::Bookmark {
+            label: format!("Saved survey page {index:02}"),
+            ..bookmark.clone()
+        }));
+    app.activate_bookmark_browser(Command::Use(Source::History))
+        .unwrap();
+    assert_eq!(app.input(Input::PageForward), Change::Partial);
+    let retained = app.list_window().1[0].title.clone();
+    let files: Vec<_> = app.fonts.iter().map(|p| p.display().to_string()).collect();
+    let landscape_turn = Viewport {
+        generation: 1,
+        turn: LogicalTurn::Clockwise,
+        logical_size: (1680, 1264),
+    };
+    let mut canvas = Canvas::new_viewport(1680, 1264, 1264, &files).unwrap();
+    app.stage_viewport(landscape_turn).unwrap();
+    canvas.begin();
+    app.draw_staged_viewport(&mut canvas).unwrap();
+    assert_eq!(app.list_page, 1);
+    app.finish_viewport(landscape_turn, ViewportDecision::Commit);
+    assert!(app.list_window().1.iter().any(|row| row.title == retained));
+
+    let layout = BrowserLayout(app.navigation_layout());
+    let find = layout.control(2, 198, 72);
+    assert!(center(find).0 > WIDTH as f32);
+    tap(&mut app, find);
+    app.editor.text = "Survey entry 40".chars().collect();
+    app.editor.caret = app.editor.text.len();
+    let (_, go) = layout
+        .0
+        .keyboard()
+        .keyboard_keys_with(app.editor.layer, "Find")
+        .into_iter()
+        .find(|(key, _)| key.key == primitive_ui::Key::Go)
+        .unwrap();
+    tap(&mut app, go);
+    assert_eq!(app.bookmark_browser.marks, [mark]);
+    app.activate_bookmark_browser(Command::Inspect(mark))
+        .unwrap();
+    let initial = primitive_app::frame(&app, &mut canvas, false);
+    assert_eq!(initial.len(), 1680 * 1264);
+    tap(&mut app, layout.control(2, 214, 72));
+    let anchor = app.bookmark_browser.text_offset;
+    assert!(anchor > 0);
+    let landscape = primitive_app::frame(&app, &mut canvas, false);
+    if let Some(path) = std::env::var_os("READER_LANDSCAPE_BOOKMARK_DETAIL") {
+        primitive_app::write_png(std::path::Path::new(&path), 1680, 1264, &landscape).unwrap();
+    }
+
+    let portrait_turn = Viewport {
+        generation: 2,
+        turn: LogicalTurn::Upright,
+        logical_size: (WIDTH, HEIGHT),
+    };
+    let mut portrait = Canvas::new_viewport(WIDTH, HEIGHT, 1264, &files).unwrap();
+    let before = app.bookmark_browser.text_pages.borrow().clone();
+    app.stage_viewport(portrait_turn).unwrap();
+    portrait.begin();
+    app.draw_staged_viewport(&mut portrait).unwrap();
+    assert_eq!(*app.bookmark_browser.text_pages.borrow(), before);
+    app.finish_viewport(portrait_turn, ViewportDecision::Abort);
+    assert_eq!(app.bookmark_browser.text_offset, anchor);
+    app.stage_viewport(portrait_turn).unwrap();
+    portrait.begin();
+    app.draw_staged_viewport(&mut portrait).unwrap();
+    app.finish_viewport(portrait_turn, ViewportDecision::Commit);
+    assert_eq!(app.bookmark_browser.text_offset, anchor);
+    let pages = app.bookmark_browser.text_pages.borrow();
+    assert_ne!(*pages, before);
+    assert!(pages[app.bookmark_browser.text_page(&pages)].contains(&anchor));
 }

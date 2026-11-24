@@ -14,10 +14,15 @@ Run `cargo test --locked --lib navigation_viewport` on the host. Set the corresp
 - `READER_NAV_LANDSCAPE_GOTO` captures the PDF destination editor and its keyboard. [Go to page screenshot](screenshots/landscape-go-to-page.png)
 - `READER_NAV_LANDSCAPE_MARKS_DARK` captures flexible PDF bookmarks in dark mode. [Bookmarks screenshot](screenshots/landscape-saved-marks-dark.png)
 
-The simulation prepares the document’s landscape viewport directly. The saved-marks measurement and rendered canvas share the active viewport dimensions and the native short-edge scale. The transition repaginates the list around the first saved item on screen. The cross-book Bookmark Browser, whole-document search and match views, Contents custom-outline/settings screens, Book Map and Page Overview still have portrait geometry. Physical display rotation and touch transformation are pending Kindle verification.
+The simulation prepares the document’s landscape viewport directly. The saved-marks measurement and rendered canvas share the active viewport dimensions and the native short-edge scale. The transition repaginates the list around the first saved item on screen. Whole-document search and match views, Contents custom-outline/settings screens, Book Map and Page Overview still have portrait geometry. Physical display rotation and touch transformation are pending Kindle verification.
 
 ## Documents and document search
 
 KOReader rebuilds its File Manager at the new screen size, preserving the folder and focused file, and updates touch zones for the new dimensions. A locked turn survives a trip to the File Manager. [Rotation policy](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/filemanager/filemanager.lua#L60-L66) · [Folder and focus capture](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/filemanager/filemanager.lua#L751-L773) · [Touch dimensions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/filemanager/filemanager.lua#L95-L100)
 
 Reader’s Documents view keeps the current folder, filter, and visible item when Keep orientation carries a landscape turn out of an open book or across a restart. The landscape card fits seven full rows and the portrait card fits ten. Previous, Next, Exit and the Find keyboard use the live canvas. The eleven Mac Library tests include a staged abort and retry, folder and file rows, page-button and far-right touch navigation, lookup and clearing the filter. [Documents screenshot](screenshots/landscape-documents.png) · [Find screenshot](screenshots/landscape-document-find.png)
+
+
+## Cross-book Bookmark Browser
+
+The cross-book browser uses the viewport for search, filter cards, result rows, note previews, and descriptions. Rotating the result list keeps its first visible item in the new page. A multi-page note or description retains its byte offset through rewrapping, and a rejected frame retains the previously measured pages. The simulator browsed an authored EPUB and PDF, searched by note text with the landscape keyboard, and changed orientation while a long note was open. [Saved note screenshot](screenshots/landscape-bookmark-detail.png)
