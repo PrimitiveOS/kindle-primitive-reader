@@ -201,7 +201,11 @@ fn landscape_profiles_edit_replace_and_delete_a_pdf_profile_without_moving_the_d
     assert_eq!(app.screen, Screen::ReadingProfiles);
     assert_landscape(&app, turn);
     tap_row(&mut app, "copies");
-    tap_row(&mut app, "Delete");
+    let tap_delete = |app: &mut Reader| {
+        assert_eq!(app.input(Input::PageForward), Change::Partial);
+        tap_row(app, "Delete");
+    };
+    tap_delete(&mut app);
     let deletion = profile_confirmation_sheet(app.navigation_layout(), "copies", Confirm::Delete);
     let cancel = deletion.button(SheetAction::Cancel);
     let delete = deletion.button(SheetAction::Confirm);
@@ -216,10 +220,10 @@ fn landscape_profiles_edit_replace_and_delete_a_pdf_profile_without_moving_the_d
 
     assert_eq!(app.input(Input::PageBack), Change::Partial);
     assert_eq!(app.profiles.len(), 2);
-    tap_row(&mut app, "Delete");
+    tap_delete(&mut app);
     tap(&mut app, cancel);
     assert_eq!(app.profiles.len(), 2);
-    tap_row(&mut app, "Delete");
+    tap_delete(&mut app);
     tap(&mut app, delete);
     assert_eq!(app.screen, Screen::ReadingProfiles);
     assert_eq!(app.profiles.len(), 1);
