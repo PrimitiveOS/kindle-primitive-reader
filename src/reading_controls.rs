@@ -58,6 +58,9 @@ pub(crate) struct ReadingControls {
     /// Show the all-results list when Find is used on selected text.
     #[serde(skip_serializing_if = "is_false")]
     pub selection_search_all: bool,
+    /// Temporarily fit fixed pages during directional text search.
+    #[serde(skip_serializing_if = "is_false")]
+    pub fixed_search_full_page: bool,
     pub left_touch: bool,
     pub large_toolbar: bool,
     pub disable_page_taps: bool,

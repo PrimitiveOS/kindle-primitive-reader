@@ -1080,6 +1080,7 @@ impl Reader {
     }
 
     fn open_with_password(&mut self, mut entry: LibraryBook, password: Option<&str>) -> Result<()> {
+        self.close_fixed_search_fit()?;
         self.logical_recovery = None;
         self.footer_initial_position = None;
         let (absolute, id, prepared_pdf) = with_storage(|| {
@@ -1371,6 +1372,11 @@ impl Reader {
         self.top_header_about = false;
         self.top_header_font_picker = None;
         let previous = self.screen;
+        let fit_error = if screen != Screen::Fixed && screen != previous {
+            self.close_fixed_search_fit().err()
+        } else {
+            None
+        };
         if screen != previous {
             self.list_density_picker = None;
         }
@@ -1646,7 +1652,7 @@ impl Reader {
             };
             self.current_contents_row.unwrap_or_default() / page_rows
         };
-        self.notice = None;
+        self.notice = fit_error.map(|error| error.to_string());
         self.prepare_flexible_marks();
         self.update_footer_clock(Instant::now());
     }
@@ -1662,6 +1668,9 @@ impl Reader {
     }
 
     fn record_position_at(&mut self, now: Instant) {
+        if self.fixed_search_fit_active() {
+            return;
+        }
         self.update_stats_activity(now);
         let position_changed = if let Some(fixed) = &self.fixed {
             let saved = self
@@ -1700,7 +1709,8 @@ impl Reader {
     }
 
     fn update_stats_activity(&mut self, now: Instant) {
-        let reading = self.stats_awake && self.end_dialog.is_none();
+        let reading =
+            self.stats_awake && self.end_dialog.is_none() && !self.fixed_search_fit_active();
         let book = match self.screen {
             Screen::Book if reading => self.active.as_ref().map(|book| book.id),
             Screen::Illustration if reading && self.book_details.is_none() => self
@@ -1842,6 +1852,14 @@ impl Reader {
                     }),
                 )
                 .detail("Open the results list when you tap Find on selected text"),
+                Item::new(
+                    "Fit fixed pages during search",
+                    Action::SetReadingControls(ReadingControls {
+                        fixed_search_full_page: !self.controls.fixed_search_full_page,
+                        ..self.controls
+                    }),
+                )
+                .detail("Temporarily show the whole page when finding the next or previous match"),
             ];
             items.extend(self.search_presentation_items());
             return items;
@@ -4384,6 +4402,7 @@ impl Reader {
     }
 
     fn jump_fixed(&mut self, page: usize, target: Option<FixedJump>) -> Result<HistoryLocation> {
+        self.close_fixed_search_fit()?;
         let fixed = self.fixed.as_mut().ok_or("No open document")?;
         let previous = HistoryLocation {
             position: fixed_position(&fixed.reading),
@@ -4449,6 +4468,7 @@ impl Reader {
             .get(index)
             .cloned()
             .ok_or("No previous location")?;
+        self.close_fixed_search_fit()?;
         let current = self
             .current_history_location()
             .ok_or("Open a document first")?;
@@ -4464,6 +4484,7 @@ impl Reader {
 
     fn next_location(&mut self) -> Result<()> {
         let next = self.forward.last().cloned().ok_or("No next location")?;
+        self.close_fixed_search_fit()?;
         let current = self
             .current_history_location()
             .ok_or("Open a document first")?;
@@ -4513,6 +4534,7 @@ impl Reader {
 
     fn auto_turn_eligible(&self) -> bool {
         self.stats_awake
+            && !self.fixed_search_fit_active()
             && !self.touch_locked
             && self.end_dialog.is_none()
             && self.link_popup.is_none()
@@ -4667,8 +4689,9 @@ impl Reader {
                 return change;
             }
             if self.nearby.deadline().is_some() {
-                self.nearby.cancel();
-                self.notice = None;
+                if let Err(error) = self.cancel_directional_search() {
+                    return self.report(error);
+                }
             }
         }
         if self.screen == Screen::Find && FIND_CASE.contains(x, y) {
@@ -4740,6 +4763,7 @@ impl Reader {
     }
 
     fn start_document_search(&mut self, query: &str) -> Result<()> {
+        self.close_fixed_search_fit()?;
         let match_case = self.find_match_case;
         let ignore_accents = self.find_ignore_accents;
         if self.fixed.is_none() {
@@ -5433,6 +5457,9 @@ impl Reader {
     }
 
     fn exit(&mut self) -> Change {
+        if let Err(error) = self.close_fixed_search_fit() {
+            return self.report(error);
+        }
         match self.save() {
             Ok(()) => Change::Exit,
             Err(error) => self.report(error),
@@ -5651,9 +5678,10 @@ impl Reader {
             return None;
         };
         if self.nearby.searching_direction() {
-            self.nearby.cancel();
-            self.notice = None;
-            return Some(Change::Partial);
+            return Some(match self.cancel_directional_search() {
+                Ok(()) => Change::Partial,
+                Err(error) => self.report(error),
+            });
         }
         let action = self.search_step(step)?;
         Some(match self.activate(action) {
@@ -6949,6 +6977,9 @@ impl Reader {
                 canvas.button(NEXT_COMIC, "Next comic", false, false);
             } else if self.screen == Screen::Fixed && selection.is_empty() {
                 self.draw_search_steps(canvas);
+                if self.fixed_search_fit_active() {
+                    self.draw_fixed_search_fit_close(canvas);
+                }
             }
             if let Some(popup) = &self.link_popup {
                 popup.draw(canvas);
@@ -7383,6 +7414,13 @@ impl Reader {
                         {
                             RowAccessory::Toggle(self.controls.selection_search_all)
                         }
+                        Action::SetReadingControls(controls)
+                            if self.screen == Screen::SearchSettings
+                                && controls.fixed_search_full_page
+                                    != self.controls.fixed_search_full_page =>
+                        {
+                            RowAccessory::Toggle(self.controls.fixed_search_full_page)
+                        }
                         _ => RowAccessory::Disclosure,
                     }
                 },
@@ -7808,6 +7846,15 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if self.screen == Screen::Fixed && self.fixed_search_fit_active() {
+            return match self.cancel_directional_search() {
+                Ok(()) => match self.swipe(input, start_x) {
+                    Change::None => Change::Partial,
+                    change => change,
+                },
+                Err(error) => self.report(error),
+            };
+        }
         if let Some(change) = self.logical_recovery_input(input) {
             return change;
         }
@@ -7889,6 +7936,9 @@ impl App for Reader {
             input,
             Input::HoldStart(..) | Input::HoldPan(..) | Input::HoldRelease { .. }
         ) {
+            if let Some(change) = self.fixed_search_fit_input(input) {
+                return change;
+            }
             return self.touch_hold_input(input).unwrap_or(Change::None);
         }
         if let Some(change) = self.logical_recovery_input(input) {
@@ -8015,6 +8065,9 @@ impl App for Reader {
         }
         if self.screen == Screen::LibraryExport(library_export::Page::Colors) {
             return self.export_colors_input(input);
+        }
+        if let Some(change) = self.fixed_search_fit_input(input) {
+            return change;
         }
         if matches!(self.screen, Screen::Book | Screen::Fixed)
             && let Some(change) = self.overlay_footer_input(input)

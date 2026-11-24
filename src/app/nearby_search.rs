@@ -2,6 +2,7 @@
 //! reuse the open document and yield between physical pages.
 use super::*;
 use crate::Anchor;
+use crate::fixed_session::SEARCH_FIT_CLOSE;
 use crate::search::{ChapterText, FlowConfig, NearbySearch, SearchDirection};
 use std::sync::{
     Arc, Condvar, Mutex,
@@ -196,6 +197,11 @@ struct FixedPending {
     at: Instant,
 }
 
+struct FixedSearchFit {
+    original_view: FixedPreferences,
+    original_location: HistoryLocation,
+}
+
 fn adjacent_page(page: usize, count: usize, direction: SearchDirection) -> Option<usize> {
     match direction {
         SearchDirection::Previous => page.checked_sub(1),
@@ -214,6 +220,7 @@ pub(super) struct Nearby {
     // Retain this even after a completed/cancelled job while hits still exist.
     // Closing a panel must not make old-style results current again.
     results_context: Option<ReflowContext>,
+    fit: Option<FixedSearchFit>,
 }
 
 impl Nearby {
@@ -249,6 +256,100 @@ impl Nearby {
 }
 
 impl Reader {
+    pub(super) fn fixed_search_fit_active(&self) -> bool {
+        self.nearby.fit.is_some()
+    }
+
+    fn enter_fixed_search_fit(&mut self) -> Result<()> {
+        if !self.controls.fixed_search_full_page || self.fixed_search_fit_active() {
+            return Ok(());
+        }
+        let original_location = self.current_history_location().ok_or("No open document")?;
+        let reading = &mut self.fixed.as_mut().ok_or("No open document")?.reading;
+        let original_view = reading.preferences();
+        reading.show_search_fit_page(reading.page())?;
+        self.nearby.fit = Some(FixedSearchFit {
+            original_view,
+            original_location,
+        });
+        let now = Instant::now();
+        self.update_stats_activity(now);
+        self.sync_auto_turn(now);
+        Ok(())
+    }
+
+    fn restore_fixed_search_fit(&mut self) -> Result<()> {
+        let Some(fit) = &self.nearby.fit else {
+            return Ok(());
+        };
+        if let Some(fixed) = &mut self.fixed {
+            if fixed.reading.preferences() != fit.original_view {
+                fixed.reading.restore_view(fit.original_view)?;
+            }
+            fixed.reading.pause();
+        }
+        self.nearby.fit = None;
+        self.record_position();
+        self.sync_auto_turn(Instant::now());
+        Ok(())
+    }
+
+    pub(super) fn cancel_directional_search(&mut self) -> Result<()> {
+        self.nearby.cancel();
+        if self.fixed_search_fit_active() {
+            self.restore_fixed_search_fit()?;
+            self.nearby.clear();
+            self.search_result = None;
+            self.pdf_result_regions.clear();
+        }
+        self.notice = None;
+        Ok(())
+    }
+
+    pub(super) fn close_fixed_search_fit(&mut self) -> Result<()> {
+        if self.fixed_search_fit_active() {
+            self.cancel_directional_search()?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn fixed_search_fit_input(&mut self, input: Input) -> Option<Change> {
+        if self.screen != Screen::Fixed || !self.fixed_search_fit_active() {
+            return None;
+        }
+        let keep = match input {
+            Input::Tap(x, y) => {
+                if DONE.contains(x, y) {
+                    return Some(self.exit());
+                }
+                if let Some(change) = self.search_result_input(x, y) {
+                    return Some(change);
+                }
+                false
+            }
+            Input::LongTap(..) | Input::HoldRelease { .. } => false,
+            Input::HoldStart(..) | Input::HoldPan(..) => return Some(Change::None),
+            Input::PageBack | Input::PageForward | Input::Swipe { .. } => true,
+            _ => return None,
+        };
+        match self.cancel_directional_search() {
+            Ok(()) if keep => match self.input(input) {
+                Change::None => Some(Change::Partial),
+                change => Some(change),
+            },
+            Ok(()) => Some(Change::Partial),
+            Err(error) => Some(self.report(error)),
+        }
+    }
+
+    pub(super) fn draw_fixed_search_fit_close(&self, canvas: &mut Canvas) {
+        // Replace the temporary view's zoom controls in the reserved footer
+        // area. The status caption and Exit keep their normal positions.
+        let rect = SEARCH_FIT_CLOSE;
+        canvas.fill(rect, 255);
+        canvas.button(rect, "Close search", false, false);
+    }
+
     fn current_reflow_context(&self) -> Option<ReflowContext> {
         self.active.as_ref().map(|active| ReflowContext {
             edition: active.id,
@@ -309,9 +410,10 @@ impl Reader {
             return None;
         };
         if self.nearby.deadline().is_some() {
-            self.nearby.cancel();
-            self.notice = None;
-            return Some(Change::Partial);
+            return Some(match self.cancel_directional_search() {
+                Ok(()) => Change::Partial,
+                Err(error) => self.report(error),
+            });
         }
         Some(match self.begin_nearby(direction, false) {
             Ok(()) => Change::Partial,
@@ -443,6 +545,7 @@ impl Reader {
                 self.cancel_search();
                 self.search_result = None;
             }
+            self.enter_fixed_search_fit()?;
             self.nearby.fixed = Some(FixedPending {
                 search,
                 query,
@@ -616,6 +719,7 @@ impl Reader {
                     (direction, false) => direction,
                 };
                 self.nearby.end = Some(exhausted);
+                self.restore_fixed_search_fit()?;
                 let message = if pending.search.skipped > 0 {
                     "No match found. Some pages could not be searched"
                 } else {
@@ -645,7 +749,24 @@ impl Reader {
             };
             // Keep all matching words highlighted, while a zoomed viewport
             // follows the first occurrence forward or the last one backward.
-            let previous = self.jump_fixed(page, FixedJump::regions(&found.focus))?;
+            let previous = if let Some(fit) = &self.nearby.fit {
+                let previous = fit.original_location.clone();
+                if let Err(error) = self
+                    .fixed
+                    .as_mut()
+                    .unwrap()
+                    .reading
+                    .show_search_fit_page(page)
+                {
+                    self.restore_fixed_search_fit()?;
+                    return Err(error);
+                }
+                self.pdf_selection = None;
+                self.show(Screen::Fixed);
+                previous
+            } else {
+                self.jump_fixed(page, FixedJump::regions(&found.focus))?
+            };
             if !pending.continuing {
                 self.push_history(previous);
             }
@@ -813,6 +934,208 @@ mod fixed_tests {
             app.poll_nearby(Instant::now()).unwrap();
         }
         assert!(!app.nearby.searching_direction());
+    }
+
+    #[test]
+    fn fixed_search_fit_is_temporary_and_restores_zoom_pan_and_history() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Coastal field guide.pdf");
+        fs::write(&path, coastal_guide()).unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&path).unwrap();
+        assert!(!app.controls.fixed_search_full_page);
+        app.activate(Action::SetReadingControls(ReadingControls {
+            fixed_search_full_page: true,
+            ..app.controls
+        }))
+        .unwrap();
+        let reading = &mut app.fixed.as_mut().unwrap().reading;
+        reading.jump(2).unwrap();
+        reading.rotate().unwrap();
+        reading.set_zoom(3).unwrap();
+        let touch = hayro::kurbo::Point::new(120.0, 140.0);
+        reading
+            .jump_to(2, Some(&FixedJump::LinkPoint(touch)))
+            .unwrap();
+        let original_view = reading.preferences();
+        assert_eq!(original_view.zoom, 3);
+        assert_ne!((original_view.offset_x, original_view.offset_y), (0.0, 0.0));
+        let origin = app.current_history_location().unwrap();
+        app.record_position();
+        app.save().unwrap();
+        let begin = |app: &mut Reader, query: &str| {
+            app.show(Screen::Find);
+            app.editor.text = query.chars().collect();
+            app.editor.caret = app.editor.text.len();
+            assert_eq!(tap(app, FixedNavigation::Next.entry().0), Change::Partial);
+            assert!(app.fixed_search_fit_active());
+            let view = app.fixed.as_ref().unwrap().reading.preferences();
+            assert_eq!((view.zoom, view.turns), (0, original_view.turns));
+            assert!(!view.width_fit && !view.height_fit && !view.continuous);
+        };
+
+        begin(&mut app, "beacon");
+        assert_eq!(tap(&mut app, PREVIOUS), Change::Partial);
+        assert!(!app.fixed_search_fit_active());
+        assert_eq!(app.current_history_location(), Some(origin.clone()));
+        assert_eq!(
+            app.fixed.as_ref().unwrap().reading.preferences(),
+            original_view
+        );
+        assert!(app.back.is_empty());
+
+        begin(&mut app, "no such phrase appears");
+        settle(&mut app);
+        assert!(!app.fixed_search_fit_active());
+        assert_eq!(app.current_history_location(), Some(origin.clone()));
+        assert!(app.back.is_empty());
+
+        begin(&mut app, "beacon");
+        settle(&mut app);
+        assert_eq!(app.screen, Screen::Fixed);
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 2);
+        assert_eq!(app.pdf_result_regions.len(), 2);
+        assert!(app.fixed_search_fit_active());
+        capture_test_screen(&app, &fonts, "READER_FIXED_SEARCH_FIT_ROTATED_FRAME", false);
+        assert_eq!(app.back, [origin.clone()]);
+        assert_eq!(
+            tap(&mut app, FixedNavigation::Next.button()),
+            Change::Partial
+        );
+        settle(&mut app);
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 4);
+        assert_eq!(app.back, [origin.clone()]);
+
+        app.save().unwrap();
+        let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(reopened.current_history_location(), Some(origin.clone()));
+        assert_eq!(
+            reopened.fixed.as_ref().unwrap().reading.preferences(),
+            original_view
+        );
+        assert!(reopened.controls.fixed_search_full_page);
+        assert_eq!(tap(&mut app, SEARCH_FIT_CLOSE), Change::Partial);
+        assert!(!app.fixed_search_fit_active());
+        assert!(app.pdf_result_regions.is_empty());
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 4);
+        assert_eq!(
+            app.fixed.as_ref().unwrap().reading.preferences(),
+            original_view
+        );
+        assert_eq!(app.back, [origin.clone()]);
+        app.save().unwrap();
+        let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        reopened.open_path(&path).unwrap();
+        assert_eq!(reopened.fixed.as_ref().unwrap().reading.page(), 4);
+        assert_eq!(
+            reopened.fixed.as_ref().unwrap().reading.preferences(),
+            original_view
+        );
+        app.activate(Action::ReturnToLocation).unwrap();
+        let restored = app.current_history_location().unwrap();
+        assert_eq!(restored.position, origin.position);
+        assert!(
+            restored
+                .scan_point
+                .unwrap()
+                .distance(origin.scan_point.unwrap())
+                < 0.5
+        );
+
+        // An adjacent result can exhaust, restoring the saved reading mode
+        // at the reached page while its search controls remain available.
+        begin(&mut app, "beacon");
+        settle(&mut app);
+        assert_eq!(
+            tap(&mut app, FixedNavigation::Next.button()),
+            Change::Partial
+        );
+        settle(&mut app);
+        assert_eq!(
+            tap(&mut app, FixedNavigation::Next.button()),
+            Change::Partial
+        );
+        settle(&mut app);
+        assert!(!app.fixed_search_fit_active());
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 4);
+        assert_eq!(
+            app.fixed.as_ref().unwrap().reading.preferences().zoom,
+            original_view.zoom
+        );
+        assert_eq!(
+            tap(&mut app, FixedNavigation::Previous.button()),
+            Change::Partial
+        );
+        assert!(app.nearby.searching_direction());
+        app.activate(Action::ReturnToLocation).unwrap();
+        assert!(!app.nearby.searching_direction());
+        assert!(!app.fixed_search_fit_active());
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 2);
+    }
+
+    #[test]
+    fn fixed_search_fit_does_not_apply_to_all_results_or_change_the_continuous_mode_permanently() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Coastal field guide.pdf");
+        fs::write(&path, coastal_guide()).unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&path).unwrap();
+        app.controls.fixed_search_full_page = true;
+        app.activate(Action::FixedScroll(true)).unwrap();
+        app.activate(Action::SetFixedZoom(2)).unwrap();
+        let original_view = app.fixed.as_ref().unwrap().reading.preferences();
+        assert!(original_view.continuous && original_view.width_fit);
+        app.start_document_search("beacon").unwrap();
+        while app.search_at.is_some() {
+            app.step_pdf_search(Instant::now()).unwrap();
+        }
+        assert!(!app.fixed_search_fit_active());
+        assert_eq!(
+            app.fixed.as_ref().unwrap().reading.preferences(),
+            original_view
+        );
+        let index = app.pdf_hits.iter().position(|hit| hit.page == 2).unwrap();
+        app.activate(Action::PdfSearchHit(index)).unwrap();
+        assert!(!app.fixed_search_fit_active());
+        assert!(app.fixed.as_ref().unwrap().reading.is_continuous());
+        assert_eq!(app.fixed.as_ref().unwrap().reading.preferences().zoom, 2);
+        app.show(Screen::Find);
+        app.editor.text = "beacon".chars().collect();
+        assert_eq!(
+            tap(&mut app, FixedNavigation::Next.entry().0),
+            Change::Partial
+        );
+        settle(&mut app);
+        assert!(app.fixed_search_fit_active());
+        assert!(!app.fixed.as_ref().unwrap().reading.is_continuous());
+        capture_test_screen(&app, &fonts, "READER_FIXED_SEARCH_FIT_FRAME", false);
+        app.gestures
+            .set(Gesture::LeftUp, Binding::Bookmark)
+            .unwrap();
+        assert_eq!(
+            app.swipe(
+                Input::Swipe {
+                    start_y: 400.0,
+                    dx: 0.0,
+                    dy: -180.0
+                },
+                30.0
+            ),
+            Change::Partial
+        );
+        assert!(!app.fixed_search_fit_active());
+        assert!(app.fixed.as_ref().unwrap().reading.is_continuous());
+        assert_eq!(app.fixed.as_ref().unwrap().reading.preferences().zoom, 2);
+        assert!(app.page_is_bookmarked());
     }
 
     #[test]
