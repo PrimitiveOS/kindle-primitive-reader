@@ -50,7 +50,9 @@ impl Screen {
 
 impl Reader {
     pub(super) fn list_geometry(&self) -> Geometry {
-        if self.screen.is_bookmark_list() {
+        if self.screen == Screen::Matches {
+            self.match_geometry()
+        } else if self.screen.is_bookmark_list() {
             Geometry::dense(self.controls.bookmark_density)
         } else {
             Geometry::STANDARD

@@ -549,6 +549,7 @@ impl Reader {
         let path = active.reading.config.book.clone();
         let chapters = active.reading.probe.chapter_count();
         search = search
+            .with_context_words(self.search_context_words())
             .with_flow_config(context.flow.clone())
             .for_publication(context.publication, chapters);
         self.update_lookup_history(|h| h.search(pattern, case, accents, regex))?;

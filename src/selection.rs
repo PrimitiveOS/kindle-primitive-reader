@@ -462,31 +462,60 @@ pub(crate) fn word_ranges(text: &str) -> impl Iterator<Item = Range<usize>> + '_
 
 /// Unicode word context with a scalar cap for space-free text and long tokens.
 pub(crate) fn bounded_context(text: &str, words: usize, from_end: bool) -> String {
+    bounded_context_range(text, words, from_end)
+        .map_or_else(String::new, |range| text[range].to_owned())
+}
+
+pub(crate) fn bounded_context_range(
+    text: &str,
+    words: usize,
+    from_end: bool,
+) -> Option<Range<usize>> {
     if words == 0 {
-        return String::new();
+        return None;
     }
-    let text = if from_end {
-        let start = text.char_indices().rev().nth(2047).map_or(0, |(i, _)| i);
-        &text[start..]
+    let offset = if from_end {
+        text.char_indices()
+            .rev()
+            .nth(2047)
+            .map_or(0, |(index, _)| index)
     } else {
-        &text[..text.char_indices().nth(2048).map_or(text.len(), |(i, _)| i)]
+        0
     };
-    let ranges: Vec<_> = word_ranges(text).collect();
-    let Some(first) = ranges.first() else {
-        return String::new();
+    let bounded = if from_end {
+        &text[offset..]
+    } else {
+        &text[..text
+            .char_indices()
+            .nth(2048)
+            .map_or(text.len(), |(index, _)| index)]
     };
-    let last = ranges.last().unwrap();
+    let ranges: Vec<_> = word_ranges(bounded).collect();
     let range = if from_end {
-        ranges[ranges.len().saturating_sub(words)].start..last.end
+        ranges.get(ranges.len().saturating_sub(words))?.start..ranges.last()?.end
     } else {
-        first.start..ranges[(words - 1).min(ranges.len() - 1)].end
+        ranges.first()?.start
+            ..ranges
+                .get((words - 1).min(ranges.len().saturating_sub(1)))?
+                .end
     };
-    let selected = &text[range];
-    if from_end {
-        selected[selected.char_indices().rev().nth(511).map_or(0, |(i, _)| i)..].to_owned()
+    let selected = &bounded[range.clone()];
+    let clipped = if from_end {
+        range.start
+            + selected
+                .char_indices()
+                .rev()
+                .nth(511)
+                .map_or(0, |(index, _)| index)..range.end
     } else {
-        selected.chars().take(512).collect()
-    }
+        range.start
+            ..range.start
+                + selected
+                    .char_indices()
+                    .nth(512)
+                    .map_or(selected.len(), |(index, _)| index)
+    };
+    Some(offset + clipped.start..offset + clipped.end)
 }
 
 pub(crate) fn word_range(text: &str, offset: usize) -> Option<Range<usize>> {

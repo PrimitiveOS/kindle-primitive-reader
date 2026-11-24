@@ -55,7 +55,10 @@ impl Geometry {
     };
 
     pub(super) fn dense(density: ListDensity) -> Self {
-        let rows = density.rows();
+        Self::with_rows(density.rows())
+    }
+
+    pub(super) fn with_rows(rows: u8) -> Self {
         Self {
             rows: usize::from(rows),
             row_height: LIST_HEIGHT / i32::from(rows),
@@ -124,16 +127,59 @@ impl Field {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum PickerTarget {
+    Density(Scope, Field),
+    Search(super::search_presentation::Field),
+}
+
+impl PickerTarget {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Density(scope, field) => field.title(scope),
+            Self::Search(field) => field.title(),
+        }
+    }
+
+    fn bounds(self) -> (u8, u8) {
+        match self {
+            Self::Density(_, field) => field.bounds(),
+            Self::Search(field) => field.bounds(),
+        }
+    }
+
+    fn default_value(self, controls: &ReadingControls) -> u8 {
+        match self {
+            Self::Density(scope, field) => field.default_value(scope.preferences(controls)),
+            Self::Search(field) => field.default_value(),
+        }
+    }
+
+    fn is_lines(self) -> bool {
+        matches!(self, Self::Density(_, Field::Lines))
+    }
+
+    fn is_font(self) -> bool {
+        matches!(self, Self::Density(_, Field::Font))
+    }
+
+    fn hold_step(self) -> i8 {
+        match self {
+            Self::Search(super::search_presentation::Field::Words) => 5,
+            _ => 4,
+        }
+    }
+}
+
 pub(super) struct Picker {
-    scope: Scope,
-    field: Field,
+    pub(super) target: PickerTarget,
     pub(super) value: Option<u8>,
 }
 
 impl Picker {
-    fn value(&self, density: ListDensity) -> u8 {
+    fn value(&self, controls: &ReadingControls) -> u8 {
         self.value
-            .unwrap_or_else(|| self.field.default_value(density))
+            .unwrap_or_else(|| self.target.default_value(controls))
     }
 }
 
@@ -189,8 +235,7 @@ impl Reader {
         };
         self.notice = None;
         self.list_density_picker = Some(Picker {
-            scope,
-            field,
+            target: PickerTarget::Density(scope, field),
             value,
         });
     }
@@ -199,12 +244,12 @@ impl Reader {
         let Some(picker) = &self.list_density_picker else {
             return;
         };
-        let density = picker.scope.preferences(&self.controls);
-        let (min, max) = picker.field.bounds();
+        let target = picker.target;
+        let (min, max) = target.bounds();
         canvas.popup(PANEL);
         canvas.text(
             Rect::new(244, 534, 776, 68),
-            picker.field.title(picker.scope),
+            target.title(),
             TextStyle::new(50).bold().center(),
         );
         canvas.text(
@@ -214,36 +259,32 @@ impl Reader {
         );
         canvas.button(DECREASE, "-", false, false);
         canvas.button(INCREASE, "+", false, false);
-        let value = if picker.field == Field::Lines && picker.value.is_none() {
+        let value = if target.is_lines() && picker.value.is_none() {
             "Disabled".to_owned()
         } else {
-            picker.value(density).to_string()
+            picker.value(&self.controls).to_string()
         };
         canvas.text(
             Rect::new(371, 686, 522, 105),
             &value,
             TextStyle::new(66).bold().center(),
         );
-        let default_value = picker.field.default_value(density);
-        match picker.field {
-            Field::Rows => {
-                canvas.button(DEFAULT, &format!("Default ({default_value})"), false, false)
-            }
-            Field::Font => canvas.button(
-                DEFAULT,
-                &format!("Automatic ({default_value})"),
+        let default_value = target.default_value(&self.controls);
+        if target.is_lines() {
+            canvas.button(
+                LINE_DEFAULT,
+                &format!("Default ({default_value})"),
                 false,
                 false,
-            ),
-            Field::Lines => {
-                canvas.button(
-                    LINE_DEFAULT,
-                    &format!("Default ({default_value})"),
-                    false,
-                    false,
-                );
-                canvas.button(DISABLE_LINES, "Disable", false, false);
-            }
+            );
+            canvas.button(DISABLE_LINES, "Disable", false, false);
+        } else {
+            let label = if target.is_font() {
+                "Automatic"
+            } else {
+                "Default"
+            };
+            canvas.button(DEFAULT, &format!("{label} ({default_value})"), false, false);
         }
         if let Some(notice) = &self.notice {
             canvas.text(
@@ -258,8 +299,8 @@ impl Reader {
 
     pub(super) fn list_density_input(&mut self, input: Input) -> Option<Change> {
         let picker = self.list_density_picker.as_mut()?;
-        let density = picker.scope.preferences(&self.controls);
-        let clear_button = if picker.field == Field::Lines {
+        let target = picker.target;
+        let clear_button = if target.is_lines() {
             DISABLE_LINES
         } else {
             DEFAULT
@@ -272,14 +313,17 @@ impl Reader {
             }
             Input::Tap(x, y) if APPLY.contains(x, y) => {
                 let mut controls = self.controls;
-                match picker.field {
-                    Field::Rows => {
-                        picker.scope.preferences_mut(&mut controls).rows_per_page = picker.value
+                match target {
+                    PickerTarget::Density(scope, Field::Rows) => {
+                        scope.preferences_mut(&mut controls).rows_per_page = picker.value
                     }
-                    Field::Font => {
-                        picker.scope.preferences_mut(&mut controls).font_size = picker.value
+                    PickerTarget::Density(scope, Field::Font) => {
+                        scope.preferences_mut(&mut controls).font_size = picker.value
                     }
-                    Field::Lines => controls.bookmark_max_lines = picker.value,
+                    PickerTarget::Density(_, Field::Lines) => {
+                        controls.bookmark_max_lines = picker.value
+                    }
+                    PickerTarget::Search(field) => field.set(&mut controls, picker.value),
                 }
                 return Some(match self.activate(Action::SetReadingControls(controls)) {
                     Ok(()) => {
@@ -290,7 +334,7 @@ impl Reader {
                     Err(error) => self.report(error),
                 });
             }
-            Input::Tap(x, y) if picker.field == Field::Lines && LINE_DEFAULT.contains(x, y) => {
+            Input::Tap(x, y) if target.is_lines() && LINE_DEFAULT.contains(x, y) => {
                 picker.value = Some(DEFAULT_BOOKMARK_LINES);
                 self.notice = None;
                 return Some(Change::Partial);
@@ -302,14 +346,14 @@ impl Reader {
             }
             Input::Tap(x, y) if DECREASE.contains(x, y) => -1,
             Input::Tap(x, y) if INCREASE.contains(x, y) => 1,
-            Input::LongTap(x, y) if DECREASE.contains(x, y) => -4,
-            Input::LongTap(x, y) if INCREASE.contains(x, y) => 4,
+            Input::LongTap(x, y) if DECREASE.contains(x, y) => -target.hold_step(),
+            Input::LongTap(x, y) if INCREASE.contains(x, y) => target.hold_step(),
             Input::PageBack => -1,
             Input::PageForward => 1,
             _ => return Some(Change::None),
         };
-        let prior = picker.value(density);
-        let (min, max) = picker.field.bounds();
+        let prior = picker.value(&self.controls);
+        let (min, max) = target.bounds();
         let adjusted = prior.saturating_add_signed(step).clamp(min, max);
         if prior == adjusted {
             return Some(Change::None);

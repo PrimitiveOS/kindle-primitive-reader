@@ -114,14 +114,15 @@ fn complete_fixed_results_page_through_occurrences_and_restore_the_passage() {
     let search = app.pdf_search.as_ref().unwrap();
     let (bytes, scanned) = (search.retained_bytes, search.next_page);
     assert!(!search.memory_limited);
-    let last_page = (count - 1) / ROWS_PER_PAGE;
+    let geometry = app.match_geometry();
+    let last_page = (count - 1) / geometry.rows;
     let final_window = Instant::now();
     assert_eq!(tap(&mut app, LAST_MATCH_PAGE), Change::Partial);
     assert_eq!(app.list_page, last_page);
     let (total, rows) = app.list_window();
     let final_window_us = final_window.elapsed().as_micros();
     assert_eq!(total, count);
-    assert_eq!(rows.len(), count - last_page * ROWS_PER_PAGE);
+    assert_eq!(rows.len(), count - last_page * geometry.rows);
     assert!(matches!(rows.last().unwrap().action, Action::PdfSearchHit(i) if i == count - 1));
     if authored {
         capture_test_screen(
@@ -141,10 +142,10 @@ fn complete_fixed_results_page_through_occurrences_and_restore_the_passage() {
     assert_eq!(tap(&mut app, FIRST_MATCH_PAGE), Change::Partial);
     assert_eq!(app.list_page, 0);
     assert_eq!(tap(&mut app, LAST_MATCH_PAGE), Change::Partial);
-    let final_row = (count - 1) % ROWS_PER_PAGE;
+    let final_row = geometry.row((count - 1) % geometry.rows);
     app.input(Input::Tap(
         (LIST_X + 30) as f32,
-        (LIST_Y + final_row as i32 * ROW_HEIGHT + 20) as f32,
+        (final_row.y + final_row.h / 2) as f32,
     ));
     assert_eq!(app.screen, Screen::Fixed);
     let hit = &app.pdf_hits[count - 1];
