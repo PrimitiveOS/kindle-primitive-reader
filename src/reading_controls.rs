@@ -4,11 +4,9 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use primitive_app::{Change, WIDTH, with_storage};
+use primitive_app::{Change, with_storage};
 use primitive_ui::Input;
 use serde::{Deserialize, Serialize};
-
-use crate::session::PAGE_HEIGHT;
 
 const MAX_FILE_BYTES: u64 = 4096;
 pub(crate) const MAX_AUTO_TURN_SECONDS: u32 = 86_400;
@@ -121,9 +119,22 @@ pub(crate) struct ReadingControls {
     /// Temporarily fit fixed pages during directional text search.
     #[serde(skip_serializing_if = "is_false")]
     pub fixed_search_full_page: bool,
+    /// Legacy global tap-only mirroring for publications without an explicit direction.
     pub left_touch: bool,
     pub large_toolbar: bool,
     pub disable_page_taps: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub disable_page_swipes: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub page_swipes_while_locked: bool,
+    #[serde(skip_serializing_if = "crate::app::page_turn_settings::Zones::is_default")]
+    pub page_turn_zones: crate::app::page_turn_settings::Zones,
+    #[serde(skip_serializing_if = "crate::app::page_turn_settings::Sizes::is_default")]
+    pub page_turn_sizes: crate::app::page_turn_settings::Sizes,
+    #[serde(skip_serializing_if = "crate::app::page_turn_settings::Order::is_default")]
+    pub touch_turn_order: crate::app::page_turn_settings::Order,
+    #[serde(skip_serializing_if = "is_false")]
+    pub mirror_document_dialogs: bool,
     /// Swap the physical previous/next page inputs, matching KOReader's device option.
     #[serde(skip_serializing_if = "is_false")]
     pub invert_page_turn_buttons: bool,
@@ -1427,6 +1438,7 @@ impl ReadingControls {
             {
                 controls.auto_turn_distance_tenths = 0;
             }
+            controls.page_turn_sizes = controls.page_turn_sizes.normalize();
             Ok(controls)
         })
         .unwrap_or_else(|_| {
@@ -1447,17 +1459,6 @@ impl ReadingControls {
     pub fn save(&self, path: &Path) -> io::Result<()> {
         let bytes = serde_json::to_vec(self).map_err(io::Error::other)?;
         primitive_app::save(path, &bytes)
-    }
-
-    /// Accept only inputs already routed to the page-turn handler.
-    pub fn page_input(self, input: Input) -> Option<Input> {
-        match input {
-            Input::Tap(_, y) if self.disable_page_taps && y < PAGE_HEIGHT as f32 => None,
-            Input::Tap(x, y) if self.left_touch && y < PAGE_HEIGHT as f32 => {
-                Some(Input::Tap(WIDTH as f32 - x, y))
-            }
-            _ => Some(input),
-        }
     }
 
     pub fn invert_page_turn_input(self, input: Input) -> Input {

@@ -28,10 +28,7 @@ pub(super) struct LinkPopup {
 
 impl LinkPopup {
     pub(super) fn draw(&self, canvas: &mut Canvas) {
-        let layout = NavigationLayout {
-            width: canvas.bounds().w,
-            height: canvas.bounds().h,
-        };
+        let layout = NavigationLayout::new(canvas.bounds().w, canvas.bounds().h);
         let place = |rect| layout.centered(rect);
         if let Some(code) = &self.qr {
             canvas.popup(place(QR_PANEL));

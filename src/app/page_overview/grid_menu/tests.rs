@@ -232,7 +232,7 @@ fn page_browser_grid_bounds_fit_the_viewport() {
         (1, 6)
     );
     for (width, height) in [(1264, 1680), (1680, 1264)] {
-        let nav = NavigationLayout { width, height };
+        let nav = NavigationLayout::new(width, height);
         let layout = OverviewLayout::with_grid(nav, Some(PageBrowserGrid::new(6, 6)));
         let first = layout.tile(0);
         let last = layout.tile(35);

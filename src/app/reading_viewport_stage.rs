@@ -143,10 +143,7 @@ impl Reader {
             self.bookmark_list_anchor().map(|ordinal| {
                 let (width, height) = target.dimensions();
                 let new_rows = Geometry::STANDARD
-                    .in_navigation(NavigationLayout {
-                        width: width as i32,
-                        height: height as i32,
-                    })
+                    .in_navigation(NavigationLayout::new(width as i32, height as i32))
                     .rows;
                 (ordinal / new_rows, ordinal)
             })

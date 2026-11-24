@@ -2168,6 +2168,20 @@ impl FixedReading {
         self.input_with_status(input, true)
     }
 
+    pub(crate) fn frame_height(&self) -> u32 {
+        self.frame.height
+    }
+
+    /// A drag of the scanned page or continuous strip is independent of page swipe settings.
+    pub(crate) fn swipe_pans(&self, dx: f32, dy: f32) -> bool {
+        self.is_continuous()
+            || (!self.is_spread()
+                && (self.view.zoom > 0
+                    || self.tiled_view_can_pan()
+                    || self.view.width_fit
+                    || (self.view.height_fit && dx.abs() >= dy.abs())))
+    }
+
     pub(crate) fn input_with_status(&mut self, input: Input, show_zoom: bool) -> Result<bool> {
         let horizontal = if self.view.right_to_left { -1 } else { 1 };
         let (smaller, larger) = self.zoom_buttons();
@@ -2179,13 +2193,7 @@ impl FixedReading {
             Input::Swipe { dx, dy, .. } if self.is_continuous() => {
                 return self.queue_scroll(dx, dy);
             }
-            Input::Swipe { dx, dy, .. }
-                if !self.is_spread()
-                    && (self.view.zoom > 0
-                        || self.tiled_view_can_pan()
-                        || self.view.width_fit
-                        || (self.view.height_fit && dx.abs() >= dy.abs())) =>
-            {
+            Input::Swipe { dx, dy, .. } if self.swipe_pans(dx, dy) => {
                 let (x, y) = (self.view.offset_x, self.view.offset_y);
                 self.present(
                     self.page,

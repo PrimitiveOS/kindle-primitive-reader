@@ -7,7 +7,7 @@ const PANEL: Rect = Rect::new(160, 615, 944, 450);
 const CLOSE: Rect = Rect::new(868, 638, 197, 100);
 
 fn grid_button(navigation: NavigationLayout) -> Rect {
-    Rect::new(navigation.width - 540, 40, 240, 100)
+    navigation.horizontal(Rect::new(navigation.width - 540, 40, 240, 100))
 }
 
 #[derive(Clone, Copy)]
@@ -119,7 +119,14 @@ impl Reader {
         (dx, dy): (f32, f32),
     ) -> Option<Change> {
         let top = 0.0..layout.navigation.height as f32 / 8.0;
-        let left = 0.0..layout.navigation.width as f32 / 8.0;
+        let navigation = layout.navigation;
+        let start_x = if navigation.mirrored {
+            navigation.width as f32 - start_x
+        } else {
+            start_x
+        };
+        let dx = if navigation.mirrored { -dx } else { dx };
+        let left = 0.0..navigation.width as f32 / 8.0;
         // Match the stock cardinal sectors before treating motion as an edge shortcut.
         let (axis, delta) = if dx != 0.0 && dy.abs() <= 0.577 * dx.abs() && top.contains(&start_y) {
             (Axis::Columns, if dx < 0.0 { 1 } else { -1 })

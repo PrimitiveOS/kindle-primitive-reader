@@ -94,12 +94,12 @@ impl OverviewLayout {
             (top, height, 26, 32)
         };
         let width = (self.navigation.width - 2 * LIST_X - (columns - 1) * gap_x) / columns;
-        Rect::new(
+        self.navigation.horizontal(Rect::new(
             LIST_X + index as i32 % columns * (width + gap_x),
             top + index as i32 / columns * (height + gap_y),
             width,
             height,
-        )
+        ))
     }
 
     fn label(self, tile: Rect) -> Rect {
@@ -150,7 +150,11 @@ impl OverviewLayout {
         if !(0.0..width).contains(&x) || !body.contains(&y) {
             return None;
         }
-        Some(if x < width / 2.0 { -1 } else { 1 })
+        Some(if (x < width / 2.0) ^ self.navigation.mirrored {
+            -1
+        } else {
+            1
+        })
     }
 
     fn track_caption(self) -> Rect {
@@ -212,7 +216,8 @@ impl Reader {
     }
 
     pub(super) fn book_map_tap_option(&self) -> Rect {
-        Rect::new(self.navigation_layout().width - 744, 40, 444, 100)
+        let layout = self.navigation_layout();
+        layout.horizontal(Rect::new(layout.width - 744, 40, 444, 100))
     }
 
     pub(super) fn draw_book_map_tap_option(&self, canvas: &mut Canvas) {
@@ -501,6 +506,11 @@ impl Reader {
         let center = track.y + track.h / 2;
         canvas.fill(Rect::new(track.x, center - 3, track.w, 6), 151);
         let portion = selected as f64 / count.saturating_sub(1).max(1) as f64;
+        let portion = if layout.navigation.mirrored {
+            1.0 - portion
+        } else {
+            portion
+        };
         let x = track.x + (portion * (track.w - 20) as f64).round() as i32;
         canvas.fill(Rect::new(x, center - 15, 20, 30), 0);
     }
@@ -525,6 +535,11 @@ impl Reader {
         let overview = self.overview.as_ref()?;
         let track = OverviewLayout::new(self.navigation_layout()).track();
         let fraction = ((x - track.x as f32) / track.w as f32).clamp(0.0, 1.0);
+        let fraction = if self.navigation_layout().mirrored {
+            1.0 - fraction
+        } else {
+            fraction
+        };
         Some(if let Some(active) = &self.active {
             let count = active.reading.probe.chapter_count();
             let chapter = (fraction * count.saturating_sub(1) as f32).round() as usize;
@@ -590,9 +605,14 @@ impl Reader {
             Input::Swipe { dx, dy, .. } if dy.abs() > dx.abs() => {
                 (if dy < 0.0 { 1 } else { -1 }, layout.columns())
             }
-            Input::Swipe { dx, dy, .. } if dx.abs() > dy.abs() => {
-                (if dx < 0.0 { 1 } else { -1 }, batch)
-            }
+            Input::Swipe { dx, dy, .. } if dx.abs() > dy.abs() => (
+                if (dx < 0.0) ^ navigation.mirrored {
+                    1
+                } else {
+                    -1
+                },
+                batch,
+            ),
             Input::Tap(x, y) if navigation.previous().contains(x, y) => (-1, batch),
             Input::Tap(x, y) if navigation.next().contains(x, y) => (1, batch),
             Input::Tap(x, y) if layout.track().contains(x, y) => return self.scrub_overview(x),

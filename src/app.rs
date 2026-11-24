@@ -77,6 +77,7 @@ mod numeric_editor;
 mod online_panel;
 mod overview_bookmarks;
 mod page_overview;
+pub(crate) mod page_turn_settings;
 #[cfg(test)]
 mod pdf_password_viewport_tests;
 mod profile_panel;
@@ -154,8 +155,10 @@ use crate::reading_profiles::{self, Profile};
 use crate::reading_stats::ReadingStats;
 use crate::search::{MAX_FIXED_SEARCH_HITS, PdfSearch, PdfSearchHit, Search, SearchHit};
 use crate::selection::TextSelection;
+#[cfg(test)]
+use crate::session::DONE;
 use crate::session::screen_pages::background::Intent as ScreenPageIntent;
-use crate::session::{BookConfig, DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageTurns, Reading};
+use crate::session::{BookConfig, PAGE_HEIGHT, PAGE_REFRESH_GAP, PageTurns, Reading};
 use crate::text_flow::TextFlow;
 use crate::{Engine, Probe, Result, Settings, TextAlignment};
 
@@ -217,6 +220,10 @@ enum Screen {
     RemoveCollection,
     ReadingControls,
     NavigationSettings,
+    PageTurns,
+    PageTurnZones,
+    PageTurnSizes(page_turn_settings::Sizes),
+    PageTurnDefaults,
     BackOptions(back_navigation::Options),
     ReadingGuides,
     ReadingGuidesAbout,
@@ -379,6 +386,10 @@ impl Screen {
             Self::RemoveCollection => "Remove collection?",
             Self::ReadingControls => "Reading controls",
             Self::NavigationSettings => "Navigation settings",
+            Self::PageTurns => "Page turns",
+            Self::PageTurnZones => "Tap zones",
+            Self::PageTurnSizes(_) => "Tap zone sizes",
+            Self::PageTurnDefaults => "Defaults for new books",
             Self::BackOptions(options) => options.title(),
             Self::ReadingGuides => "Reading guides",
             Self::ReadingGuidesAbout => "About reading guides",
@@ -588,6 +599,7 @@ enum Action {
     NameCollection(Option<String>),
     RemoveCollection,
     SetReadingControls(ReadingControls),
+    PageTurnSetting(page_turn_settings::Command),
     SetReadingOrientation(ReadingOrientation),
     KeepReadingOrientation(bool),
     ConfirmReadingOrientationDefault(ReadingOrientation),
@@ -2252,6 +2264,7 @@ impl Reader {
         self.update_stats_activity(now);
         let reading_percent = self.folder_reading_percent();
         let default_orientation = self.default_reading_orientation();
+        let document_turns = self.default_document_turns();
         let position_changed = if let Some(fixed) = &self.fixed {
             let saved = self
                 .library
@@ -2260,6 +2273,7 @@ impl Reader {
                 .highlight_color
                 .get_or_insert(self.controls.highlight_color);
             saved.screen_orientation.get_or_insert(default_orientation);
+            saved.document_turns.fill_missing(document_turns);
             let position = fixed_position(&fixed.reading);
             let changed = saved.position.as_ref() != Some(&position)
                 || saved.reading_percent != reading_percent;
@@ -2275,6 +2289,7 @@ impl Reader {
                 .highlight_color
                 .get_or_insert(self.controls.highlight_color);
             saved.screen_orientation.get_or_insert(default_orientation);
+            saved.document_turns.fill_missing(document_turns);
             let position = position(&active.reading);
             let changed = saved.position.as_ref() != Some(&position)
                 || saved.reading_percent != reading_percent;
@@ -2438,6 +2453,12 @@ impl Reader {
     }
 
     fn items(&self) -> Vec<Item> {
+        if matches!(
+            self.screen,
+            Screen::PageTurns | Screen::PageTurnZones | Screen::PageTurnDefaults
+        ) {
+            return self.page_turn_items();
+        }
         if self.screen == Screen::NavigationSettings {
             return self.navigation_preference_items();
         }
@@ -3968,6 +3989,7 @@ impl Reader {
             Action::ConfirmReadingOrientationDefault(orientation) => {
                 self.confirm_reading_orientation_default(orientation);
             }
+            Action::PageTurnSetting(command) => self.change_page_turn_setting(command)?,
             Action::SetReadingControls(mut controls) => {
                 if controls.status_bar == crate::reading_controls::StatusBar::Custom
                     && self.controls.status_bar != crate::reading_controls::StatusBar::Custom
@@ -6049,12 +6071,18 @@ impl Reader {
                 return Change::Partial;
             }
         }
-        let Some(active) = &mut self.active else {
+        let Some(active) = &self.active else {
             return Change::None;
         };
-        let Some(input) = self.controls.page_input(input) else {
+        let input = match input {
+            Input::Tap(x, y) => self.tap_turn(x, y, active.reading.frame_height()),
+            Input::Swipe { dx, dy, .. } if dx.abs() > dy.abs() => self.swipe_turn(dx, dy),
+            other => Some(other),
+        };
+        let Some(input) = input else {
             return Change::None;
         };
+        let active = self.active.as_mut().unwrap();
         let previous = (active.reading.chapter, active.reading.page);
         let change = active.reading.input(input);
         self.finish_book_update(change, previous)
@@ -6216,13 +6244,28 @@ impl Reader {
                 return Change::Partial;
             }
         }
-        let Some(fixed) = &mut self.fixed else {
+        let Some(fixed) = &self.fixed else {
             return Change::None;
         };
         let page = fixed.reading.page();
-        let Some(input) = self.controls.page_input(input) else {
+        let input = match input {
+            Input::Tap(x, y)
+                if !(show_zoom && {
+                    let (smaller, larger) = fixed.reading.zoom_buttons();
+                    smaller.contains(x, y) || larger.contains(x, y)
+                }) =>
+            {
+                self.tap_turn(x, y, fixed.reading.frame_height())
+            }
+            Input::Swipe { dx, dy, .. } if !fixed.reading.swipe_pans(dx, dy) => {
+                self.swipe_turn(dx, dy)
+            }
+            other => Some(other),
+        };
+        let Some(input) = input else {
             return Change::None;
         };
+        let fixed = self.fixed.as_mut().unwrap();
         let result = fixed.reading.input_with_status(input, show_zoom);
         self.finish_fixed_update(result, page)
     }
@@ -6429,14 +6472,22 @@ impl Reader {
     }
 
     fn scan_column_input(&mut self, input: Input) -> Change {
+        let viewport = self.reading_viewport();
+        let input = match input {
+            Input::Tap(x, y) if y < viewport.page_height() as f32 => {
+                self.tap_turn(x, y, viewport.page_height())
+            }
+            Input::Swipe { dx, dy, .. } if dx.abs() > dy.abs() => self.swipe_turn(dx, dy),
+            other => Some(other),
+        };
+        let Some(input) = input else {
+            return Change::None;
+        };
         let (Some(scan), Some(fixed)) = (&mut self.scan_columns, &mut self.fixed) else {
             return Change::None;
         };
-        let Some(input) = self.controls.page_input(input) else {
-            return Change::None;
-        };
         let direction = match input {
-            Input::Tap(x, y) if DONE.contains(x, y) => {
+            Input::Tap(x, y) if viewport.done().contains(x, y) => {
                 if let Err(error) = fixed.reading.restore_view(scan.original) {
                     return self.report(error);
                 }
@@ -6445,22 +6496,6 @@ impl Reader {
             }
             Input::PageForward => 1,
             Input::PageBack => -1,
-            Input::Swipe { dx, dy, .. } if dx.abs() > dy.abs() => {
-                if dx < 0.0 {
-                    1
-                } else {
-                    -1
-                }
-            }
-            Input::Tap(x, y) if y < PAGE_HEIGHT as f32 => {
-                if x < WIDTH as f32 / 3.0 {
-                    -1
-                } else if x > WIDTH as f32 * 2.0 / 3.0 {
-                    1
-                } else {
-                    return Change::None;
-                }
-            }
             _ => {
                 return match fixed.reading.input(input) {
                     Ok(true) => Change::Partial,
@@ -7988,6 +8023,10 @@ impl Reader {
             self.draw_export_template(canvas, scope);
             return;
         }
+        if let Screen::PageTurnSizes(sizes) = self.screen {
+            self.draw_page_turn_sizes(canvas, sizes);
+            return;
+        }
         self.draw_search_results_options(canvas);
         if self.screen == Screen::Matches && self.draw_flexible_results(canvas) {
             return;
@@ -8355,6 +8394,7 @@ impl Reader {
                                 book.reading.config.settings.typography.respect_embedded
                             }))
                         }
+                        Action::PageTurnSetting(command) => self.page_turn_accessory(*command),
                         Action::ToggleLinkPreference(setting) => {
                             RowAccessory::Toggle(setting.checked(self.controls))
                         }
@@ -8434,6 +8474,8 @@ impl Reader {
             self.draw_saved_mark_rows(canvas, &group, &items);
         } else if self.screen == Screen::ReadingFonts {
             self.draw_reading_font_rows(canvas, &group, &items);
+        } else if self.screen == Screen::BookMap && navigation.mirrored {
+            self.draw_mirrored_chapter_rows(canvas, &group);
         } else {
             group.draw(canvas, None);
         }
@@ -8446,7 +8488,8 @@ impl Reader {
                     && let Some(rect) = group.row_rect(index)
                 {
                     // Gray rail keeps the shared row's text and disclosure target intact.
-                    canvas.fill(Rect::new(rect.x + 8, rect.y + 14, 12, rect.h - 28), 187);
+                    let rail = Rect::new(rect.x + 8, rect.y + 14, 12, rect.h - 28);
+                    canvas.fill(navigation.horizontal(rail), 187);
                 }
             }
         }
@@ -8985,6 +9028,9 @@ impl App for Reader {
         if self.screen == Screen::Skim {
             return self.skim_swipe(input, start_x);
         }
+        if self.touch_locked {
+            return self.input(input);
+        }
         if let Some(change) = self.swipe_display_control(input, start_x) {
             return change;
         }
@@ -9305,7 +9351,10 @@ impl App for Reader {
         if self.screen == Screen::PdfPassword {
             return self.handle_pdf_password(input);
         }
-        if self.touch_locked {
+        if let Screen::PageTurnSizes(sizes) = self.screen {
+            return self.page_turn_sizes_input(input, sizes);
+        }
+        let input = if self.touch_locked {
             match input {
                 Input::Tap(x, y)
                     if self
@@ -9320,10 +9369,15 @@ impl App for Reader {
                 Input::Tap(x, y) if self.reading_viewport().done().contains(x, y) => {
                     return self.exit();
                 }
-                Input::PageBack | Input::PageForward => {}
-                _ => return Change::None,
+                Input::PageBack | Input::PageForward => input,
+                _ => match self.locked_swipe_turn(input) {
+                    Some(turn) => turn,
+                    None => return Change::None,
+                },
             }
-        }
+        } else {
+            input
+        };
         if self.range_edit.is_some() {
             return self.range_input(input);
         }
@@ -9372,12 +9426,14 @@ impl App for Reader {
                 self.show(Screen::Fixed);
                 return Change::Partial;
             }
+            let turn = match input {
+                Input::Tap(x, y) => self.tap_turn(x, y, self.reading_viewport().page_height()),
+                Input::Swipe { dx, dy, .. } => self.swipe_turn(dx, dy),
+                other => Some(other),
+            };
             if let (Some(flow), Some(fixed)) = (&mut self.text_flow, &mut self.fixed) {
-                let Some(input) = self.controls.page_input(input) else {
-                    return Change::None;
-                };
                 let spacing = flow.line_spacing();
-                let result = flow.input(input, &fixed.reading);
+                let result = flow.input_with_turn(input, turn, &fixed.reading);
                 if result.is_ok() && flow.line_spacing() != spacing {
                     fixed.reading.set_fixed_reflow_spacing(flow.line_spacing());
                     self.record_position();
@@ -9592,6 +9648,10 @@ impl App for Reader {
                     Screen::Scrolling => self.show(Screen::Gestures),
                     Screen::Gestures | Screen::LinkSettings => self.show(Screen::ReadingControls),
                     Screen::BackOptions(_) => self.show(Screen::NavigationSettings),
+                    Screen::PageTurnZones | Screen::PageTurnDefaults => {
+                        self.show(Screen::PageTurns)
+                    }
+                    Screen::PageTurns => self.show(Screen::ReadingControls),
                     Screen::ReadingFonts => self.close_font_chooser(),
                     Screen::DictionaryOptions(i) => {
                         self.show(Screen::Dictionaries);
@@ -11078,11 +11138,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reopened.controls, controls);
-        assert_eq!(
-            reopened.controls.page_input(Input::Tap(100.0, 700.0)),
-            Some(Input::Tap(WIDTH as f32 - 100.0, 700.0))
-        );
         reopened.open_path(&fixture.book).unwrap();
+        assert_eq!(
+            reopened.tap_turn(100.0, 700.0, PAGE_HEIGHT),
+            Some(Input::PageForward)
+        );
         reopened.show(Screen::BookTools);
         tap_reading_control(&mut reopened, "Contents");
         assert_eq!(reopened.screen, Screen::Contents);

@@ -1072,6 +1072,10 @@ impl Reading {
         self.error.is_some()
     }
 
+    pub(crate) fn frame_height(&self) -> u32 {
+        self.frame.height
+    }
+
     pub(crate) fn paged_frame_ready(&self) -> bool {
         self.scroll_top.is_none() && self.error.is_none()
     }

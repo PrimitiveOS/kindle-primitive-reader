@@ -369,7 +369,21 @@ impl TextFlow {
         std::mem::take(&mut self.end_attempt)
     }
 
+    #[cfg(test)]
     pub(crate) fn input(&mut self, input: Input, document: &FixedReading) -> Result<bool> {
+        let turn = match input {
+            Input::PageForward | Input::PageBack => Some(input),
+            _ => None,
+        };
+        self.input_with_turn(input, turn, document)
+    }
+
+    pub(crate) fn input_with_turn(
+        &mut self,
+        input: Input,
+        turn: Option<Input>,
+        document: &FixedReading,
+    ) -> Result<bool> {
         let controls = Controls::new(self.viewport);
         if let Some(draft) = self.spacing_draft {
             return self.spacing_input(input, document, &controls, draft);
@@ -391,21 +405,9 @@ impl TextFlow {
                 return self.resize_scan(SCAN_SIZE_STEP, document);
             }
         }
-        let direction = match input {
-            Input::PageForward => 1,
-            Input::PageBack => -1,
-            Input::Swipe { dx, dy, .. } => {
-                let displacement = if dx.abs() >= dy.abs() { dx } else { dy };
-                if displacement < 0.0 { 1 } else { -1 }
-            }
-            Input::Tap(x, y) if y < controls.footer_y as f32 && x < controls.width as f32 / 3.0 => {
-                -1
-            }
-            Input::Tap(x, y)
-                if y < controls.footer_y as f32 && x > controls.width as f32 * 2.0 / 3.0 =>
-            {
-                1
-            }
+        let direction = match turn {
+            Some(Input::PageForward) => 1,
+            Some(Input::PageBack) => -1,
             _ => return Ok(false),
         };
         self.turns.pending.push(direction);

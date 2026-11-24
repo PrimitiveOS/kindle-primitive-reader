@@ -18,6 +18,7 @@ use crate::reading_controls::SkimPosition;
 use crate::session::ReadingViewport;
 
 pub(super) struct Layout {
+    mirrored: bool,
     pub(super) panel: Rect,
     pub(super) track: Rect,
     previous_ten: Rect,
@@ -303,7 +304,7 @@ mod placement_tests {
 }
 
 impl Layout {
-    fn new(position: SkimPosition, viewport: ReadingViewport) -> Self {
+    fn new(position: SkimPosition, viewport: ReadingViewport, mirrored: bool) -> Self {
         let (width, screen_height) = viewport.dimensions();
         let width = width as i32;
         let screen_height = screen_height as i32;
@@ -318,23 +319,31 @@ impl Layout {
         };
         let button_stride = (width - 144) / 5;
         let action_stride = (width - 160) / 3;
+        let place = |rect: Rect| {
+            if mirrored {
+                Rect::new(width - rect.right(), rect.y, rect.w, rect.h)
+            } else {
+                rect
+            }
+        };
         let button = |row, index| {
-            Rect::new(
+            place(Rect::new(
                 80 + button_stride * index,
                 top + row,
                 button_stride - 16,
                 100,
-            )
+            ))
         };
         let action = |index| {
-            Rect::new(
+            place(Rect::new(
                 80 + action_stride * index,
                 top + actions,
                 action_stride - 16,
                 82,
-            )
+            ))
         };
         Self {
+            mirrored,
             panel: Rect::new(40, top, width - 80, height),
             track: Rect::new(92, top + track, width - 184, 42),
             previous_ten: button(preview, 0),
@@ -355,7 +364,12 @@ impl Layout {
     }
 
     fn fraction(&self, x: f32) -> f64 {
-        f64::from(((x - self.track.x as f32) / self.track.w as f32).clamp(0.0, 1.0))
+        let fraction = f64::from(((x - self.track.x as f32) / self.track.w as f32).clamp(0.0, 1.0));
+        if self.mirrored {
+            1.0 - fraction
+        } else {
+            fraction
+        }
     }
 }
 
@@ -367,7 +381,11 @@ pub(super) struct Session {
 
 impl Reader {
     pub(super) fn skim_layout(&self) -> Layout {
-        Layout::new(self.controls.skim_position, self.reading_viewport())
+        Layout::new(
+            self.controls.skim_position,
+            self.reading_viewport(),
+            self.document_dialogs_mirrored(),
+        )
     }
 
     pub(super) fn start_skim(&mut self) -> crate::Result<()> {
@@ -524,16 +542,32 @@ impl Reader {
             TextStyle::new(34).bold(),
         );
         canvas.panel(track, 8, 2, 224);
-        let filled = (progress * track.w.saturating_sub(18) as f64).round() as i32;
+        let track_width = track.w.saturating_sub(18);
+        let filled = (progress * track_width as f64).round() as i32;
+        let at = |offset| {
+            if layout.mirrored {
+                track_width - offset
+            } else {
+                offset
+            }
+        };
         if filled > 0 {
-            canvas.fill(Rect::new(track.x + 9, track.y + 17, filled, 8), 0);
+            let x = if layout.mirrored { at(filled) } else { 0 };
+            canvas.fill(Rect::new(track.x + 9 + x, track.y + 17, filled, 8), 0);
         }
-        let track_width = track.w - 18;
         let mut previous = 0;
         let mut draw_marker = |fraction: f64| {
             let x = (fraction * track_width as f64).round() as i32;
             if x > previous + 2 && x < track_width - 2 {
-                canvas.fill(Rect::new(track.x + 9 + x, track.y + 11, 2, 20), 0);
+                canvas.fill(
+                    Rect::new(
+                        track.x + 8 + at(x) + i32::from(!layout.mirrored),
+                        track.y + 11,
+                        2,
+                        20,
+                    ),
+                    0,
+                );
                 previous = x;
             }
         };
@@ -549,18 +583,32 @@ impl Reader {
         }
         if let Some(skim) = &self.skim {
             let origin = (skim.origin_fraction * f64::from(track.w - 18)).round() as i32;
-            canvas.fill(Rect::new(track.x + origin + 7, track.y + 5, 4, 32), 0);
+            canvas.fill(Rect::new(track.x + at(origin) + 7, track.y + 5, 4, 32), 0);
         }
-        let marker = track.x + 9 + filled - 8;
+        let marker = track.x + 9 + at(filled) - 8;
         canvas.panel(Rect::new(marker, track.y + 7, 18, track.h - 14), 8, 1, 0);
         skim_icon_button(
             canvas,
             layout.chapters[0],
-            FIRST_PAGE,
+            if layout.mirrored {
+                LAST_PAGE
+            } else {
+                FIRST_PAGE
+            },
             "Chapter back",
             false,
         );
-        skim_icon_button(canvas, layout.marks[0], MARK_BACK, "Mark back", false);
+        skim_icon_button(
+            canvas,
+            layout.marks[0],
+            if layout.mirrored {
+                MARK_FORWARD
+            } else {
+                MARK_BACK
+            },
+            "Mark back",
+            false,
+        );
         let marked = self.page_is_bookmarked();
         skim_icon_button(
             canvas,
@@ -569,12 +617,50 @@ impl Reader {
             if marked { "Saved" } else { "Save page" },
             marked,
         );
-        skim_icon_button(canvas, layout.marks[2], MARK_FORWARD, "Mark next", false);
-        skim_icon_button(canvas, layout.chapters[1], LAST_PAGE, "Chapter next", false);
+        skim_icon_button(
+            canvas,
+            layout.marks[2],
+            if layout.mirrored {
+                MARK_BACK
+            } else {
+                MARK_FORWARD
+            },
+            "Mark next",
+            false,
+        );
+        skim_icon_button(
+            canvas,
+            layout.chapters[1],
+            if layout.mirrored {
+                FIRST_PAGE
+            } else {
+                LAST_PAGE
+            },
+            "Chapter next",
+            false,
+        );
         canvas.button(layout.previous_ten, "-10", false, false);
-        canvas.button(layout.previous, "‹  Previous", false, false);
+        canvas.button(
+            layout.previous,
+            if layout.mirrored {
+                "Previous  ›"
+            } else {
+                "‹  Previous"
+            },
+            false,
+            false,
+        );
         canvas.button(layout.number, "Go to", false, false);
-        canvas.button(layout.next, "Next  ›", false, false);
+        canvas.button(
+            layout.next,
+            if layout.mirrored {
+                "‹  Next"
+            } else {
+                "Next  ›"
+            },
+            false,
+            false,
+        );
         canvas.button(layout.next_ten, "+10", false, false);
         canvas.button(layout.cancel, "Cancel", false, false);
         canvas.button(layout.origin, "Origin", false, false);
@@ -751,9 +837,6 @@ impl Reader {
         if let Some(skim) = &mut self.skim {
             skim.commit_when_idle = false;
         }
-        let Some(input) = self.controls.page_input(input) else {
-            return Change::None;
-        };
         let before = self.current_position();
         if let Some(active) = &mut self.active {
             let change = active.reading.input(input);
@@ -835,7 +918,7 @@ impl Reader {
             return self.skim_preview_progress(layout.fraction(start_x + dx));
         }
         if dx.abs() > dy.abs() {
-            self.skim_step(if dx < 0.0 {
+            self.skim_step(if (dx < 0.0) ^ layout.mirrored {
                 Input::PageForward
             } else {
                 Input::PageBack

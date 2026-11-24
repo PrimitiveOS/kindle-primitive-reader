@@ -549,3 +549,65 @@ mod tests {
         assert_eq!(reader.current_position(), Some(original));
     }
 }
+
+impl Reader {
+    pub(super) fn draw_mirrored_chapter_rows(
+        &self,
+        canvas: &mut Canvas,
+        rows: &primitive_ui::Rows<'_>,
+    ) {
+        use primitive_ui::{BLACK, CAPTION, HAIRLINE, Icon, PAPER, Rect, SECONDARY, TextStyle};
+        const BACK: Icon = Icon {
+            stroke: &["M15 5 L8 12 L15 19"],
+            fill: &[],
+        };
+        if rows.rows.is_empty() {
+            return;
+        }
+        canvas.card(rows.bounds);
+        for (index, row) in rows.rows.iter().enumerate() {
+            let Some(rect) = rows.row_rect(index) else {
+                continue;
+            };
+            let pressed = canvas.control_pressed(rect, false);
+            if pressed {
+                canvas.panel(rect.inset(6), 16, 2, BLACK);
+            }
+            let ink = if pressed { PAPER } else { BLACK };
+            let title_y = rect.y
+                + if row.detail.is_some() {
+                    17
+                } else {
+                    (rect.h - 50) / 2
+                };
+            canvas.text(
+                Rect::new(rect.x + 88, title_y, rect.w - 120, 50),
+                row.title,
+                TextStyle::new(38).bold().right().ink(ink),
+            );
+            if let Some(detail) = row.detail {
+                let detail_ink = if pressed {
+                    PAPER - SECONDARY
+                } else {
+                    SECONDARY
+                };
+                canvas.text(
+                    Rect::new(rect.x + 88, title_y + 50, rect.w - 120, 40),
+                    detail,
+                    CAPTION.right().ink(detail_ink),
+                );
+            }
+            canvas.icon(
+                Rect::new(rect.x + 32, rect.y + (rect.h - 40) / 2, 40, 40),
+                BACK,
+                ink,
+            );
+            if index + 1 < rows.rows.len() {
+                canvas.fill(
+                    Rect::new(rect.x + 32, rect.bottom() - 2, rect.w - 64, 2),
+                    HAIRLINE,
+                );
+            }
+        }
+    }
+}

@@ -1295,6 +1295,12 @@ pub struct BookState {
     pub(crate) top_status_header: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) page_browser_grid: Option<PageBrowserGrid>,
+    #[cfg(feature = "kindle")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::app::page_turn_settings::Document::is_default"
+    )]
+    pub(crate) document_turns: crate::app::page_turn_settings::Document,
     #[serde(
         default,
         deserialize_with = "read_orientation",
@@ -1397,6 +1403,8 @@ impl BookState {
             character_page_stride: None,
             top_status_header: None,
             page_browser_grid: None,
+            #[cfg(feature = "kindle")]
+            document_turns: Default::default(),
             screen_orientation: None,
             preferences: BookPreferences::default(),
             fixed_preferences: FixedPreferences::default(),
@@ -2692,6 +2700,8 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
         if target.top_status_header.is_none() {
             target.top_status_header = source.top_status_header;
         }
+        #[cfg(feature = "kindle")]
+        target.document_turns.fill_missing(source.document_turns);
         if target.page_browser_grid.is_none() {
             target.page_browser_grid = source.page_browser_grid;
         }

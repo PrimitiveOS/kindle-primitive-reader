@@ -352,6 +352,8 @@ impl Reader {
                 .detail("Settings for new books; existing books stay unchanged"),
             Item::new("Reading gestures", Action::Show(Screen::Gestures))
                 .detail("Assign taps, holds and swipes"),
+            Item::new("Page turns", Action::Show(Screen::PageTurns))
+                .detail("Touch controls, tap zones and reading direction"),
             Item::new(
                 "Navigation settings",
                 Action::Show(Screen::NavigationSettings),
@@ -415,30 +417,6 @@ impl Reader {
             );
         }
         items.extend([
-            Item::new(
-                "Page turn tap zones",
-                Action::SetReadingControls(ReadingControls {
-                    left_touch: !current.left_touch,
-                    ..current
-                }),
-            )
-            .detail(if current.left_touch {
-                "Mirrored touch zones"
-            } else {
-                "Standard touch zones"
-            }),
-            Item::new(
-                "Turn pages by tapping",
-                Action::SetReadingControls(ReadingControls {
-                    disable_page_taps: !current.disable_page_taps,
-                    ..current
-                }),
-            )
-            .detail(if current.disable_page_taps {
-                "Off · swipe or use page buttons"
-            } else {
-                "On"
-            }),
             Item::new(
                 "Reading toolbar size",
                 Action::SetReadingControls(ReadingControls {

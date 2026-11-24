@@ -102,12 +102,12 @@ pub(super) fn projected_cell(layout: NavigationLayout, index: usize) -> Rect {
     };
     let width = (layout.width - 2 * LIST_X - (columns as i32 - 1) * GAP) / columns as i32;
     let height = (layout.height - 140 - TOP - (rows as i32 - 1) * GAP) / rows as i32;
-    Rect::new(
+    layout.horizontal(Rect::new(
         LIST_X + (index % columns) as i32 * (width + GAP),
         TOP + (index / columns) as i32 * (height + GAP),
         width,
         height,
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -218,10 +218,13 @@ impl Reader {
                     let x = ((focus - slot.start) as f64 / slot.len() as f64 * f64::from(rail.w))
                         as i32;
                     let width = (rail.w as f64 / slot.len() as f64).ceil() as i32;
-                    canvas.fill(
-                        Rect::new(rail.x + x, rail.y - 4, width.max(3).min(rail.w - x), 9),
-                        ink,
-                    );
+                    let width = width.max(3).min(rail.w - x);
+                    let x = if layout.mirrored {
+                        rail.right() - x - width
+                    } else {
+                        rail.x + x
+                    };
+                    canvas.fill(Rect::new(x, rail.y - 4, width, 9), ink);
                 }
             }
             if let Some(state) = state {
@@ -308,7 +311,7 @@ impl Reader {
                 if dy.abs() >= dx.abs() {
                     dy < 0.0
                 } else {
-                    dx < 0.0
+                    (dx < 0.0) ^ layout.mirrored
                 }
             }
             _ => return Change::None,

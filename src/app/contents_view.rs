@@ -22,6 +22,10 @@ const EXPAND: Icon = Icon {
     stroke: &["M9 5 L16 12 L9 19"],
     fill: &[],
 };
+const REVERSE_EXPAND: Icon = Icon {
+    stroke: &["M15 5 L8 12 L15 19"],
+    fill: &[],
+};
 const COLLAPSE: Icon = Icon {
     stroke: &["M5 9 L12 16 L19 9"],
     fill: &[],
@@ -82,7 +86,8 @@ impl Reader {
         let (_, lines) = self.contents_window(self.list_page * rows, rows);
         let heading = lines.get(offset)?.heading?;
         Some((
-            branch_rect(self.contents_row_rect(offset), heading)?,
+            self.navigation_layout()
+                .horizontal(branch_rect(self.contents_row_rect(offset), heading)?),
             heading.branch,
         ))
     }
@@ -313,10 +318,11 @@ impl Reader {
             .contents_view
             .as_ref()
             .is_some_and(|view| view.hierarchical);
+        let navigation = self.navigation_layout();
         for (offset, line) in lines.iter().enumerate() {
             let row = self.contents_row_rect(offset);
             let branch = line.heading.and_then(|heading| branch_rect(row, heading));
-            let body = heading_body(row, branch);
+            let body = navigation.horizontal(heading_body(row, branch));
             let link = !matches!(line.item.action, Action::Heading);
             let pressed = link && canvas.control_pressed(body, false);
             if pressed {
@@ -363,17 +369,29 @@ impl Reader {
             );
             if let Some(detail) = detail {
                 canvas.text(
-                    Rect::new(title_x, title_y + title_height, width, detail_height),
+                    navigation.horizontal(Rect::new(
+                        title_x,
+                        title_y + title_height,
+                        width,
+                        detail_height,
+                    )),
                     &detail,
-                    TextStyle::new(detail_size).ink(detail_ink),
+                    if navigation.mirrored {
+                        TextStyle::new(detail_size).ink(detail_ink).right()
+                    } else {
+                        TextStyle::new(detail_size).ink(detail_ink)
+                    },
                 );
             }
             if let (Some(branch), Some(heading)) = (branch, line.heading) {
                 let icon = if heading.branch == Branch::Expanded {
                     COLLAPSE
+                } else if navigation.mirrored {
+                    REVERSE_EXPAND
                 } else {
                     EXPAND
                 };
+                let branch = navigation.horizontal(branch);
                 let size = 76.min(branch.h - 10);
                 let face = Rect::new(
                     branch.x + (branch.w - size) / 2,
@@ -391,11 +409,17 @@ impl Reader {
                 canvas.icon(face.inset(size / 4), icon, ink);
             }
             if link {
-                primitive_ui::chevron(
-                    canvas,
-                    Rect::new(row.right() - 72, row.y + (row.h - 40) / 2, 40, 40),
-                    ink,
-                );
+                let icon = navigation.horizontal(Rect::new(
+                    row.right() - 72,
+                    row.y + (row.h - 40) / 2,
+                    40,
+                    40,
+                ));
+                if navigation.mirrored {
+                    canvas.icon(icon, REVERSE_EXPAND, ink);
+                } else {
+                    primitive_ui::chevron(canvas, icon, ink);
+                }
             }
             if offset + 1 < lines.len() {
                 canvas.fill(
@@ -405,7 +429,6 @@ impl Reader {
             }
         }
 
-        let navigation = self.navigation_layout();
         if self.list_page > 0 {
             footer_button(canvas, navigation.previous(), "Previous");
         }
@@ -506,7 +529,7 @@ impl Reader {
         if let Some(heading) = line.heading
             && let Some(branch) = branch_rect(row, heading)
         {
-            if branch.contains(x, y) {
+            if navigation.horizontal(branch).contains(x, y) {
                 if self
                     .contents_view
                     .as_mut()
@@ -519,7 +542,10 @@ impl Reader {
                 }
                 return Change::None;
             }
-            if !heading_body(row, Some(branch)).contains(x, y) {
+            if !navigation
+                .horizontal(heading_body(row, Some(branch)))
+                .contains(x, y)
+            {
                 return Change::None;
             }
         }

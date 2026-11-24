@@ -51,12 +51,21 @@ impl Reader {
             ink,
             info_ink,
         } = typeface;
-        let mut title_style = TextStyle::new(title_size).ink(ink);
+        let navigation = self.navigation_layout();
+        let position = |area| navigation.horizontal(area);
+        let leading = |style: TextStyle| {
+            if navigation.mirrored {
+                style.right()
+            } else {
+                style
+            }
+        };
+        let mut title_style = leading(TextStyle::new(title_size).ink(ink));
         if title_bold {
             title_style = title_style.bold();
         }
         let Some(numbers) = numbers else {
-            canvas.text(rect, title, title_style);
+            canvas.text(position(rect), title, title_style);
             return;
         };
         let length = if self.controls.contents_chapter_lengths {
@@ -66,7 +75,7 @@ impl Reader {
         };
         let label = numbers.page_label.as_deref();
         if length.is_none() && label.is_none() {
-            canvas.text(rect, title, title_style);
+            canvas.text(position(rect), title, title_style);
             return;
         }
 
@@ -87,7 +96,7 @@ impl Reader {
         let title_width = canvas.measure_with_weight(title, title_size, title_bold);
         let fitted_width = title_width.min(title_limit);
         canvas.text(
-            Rect::new(rect.x, rect.y, title_limit, rect.h),
+            position(Rect::new(rect.x, rect.y, title_limit, rect.h)),
             title,
             title_style,
         );
@@ -97,16 +106,20 @@ impl Reader {
         let length_x = rect.x + fitted_width + spacing;
         if let Some(length) = length {
             canvas.text(
-                Rect::new(length_x, info_y, length_width, info_height),
+                position(Rect::new(length_x, info_y, length_width, info_height)),
                 &length,
-                info_style,
+                leading(info_style),
             );
         }
         if let Some(label) = label {
             canvas.text(
-                Rect::new(label_x, info_y, label_width, info_height),
+                position(Rect::new(label_x, info_y, label_width, info_height)),
                 label,
-                info_style.right(),
+                if navigation.mirrored {
+                    info_style
+                } else {
+                    info_style.right()
+                },
             );
             if self.controls.contents_dot_leaders.unwrap_or(true) && title_width <= title_limit {
                 let dots_start = length_x + length_width + i32::from(length_width > 0) * spacing;
@@ -117,9 +130,9 @@ impl Reader {
                 let count = available * 16 / step;
                 if count >= 3 {
                     canvas.text(
-                        Rect::new(dots_start, info_y, available, info_height),
+                        position(Rect::new(dots_start, info_y, available, info_height)),
                         &".".repeat(count as usize),
-                        info_style,
+                        leading(info_style),
                     );
                 }
             }

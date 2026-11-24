@@ -8,20 +8,34 @@ use primitive_app::App;
 pub(super) struct NavigationLayout {
     pub(super) width: i32,
     pub(super) height: i32,
+    pub(super) mirrored: bool,
 }
 
 impl NavigationLayout {
-    pub(super) const PORTRAIT: Self = Self {
-        width: WIDTH as i32,
-        height: HEIGHT as i32,
-    };
+    pub(super) const PORTRAIT: Self = Self::new(WIDTH as i32, HEIGHT as i32);
+
+    pub(super) const fn new(width: i32, height: i32) -> Self {
+        Self {
+            width,
+            height,
+            mirrored: false,
+        }
+    }
+
+    pub(super) fn horizontal(self, rect: Rect) -> Rect {
+        if self.mirrored {
+            Rect::new(self.width - rect.right(), rect.y, rect.w, rect.h)
+        } else {
+            rect
+        }
+    }
 
     pub(super) fn keyboard(self) -> Layout {
         Layout::new(self.width as u32, self.height as u32, 4, 5)
     }
 
     pub(super) fn back(self) -> Rect {
-        Rect::new(self.width - 260, 40, 220, 100)
+        self.horizontal(Rect::new(self.width - 260, 40, 220, 100))
     }
 
     pub(super) fn header(self, canvas: &mut Canvas, title: &str) {
@@ -29,10 +43,11 @@ impl NavigationLayout {
     }
 
     pub(super) fn header_action(self, canvas: &mut Canvas, title: &str, action: &str) {
+        let style = primitive_ui::TITLE;
         canvas.text(
-            Rect::new(40, 47, self.width - 354, 110),
+            self.horizontal(Rect::new(40, 47, self.width - 354, 110)),
             title,
-            primitive_ui::TITLE,
+            if self.mirrored { style.right() } else { style },
         );
         canvas.button(self.back(), action, true, false);
     }
@@ -42,16 +57,16 @@ impl NavigationLayout {
     }
 
     pub(super) fn previous(self) -> Rect {
-        Rect::new(PREV.x, self.bottom_y(PREV.y), PREV.w, PREV.h)
+        self.horizontal(Rect::new(PREV.x, self.bottom_y(PREV.y), PREV.w, PREV.h))
     }
 
     pub(super) fn next(self) -> Rect {
-        Rect::new(
+        self.horizontal(Rect::new(
             self.width - (WIDTH as i32 - NEXT.x),
             self.bottom_y(NEXT.y),
             NEXT.w,
             NEXT.h,
-        )
+        ))
     }
 
     pub(super) fn edge_footer(self, face: Rect) -> Rect {
@@ -108,6 +123,10 @@ impl Screen {
             self,
             Self::Links
                 | Self::NavigationSettings
+                | Self::PageTurns
+                | Self::PageTurnZones
+                | Self::PageTurnSizes(_)
+                | Self::PageTurnDefaults
                 | Self::Gestures
                 | Self::Scrolling
                 | Self::GestureBinding(_)
@@ -207,10 +226,11 @@ impl Reader {
 
     pub(super) fn navigation_layout(&self) -> NavigationLayout {
         let (width, height) = self.reading_viewport().dimensions();
-        NavigationLayout {
-            width: width as i32,
-            height: height as i32,
-        }
+        let mut layout = NavigationLayout::new(width as i32, height as i32);
+        layout.mirrored = (self.screen.is_contents()
+            || matches!(self.screen, Screen::PageOverview | Screen::BookMap))
+            && self.document_dialogs_mirrored();
+        layout
     }
 
     pub(super) fn reading_list_ordinal(&self) -> usize {

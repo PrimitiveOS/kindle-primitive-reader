@@ -1630,15 +1630,7 @@ impl Reader {
     }
 
     fn page_turning_inverted(&self) -> bool {
-        self.controls.invert_page_turn_buttons
-            || self
-                .active
-                .as_ref()
-                .is_some_and(|active| active.reading.probe.pages_right_to_left())
-            || self
-                .fixed
-                .as_ref()
-                .is_some_and(|fixed| fixed.reading.pages_right_to_left())
+        self.controls.invert_page_turn_buttons || self.touch_turn_inverted(false)
     }
 
     fn custom_footer_caption(&self, progress: &Progress<'_>) -> String {
@@ -1916,13 +1908,19 @@ impl Reader {
             ProgressScope::Chapter => p.section_page as f64 / p.section_len as f64,
             _ => p.book_fraction,
         };
+        let mirrored = self.document_dialogs_mirrored();
         let fill = (bar.w as f64 * fraction).round() as i32;
         canvas.fill(bar, 200);
         if fill > 0 {
-            canvas.fill(Rect::new(bar.x, bar.y, fill, bar.h), 0);
+            let x = if mirrored { bar.right() - fill } else { bar.x };
+            canvas.fill(Rect::new(x, bar.y, fill, bar.h), 0);
         }
         if let Some(fraction) = self.initial_marker_fraction(&p) {
-            draw_initial_marker(canvas, bar, fraction);
+            draw_initial_marker(
+                canvas,
+                bar,
+                if mirrored { 1.0 - fraction } else { fraction },
+            );
         }
         if scope == ProgressScope::Book && !self.controls.hide_chapter_markers {
             let marker_width = self.controls.chapter_marker_width.width();
@@ -1933,10 +1931,12 @@ impl Reader {
                 let marker_x = x - marker_width / 2;
                 if marker_x > last + marker_width && marker_x > 0 && marker_x < bar.w - marker_width
                 {
-                    canvas.fill(
-                        Rect::new(bar.x + marker_x, bar.y - 1, marker_width, bar.h + 2),
-                        0,
-                    );
+                    let x = if mirrored {
+                        bar.right() - marker_x - marker_width
+                    } else {
+                        bar.x + marker_x
+                    };
+                    canvas.fill(Rect::new(x, bar.y - 1, marker_width, bar.h + 2), 0);
                     last = marker_x;
                 }
             };
