@@ -85,7 +85,7 @@ impl Reader {
             // KOReader applies an empty title to every result when there is
             // no outline. The Contents screen's generated spine labels are
             // navigation fallbacks, not publisher or custom boundaries.
-            let has_contents = self.uses_alternative_contents()
+            let has_contents = self.alternative_entries(book_id).is_some()
                 || !reading.probe.toc.is_empty()
                 || state.is_some_and(|state| state.custom_contents.enabled);
             let entries = has_contents

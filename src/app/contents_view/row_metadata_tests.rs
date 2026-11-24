@@ -258,7 +258,13 @@ fn dense_contents_keeps_stable_labels_lengths_and_actions_visible() {
     }))
     .unwrap();
     app.show(Screen::ContentsSettings);
-    assert_eq!(app.items().len(), 4);
+    let items = app.items();
+    assert_eq!(items.len(), 5);
+    assert!(
+        items
+            .iter()
+            .any(|item| matches!(item.action, Action::ToggleAlternativeContents))
+    );
     tap_contents_item(&mut app, "Show chapter length");
     assert!(app.controls.contents_chapter_lengths);
     assert!(app.controls.contents_dot_leaders.unwrap_or(true));

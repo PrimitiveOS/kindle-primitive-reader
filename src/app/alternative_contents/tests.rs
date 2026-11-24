@@ -96,15 +96,23 @@ fn alternative_contents_switches_normal_contents_and_preserves_anchor_across_reo
     assert_eq!(rows[1].target, rows[2].target);
     assert!(matches!(&rows[2].target, OutlineTarget::Heading(1, _)));
     let target = rows[2].target.clone();
+    let parent = reader.contents_branch_button(1).unwrap().0;
+    tap(&mut reader, parent);
+    let intermediate = reader.contents_branch_button(2).unwrap().0;
+    tap(&mut reader, intermediate);
     capture(
         &reader,
         &mut wide,
         "alternative-contents-landscape.png",
         false,
     );
-    reader
-        .activate(Action::AlternativeContentsEntry(target.clone()))
+    let (_, items) = reader.contents_items(0, reader.contents_rows());
+    let row = items
+        .iter()
+        .position(|item| item.title == "East softhyphen quay")
         .unwrap();
+    let heading = reader.contents_row_rect(row);
+    tap(&mut reader, heading);
     assert_eq!(reader.screen, Screen::Book);
     assert_eq!(
         reader.current_history_location().unwrap().position.chapter,
