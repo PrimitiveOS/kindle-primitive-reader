@@ -1262,6 +1262,20 @@ impl FixedReading {
             .find(|link| source_rect((1.0, 1.0), link.bounds).contains(point))
     }
 
+    pub(crate) fn visible_links(&self) -> Vec<PdfLink> {
+        let FixedDocument::Pdf(pdf) = &self.source else {
+            return Vec::new();
+        };
+        self.visible_pages()
+            .flat_map(|page| {
+                pdf.page_links(page)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(move |link| self.visible_rectangle(page, link.bounds).is_some())
+            })
+            .collect()
+    }
+
     fn word_at(&self, page: usize, text: &PdfPageText, x: f32, y: f32) -> Option<usize> {
         let point = self.source_point(page, x, y)?;
         text.words

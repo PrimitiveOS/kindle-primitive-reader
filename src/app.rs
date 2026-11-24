@@ -52,6 +52,7 @@ mod hidden_flows;
 mod highlight_palette;
 mod library_export;
 mod library_view;
+mod link_taps;
 mod lookup_history;
 mod metadata_save;
 mod nearby_search;
@@ -242,6 +243,7 @@ enum Screen {
     CustomEdits,
     CustomBookmarks,
     Links,
+    LinkTapSettings,
     Bookmarks,
     Typography,
     ReadingFonts,
@@ -384,6 +386,7 @@ impl Screen {
             Self::CustomTitle => "Chapter title",
             Self::GeneratedContents => "Generated outline",
             Self::Links => "Links on this page",
+            Self::LinkTapSettings => "Link taps",
             Self::Bookmarks | Self::FixedBookmarks => "Bookmarks",
             Self::Typography => "Text settings",
             Self::ReadingFonts => "Reading font",
@@ -477,6 +480,9 @@ enum Action {
     ExportAnnotatedPdf,
     Show(Screen),
     Jump(Destination),
+    OpenFixedLink(crate::fixed::PdfLink),
+    OpenLinkAddress(String),
+    ToggleLinkPreference(link_taps::LinkPreference),
     Chapter(chapter_navigation::Direction),
     ChapterLevel(chapter_navigation::LevelSetting),
     SetCharacterPages(Option<u16>),
@@ -2409,6 +2415,12 @@ impl Reader {
             }
             return items;
         }
+        if self.screen == Screen::Links {
+            return self.page_link_items();
+        }
+        if self.screen == Screen::LinkTapSettings {
+            return self.link_tap_settings_items();
+        }
         if self.screen == Screen::EndActionSettings {
             return self.end_action_rows();
         }
@@ -2613,11 +2625,6 @@ impl Reader {
                     })
                     .collect()
             }),
-            Screen::Links => reading
-                .links()
-                .into_iter()
-                .map(|(label, target)| Item::new(label, Action::Jump(target)))
-                .collect(),
             Screen::Bookmarks => self.bookmark_items(active.id),
             Screen::Typography => {
                 let settings = reading.config.settings;
@@ -3448,6 +3455,12 @@ impl Reader {
             }
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
+            Action::OpenFixedLink(link) => self.open_fixed_link(link)?,
+            Action::OpenLinkAddress(address) => {
+                self.show(self.surface_screen());
+                self.show_link_address(address);
+            }
+            Action::ToggleLinkPreference(setting) => self.toggle_link_preference(setting)?,
             Action::Chapter(direction) => self.jump_chapter(direction)?,
             Action::ChapterLevel(setting) => self.set_chapter_level(setting)?,
             Action::Custom(action) => self.custom_action(action)?,
@@ -5401,16 +5414,18 @@ impl Reader {
             if DONE.contains(x, y) {
                 return self.exit();
             }
-            if let Some(target) = self.active.as_ref().and_then(|active| {
-                let reading = &active.reading;
-                reading.link_at(x, y)
-            }) {
-                if self.open_note_at(target.clone(), x, y) {
-                    return Change::Partial;
-                }
-                return match self.follow(target) {
-                    Ok(()) => Change::Partial,
-                    Err(error) => self.report(error),
+            if let Some((link, link_x, link_y)) = self.reflow_tap_link(x, y) {
+                return match link {
+                    link_taps::ReflowLink::Address(address) => self.show_link_address(address),
+                    link_taps::ReflowLink::Internal(target) => {
+                        if self.open_note_at(target.clone(), link_x, link_y) {
+                            return Change::Partial;
+                        }
+                        match self.follow(target) {
+                            Ok(()) => Change::Partial,
+                            Err(error) => self.report(error),
+                        }
+                    }
                 };
             }
             if let Some(change) = self.tap_footer(x, y) {
@@ -5577,23 +5592,10 @@ impl Reader {
                     Err(error) => self.report(error),
                 };
             }
-            if let Some(link) = self
-                .fixed
-                .as_ref()
-                .and_then(|fixed| fixed.reading.link_at(x, y))
-            {
-                return match link.target {
-                    PdfLinkTarget::Page(page) => match self
-                        .follow_fixed(page, link.destination_point.map(FixedJump::LinkPoint))
-                    {
-                        Ok(()) => Change::Partial,
-                        Err(error) => self.report(error),
-                    },
-                    PdfLinkTarget::External => match link.uri {
-                        Some(address) => self.show_link_address(address),
-                        None => self.report("This link refers to a resource outside the PDF"),
-                    },
-                    PdfLinkTarget::Unavailable => self.report("This PDF link is unavailable"),
+            if let Some(link) = self.fixed_tap_link(x, y) {
+                return match self.open_fixed_link(link) {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
                 };
             }
             if let Some(change) = self.tap_footer(x, y) {
@@ -7443,6 +7445,9 @@ impl Reader {
                         Action::ChapterLevel(setting) => {
                             RowAccessory::Toggle(self.chapter_level_checked(setting))
                         }
+                        Action::ToggleLinkPreference(setting) => {
+                            RowAccessory::Toggle(setting.checked(self.controls))
+                        }
                         Action::SetReadingControls(controls)
                             if self.screen == Screen::SearchSettings
                                 && controls.selection_search_all
@@ -8324,7 +8329,9 @@ impl App for Reader {
                             .unwrap()
                             / ROWS_PER_PAGE;
                     }
-                    Screen::Gestures => self.show(Screen::ReadingControls),
+                    Screen::Gestures | Screen::LinkTapSettings => {
+                        self.show(Screen::ReadingControls)
+                    }
                     Screen::ReadingFonts => self.show(Screen::Typography),
                     Screen::DictionaryOptions(i) => {
                         self.show(Screen::Dictionaries);

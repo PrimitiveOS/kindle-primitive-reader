@@ -1273,10 +1273,14 @@ impl Probe {
     }
 
     pub(crate) fn link_in(&self, range: Range<f32>, x: f32, y: f32) -> Option<Destination> {
+        Book::resolve_link(&self.chapter, self.link_href_in(range, x, y)?).ok()
+    }
+
+    pub(crate) fn link_href_in(&self, range: Range<f32>, x: f32, y: f32) -> Option<&str> {
         if let Renderer::Parley(layout) = &self.renderer
             && let Some(href) = layout.image_link_at(range.clone(), self.settings, x, y)
         {
-            return Book::resolve_link(&self.chapter, href).ok();
+            return Some(href);
         }
         let (key, offset) = self.source_at(range, x, y)?;
         let block = self.source.blocks.iter().find(|block| block.key == key)?;
@@ -1284,7 +1288,7 @@ impl Probe {
             .links
             .iter()
             .find(|link| link.bytes.contains(&offset))?;
-        Book::resolve_link(&self.chapter, &link.href).ok()
+        Some(&link.href)
     }
 
     fn source_at(&self, range: Range<f32>, x: f32, y: f32) -> Option<(usize, usize)> {
@@ -1315,6 +1319,38 @@ impl Probe {
     }
 
     pub(crate) fn links_in(&self, bounds: Range<f32>) -> Vec<(String, Destination)> {
+        let mut links: Vec<_> = self
+            .text_link_hrefs_in(bounds.clone())
+            .into_iter()
+            .filter_map(|(label, href)| {
+                Some((label, Book::resolve_link(&self.chapter, href).ok()?))
+            })
+            .collect();
+        if let Renderer::Parley(layout) = &self.renderer {
+            for (label, href) in layout.image_links(bounds, self.settings) {
+                if let Ok(target) = Book::resolve_link(&self.chapter, href)
+                    && !links.iter().any(|(_, existing)| existing == &target)
+                {
+                    links.push((label.to_owned(), target));
+                }
+            }
+        }
+        links
+    }
+
+    pub(crate) fn link_hrefs_in(&self, bounds: Range<f32>) -> Vec<(String, &str)> {
+        let mut links = self.text_link_hrefs_in(bounds.clone());
+        if let Renderer::Parley(layout) = &self.renderer {
+            for (label, href) in layout.image_links(bounds, self.settings) {
+                if !links.iter().any(|(_, existing)| *existing == href) {
+                    links.push((label.to_owned(), href));
+                }
+            }
+        }
+        links
+    }
+
+    fn text_link_hrefs_in(&self, bounds: Range<f32>) -> Vec<(String, &str)> {
         // Several cells may have lines crossing the top of a scrolled view.
         // A paginated line can extend upward by at most one reading viewport.
         let earliest = bounds.start - self.settings.text_height() as f32;
@@ -1332,7 +1368,7 @@ impl Probe {
                             .iter()
                             .any(|span| span.start < link.bytes.end && span.end > link.bytes.start)
                 });
-                if visible && let Ok(destination) = Book::resolve_link(&self.chapter, &link.href) {
+                if visible {
                     let Ok(view) = self.reading_flow.view(&self.source, block) else {
                         continue;
                     };
@@ -1344,17 +1380,8 @@ impl Probe {
                         .map(|span| &view.text()[span.clone()])
                         .collect();
                     if !label.trim().is_empty() {
-                        links.push((label.trim().to_owned(), destination));
+                        links.push((label.trim().to_owned(), link.href.as_str()));
                     }
-                }
-            }
-        }
-        if let Renderer::Parley(layout) = &self.renderer {
-            for (label, href) in layout.image_links(bounds, self.settings) {
-                if let Ok(target) = Book::resolve_link(&self.chapter, href)
-                    && !links.iter().any(|(_, existing)| existing == &target)
-                {
-                    links.push((label.to_owned(), target));
                 }
             }
         }

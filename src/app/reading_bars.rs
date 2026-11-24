@@ -506,11 +506,7 @@ impl Reader {
             Item::new("Skim", Action::Skim),
             Item::new("Add bookmark", Action::AddBookmark),
         ];
-        if self
-            .active
-            .as_ref()
-            .is_some_and(|active| !active.reading.links().is_empty())
-        {
+        if !self.page_link_items().is_empty() {
             items.push(Item::new("Links", Action::Show(Screen::Links)));
         }
         if !self.back.is_empty() {

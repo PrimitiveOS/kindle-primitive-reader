@@ -1,0 +1,221 @@
+use super::*;
+use crate::app::tests::{Fixture, capture_test_screen, tap_contents_item, tap_reading_control};
+use crate::fixed::tests::pdf_objects;
+use std::io::Write;
+
+const ADDRESS: &str = "https://example.org/harbor/tide-chart?edition=2#table";
+
+fn test_fonts() -> Vec<PathBuf> {
+    ["fonts/NotoSans-Regular.ttf", "fonts/NotoSans-Bold.ttf"]
+        .into_iter()
+        .map(crate::test_fixture)
+        .collect()
+}
+
+fn write_book(path: &Path) {
+    let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
+    let options = zip::write::SimpleFileOptions::default();
+    let first = format!(
+        r#"<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>Harbor field guide</h1>
+        <p>Consult the <a href="{ADDRESS}">online tide chart</a> before crossing the harbor.</p>
+        <p><a href="routes.xhtml#route">Local route</a> passes the eastern beacon.</p>
+        <p>Check the wind and current before returning.</p>
+        <p><a href="javascript:alert('script')">Incorrect link</a></p></body></html>"#
+    );
+    for (name, text) in [
+        ("mimetype", "application/epub+zip"),
+        (
+            "META-INF/container.xml",
+            r#"<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#,
+        ),
+        (
+            "book.opf",
+            r#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Harbor field guide</dc:title></metadata><manifest><item id="guide" href="guide.xhtml" media-type="application/xhtml+xml"/><item id="routes" href="routes.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="guide"/><itemref idref="routes"/></spine></package>"#,
+        ),
+        ("guide.xhtml", first.as_str()),
+        (
+            "routes.xhtml",
+            r#"<html xmlns="http://www.w3.org/1999/xhtml"><body><h1 id="route">Eastern route</h1><p>Return by the beacon.</p></body></html>"#,
+        ),
+    ] {
+        zip.start_file(name, options).unwrap();
+        zip.write_all(text.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+}
+
+fn hit(reading: &Reading, href: &str) -> (f32, f32) {
+    (35..700)
+        .step_by(5)
+        .find_map(|y| {
+            (35..1200)
+                .step_by(5)
+                .find(|&x| reading.link_href_at(x as f32, y as f32) == Some(href))
+                .map(|x| (x as f32, y as f32))
+        })
+        .expect("a visible link")
+}
+
+fn open_preferences(app: &mut Reader) {
+    app.open_reading_edge(true, WIDTH as f32 * 0.5);
+    if app.top_group != Some(TopGroup::Settings) {
+        assert_eq!(tap_reading_control(app, "Settings"), Change::Partial);
+    }
+    assert_eq!(tap_reading_control(app, "Link taps"), Change::Partial);
+    assert_eq!(app.screen, Screen::LinkTapSettings);
+}
+
+#[test]
+fn reflow_link_tap_settings_match_defaults_preserve_explicit_links_and_enlarge_internal_hits() {
+    let fixture = Fixture::new();
+    write_book(&fixture.book);
+    let fonts = test_fonts();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    let origin = app.current_history_location().unwrap();
+    let reading = &app.active.as_ref().unwrap().reading;
+    let external = hit(reading, ADDRESS);
+    let internal = hit(reading, "routes.xhtml#route");
+    let nearby = [10.0, 18.0, 26.0, 34.0, 42.0]
+        .into_iter()
+        .map(|dx| (internal.0 - dx, internal.1))
+        .find(|&(x, y)| {
+            reading.link_href_at(x, y).is_none() && nearest_internal_link(reading, x, y).is_some()
+        })
+        .expect("blank touch near local link");
+    let mut canvas = Canvas::new(
+        WIDTH,
+        HEIGHT,
+        &fonts
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let frame = primitive_app::frame(&app, &mut canvas, false);
+
+    assert_eq!(
+        app.input(Input::Tap(external.0, external.1)),
+        Change::Partial
+    );
+    assert!(app.link_popup.is_some());
+    assert_eq!(app.current_history_location(), Some(origin.clone()));
+    app.input(Input::Tap(50.0, 50.0));
+    assert!(app.link_popup.is_none());
+
+    let defaults = app.controls;
+    assert!(LinkPreference::Follow.checked(defaults));
+    assert!(!LinkPreference::IgnoreExternal.checked(defaults));
+    assert!(!LinkPreference::LargerArea.checked(defaults));
+    assert!(app.reflow_tap_link(nearby.0, nearby.1).is_none());
+    assert!(
+        !app.page_link_items()
+            .iter()
+            .any(|item| item.title == "Incorrect link")
+    );
+    open_preferences(&mut app);
+    tap_contents_item(&mut app, "Ignore external links on tap");
+    tap_contents_item(&mut app, "Allow larger tap area around links");
+    capture_test_screen(&app, &fonts, "READER_LINK_TAP_SETTINGS_FRAME", false);
+    app.show(Screen::Book);
+    assert_eq!(app.current_history_location(), Some(origin.clone()));
+    assert_eq!(primitive_app::frame(&app, &mut canvas, false), frame);
+    assert!(app.reflow_tap_link(external.0, external.1).is_none());
+    assert!(
+        app.reflow_tap_link(internal.0, internal.1 + 150.0)
+            .is_none()
+    );
+    assert!(app.reflow_tap_link(nearby.0, nearby.1).is_some());
+    assert_eq!(app.input(Input::Tap(nearby.0, nearby.1)), Change::Partial);
+    assert_eq!(app.current_position().unwrap().chapter, 1);
+    app.activate(Action::ReturnToLocation).unwrap();
+    assert_eq!(app.current_history_location(), Some(origin.clone()));
+
+    open_preferences(&mut app);
+    tap_contents_item(&mut app, "Tap to follow links");
+    assert!(
+        app.items()
+            .iter()
+            .filter(|item| matches!(item.action, Action::Heading))
+            .count()
+            == 2
+    );
+    app.show(Screen::Book);
+    assert!(app.reflow_tap_link(internal.0, internal.1).is_none());
+    app.show(Screen::Links);
+    tap_contents_item(&mut app, "online tide chart");
+    assert!(app.link_popup.is_some());
+    assert_eq!(app.current_history_location(), Some(origin.clone()));
+    app.input(Input::Tap(50.0, 50.0));
+    app.show(Screen::Links);
+    tap_contents_item(&mut app, "Local route");
+    assert_eq!(app.current_position().unwrap().chapter, 1);
+    app.activate(Action::ReturnToLocation).unwrap();
+    app.save().unwrap();
+    let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    reopened.open_path(&fixture.book).unwrap();
+    assert_eq!(reopened.current_history_location(), Some(origin));
+    assert!(!LinkPreference::Follow.checked(reopened.controls));
+    assert!(LinkPreference::IgnoreExternal.checked(reopened.controls));
+    assert!(LinkPreference::LargerArea.checked(reopened.controls));
+}
+
+#[test]
+fn pdf_external_filter_keeps_internal_and_explicit_links_without_a_larger_tap_area() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Harbor links.pdf");
+    fs::write(
+        &path,
+        pdf_objects(&[
+            "<< /Type /Catalog /Pages 2 0 R >>".into(),
+            "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] /MediaBox [0 0 600 800] >>".into(),
+            "<< /Type /Page /Parent 2 0 R /Annots [5 0 R 6 0 R] >>".into(),
+            "<< /Type /Page /Parent 2 0 R >>".into(),
+            format!(
+                "<< /Subtype /Link /Rect [72 550 220 580] /A << /S /URI /URI ({ADDRESS}) >> >>"
+            ),
+            "<< /Subtype /Link /Rect [72 430 220 460] /Dest [4 0 R /XYZ 110 525 null] >>".into(),
+        ]),
+    )
+    .unwrap();
+    let mut app = Reader::open(&fixture.root, &fixture.state, test_fonts()).unwrap();
+    app.open_path(&path).unwrap();
+    let original = app.current_history_location();
+    let reading = &app.fixed.as_ref().unwrap().reading;
+    let [external, internal] = reading.visible_links().try_into().unwrap();
+    let center = |link: PdfLink| {
+        let p = reading.visible_rectangle(0, link.bounds).unwrap().center();
+        (p.x as f32, p.y as f32)
+    };
+    let external = center(external);
+    let internal = center(internal);
+    assert_eq!(
+        app.input(Input::Tap(external.0, external.1)),
+        Change::Partial
+    );
+    assert!(app.link_popup.is_some());
+    app.input(Input::Tap(30.0, 30.0));
+
+    open_preferences(&mut app);
+    assert!(!app.items().iter().any(|item| item.title.contains("larger")));
+    tap_contents_item(&mut app, "Ignore external links on tap");
+    app.show(Screen::Fixed);
+    assert!(app.fixed_tap_link(external.0, external.1).is_none());
+    // A filtered ordinary tap goes to the same reading input path as unlinked ink.
+    let _ = app.input(Input::Tap(external.0, external.1));
+    assert!(app.link_popup.is_none());
+    if app.current_history_location() != original {
+        app.jump_fixed(0, None).unwrap();
+    }
+    assert_eq!(
+        app.input(Input::Tap(internal.0, internal.1)),
+        Change::Partial
+    );
+    assert_eq!(app.current_position().unwrap().page, 1);
+    app.activate(Action::ReturnToLocation).unwrap();
+
+    app.show(Screen::Links);
+    tap_contents_item(&mut app, "External link");
+    assert!(app.link_popup.is_some());
+    assert_eq!(app.current_history_location(), original);
+}
