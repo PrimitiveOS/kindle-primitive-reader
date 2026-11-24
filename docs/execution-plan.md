@@ -54,7 +54,9 @@ changes. Compare DjVu's native raster with DjVuLibre, check the same word
 at fractional zoom, and verify the portrait round trip. Confirm that the
 reading footer and toolbar hit areas move with the prepared reflow and
 fixed-page frames in simulation. Rotation enablement still requires the
-negotiated Canvas and the Launcher and device checks.
+negotiated Canvas and the Launcher and device checks. The integrated Mac
+build passed 1,246 checks, with both page-entry captures and both DjVu
+viewport captures matching the reviewed images.
 [Go to page](go-to-page.md) · [Viewport verification](reading-edition-orientation.md)
 
 ## Reader 0.1.49 verification plan
