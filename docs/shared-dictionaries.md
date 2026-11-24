@@ -18,6 +18,10 @@ still uses, and that re-enabling restores its previous rank. KOReader also
 saves edition exclusions separately from its preferred order and applies the
 filtered set to the lookup command. [Pinned source controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L733-L825) · [Pinned lookup dispatch](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1454-L1477)
 
+The source check runs KOReader's preferred-source menu callback, persisted
+edition settings, lookup filter, and reset against the pinned Lua module.
+[Reproducible dictionary exclusion check](../scripts/compare-dictionary-book-exclusions.py)
+
 | Location on Kindle user storage | Behavior |
 | --- | --- |
 | `reader/data/dictionaries/` | Reader's own StarDict directory. Existing preferred-dictionary settings continue to work. |
