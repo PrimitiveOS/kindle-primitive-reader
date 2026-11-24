@@ -104,6 +104,7 @@ for mode = 0, 3 do
             end
         end
         assert(left <= right)
+        mark.band_left = left
         mark.band_width = right - left + 1
         print(string.format("BAND %s|%s|x=%d|w=%d",modes[mode+1],band[1],left,mark.band_width))
     end
@@ -133,8 +134,16 @@ for _, mode in ipairs{flat, book, web} do
     assert(mode["First table cell"].box.x0 < mode["Second table cell"].box.x0)
     assert(pitch(mode, "First table cell", "Second table cell") == 0)
 end
-assert(web["Pixel box marker"].band_width == 260)
-assert(book["Pixel box marker"].band_width == 1156)
+local function check_band(mode, phrase, left, width)
+    local mark = mode[phrase]
+    assert(mark.band_left == left and mark.band_width == width and mark.box.x0 == left)
+end
+for _, mode in ipairs{legacy, flat, book} do
+    check_band(mode, "Centered box marker", 54, 1156)
+    check_band(mode, "Pixel box marker", 54, 1156)
+end
+check_band(web, "Centered box marker", 389, 485)
+check_band(web, "Pixel box marker", 54, 260)
 for _, check in ipairs{{legacy,3},{flat,1},{book,1},{web,3}} do
     local mode, expected = unpack(check)
     assert(mode["After empty breaks"].page - mode["Before empty breaks"].page == expected)

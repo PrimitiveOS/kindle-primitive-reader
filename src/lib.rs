@@ -292,6 +292,15 @@ pub enum BlockMarginMode {
     CollapseNegative,
 }
 
+/// Experimental width policy for ordinary publisher text boxes.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BlockWidthMode {
+    #[default]
+    Ignore,
+    Publisher,
+}
+
 /// Experimental horizontal float policy for the Parley provider.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -343,6 +352,8 @@ pub struct Settings {
     /// The default preserves the existing book layout and preference contract.
     #[doc(hidden)]
     pub block_margins: BlockMarginMode,
+    #[doc(hidden)]
+    pub block_width: BlockWidthMode,
     #[doc(hidden)]
     pub float_mode: FloatMode,
     #[doc(hidden)]
@@ -409,6 +420,7 @@ impl Default for Settings {
             margin_top: None,
             margin_bottom: None,
             block_margins: BlockMarginMode::Ignore,
+            block_width: BlockWidthMode::Ignore,
             float_mode: FloatMode::Ignore,
             empty_break_mode: EmptyBreakMode::Current,
             empty_break_geometry: false,

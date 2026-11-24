@@ -1,6 +1,7 @@
 //! Horizontal publisher block boxes, measured against their parent content area.
 use crate::{
-    book_style::{CssLength, Style},
+    BlockWidthMode,
+    book_style::{BoxMargin, CssLength, ImageLength, Style, WritingMode},
     source::{Source, is_block_tag},
     table_layout::Cell,
 };
@@ -14,6 +15,82 @@ pub(crate) struct BoxArea {
     pub outer_width: u32,
     border: [u32; 2],
     pub cell: Option<Cell>,
+}
+
+fn publisher_width(area: BoxArea, style: &Style, font: f32) -> Option<BoxArea> {
+    let length = match style.image_width? {
+        ImageLength::Pixels(px) => CssLength::Pixels(px),
+        ImageLength::Fraction(ratio) => CssLength::Fraction(ratio),
+        _ => return None,
+    };
+    let width = length.box_pixels(area.width, font);
+    if !(font.ceil()..=area.width as f32).contains(&width)
+        || style.borders.is_some()
+        || style.image_max_width.is_some_and(|width| !matches!(width, ImageLength::Auto))
+        || style.padding.iter().any(|edge| edge.box_pixels(area.width, font) != 0.0)
+        || style.horizontal_margin.iter().any(|margin| {
+            matches!(margin, BoxMargin::Length(length) if length.pixels(area.width, font) != 0.0)
+        })
+    {
+        return None;
+    }
+    let width = width as u32;
+    let remainder = area.width - width;
+    let inset = match style.horizontal_margin {
+        [BoxMargin::Auto, BoxMargin::Auto] => remainder / 2,
+        [BoxMargin::Auto, _] => remainder,
+        _ => 0,
+    };
+    Some(BoxArea::new(area.x + inset, width, None))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WidthCandidate {
+    Unseen,
+    Simple,
+    Unsupported,
+}
+
+fn width_candidates(
+    source: &Source,
+    styles: &[Style],
+    mode: BlockWidthMode,
+) -> Vec<WidthCandidate> {
+    if mode == BlockWidthMode::Ignore {
+        return Vec::new();
+    }
+    // Only ordinary paragraphs represented by a single text block get this
+    // policy. More elaborate boxes still use the existing provider.
+    let mut candidates = vec![WidthCandidate::Unseen; styles.len()];
+    for block in &source.blocks {
+        let index = block.element;
+        let element = &source.elements[index];
+        let style = &styles[index];
+        let eligible = candidates[index] == WidthCandidate::Unseen
+            && element.tag == "p"
+            && element
+                .parent
+                .is_some_and(|parent| source.elements[parent].tag == "body")
+            && matches!(style.display, crate::book_style::flow::Display::Block)
+            && style.writing_mode == WritingMode::Horizontal
+            && !style.flow.suppressed
+            && style.float_side.is_none()
+            && matches!(
+                style.image_width,
+                Some(ImageLength::Pixels(_) | ImageLength::Fraction(_))
+            )
+            && block.list_item.is_none()
+            && block.table_cell.is_none()
+            && !block.text.is_empty()
+            && block.images.is_empty()
+            && block.ruby.is_empty();
+        candidates[index] = if eligible {
+            WidthCandidate::Simple
+        } else {
+            WidthCandidate::Unsupported
+        };
+    }
+    candidates
 }
 
 impl BoxArea {
@@ -130,6 +207,7 @@ pub(crate) fn layout(
         font,
         borders,
         &crate::table_layout::TableFlow::identity(source),
+        BlockWidthMode::Ignore,
         measure,
     )
 }
@@ -141,10 +219,13 @@ pub(crate) fn layout_with_flow(
     font: f32,
     borders: Option<&crate::table_borders::Borders>,
     flow: &crate::table_layout::TableFlow<'_>,
+    block_width: BlockWidthMode,
     measure: impl FnMut(&crate::source::Block) -> (u32, u32),
 ) -> Option<Vec<BoxArea>> {
+    let width_candidates = width_candidates(source, styles, block_width);
     if flow.is_identity()
         && borders.is_none()
+        && !width_candidates.contains(&WidthCandidate::Simple)
         && !styles.iter().zip(&source.elements).any(|(style, element)| {
             !style.flow.suppressed
                 && ((element.tag == "table" && style.border_collapse)
@@ -196,6 +277,12 @@ pub(crate) fn layout_with_flow(
             continue;
         }
         let mut area = BoxArea::new(parent.x, parent.width, parent.cell);
+        if width_candidates.get(idx) == Some(&WidthCandidate::Simple)
+            && let Some(published) =
+                publisher_width(area, &styles[idx], font * styles[idx].size_scale)
+        {
+            area = published;
+        }
         if let Some(cell) = cells[idx]
             && area.width as f32 / f32::from(cell.columns) >= 2.5 * font
         {
@@ -288,11 +375,20 @@ mod tests {
             .compute(&source.elements);
         let flow = crate::table_layout::TableFlow::new(&source, &styles).unwrap();
         let mut measured = 0;
-        let boxes = layout_with_flow(&source, &styles, 600, 40., None, &flow, |block| {
-            assert!(!styles[block.element].flow.suppressed);
-            measured += 1;
-            (40, 40)
-        })
+        let boxes = layout_with_flow(
+            &source,
+            &styles,
+            600,
+            40.,
+            None,
+            &flow,
+            BlockWidthMode::Ignore,
+            |block| {
+                assert!(!styles[block.element].flow.suppressed);
+                measured += 1;
+                (40, 40)
+            },
+        )
         .unwrap();
         assert_eq!(measured, 1);
         let kept = source
@@ -357,3 +453,7 @@ mod tests {
         assert_eq!((sibling.x, sibling.width), (100, 800));
     }
 }
+
+#[cfg(test)]
+#[path = "publisher_padding/width_tests.rs"]
+mod width_tests;

@@ -361,6 +361,7 @@ impl ParleyChapter {
             settings.font_size,
             borders.as_ref(),
             &table_flow,
+            settings.block_width,
             |block| {
                 if styles[block.element].flow.suppressed {
                     return (0, 0);

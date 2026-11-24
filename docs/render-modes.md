@@ -88,6 +88,32 @@ The four options depend on independent box geometry, pagination and
 source mappings. A Reader renderer choice would currently change several
 of these behaviors together. The **Render Mode** matrix item remains open.
 
+## Publisher widths on ordinary paragraphs
+
+An internal horizontal Parley width policy lays out a direct body paragraph
+at its supported publisher pixel or percentage width. The existing box
+coordinates set the line width, text hit areas, and painted background.
+Auto margins consume the available space and resolve through the normal CSS
+cascade, including the `margin` shorthand. A declared width must fit its
+parent and leave room for text. Reader uses its existing layout by default.
+
+| Authored paragraph | Reader default and stock Legacy/Flat/Book | Reader width policy and stock Web |
+| --- | ---: | ---: |
+| Centered at 42% | x = 54, width = 1,156 px | x = 389, width = 485 px |
+| Left aligned at 260 px | x = 54, width = 1,156 px | x = 54, width = 260 px |
+
+The comparisons use a 1264 × 1606 viewport and a 1,156-pixel content width.
+The native oracle asserts the stock word origin and the width and origin of
+each solid paint band. Reader tests additionally check line wrapping,
+restored source quotes and touch hit testing. Reader wraps the 260-pixel
+sample in two lines under its own text metrics. Remaining box sizing work
+includes colored ancestor boxes, explicit height, nonzero horizontal
+margins, overflow, and boxes with images, tables, or floats.
+[CREngine width resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7909-L7982) · [CREngine auto margins](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L8178-L8202) · [Native oracle](../scripts/koreader-render-modes-check.lua) · [Reader capture](screenshots/render-modes-reader-web-width.png)
+
+Run `cargo test --locked --lib publisher_width` for the Reader comparison.
+Set `READER_WEB_WIDTH_CAPTURE` to a PNG path to save a capture.
+
 ## Horizontal block spacing
 
 The horizontal Parley provider now has three internal margin policies. A

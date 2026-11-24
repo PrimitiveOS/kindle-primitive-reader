@@ -124,6 +124,27 @@ impl Default for CssLength {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum BoxMargin {
+    Auto,
+    Length(CssLength),
+}
+
+impl Default for BoxMargin {
+    fn default() -> Self {
+        Self::Length(CssLength::default())
+    }
+}
+
+impl BoxMargin {
+    fn length(self) -> CssLength {
+        match self {
+            Self::Auto => CssLength::default(),
+            Self::Length(length) => length,
+        }
+    }
+}
+
 impl CssLength {
     fn for_dpi(self, dpi: u16) -> Self {
         match self {
@@ -294,6 +315,7 @@ pub(crate) struct Style {
     pub padding: [CssLength; 2],
     pub vertical_padding: [CssLength; 2],
     pub vertical_margin: [CssLength; 2],
+    pub horizontal_margin: [BoxMargin; 2],
     pub float_side: Option<Side>,
     pub clear: Clear,
     pub border_collapse: bool,
@@ -336,6 +358,7 @@ impl Default for Style {
             padding: Default::default(),
             vertical_padding: Default::default(),
             vertical_margin: Default::default(),
+            horizontal_margin: Default::default(),
             float_side: None,
             clear: Clear::default(),
             border_collapse: false,
@@ -599,6 +622,7 @@ impl BookStyle {
             style.padding = Default::default();
             style.vertical_padding = Default::default();
             style.vertical_margin = Default::default();
+            style.horizontal_margin = Default::default();
             style.float_side = None;
             style.clear = Clear::default();
             if let Some(kind) = element.list_kind {
@@ -639,7 +663,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners: Winners = [None; 48];
+            let mut winners: Winners = [None; 50];
             for (origin, rules) in [
                 (CascadeOrigin::User, &self.user_rules),
                 (CascadeOrigin::Author, &self.rules),
@@ -728,7 +752,11 @@ impl BookStyle {
                                 length.computed(font, root_font)
                             });
                     }
-                    Property::PaddingBoth(_) | Property::VerticalMargins(_) => {
+                    Property::HorizontalMargin(side, value) => {
+                        style.horizontal_margin[*side] =
+                            value.unwrap_or(parent.horizontal_margin[*side]);
+                    }
+                    Property::PaddingBoth(_) | Property::Margins(_) => {
                         unreachable!("shorthands are expanded before cascading")
                     }
                     Property::Indent(indent) => {
@@ -1361,16 +1389,18 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
                     important: decl.important,
                 });
             }
-        } else if let Property::VerticalMargins(edges) = decl.property {
-            result.extend(
-                edges
-                    .into_iter()
-                    .enumerate()
-                    .map(|(side, length)| Declaration {
-                        property: Property::VerticalMargin(side, length),
-                        important: decl.important,
-                    }),
-            );
+        } else if let Property::Margins(edges) = decl.property {
+            for (side, margin) in edges.into_iter().enumerate() {
+                let property = if side < 2 {
+                    Property::HorizontalMargin(side, margin)
+                } else {
+                    Property::VerticalMargin(side - 2, margin.map(BoxMargin::length))
+                };
+                result.push(Declaration {
+                    property,
+                    important: decl.important,
+                });
+            }
         } else if let Property::BorderParts(parts) = decl.property {
             result.extend(parts.into_iter().map(|(side, part)| Declaration {
                 property: Property::Border(side, part),
@@ -1384,7 +1414,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (u8, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 48];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 50];
 
 #[derive(Clone, Copy)]
 enum CascadeOrigin {
@@ -1411,6 +1441,7 @@ fn choose<'a>(
             Property::VerticalMargin(side, _) => 44 + side,
             Property::Float(_) => 46,
             Property::Clear(_) => 47,
+            Property::HorizontalMargin(side, _) => 48 + side,
             Property::Family(_) => 0,
             Property::Size(_) => 1,
             Property::LineHeight(_) => 2,
@@ -1444,7 +1475,7 @@ fn choose<'a>(
                     36 + side
                 }
             }
-            Property::PaddingBoth(_) | Property::VerticalMargins(_) | Property::FontSource(_) => {
+            Property::PaddingBoth(_) | Property::Margins(_) | Property::FontSource(_) => {
                 continue;
             }
         };
@@ -1505,7 +1536,8 @@ enum Property {
     Padding(usize, Option<CssLength>),
     PaddingBoth([Option<CssLength>; 4]),
     VerticalMargin(usize, Option<CssLength>),
-    VerticalMargins([Option<CssLength>; 2]),
+    HorizontalMargin(usize, Option<BoxMargin>),
+    Margins([Option<BoxMargin>; 4]),
     Float(Option<Side>),
     Clear(Clear),
     Orphans(Option<u8>),
@@ -1575,21 +1607,26 @@ impl<'i> DeclarationParser<'i> for Properties {
                     Clear::parse(&input.expect_ident()?.to_ascii_lowercase())
                         .ok_or_else(ParseError::unexpected_token)?,
                 ),
-                "padding-top" => Property::Padding(2, parse_box_edges(input, false, false)?[0]),
-                "padding-bottom" => Property::Padding(3, parse_box_edges(input, false, false)?[0]),
-                "padding-left" => Property::Padding(0, parse_box_edges(input, false, false)?[0]),
-                "padding-right" => Property::Padding(1, parse_box_edges(input, false, false)?[0]),
-                "padding" => Property::PaddingBoth(parse_box_edges(input, true, false)?),
-                "margin-top" => {
-                    Property::VerticalMargin(0, parse_box_edges(input, false, true)?[2])
+                "padding-top" => Property::Padding(2, parse_padding(input, false)?[0]),
+                "padding-bottom" => Property::Padding(3, parse_padding(input, false)?[0]),
+                "padding-left" => Property::Padding(0, parse_padding(input, false)?[0]),
+                "padding-right" => Property::Padding(1, parse_padding(input, false)?[0]),
+                "padding" => Property::PaddingBoth(parse_padding(input, true)?),
+                "margin-left" => {
+                    Property::HorizontalMargin(0, parse_box_edges(input, false, true)?[0])
                 }
-                "margin-bottom" => {
-                    Property::VerticalMargin(1, parse_box_edges(input, false, true)?[3])
+                "margin-right" => {
+                    Property::HorizontalMargin(1, parse_box_edges(input, false, true)?[1])
                 }
-                "margin" => {
-                    let [_, _, top, bottom] = parse_box_edges(input, true, true)?;
-                    Property::VerticalMargins([top, bottom])
-                }
+                "margin-top" => Property::VerticalMargin(
+                    0,
+                    parse_box_edges(input, false, true)?[2].map(BoxMargin::length),
+                ),
+                "margin-bottom" => Property::VerticalMargin(
+                    1,
+                    parse_box_edges(input, false, true)?[3].map(BoxMargin::length),
+                ),
+                "margin" => Property::Margins(parse_box_edges(input, true, true)?),
 
                 "border-spacing" => Property::BorderSpacing(
                     if input
@@ -1975,36 +2012,41 @@ fn parse_indent(input: &mut Parser<'_>) -> CssResult<Option<TextIndent>> {
     Ok(Some(TextIndent { length, hanging }))
 }
 
+fn parse_padding(input: &mut Parser<'_>, shorthand: bool) -> CssResult<[Option<CssLength>; 4]> {
+    Ok(parse_box_edges(input, shorthand, false)?.map(|edge| edge.map(BoxMargin::length)))
+}
+
 // Expand CSS top/right/bottom/left into the two horizontal and two vertical sides.
 fn parse_box_edges(
     input: &mut Parser<'_>,
     shorthand: bool,
     margins: bool,
-) -> CssResult<[Option<CssLength>; 4]> {
+) -> CssResult<[Option<BoxMargin>; 4]> {
     let before = input.state();
     if let Ok(keyword) = input.try_parse(Parser::expect_ident_cloned) {
         match keyword.to_ascii_lowercase().as_str() {
             "inherit" => return Ok([None; 4]),
-            "initial" | "unset" | "revert" => return Ok([Some(CssLength::default()); 4]),
+            "initial" | "unset" | "revert" => return Ok([Some(BoxMargin::default()); 4]),
             "auto" if margins => input.reset(&before),
             _ => return Err(ParseError::unexpected_token()),
         }
     }
-    let mut values = [CssLength::default(); 4];
+    let mut values = [BoxMargin::default(); 4];
     let mut count = 0;
     while !input.is_exhausted() {
         if count == if shorthand { 4 } else { 1 } {
             return Err(ParseError::unexpected_token());
         }
-        let length = if margins && input.try_parse(|p| p.expect_ident_matching("auto")).is_ok() {
-            CssLength::default()
+        let value = if margins && input.try_parse(|p| p.expect_ident_matching("auto")).is_ok() {
+            BoxMargin::Auto
         } else {
-            parse_css_length(input)?
+            let length = parse_css_length(input)?;
+            if !margins && length.pixels(100, 1.0) < 0.0 {
+                return Err(ParseError::unexpected_token());
+            }
+            BoxMargin::Length(length)
         };
-        if !margins && length.pixels(100, 1.0) < 0.0 {
-            return Err(ParseError::unexpected_token());
-        }
-        values[count] = length;
+        values[count] = value;
         count += 1;
     }
     match count {
