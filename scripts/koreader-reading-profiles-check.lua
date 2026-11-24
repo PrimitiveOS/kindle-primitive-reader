@@ -98,6 +98,7 @@ local profile_ui = {instance = {rolling = true}}
 mock("apps/reader/readerui", profile_ui)
 local events = {}
 local next_tick = {}
+local after_next_tick = {}
 local scheduled = {}
 local visible
 mock("ui/uimanager", {
@@ -107,6 +108,7 @@ mock("ui/uimanager", {
     show = function(_, widget) visible = widget end,
     close = function() visible = nil end,
     nextTick = function(_, callback) table.insert(next_tick, callback) end,
+    tickAfterNext = function(_, callback) table.insert(after_next_tick, callback) end,
     scheduleIn = function(_, seconds, callback) table.insert(scheduled, {seconds, callback}) end,
 })
 for _, name in ipairs{"confirmbox", "inputdialog", "infomessage", "datetimewidget", "spinwidget"} do
@@ -717,6 +719,55 @@ assert(delays[2].checked_func())
 ask.callback()
 always_text.callback()
 
+-- CloseDocument fires before ReaderUI releases its instance. Replay the stock
+-- callback in that context, then advance to file-manager context after closing.
+local close_menu = profiles:genAutoExecDocConditionalMenuItem("on book closing", "CloseDocumentAll", "Text")
+local always_close = close_menu.sub_item_table_func()[1]
+always_close.callback()
+assert(close_menu.checked_func())
+local function close_book()
+    profile_ui.instance = {rolling = true}
+    events, next_tick, after_next_tick, scheduled, visible = {}, {}, {}, {}, nil
+    profiles:onCloseDocument()
+end
+delays[1].callback()
+close_book()
+assert(sent_setting("font_size") == 31.5 and #after_next_tick == 0)
+profiles.ui.reloading = true
+close_book()
+assert(#events == 0)
+profiles.ui.reloading = nil
+
+delays[2].callback()
+close_book()
+assert(#events == 0 and #next_tick == 0 and #after_next_tick == 1)
+profile_ui.instance = nil
+after_next_tick[1]()
+assert(sent_setting("font_size") == nil)
+
+delays[3].callback(menu)
+visible.callback({value = 3.4})
+close_book()
+assert(#events == 0 and #scheduled == 1 and scheduled[1][1] == 3.4)
+profile_ui.instance = nil
+scheduled[1][2]()
+assert(sent_setting("font_size") == nil)
+
+delays[1].callback()
+ask.callback()
+close_book()
+assert(#events == 0 and visible and visible.ok_text == "Execute")
+profile_ui.instance = nil
+visible.ok_callback()
+assert(sent_setting("font_size") == nil)
+close_book()
+visible.ok_callback()
+assert(sent_setting("font_size") == 31.5)
+ask.callback()
+always_close.callback()
+assert(not close_menu.checked_func())
+delay.hold_callback(menu)
+
 for _, item in ipairs(profiles:getSubMenuItems()) do
     if item.name == "PDF copy" then commands = item.sub_item_table; break end
 end
@@ -739,3 +790,4 @@ print("Stock path shortcuts: %H%/%D%/%S%/%W%, preview, single-pass expansion, li
 print("Stock metadata opening: seven fields, effective title, Current book, OR/only-new, and save/clear.")
 print("Stock opening time: endpoint editor, every minute of daytime, overnight and equal-endpoint windows, conditional gating and clearing.")
 print("Stock opening execution: confirmation before scheduling, Cancel, Prompt, next-tick Default and 1–10 second Custom.")
+print("Stock closing execution: Always, reload guard, Prompt dispatch for active reader, and deferred/late confirmation format gating.")

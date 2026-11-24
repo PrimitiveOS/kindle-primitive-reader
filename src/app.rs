@@ -298,6 +298,7 @@ enum Screen {
     ReadingProfileBookRendering(usize),
     ReadingProfileChoice(usize, reading_profiles::Field),
     ReadingProfileOpening(usize, profile_panel::opening_rules::Page),
+    ReadingProfileClosing(usize),
     ConfirmProfile(usize, profile_panel::Confirm),
     Find,
     Matches,
@@ -478,6 +479,7 @@ impl Screen {
             Self::ReadingProfileBookRendering(_) => "Saved book rendering",
             Self::ReadingProfileChoice(_, field) => field.label(),
             Self::ReadingProfileOpening(_, page) => page.title(),
+            Self::ReadingProfileClosing(_) => "Apply on book closing",
             Self::Find => "Find in book",
             Self::Matches => "Search results",
             Self::SearchSettings => "Search settings",
@@ -620,6 +622,7 @@ enum Action {
     EditReadingProfileFields(usize),
     ToggleReadingProfileField(reading_profiles::Field),
     SetReadingProfileFields(bool),
+    SetClosingProfile(usize, Option<reading_profiles::OnClose>),
     OpeningProfileRule(usize, profile_panel::opening_rules::Command),
     SetProfileRendering(usize, profile_panel::rendering_choices::Value),
     ToggleProfileMarginLink(usize),
@@ -837,6 +840,8 @@ pub struct Reader {
     opening_profile_epoch: u64,
     pending_opening_profiles: Option<profile_panel::on_open::OpeningPlan>,
     opening_execution: Option<profile_panel::opening_execution::OpeningExecution>,
+    closing_profile: Option<profile_panel::on_close::Closing>,
+    closing_before_switch: Option<profile_panel::on_close::BeforeSwitch>,
     pending_orientation: Option<reading_orientation::PendingOrientation>,
     staged_frame_orientation: Option<ReadingOrientation>,
     flow_popup: Option<hidden_flows::FlowPopup>,
@@ -1069,6 +1074,8 @@ impl Reader {
             opening_profile_epoch: 0,
             pending_opening_profiles: None,
             opening_execution: None,
+            closing_profile: None,
+            closing_before_switch: None,
             pending_orientation: None,
             staged_frame_orientation: None,
             flow_popup: None,
@@ -1243,6 +1250,14 @@ impl Reader {
     }
 
     fn open_book(&mut self, entry: LibraryBook) -> Result<()> {
+        self.request_close(profile_panel::on_close::AfterClose::Open {
+            entry,
+            password_return: None,
+        })?;
+        Ok(())
+    }
+
+    fn open_book_now(&mut self, entry: LibraryBook) -> Result<()> {
         let publication = with_storage(|| Ok(self.library.publication_for_chapter(&entry)))?;
         if let Some((marker, chapter, path)) = publication {
             self.open_with_password(marker, None)?;
@@ -1258,6 +1273,7 @@ impl Reader {
     }
 
     fn open_with_password(&mut self, mut entry: LibraryBook, password: Option<&str>) -> Result<()> {
+        self.closing_profile = None;
         self.opening_execution = None;
         self.screen_page_worker.cancel();
         self.close_fixed_search_fit()?;
@@ -1431,6 +1447,7 @@ impl Reader {
             }
             entry.author = reading.author();
             self.save_library()?;
+            let closing_warning = self.apply_closing_before_switch(id);
             self.pending_orientation = None;
             self.install_opening_profile_plan(opening);
             self.active = None;
@@ -1460,6 +1477,8 @@ impl Reader {
             }
             if let Some(error) = profile_warning {
                 self.notice = Some(format!("Opening profile could not be applied: {error}"));
+            } else if closing_warning.is_some() {
+                self.notice = closing_warning;
             }
             if let Some(fixed) = &self.fixed {
                 self.library.cache_author(id, fixed.entry.author.as_deref());
@@ -1625,6 +1644,7 @@ impl Reader {
         }
         entry.author.clone_from(&reading.probe.author);
         self.save_library()?;
+        let closing_warning = self.apply_closing_before_switch(id);
         self.pages_since_refresh = 0;
         self.range_edit = None;
         self.saved_popup = None;
@@ -1673,6 +1693,8 @@ impl Reader {
             self.notice = Some(format!("Opening profile could not be applied: {error}"));
         } else if default_font_missing {
             self.notice = Some("Default reading font unavailable; using device fonts".into());
+        } else if closing_warning.is_some() {
+            self.notice = closing_warning;
         }
         if let Some(active) = &self.active {
             self.library
@@ -2140,6 +2162,7 @@ impl Reader {
 
     fn update_stats_activity(&mut self, now: Instant) {
         let reading = self.stats_awake
+            && self.closing_profile.is_none()
             && self.pending_opening_profiles.is_none()
             && self.end_dialog.is_none()
             && !self.fixed_search_fit_active();
@@ -2301,6 +2324,7 @@ impl Reader {
                 | Screen::ReadingProfileBookRendering(_)
                 | Screen::ReadingProfileChoice(_, _)
                 | Screen::ReadingProfileOpening(_, _)
+                | Screen::ReadingProfileClosing(_)
                 | Screen::ConfirmProfile(_, _)
         ) {
             return self.reading_profile_items();
@@ -3919,8 +3943,7 @@ impl Reader {
             Action::ApplyPdfAnnotations => self.apply_pdf_annotations()?,
             Action::ExportAnnotatedPdf => self.export_annotated_pdf()?,
             Action::Show(Screen::Library) => {
-                self.save()?;
-                self.close_book_to_library();
+                self.request_close(profile_panel::on_close::AfterClose::Library)?;
             }
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
@@ -4258,6 +4281,7 @@ impl Reader {
             Action::EditReadingProfileFields(index) => self.edit_profile_fields(index)?,
             Action::ToggleReadingProfileField(field) => self.toggle_profile_field(field)?,
             Action::SetReadingProfileFields(all) => self.set_profile_fields(all)?,
+            Action::SetClosingProfile(index, policy) => self.set_closing_profile(index, policy)?,
             Action::OpeningProfileRule(index, command) => {
                 self.change_opening_rule(index, command)?
             }
@@ -4994,6 +5018,8 @@ impl Reader {
     }
 
     fn close_book_to_library(&mut self) {
+        self.closing_profile = None;
+        self.closing_before_switch = None;
         self.opening_execution = None;
         self.settle_pending_opening();
         self.pending_orientation = None;
@@ -5091,6 +5117,7 @@ impl Reader {
 
     fn auto_turn_eligible(&self) -> bool {
         self.stats_awake
+            && self.closing_profile.is_none()
             && !self.opening_ask_visible()
             && self.pending_opening_profiles.is_none()
             && !self.fixed_search_fit_active()
@@ -5526,6 +5553,7 @@ impl Reader {
         if matches!(input, Input::PageBack)
             || matches!(input, Input::Tap(x, y) if navigation.back().contains(x, y))
         {
+            self.closing_before_switch = None;
             self.locked = None;
             self.editor = Editor::new(64);
             if self.bookmark_browser.after_password.take().is_some() {
@@ -5559,6 +5587,9 @@ impl Reader {
                 .open_with_password(entry, Some(&password))
                 .and_then(|_| self.bookmark_after_password())
             {
+                if self.locked.is_none() {
+                    self.closing_before_switch = None;
+                }
                 return self.report(error);
             }
         }
@@ -5739,12 +5770,8 @@ impl Reader {
     }
 
     fn exit(&mut self) -> Change {
-        self.opening_execution = None;
-        if let Err(error) = self.close_fixed_search_fit() {
-            return self.report(error);
-        }
-        match self.save() {
-            Ok(()) => Change::Exit,
+        match self.request_close(profile_panel::on_close::AfterClose::Exit) {
+            Ok(change) => change,
             Err(error) => self.report(error),
         }
     }
@@ -8400,9 +8427,13 @@ impl App for Reader {
         self.draw_logical_recovery(canvas);
         self.draw_opening_delay(canvas);
         self.draw_opening_ask(canvas);
+        self.draw_closing_profile(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
+        if let Some(point) = self.closing_profile_press(input) {
+            return point;
+        }
         if let Some(point) = self.opening_modal_press(input) {
             return point;
         }
@@ -8423,6 +8454,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.closing_profile_input(input) {
+            return change;
+        }
         if let Some(change) = self
             .opening_delay_input(input)
             .or_else(|| self.opening_ask_input(input, Instant::now()))
@@ -8638,6 +8672,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.closing_profile_input(input) {
+            return change;
+        }
         if let Some(change) = self
             .opening_delay_input(input)
             .or_else(|| self.opening_ask_input(input, Instant::now()))
@@ -9137,6 +9174,9 @@ impl App for Reader {
                     Screen::ReadingProfileOpening(index, page) => {
                         self.show(page.back(index));
                     }
+                    Screen::ReadingProfileClosing(index) => {
+                        self.show(Screen::ReadingProfile(index))
+                    }
                     Screen::BookDetails => {
                         if self
                             .book_details
@@ -9573,6 +9613,11 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.closing_profile = None;
+        if self.closing_before_switch.is_some() && self.screen == Screen::PdfPassword {
+            self.handle_pdf_password(Input::PageBack);
+        }
+        self.closing_before_switch = None;
         self.opening_execution = None;
         self.install_opening_profile_plan(None);
         self.screen_page_worker.cancel();
@@ -9583,7 +9628,9 @@ impl App for Reader {
         self.spelling_lookup = None;
         self.cancel_ocr_selection();
         self.pages_since_refresh = 0;
-        self.auto_turn.activity(Instant::now());
+        let now = Instant::now();
+        self.auto_turn.activity(now);
+        self.sync_auto_turn(now);
         if self.screen == Screen::GeneratedContents {
             self.show(Screen::Contents);
         }

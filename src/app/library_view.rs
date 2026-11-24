@@ -90,9 +90,10 @@ impl Reader {
             .library_path()
             .to_owned();
         let browser = self.read_book_folder(&path)?;
-        self.activate(Action::Show(Screen::Library))?;
-        self.browser = browser;
-        self.reveal_book_row(&path);
+        self.request_close(super::profile_panel::on_close::AfterClose::CurrentFolder {
+            browser,
+            path,
+        })?;
         Ok(())
     }
 
@@ -108,10 +109,10 @@ impl Reader {
         })?;
         let origin = self.surface_screen();
         primitive_app::App::save(self)?;
-        self.open_book(adjacent)?;
-        if self.screen == Screen::PdfPassword {
-            self.folder_password_return = Some(origin);
-        }
+        self.request_close(super::profile_panel::on_close::AfterClose::Open {
+            entry: adjacent,
+            password_return: Some(origin),
+        })?;
         Ok(())
     }
 

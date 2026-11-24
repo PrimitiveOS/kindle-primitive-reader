@@ -145,6 +145,7 @@ fn opening_shortcuts_match_both_physical_and_library_relative_paths() {
             opening: None,
             opening_time: None,
             opening_execution: None,
+            apply_on_close: None,
         };
         profile.set_opening_conditions(conditions.clone());
         assert_eq!(

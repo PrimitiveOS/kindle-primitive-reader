@@ -384,6 +384,58 @@ fn browser_covers_sources_date_text_filters_preview_and_exact_return() {
 }
 
 #[test]
+fn closing_profile_keeps_the_bookmark_destination_until_the_outgoing_book_is_saved() {
+    let fixture = Fixture::new();
+    let pdf = fixture.root.join("Survey.pdf");
+    fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    let (epub, survey) = mount_marks(&mut app, &fixture, &pdf);
+    let destination = MarkKey {
+        book: epub,
+        locator: Locator::Reflow(0),
+    };
+    app.activate(Action::ScanGamma(18)).unwrap();
+    app.save_reading_profile("Survey contrast").unwrap();
+    app.set_closing_profile(0, Some(crate::reading_profiles::OnClose::Ask))
+        .unwrap();
+    app.activate(Action::ScanGamma(32)).unwrap();
+    app.activate_bookmark_browser(Command::Use(Source::History))
+        .unwrap();
+    app.activate_bookmark_browser(Command::Inspect(destination))
+        .unwrap();
+    tap(
+        &mut app,
+        BrowserLayout(NavigationLayout::PORTRAIT).control(1, 115, 84),
+    );
+    assert_eq!(app.open_book_id(), Some(survey));
+    assert!(app.closing_profile.is_some());
+    assert_eq!(
+        app.library
+            .state(survey)
+            .unwrap()
+            .fixed_preferences
+            .scan_gamma_tenths,
+        Some(32)
+    );
+    let (width, height) = app.reading_viewport().dimensions();
+    let sheet =
+        primitive_ui::Sheet::centered(Rect::new(0, 0, width as i32, height as i32), "", "", "");
+    tap(&mut app, sheet.button(primitive_ui::SheetAction::Confirm));
+    assert!(app.closing_profile.is_none());
+    assert_eq!(app.open_book_id(), Some(epub));
+    assert_eq!(app.current_position().unwrap().chapter, 1);
+    assert_eq!(
+        app.library
+            .state(survey)
+            .unwrap()
+            .fixed_preferences
+            .scan_gamma_tenths,
+        Some(18)
+    );
+}
+
+#[test]
 fn password_prompt_keeps_the_mark_pending_until_authentication_or_cancel() {
     let fixture = Fixture::new();
     let pdf = fixture.root.join("Weather survey.pdf");

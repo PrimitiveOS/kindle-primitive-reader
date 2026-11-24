@@ -21,6 +21,13 @@ const MAX_BYTES: u64 = 32 * 1024;
 const MAX_PROFILES: usize = 16;
 pub(crate) const MAX_NAME: usize = 48;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OnClose {
+    Apply,
+    Ask,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub(crate) enum Profile {
@@ -37,6 +44,8 @@ pub(crate) enum Profile {
         opening_time: Option<opening::TimeWindow>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         opening_execution: Option<opening::Execution>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        apply_on_close: Option<OnClose>,
     },
     Fixed {
         name: String,
@@ -51,10 +60,28 @@ pub(crate) enum Profile {
         opening_time: Option<opening::TimeWindow>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         opening_execution: Option<opening::Execution>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        apply_on_close: Option<OnClose>,
     },
 }
 
 impl Profile {
+    pub(crate) fn apply_on_close(&self) -> Option<OnClose> {
+        match self {
+            Self::Text { apply_on_close, .. } | Self::Fixed { apply_on_close, .. } => {
+                *apply_on_close
+            }
+        }
+    }
+
+    pub(crate) fn set_apply_on_close(&mut self, policy: Option<OnClose>) {
+        match self {
+            Self::Text { apply_on_close, .. } | Self::Fixed { apply_on_close, .. } => {
+                *apply_on_close = policy
+            }
+        }
+    }
+
     pub(crate) fn opening_execution(&self) -> Option<opening::Execution> {
         match self {
             Self::Text {

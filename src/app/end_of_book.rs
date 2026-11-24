@@ -220,8 +220,9 @@ impl Reader {
             .0
             .library_path()
             .to_owned();
-        self.activate(Action::Show(Screen::Library))?;
-        self.browse_from_book(&path)?;
+        self.request_close(super::profile_panel::on_close::AfterClose::FinishedFolder(
+            path,
+        ))?;
         Ok(())
     }
 
@@ -237,7 +238,10 @@ impl Reader {
         self.save()?;
         with_storage(|| self.library.delete_book_file(&entry, id))?;
         self.mark_dirty();
-        self.leave_finished_book()
+        self.save()?;
+        self.close_book_to_library();
+        self.browse_from_book(entry.library_path())?;
+        Ok(())
     }
 
     fn delete_sheet<'a>(&self, name: &'a str) -> Sheet<'a> {

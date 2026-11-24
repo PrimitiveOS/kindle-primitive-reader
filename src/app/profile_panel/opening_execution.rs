@@ -197,43 +197,10 @@ impl Reader {
     }
 
     fn apply_opening_batch(&mut self, profiles: &[Profile]) -> Result<()> {
-        if !self.opening_execution_current()
-            || profiles
-                .iter()
-                .any(|profile| !self.profile_supported(profile))
-        {
+        if !self.opening_execution_current() {
             return Err("The book changed before opening profile execution".into());
         }
-        if let Some(book) = &self.active {
-            let current = &self
-                .library
-                .state(book.id)
-                .ok_or("Reading state unavailable")?
-                .preferences;
-            let mut adjusted = current.clone();
-            for profile in profiles {
-                if let Some(prefs) = profile.apply_text(&adjusted) {
-                    adjusted = prefs;
-                }
-            }
-            if adjusted != *current {
-                self.apply_text_profile(adjusted)?;
-            }
-        } else {
-            let fixed: Vec<_> = profiles
-                .iter()
-                .filter_map(|profile| match profile {
-                    Profile::Fixed { fixed, .. } => Some((*fixed, profile.selection())),
-                    _ => None,
-                })
-                .collect();
-            self.apply_fixed_profiles(
-                fixed
-                    .iter()
-                    .map(|(profile, fields)| (*profile, fields.as_slice())),
-            )?;
-        }
-        Ok(())
+        self.apply_profile_batch(profiles)
     }
 
     pub(in crate::app) fn opening_ask_visible(&self) -> bool {

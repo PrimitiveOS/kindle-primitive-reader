@@ -950,9 +950,17 @@ impl Reader {
     }
 
     fn view_bookmark_in_book(&mut self, key: MarkKey) -> Result<()> {
+        if self.open_book_id() == Some(key.book) {
+            return self.view_bookmark_in_book_now(key);
+        }
+        self.request_close(super::profile_panel::on_close::AfterClose::Mark(key))?;
+        Ok(())
+    }
+
+    pub(super) fn view_bookmark_in_book_now(&mut self, key: MarkKey) -> Result<()> {
         if self.open_book_id() != Some(key.book) {
             let entry = self.locate_tracked(key.book)?;
-            self.open_book(entry)?;
+            self.open_book_now(entry)?;
             if self.screen == Screen::PdfPassword {
                 self.bookmark_browser.after_password = Some(key);
                 return Ok(());
@@ -972,7 +980,7 @@ impl Reader {
         if self.screen != Screen::PdfPassword
             && let Some(key) = self.bookmark_browser.after_password.take()
         {
-            self.view_bookmark_in_book(key)?;
+            self.view_bookmark_in_book_now(key)?;
         }
         Ok(())
     }

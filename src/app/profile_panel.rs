@@ -5,6 +5,7 @@ use super::{navigation_layout::NavigationLayout, *};
 use crate::reading_profiles::opening::MetadataField;
 use crate::reading_profiles::{Field, FixedProfile};
 
+pub(super) mod on_close;
 pub(super) mod on_open;
 pub(super) mod opening_execution;
 mod opening_metadata;
@@ -107,6 +108,9 @@ impl Reader {
         if let Screen::ReadingProfileOpening(index, page) = self.screen {
             return self.opening_rule_items(index, page);
         }
+        if let Screen::ReadingProfileClosing(index) = self.screen {
+            return self.close_profile_items(index);
+        }
         if let Screen::ReadingProfileFields(index) = self.screen {
             return self.profile_field_items(index);
         }
@@ -150,6 +154,11 @@ impl Reader {
                 )),
             )
             .detail(opening_rules::summary(profile)),
+            Item::new(
+                "Apply on book closing",
+                Action::Show(Screen::ReadingProfileClosing(index)),
+            )
+            .detail(on_close::summary(profile.apply_on_close())),
             Item::new(
                 "Rename",
                 Action::Show(Screen::ProfileName(Name::Rename(index))),
@@ -272,6 +281,7 @@ impl Reader {
                 opening: None,
                 opening_time: None,
                 opening_execution: None,
+                apply_on_close: None,
             });
         }
         Ok(Profile::Text {
@@ -282,6 +292,7 @@ impl Reader {
             opening: None,
             opening_time: None,
             opening_execution: None,
+            apply_on_close: None,
         })
     }
 
@@ -320,6 +331,7 @@ impl Reader {
                 let mut copy = profile.clone();
                 copy.set_name(name);
                 copy.set_opening_conditions(Default::default());
+                copy.set_apply_on_close(None);
                 profiles.push(copy);
             }
             Name::Create
@@ -388,6 +400,45 @@ impl Reader {
                 self.apply_fixed_profiles([(*fixed, profile.selection().as_slice())])
             }
         }
+    }
+
+    fn apply_profile_batch(&mut self, profiles: &[Profile]) -> Result<()> {
+        if profiles
+            .iter()
+            .any(|profile| !self.profile_supported(profile))
+        {
+            return Err("The book changed before profile execution".into());
+        }
+        if let Some(book) = &self.active {
+            let current = &self
+                .library
+                .state(book.id)
+                .ok_or("Reading state unavailable")?
+                .preferences;
+            let mut adjusted = current.clone();
+            for profile in profiles {
+                if let Some(prefs) = profile.apply_text(&adjusted) {
+                    adjusted = prefs;
+                }
+            }
+            if adjusted != *current {
+                self.apply_text_profile(adjusted)?;
+            }
+        } else {
+            let fixed: Vec<_> = profiles
+                .iter()
+                .filter_map(|profile| match profile {
+                    Profile::Fixed { fixed, .. } => Some((*fixed, profile.selection())),
+                    _ => None,
+                })
+                .collect();
+            self.apply_fixed_profiles(
+                fixed
+                    .iter()
+                    .map(|(profile, fields)| (*profile, fields.as_slice())),
+            )?;
+        }
+        Ok(())
     }
 
     fn apply_fixed_profiles<'a>(
