@@ -53,13 +53,17 @@ impl Default for Options {
     }
 }
 impl Options {
-    fn valid(self) -> bool {
+    pub(crate) fn duration_limits_valid(self) -> bool {
         let stock_limits = MIN_DURATION_RANGE.contains(&self.min_seconds)
             && MAX_DURATION_RANGE.contains(&self.max_seconds);
         let legacy_limits = self.min_seconds > 0
             && self.min_seconds <= self.max_seconds
             && self.max_seconds <= 3600;
-        (stock_limits || legacy_limits)
+        stock_limits || legacy_limits
+    }
+
+    fn valid(self) -> bool {
+        self.duration_limits_valid()
             && self.week_start <= 6
             && self.day_start < 1440
             && (1..=5).contains(&self.calendar_book_spans)

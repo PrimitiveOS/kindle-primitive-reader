@@ -4,7 +4,7 @@ use super::{
 };
 use crate::app::step_buttons::StepButtons;
 use crate::reading_stats::history::{MAX_DURATION_RANGE, MIN_DURATION_RANGE};
-use primitive_ui::{Editor, Key};
+use primitive_ui::{Editor, Key, Press};
 use std::ops::RangeInclusive;
 
 const SHEET: Rect = Rect::new(86, 490, 1092, 700);
@@ -179,7 +179,7 @@ impl Reader {
         );
         canvas.text(
             DESCRIPTION,
-            "Skip visits shorter than the minimum. Cap longer visits at the maximum.",
+            "Cap visits above the maximum. Otherwise, skip visits below the minimum.",
             CAPTION.lines(2),
         );
         for limit in LIMITS {
@@ -238,6 +238,9 @@ impl Reader {
                 return Some(Change::None);
             };
             if ENTRY_USE.contains(x, y) {
+                if entry.invalid {
+                    return Some(Change::None);
+                }
                 if let Some(value) = entry
                     .editor
                     .string()
@@ -253,8 +256,8 @@ impl Reader {
             } else if let Some((_, _, key)) =
                 digit_buttons().find(|(rect, _, _)| rect.contains(x, y))
             {
-                entry.editor.press(key);
-                entry.invalid = false;
+                let change = entry.editor.press(key);
+                entry.invalid = matches!(key, Key::Char(_)) && change == Press::Nothing;
             } else {
                 return Some(Change::None);
             }
@@ -269,11 +272,8 @@ impl Reader {
             if draft.options == self.reading_history.options() {
                 return Some(Change::None);
             }
-            if !LIMITS
-                .into_iter()
-                .all(|limit| limit.range().contains(&limit.value(draft.options)))
-            {
-                return Some(self.report("Enter both values within their displayed ranges."));
+            if !draft.options.duration_limits_valid() {
+                return Some(self.report("Adjust the saved limit to fit the keypad range."));
             }
             let options = draft.options;
             if let Err(error) = self.activate_reading_history(Command::Configure(options)) {
@@ -295,7 +295,7 @@ impl Reader {
             };
             draft.entry = Some(Entry {
                 limit,
-                editor: Editor::new(4),
+                editor: Editor::new(10),
                 invalid: false,
             });
         }
@@ -376,7 +376,7 @@ mod tests {
         assert_eq!(draft(&app).options.min_seconds, 16);
         assert_eq!(draft(&app).options.max_seconds, 190);
         press(&mut app, Limit::Max.value_button());
-        enter(&mut app, "7201");
+        enter(&mut app, "72001");
         press(&mut app, ENTRY_USE);
         assert!(draft(&app).entry.as_ref().unwrap().invalid);
         assert_eq!(draft(&app).options.max_seconds, 190);
@@ -384,7 +384,6 @@ mod tests {
             .find(|(_, _, key)| *key == Key::Delete)
             .unwrap();
         press(&mut app, delete);
-        enter(&mut app, "0");
         capture_test_screen(&app, &fonts, "READER_STATS_DURATION_KEYPAD_SCREEN", false);
         press(&mut app, ENTRY_USE);
         assert_eq!(draft(&app).options.max_seconds, 7200);
@@ -401,7 +400,7 @@ mod tests {
         enter(&mut app, "0");
         press(&mut app, ENTRY_USE);
         press(&mut app, Limit::Max.value_button());
-        enter(&mut app, "7200");
+        enter(&mut app, "07200");
         press(&mut app, ENTRY_USE);
         capture_test_screen(&app, &fonts, "READER_STATS_DURATION_SCREEN", false);
         press(&mut app, APPLY);
@@ -440,5 +439,23 @@ mod tests {
         press(&mut app, APPLY);
         assert_eq!(app.reading_history.options().max_seconds, 7200);
         assert!(app.notice.is_none());
+    }
+
+    #[test]
+    fn duration_limits_edit_keeps_an_untouched_legacy_limit() {
+        let (_fixture, mut app, _) = setup();
+        app.activate_reading_history(Command::Configure(Options {
+            min_seconds: 180,
+            max_seconds: 1800,
+            ..Options::default()
+        }))
+        .unwrap();
+        open(&mut app);
+        press(&mut app, Limit::Max.value_button());
+        enter(&mut app, "300");
+        press(&mut app, ENTRY_USE);
+        press(&mut app, APPLY);
+        assert_eq!(app.reading_history.options().min_seconds, 180);
+        assert_eq!(app.reading_history.options().max_seconds, 300);
     }
 }
