@@ -25,6 +25,25 @@ Desktop tests cover a resumed EPUB beyond the first folder page, saved
 bookmarks and position after restart, fixed PDF, extracted EPUB, and
 failed folder lookup or save. [Reading menu](screenshots/current-book-folder-menu.png) · [Containing folder](screenshots/current-book-folder.png)
 
+## Switch between files in a folder
+
+From the reading **Library** menu, choose **Previous file in folder** or
+**Next file in folder**. Reader looks for the next unfinished publication
+in that direction using the file picker’s natural order. It skips unsupported
+entries and stops at the folder boundary. Reader saves the outgoing
+position and marks before opening the selected document. The selected
+document resumes at its saved position. If you cancel a PDF password,
+Reader returns to the open book.
+
+KOReader exposes both directions as reading actions and searches its active
+folder order for supported files that are still unfinished. Reader uses the
+same filtering for its manual actions. **Open previous document** uses
+the recently read list. [Pinned KOReader actions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L76-L79) · [Pinned folder chooser](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/filechooser.lua#L425-L450)
+
+Desktop tests check both directions across a saved EPUB and PDF, both
+folder boundaries, skipping completed and unsupported files, an extracted
+EPUB, and wrong-password retry and cancellation. [Reading menu](screenshots/adjacent-folder-files-menu.png) · [Resumed EPUB](screenshots/adjacent-folder-files-target.png)
+
 ## Reference and tests
 
 The installed KOReader source matched the v2026.07.1 reference. Thirteen checks exercised its dialog, automatic and manual reading status, next-file access under different sort orders, return to the beginning, Library, and the independent confirmation before deletion. Reader uses its natural filename order across regular document folders. Both reading providers treat a forward attempt at the boundary as the trigger. [KOReader end-of-book actions](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerstatus.lua#L38-L222) · [Reflow page turns](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerrolling.lua#L911-L945) · [Fixed-page and continuous turns](https://github.com/koreader/koreader/blob/v2026.07.1/frontend/apps/reader/modules/readerpaging.lua#L912-L1047)

@@ -224,6 +224,12 @@ impl LibraryBook {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FolderDirection {
+    Previous,
+    Next,
+}
+
 #[derive(Clone, Debug)]
 pub struct BrowseList {
     pub entries: Vec<BrowseEntry>,
@@ -526,6 +532,8 @@ pub struct FixedPreferences {
     pub epub_right_to_left: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crop: Option<PdfTextRect>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub semi_auto_crop: bool,
 }
 
 impl FixedPreferences {
@@ -562,7 +570,7 @@ impl FixedPreferences {
             turns: self.turns % 4,
             width_fit,
             height_fit: self.height_fit && !width_fit && tile_zoom.is_none(),
-            continuous: self.continuous && tile_zoom.is_none(),
+            continuous: self.continuous && tile_zoom.is_none() && !self.semi_auto_crop,
             spread: self.spread && tile_zoom.is_none(),
             continuous_gap: self.continuous_gap.min(MAX_CONTINUOUS_GAP),
             straighten_limit: self.straighten_limit.min(MAX_STRAIGHTEN_DEGREES),
@@ -637,6 +645,7 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                 .get("crop")
                 .and_then(|value| serde_json::from_value(value.clone()).ok())
                 .filter(valid_crop),
+            semi_auto_crop: switch("semi_auto_crop"),
         }
         .normalized())
     }
@@ -863,6 +872,12 @@ pub struct BookState {
     pub preferences: BookPreferences,
     #[serde(default)]
     pub fixed_preferences: FixedPreferences,
+    #[serde(
+        default,
+        deserialize_with = "read_pdf_crop_seeds",
+        skip_serializing_if = "crate::pdf_crop::Seeds::is_empty"
+    )]
+    pub(crate) pdf_crop_seeds: crate::pdf_crop::Seeds,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) preferred_dictionaries: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -906,6 +921,13 @@ fn read_ocr_language<'de, D: serde::Deserializer<'de>>(
         .map(str::to_owned))
 }
 
+fn read_pdf_crop_seeds<'de, D: serde::Deserializer<'de>>(
+    reader: D,
+) -> Result<crate::pdf_crop::Seeds, D::Error> {
+    let value = serde_json::Value::deserialize(reader)?;
+    Ok(serde_json::from_value(value).unwrap_or_default())
+}
+
 impl BookState {
     fn new(entry: &LibraryBook, id: u64) -> Self {
         Self {
@@ -928,6 +950,7 @@ impl BookState {
             top_status_header: None,
             preferences: BookPreferences::default(),
             fixed_preferences: FixedPreferences::default(),
+            pdf_crop_seeds: Default::default(),
             preferred_dictionaries: Vec::new(),
             dictionary_word_forms: None,
             ocr_language: None,
@@ -1278,15 +1301,43 @@ impl Library {
         &self,
         current: &LibraryBook,
     ) -> io::Result<Option<LibraryBook>> {
+        self.folder_book(current, FolderDirection::Next, false)
+    }
+
+    pub(crate) fn adjacent_book_in_folder(
+        &self,
+        current: &LibraryBook,
+        direction: FolderDirection,
+    ) -> io::Result<Option<LibraryBook>> {
+        self.folder_book(current, direction, true)
+    }
+
+    fn folder_book(
+        &self,
+        current: &LibraryBook,
+        direction: FolderDirection,
+        skip_finished: bool,
+    ) -> io::Result<Option<LibraryBook>> {
         let path = current.library_path();
         let folder = path.parent().unwrap_or_else(|| Path::new(""));
-        let listing = self.browse(folder)?;
-        let next = listing
-            .entries
+        let mut entries = self.browse(folder)?.entries;
+        if direction == FolderDirection::Previous {
+            entries.reverse();
+        }
+        let possibly_finished: HashSet<_> = if skip_finished {
+            self.recent
+                .iter()
+                .filter(|state| state.status() == ReadingStatus::Finished)
+                .map(|state| (state.path.as_path(), state.size))
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        let next = entries
             .into_iter()
             .skip_while(|entry| entry.path != path)
             .skip(1)
-            .find_map(|entry| match entry.kind {
+            .filter_map(|entry| match entry.kind {
                 BrowseKind::Readable(book) => Some(book),
                 BrowseKind::Folder => {
                     let marker = entry.path.join("mimetype");
@@ -1297,6 +1348,15 @@ impl Library {
                     }
                 }
                 _ => None,
+            })
+            .find(|book| {
+                // A different edition at a finished file's path is still readable.
+                !possibly_finished.contains(&(book.path.as_path(), book.size))
+                    || self
+                        .identify(book)
+                        .ok()
+                        .and_then(|id| self.state(id))
+                        .is_none_or(|state| state.status() != ReadingStatus::Finished)
             });
         Ok(next)
     }
@@ -3262,6 +3322,7 @@ mod tests {
                 epub_spread: None,
                 epub_right_to_left: None,
                 crop: None,
+                semi_auto_crop: false,
             }
         );
         assert!(state.fixed_preferences.is_valid());

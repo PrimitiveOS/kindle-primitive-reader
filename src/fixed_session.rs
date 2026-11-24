@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::ops::Range;
@@ -23,6 +25,7 @@ use crate::library::{
     MAX_CONTINUOUS_GAP, MAX_HIGHLIGHT_TEXT_BYTES, MAX_SCAN_WHITE_LEVEL, MIN_SCAN_WHITE_LEVEL,
     PdfHighlight,
 };
+use crate::pdf_crop::{self, Seed, Seeds};
 use crate::session::{
     DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, draw_document_and_footer,
 };
@@ -57,6 +60,8 @@ const MAX_CONTRAST_SAMPLES: usize = 32_768;
 
 pub(crate) struct FixedReading {
     hidden_flows: Option<PageFlows>,
+    crop_seeds: Seeds,
+    detected_crops: RefCell<BTreeMap<usize, PdfTextRect>>,
     source: FixedDocument,
     page: usize,
     view: View,
@@ -465,6 +470,8 @@ impl FixedReading {
         }
         Ok(Self {
             hidden_flows: None,
+            crop_seeds: Seeds::default(),
+            detected_crops: RefCell::default(),
             source,
             page,
             view,
@@ -674,6 +681,9 @@ impl FixedReading {
     }
 
     pub(crate) fn set_continuous(&mut self, enabled: bool) -> Result<()> {
+        if enabled && self.view.semi_auto_crop {
+            return Err("Reset semi-auto crop before enabling continuous reading".into());
+        }
         let FixedDocument::Pdf(pdf) = &self.source else {
             return Err("Continuous scrolling is available for PDF".into());
         };
@@ -967,9 +977,116 @@ impl FixedReading {
         self.supports_text()
     }
 
+    pub(crate) fn supports_semi_auto_crop(&self) -> bool {
+        matches!(self.source, FixedDocument::Pdf(_)) && !self.is_continuous()
+    }
+
+    pub(crate) fn load_crop_seeds(&mut self, seeds: Seeds) -> Result<()> {
+        self.crop_seeds = seeds;
+        self.detected_crops.get_mut().clear();
+        if self.view.semi_auto_crop {
+            self.restore_view(self.view)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn initial_crop_seed(&self) -> Result<(Seed, (f32, f32))> {
+        let FixedDocument::Pdf(pdf) = &self.source else {
+            return Err("Semi-auto crop is available for paged PDF".into());
+        };
+        let size = pdf.page_size(self.page)?;
+        let found = self
+            .crop_seeds
+            .get(self.page)
+            .and_then(|seed| seed.normalized(size))
+            .or(self.view.crop);
+        let area = match found {
+            Some(area) => area,
+            None => pdf_crop::detect(pdf, self.page, None, WIDTH)?,
+        };
+        Ok((Seed::from_normalized(area, size), size))
+    }
+
+    pub(crate) fn apply_crop_seed(
+        &mut self,
+        original: View,
+        viewport_height: u32,
+        seed: Seed,
+        save: impl FnOnce(usize, View, &Seeds) -> io::Result<()>,
+    ) -> Result<()> {
+        let mut next = self.crop_seeds.clone();
+        next.record(self.page, seed);
+        let previous = std::mem::replace(&mut self.crop_seeds, next.clone());
+        let previous_cache = std::mem::take(self.detected_crops.get_mut());
+        let view = View {
+            semi_auto_crop: true,
+            offset_x: if original.right_to_left {
+                -f32::MAX
+            } else {
+                f32::MAX
+            },
+            offset_y: if original.zoom_bottom_to_top() {
+                -f32::MAX
+            } else {
+                f32::MAX
+            },
+            ..original
+        };
+        if let Err(err) = self.present_in_saved(self.page, view, viewport_height, |page, view| {
+            save(page, view, &next)
+        }) {
+            self.crop_seeds = previous;
+            *self.detected_crops.get_mut() = previous_cache;
+            return Err(err);
+        }
+        self.pause();
+        Ok(())
+    }
+
+    fn resolve_crop(&self, page: usize, mut view: View) -> Result<View> {
+        if !view.semi_auto_crop {
+            return Ok(view);
+        }
+        let FixedDocument::Pdf(pdf) = &self.source else {
+            view.semi_auto_crop = false;
+            return Ok(view);
+        };
+        let cached = self.detected_crops.borrow().get(&page).copied();
+        let crop = match cached {
+            Some(crop) => crop,
+            None => {
+                let crop = pdf_crop::detect(pdf, page, self.crop_seeds.get(page), WIDTH)?;
+                let mut cache = self.detected_crops.borrow_mut();
+                if cache.len() == 64 {
+                    cache.pop_first();
+                }
+                cache.insert(page, crop);
+                crop
+            }
+        };
+        view.crop = Some(crop);
+        Ok(view)
+    }
+
     pub(crate) fn start_crop(&mut self) -> Result<View> {
+        self.start_crop_at_height(self.frame.height)
+    }
+
+    pub(crate) fn start_crop_preview(&mut self) -> Result<(View, u32)> {
+        let height = self.frame.height;
+        self.start_crop_at_height(PAGE_HEIGHT)
+            .map(|view| (view, height))
+    }
+
+    pub(crate) fn restore_crop_preview(&mut self, view: View, height: u32) -> Result<()> {
+        self.present_in(self.page, view, height, || Ok(()))?;
+        self.pause();
+        Ok(())
+    }
+
+    fn start_crop_at_height(&mut self, height: u32) -> Result<View> {
         let original = self.view;
-        self.present(
+        self.present_in(
             self.page,
             View {
                 turns: original.turns,
@@ -979,6 +1096,8 @@ impl FixedReading {
                 scan_white_level: original.scan_white_level,
                 ..View::default()
             },
+            height,
+            || Ok(()),
         )?;
         Ok(original)
     }
@@ -1001,6 +1120,7 @@ impl FixedReading {
             offset_x: 0.0,
             offset_y: 0.0,
             crop: None,
+            semi_auto_crop: false,
             ..self.view
         };
         if page != self.page || view != self.view {
@@ -1425,11 +1545,14 @@ impl FixedReading {
         {
             return Ok(());
         }
-        let mut view = View {
-            offset_x: 0.0,
-            offset_y: 0.0,
-            ..self.view
-        };
+        let mut view = self.resolve_crop(
+            page,
+            View {
+                offset_x: 0.0,
+                offset_y: 0.0,
+                ..self.view
+            },
+        )?;
         if let (Some(target), Some(scan)) = (target, ScanPage::from_document(&self.source)) {
             let size = scan.page_size(page)?;
             let metrics = view_metrics(size, &view, self.frame.height);
@@ -1879,6 +2002,7 @@ impl FixedReading {
         }
 
         let next_size = self.source.page_size(page)?;
+        view = self.resolve_crop(page, view)?;
         let next_metrics = view_metrics(next_size, &view, self.frame.height);
         let next_x_limit = ((next_metrics.width - WIDTH as f32) / 2.0).max(0.0);
         let next_y_limit = ((next_metrics.height - self.frame.height as f32) / 2.0).max(0.0);
@@ -2030,6 +2154,7 @@ impl FixedReading {
         viewport_height: u32,
         save: impl FnOnce(usize, View) -> io::Result<()>,
     ) -> Result<()> {
+        let view = self.resolve_crop(page, view)?;
         let new_epub_spreads = if viewport_height != self.frame.height
             || view.epub_spread != self.view.epub_spread
             || view.epub_right_to_left != self.view.epub_right_to_left

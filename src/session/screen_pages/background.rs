@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 
 use primitive_app::with_storage;
 
-use super::{FileStamp, Generation, PageSample, ScreenPageSources, checked_prefix, same_spine};
+use super::{
+    FileStamp, Generation, PageSample, ScreenPageSources, checked_prefix, heading_pages, same_spine,
+};
 use crate::epub::{Book, Chapter};
 use crate::session::Reading;
 use crate::{Engine, Probe, Result, Settings, user_hyphenation, user_styles};
@@ -34,11 +36,17 @@ pub(crate) struct Worker {
     pending: Option<Pending>,
 }
 
+struct ChapterSample {
+    index: usize,
+    pagination: PageSample,
+    headings: Option<Vec<(usize, usize)>>,
+}
+
 struct Pending {
     cancelled: Arc<AtomicBool>,
     generation: Rc<()>,
     poll_at: Instant,
-    thread: JoinHandle<Result<Vec<(usize, PageSample)>>>,
+    thread: JoinHandle<Result<Vec<ChapterSample>>>,
 }
 
 impl Worker {
@@ -190,7 +198,7 @@ fn current_generation(reading: &Reading, id: &Rc<()>) -> bool {
     })
 }
 
-fn accept_result(reading: &Reading, id: &Rc<()>, result: Option<Vec<(usize, PageSample)>>) -> bool {
+fn accept_result(reading: &Reading, id: &Rc<()>, result: Option<Vec<ChapterSample>>) -> bool {
     if !current_generation(reading, id) {
         return false;
     }
@@ -201,7 +209,12 @@ fn accept_result(reading: &Reading, id: &Rc<()>, result: Option<Vec<(usize, Page
         return false;
     };
     let active = PageSample::new(&reading.probe);
-    if result.iter().any(|(index, sample)| {
+    if result.iter().any(|part| {
+        let ChapterSample {
+            index,
+            pagination: sample,
+            ..
+        } = part;
         sample.count == 0
             || generation
                 .samples
@@ -213,14 +226,17 @@ fn accept_result(reading: &Reading, id: &Rc<()>, result: Option<Vec<(usize, Page
         return false;
     }
     let mut completed = generation.samples.clone();
-    for (index, sample) in result {
-        completed[index] = Some(sample);
+    for part in &result {
+        completed[part.index] = Some(part.pagination);
     }
     let Some(prefix) = checked_prefix(&completed) else {
         generation.background_rejected = true;
         return false;
     };
     generation.samples = completed;
+    for part in result {
+        generation.heading_pages[part.index] = part.headings;
+    }
     generation.missing = 0;
     generation.prefix = Some(prefix);
     true
@@ -263,7 +279,7 @@ impl Request {
         }
     }
 
-    fn run(self, cancelled: &AtomicBool) -> Result<Vec<(usize, PageSample)>> {
+    fn run(self, cancelled: &AtomicBool) -> Result<Vec<ChapterSample>> {
         let archive: Arc<[u8]> = read_snapshot(&self.book, &self.sources.book, cancelled)?.into();
         let fonts =
             crate::font_context_with_font_data(&self.fonts, Path::new(FIRMWARE_FONTS), |path| {
@@ -319,7 +335,11 @@ impl Request {
             if index == self.witness.0 && sample != self.witness.1 {
                 return Err("The visible chapter's page count changed during indexing".into());
             }
-            result.push((index, sample));
+            result.push(ChapterSample {
+                index,
+                pagination: sample,
+                headings: heading_pages(&probe),
+            });
             drop(probe);
             thread::park_timeout(CHAPTER_YIELD);
         }
@@ -393,11 +413,21 @@ mod tests {
             drop(slot);
             let counts = request.run(&AtomicBool::new(false)).unwrap();
             assert_eq!(counts.len(), reading.probe.chapter_count());
-            for (index, sample) in counts {
+            for ChapterSample {
+                index,
+                pagination: sample,
+                headings,
+            } in counts
+            {
                 let loaded = reading.config.chapter(index).unwrap();
                 assert!(
                     sample == PageSample::new(&loaded),
                     "{fixture} chapter {index}"
+                );
+                assert_eq!(
+                    headings,
+                    heading_pages(&loaded),
+                    "{fixture} outline positions"
                 );
             }
         }

@@ -70,6 +70,7 @@ mod result_context;
 mod saved_highlight_popup;
 mod search_chapter_scope;
 mod selection_popup;
+mod semi_auto_crop;
 mod sidecar_marks;
 mod skim;
 mod step_buttons;
@@ -105,7 +106,8 @@ use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
 use crate::koreader_sidecar::{self, SidecarProgress};
 use crate::library::{
     BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat, FixedPreferences,
-    FixedTileAxis, Highlight, Library, LibraryBook, PdfHighlight, ReadingPosition, ReadingStatus,
+    FixedTileAxis, FolderDirection, Highlight, Library, LibraryBook, PdfHighlight, ReadingPosition,
+    ReadingStatus,
 };
 use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::pdf_annotations;
@@ -435,6 +437,7 @@ enum Action {
     Open(LibraryBook),
     OpenTracked(u64),
     OpenPreviousDocument,
+    OpenFolderFile(FolderDirection),
     Browse(PathBuf),
     CurrentBookFolder,
     Continue,
@@ -568,6 +571,7 @@ enum Action {
     RotatePage,
     ReversePageDirection,
     CropPage,
+    SemiAutoCrop,
     RecognizeText,
     RecognizeLanguage(String),
     ReadFixedText,
@@ -784,7 +788,9 @@ pub struct Reader {
     ocr: Option<ActiveOcr>,
     text_flow: Option<TextFlow>,
     locked: Option<LibraryBook>,
+    folder_password_return: Option<Screen>,
     crop_dialog: Option<(FixedPreferences, Option<(f32, f32)>)>,
+    semi_auto_crop: Option<semi_auto_crop::Draft>,
     screen: Screen,
     reading_panel: Option<BarPanel>,
     last_text_panel: BarPanel,
@@ -992,7 +998,9 @@ impl Reader {
             ocr: None,
             text_flow: None,
             locked: None,
+            folder_password_return: None,
             crop_dialog: None,
+            semi_auto_crop: None,
             screen: Screen::Library,
             reading_panel: None,
             last_text_panel: BarPanel::Text,
@@ -1188,6 +1196,9 @@ impl Reader {
         self.search_result = None;
         self.result_selection = None;
         if let Some(mut reading) = fixed {
+            if let Some(state) = self.library.state(id) {
+                reading.load_crop_seeds(state.pdf_crop_seeds.clone())?;
+            }
             let flows = self
                 .library
                 .state(id)
@@ -1391,6 +1402,9 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        if screen != Screen::PdfPassword {
+            self.folder_password_return = None;
+        }
         if screen != Screen::Book {
             self.screen_page_worker.cancel();
         }
@@ -1707,7 +1721,7 @@ impl Reader {
     }
 
     fn record_position_at(&mut self, now: Instant) {
-        if self.fixed_search_fit_active() {
+        if self.fixed_search_fit_active() || self.semi_auto_crop.is_some() {
             return;
         }
         self.update_stats_activity(now);
@@ -3505,6 +3519,7 @@ impl Reader {
             Action::ReturnToHistory(index) => self.return_to_location(index)?,
             Action::NextLocation => self.next_location()?,
             Action::OpenPreviousDocument => self.open_previous_document()?,
+            Action::OpenFolderFile(direction) => self.open_folder_file(direction)?,
             Action::Wikipedia => self.prepare_online(true, false)?,
             Action::TranslatePage => self.prepare_online(false, true)?,
             Action::RepeatOnline(index) => self.repeat_online(index)?,
@@ -3669,6 +3684,7 @@ impl Reader {
                 self.crop_dialog = Some((fixed.reading.start_crop()?, None));
                 self.show(Screen::FixedCrop);
             }
+            Action::SemiAutoCrop => self.start_semi_auto_crop()?,
             Action::RecognizeText => self.start_ocr(None)?,
             Action::RecognizeLanguage(language) => self.start_ocr(Some(&language))?,
             Action::ReadFixedText => self.read_fixed_text(false)?,
@@ -4618,7 +4634,15 @@ impl Reader {
         self.stats_awake
             && self.screen == Screen::Book
             && self.top_header_visible()
-            && (header.reading_percent
+            && ((header.chapter_marks
+                && self.active.as_ref().is_some_and(|book| {
+                    !book.reading.probe.toc.is_empty()
+                        && self
+                            .library
+                            .state(book.id)
+                            .is_some_and(|state| !state.custom_contents.enabled)
+                }))
+                || header.reading_percent
                 || ((header.page_number || header.page_count)
                     && self.top_header_page_labels().is_none()))
     }
@@ -4998,6 +5022,10 @@ impl Reader {
             self.editor = Editor::new(64);
             if self.bookmark_browser.after_password.take().is_some() {
                 self.show(Screen::BookmarkBrowser(bookmark_browser::Page::Detail));
+                return Change::Partial;
+            }
+            if let Some(screen) = self.folder_password_return.take() {
+                self.show(screen);
                 return Change::Partial;
             }
             return match self.activate(Action::Show(Screen::Library)) {
@@ -6042,6 +6070,9 @@ impl Reader {
     }
 
     fn crop_input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.semi_auto_crop_input(input) {
+            return change;
+        }
         let Some((original, first)) = self.crop_dialog else {
             return Change::None;
         };
@@ -6054,6 +6085,7 @@ impl Reader {
             Input::Tap(x, y) if RESET_CROP.contains(x, y) => (
                 FixedPreferences {
                     crop: None,
+                    semi_auto_crop: false,
                     offset_x: 0.0,
                     offset_y: 0.0,
                     ..original
@@ -6086,18 +6118,10 @@ impl Reader {
                 (
                     FixedPreferences {
                         crop: Some(region),
-                        turns: original.turns,
-                        right_to_left: original.right_to_left,
-                        width_fit: original.continuous,
-                        continuous: original.continuous,
-                        height_fit: original.height_fit,
-                        scan_contrast: original.scan_contrast,
-                        dither: original.dither,
-                        straighten_limit: original.straighten_limit,
-                        force_ocr: original.force_ocr,
-                        scan_white_level: original.scan_white_level,
-                        continuous_gap: original.continuous_gap,
-                        ..FixedPreferences::default()
+                        semi_auto_crop: false,
+                        offset_x: 0.0,
+                        offset_y: 0.0,
+                        ..original
                     },
                     true,
                 )
@@ -6911,6 +6935,9 @@ impl Reader {
         if self.screen == Screen::FixedCrop
             && let Some(fixed) = &self.fixed
         {
+            if self.draw_semi_auto_crop(canvas) {
+                return;
+            }
             let first = self.crop_dialog.and_then(|(_, first)| first);
             let point = first.map(|(x, y)| PdfTextRect {
                 x0: (x - 0.009).max(0.0),
@@ -15743,9 +15770,25 @@ mod tests {
         let after = primitive_app::frame(&app, &mut canvas, false);
         let header_end = crate::reading_controls::TopHeader::HEIGHT as usize * WIDTH as usize;
         assert!(before[header_end..] == after[header_end..]);
-        let counts: Vec<_> = (0..chapters)
-            .map(|chapter| reading.config.chapter(chapter).unwrap().page_count())
-            .collect();
+        let mut counts = Vec::with_capacity(chapters);
+        let mut expected_marks = Vec::new();
+        let mut offset = 0;
+        for chapter in 0..chapters {
+            let probe = reading.config.chapter(chapter).unwrap();
+            expected_marks.extend(
+                probe
+                    .local_contents_pages()
+                    .iter()
+                    .map(|&(_, page)| offset + page),
+            );
+            counts.push(probe.page_count());
+            offset += probe.page_count();
+        }
+        expected_marks.sort_unstable();
+        expected_marks.dedup();
+        let (marks, marker_count) = reading.whole_book_publisher_markers(|_| true).unwrap();
+        assert_eq!(marker_count, total);
+        assert_eq!(marks, expected_marks);
         assert_eq!(
             ordinal,
             counts[..reading.chapter].iter().sum::<usize>() + reading.page + 1
@@ -15757,7 +15800,7 @@ mod tests {
             serde_json::json!({
                 "chapters": chapters, "screen_page": ordinal, "screen_pages": total,
                 "first_frame_ms": first_frame_ms, "whole_book_ready_ms": settled_ms,
-                "peak_rss_kib": peak_rss_kib,
+                "peak_rss_kib": peak_rss_kib, "publisher_marks": marks.len(),
             })
         );
     }

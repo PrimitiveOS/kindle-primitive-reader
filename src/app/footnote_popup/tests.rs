@@ -1,5 +1,8 @@
 use super::*;
-use crate::app::{position, tests::Fixture};
+use crate::app::{
+    Action, position,
+    tests::{Fixture, tap_contents_item},
+};
 use primitive_app::App;
 
 fn source_point(app: &mut Reader, label: &str) -> (f32, f32) {
@@ -31,7 +34,7 @@ fn source_point(app: &mut Reader, label: &str) -> (f32, f32) {
         (rect.y + rect.height / 2) as f32,
     )
 }
-fn screenshot(app: &Reader, case: &str, fonts: &[std::path::PathBuf]) {
+fn screenshot(app: &Reader, case: &str, fonts: &[std::path::PathBuf], palettes: &[bool]) {
     let Some(folder) = std::env::var_os("READER_FOOTNOTE_ROOT_SCREENS") else {
         return;
     };
@@ -42,7 +45,7 @@ fn screenshot(app: &Reader, case: &str, fonts: &[std::path::PathBuf]) {
         .map(|p| p.display().to_string())
         .collect::<Vec<_>>();
     let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
-    for dark in [false, true] {
+    for &dark in palettes {
         let pixels = primitive_app::frame(app, &mut canvas, dark);
         primitive_app::write_png(
             &folder.join(format!(
@@ -110,7 +113,7 @@ fn native_oracle_popup_roots_render_inline_styles_and_preserve_source_page_and_e
         if case != "B" {
             assert!(popup.frame.pixels.iter().any(|p| *p < 200), "{case}");
         }
-        screenshot(&app, case, &fonts);
+        screenshot(&app, case, &fonts, &[false, true]);
         let close = popup.close_button();
         app.input(Input::Tap(
             (close.x + close.w / 2) as f32,
@@ -141,6 +144,118 @@ fn native_oracle_popup_roots_render_inline_styles_and_preserve_source_page_and_e
     let reading = &mut reopened.active.as_mut().unwrap().reading;
     assert_eq!(reading.probe.capture(reading.page).unwrap(), saved_frame);
     assert_eq!(std::fs::read(&fixture.book).unwrap(), original);
+}
+
+#[test]
+fn footnote_book_font_toggle_keeps_the_same_document_location_and_other_settings() {
+    use std::fs;
+
+    let fixture = Fixture::new();
+    fs::copy(
+        crate::test_fixture("footnote-export-roots.epub"),
+        &fixture.book,
+    )
+    .unwrap();
+    let original = fs::read(&fixture.book).unwrap();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let open = || Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    let first = open();
+    assert!(first.controls.footnote_popups);
+    assert!(!first.controls.footnote_book_font);
+    fs::write(&first.controls_path, br#"{"footnote_popups":true,"prefer_footnotes":true,"swipe_to_follow_nearest_link":true,"search_rows":4}"#).unwrap();
+    drop(first);
+
+    let open_note = |app: &mut Reader| {
+        let (x, y) = source_point(app, "1");
+        assert_eq!(app.input(Input::Tap(x, y)), Change::Partial);
+        assert_eq!(app.screen, Screen::Footnote);
+        let popup = app.footnote.as_ref().unwrap();
+        assert!(!popup.preview.matches("INLINE INNER NOTE A").is_empty());
+        popup.frame.pixels.clone()
+    };
+    let close_note = |app: &mut Reader| {
+        let close = app.footnote.as_ref().unwrap().close_button();
+        assert_eq!(
+            app.input(Input::Tap(
+                (close.x + close.w / 2) as f32,
+                (close.y + close.h / 2) as f32
+            )),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::Book);
+    };
+    let toggle = |app: &mut Reader| {
+        app.activate(Action::Show(Screen::LinkSettings)).unwrap();
+        tap_contents_item(app, "Use book font in popups");
+        app.activate(Action::Show(Screen::Book)).unwrap();
+    };
+
+    let mut app = open();
+    let before = app.controls;
+    assert!(before.prefer_footnotes && before.swipe_to_follow_nearest_link);
+    assert_eq!(before.search_rows, Some(4));
+    assert!(!before.footnote_book_font);
+    app.open_path(&fixture.book).unwrap();
+    let default_popup = open_note(&mut app);
+    close_note(&mut app);
+    fs::create_dir_all(&app.fonts_directory).unwrap();
+    let custom = "Silkscreen-Regular.ttf";
+    let custom_path = app.fonts_directory.join(custom);
+    fs::copy(
+        crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+        &custom_path,
+    )
+    .unwrap();
+    app.activate(Action::SetFont(Some(custom.into()))).unwrap();
+    source_point(&mut app, "1");
+    let location = app.current_history_location();
+    let history = (app.back.len(), app.forward.len());
+    let reading = &mut app.active.as_mut().unwrap().reading;
+    let document_settings = reading.config.settings;
+    let screen = reading.probe.capture(reading.page).unwrap();
+    assert_eq!(reading.config.fonts[0], custom_path);
+
+    assert_eq!(open_note(&mut app), default_popup);
+    screenshot(&app, "font-default", &fonts, &[false]);
+    close_note(&mut app);
+    assert_eq!(app.current_history_location(), location);
+    toggle(&mut app);
+    let mut expected = before;
+    expected.footnote_book_font = true;
+    assert_eq!(app.controls, expected);
+    let custom_popup = open_note(&mut app);
+    assert_ne!(custom_popup, default_popup);
+    screenshot(&app, "font-book", &fonts, &[false]);
+    app.controls.night_pages = true;
+    screenshot(&app, "font-book", &fonts, &[true]);
+    app.controls = expected;
+    close_note(&mut app);
+    assert_eq!(app.current_history_location(), location);
+    assert_eq!((app.back.len(), app.forward.len()), history);
+    let reading = &mut app.active.as_mut().unwrap().reading;
+    assert_eq!(reading.config.settings, document_settings);
+    assert_eq!(reading.probe.capture(reading.page).unwrap(), screen);
+    app.save().unwrap();
+    drop(app);
+
+    let mut reopened = open();
+    assert_eq!(reopened.controls, expected);
+    reopened.open_path(&fixture.book).unwrap();
+    assert_eq!(reopened.current_history_location(), location);
+    assert_eq!(open_note(&mut reopened), custom_popup);
+    close_note(&mut reopened);
+    toggle(&mut reopened);
+    assert_eq!(reopened.controls, before);
+    assert_eq!(open_note(&mut reopened), default_popup);
+    close_note(&mut reopened);
+    assert_eq!(reopened.current_history_location(), location);
+    toggle(&mut reopened);
+    fs::remove_file(&custom_path).unwrap();
+    assert_eq!(reopened.controls, expected);
+    assert_eq!(open_note(&mut reopened), default_popup);
+    close_note(&mut reopened);
+    assert_eq!(reopened.current_history_location(), location);
+    assert_eq!(fs::read(&fixture.book).unwrap(), original);
 }
 
 #[test]

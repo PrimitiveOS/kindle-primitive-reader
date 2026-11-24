@@ -70,6 +70,8 @@ pub(crate) struct ReadingControls {
     pub swipe_ignore_external_links: Option<bool>,
     pub footnote_popups: bool,
     pub prefer_footnotes: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub footnote_book_font: bool,
     /// Show the all-results list when Find is used on selected text.
     #[serde(skip_serializing_if = "is_false")]
     pub selection_search_all: bool,
