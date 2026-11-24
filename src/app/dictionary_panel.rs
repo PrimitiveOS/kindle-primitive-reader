@@ -94,7 +94,22 @@ struct Find {
 }
 struct TextLine {
     range: Range<usize>,
+    soft_wrap: bool,
+    placed: OnceCell<PlacedLine>,
     words: OnceCell<Vec<(Range<usize>, i32, i32)>>,
+}
+
+#[derive(Debug)]
+struct PlacedRun {
+    range: Range<usize>,
+    x: i32,
+    width: i32,
+    rtl: bool,
+}
+
+struct PlacedLine {
+    runs: Vec<PlacedRun>,
+    justified: bool,
 }
 
 fn body(popup: Rect) -> Rect {
@@ -136,50 +151,179 @@ fn layout(canvas: &mut Canvas, text: &str, width: i32) -> Vec<TextLine> {
         .text_pages(Rect::new(0, 0, width, LINE), text, DEFINITION_TEXT)
         .into_iter()
         .map(|range| TextLine {
+            soft_wrap: range.end < text.len()
+                && !text[range.clone()].ends_with(['\n', '\r', '\u{0085}', '\u{2028}', '\u{2029}']),
             range,
+            placed: OnceCell::new(),
             words: OnceCell::new(),
         })
         .collect()
 }
 
-// The canvas draws each wrapped line separately. Resolve its visual runs before measuring
-// word positions, so a hold on the right of an RTL run hits its first logical word.
-fn range_boxes(
-    canvas: &mut Canvas,
-    text: &str,
-    row: &Range<usize>,
-    spans: &[Range<usize>],
-) -> Vec<(Range<usize>, i32, i32)> {
-    let line = text[row.clone()].trim_end();
-    if line.is_empty() {
-        return Vec::new();
-    }
-    let bidi = unicode_bidi::BidiInfo::new(line, None);
-    let (levels, runs) = bidi.visual_runs(&bidi.paragraphs[0], 0..line.len());
-    let mut boxes = Vec::new();
-    let mut x = 0;
-    for run in runs {
-        let width = canvas.measure(&line[run.clone()], FONT_SIZE);
-        for word in spans
-            .iter()
-            .filter(|word| word.end > run.start && word.start < run.end)
-        {
-            let a = canvas.measure(&line[run.start..word.start.max(run.start)], FONT_SIZE);
-            let b = canvas.measure(&line[run.start..word.end.min(run.end)], FONT_SIZE);
-            let (left, right) = if levels[run.start].is_rtl() {
-                (width - b, width - a)
-            } else {
-                (a, b)
+fn stretchable_space(ch: char) -> bool {
+    matches!(ch, ' ' | '\u{2000}'..='\u{2006}' | '\u{2008}'..='\u{200a}' | '\u{205f}' | '\u{3000}')
+}
+
+impl PlacedLine {
+    fn new(canvas: &mut Canvas, line: &str, width: i32, justify: bool) -> Self {
+        let bidi = unicode_bidi::BidiInfo::new(line, None);
+        let Some(paragraph) = bidi.paragraphs.first() else {
+            return Self {
+                runs: Vec::new(),
+                justified: false,
             };
-            boxes.push((
-                row.start + word.start..row.start + word.end,
-                x + left,
-                x + right,
-            ));
+        };
+        let (levels, ranges) = bidi.visual_runs(paragraph, paragraph.range.clone());
+        if justify && let Some(runs) = Self::spread(canvas, line, width, &levels, &ranges) {
+            return Self {
+                runs,
+                justified: true,
+            };
         }
-        x += width;
+        let mut x = 0;
+        let runs = ranges
+            .into_iter()
+            .map(|range| {
+                let width = canvas.measure(&line[range.clone()], FONT_SIZE);
+                let run = PlacedRun {
+                    rtl: levels[range.start].is_rtl(),
+                    range,
+                    x,
+                    width,
+                };
+                x += width;
+                run
+            })
+            .collect();
+        Self {
+            runs,
+            justified: false,
+        }
     }
-    boxes
+
+    fn spread(
+        canvas: &mut Canvas,
+        line: &str,
+        width: i32,
+        levels: &[unicode_bidi::Level],
+        ranges: &[Range<usize>],
+    ) -> Option<Vec<PlacedRun>> {
+        let mut pieces = Vec::new();
+        for run in ranges {
+            let first = pieces.len();
+            let rtl = levels[run.start].is_rtl();
+            let mut start = run.start;
+            for (offset, ch) in line[run.clone()]
+                .char_indices()
+                .filter(|(_, ch)| stretchable_space(*ch))
+            {
+                let offset = run.start + offset;
+                if start < offset {
+                    pieces.push((start..offset, rtl, false));
+                }
+                start = offset + ch.len_utf8();
+                pieces.push((offset..start, rtl, true));
+            }
+            if start < run.end {
+                pieces.push((start..run.end, rtl, false));
+            }
+            if rtl {
+                pieces[first..].reverse();
+            }
+        }
+        // Stretch separated words. Leave both paragraph boundaries, indentation,
+        // and non-breaking spaces intact. RTL gaps follow the visual run order.
+        let gaps = pieces.iter().filter(|(_, _, space)| *space).count() as i32;
+        if gaps == 0 || pieces.first()?.2 || pieces.last()?.2 {
+            return None;
+        }
+        let mut measured = Vec::with_capacity(pieces.len());
+        let mut used = 0;
+        for (range, rtl, space) in pieces {
+            let advance = if space {
+                0
+            } else {
+                canvas.measure(&line[range.clone()], FONT_SIZE)
+            };
+            used += advance;
+            measured.push((range, rtl, space, advance));
+        }
+        if used + gaps >= width {
+            return None;
+        }
+        let free = width - used;
+        let mut seen = 0;
+        let mut x = 0;
+        let mut runs = Vec::new();
+        for (range, rtl, space, advance) in measured {
+            if space {
+                x += (seen + 1) * free / gaps - seen * free / gaps;
+                seen += 1;
+            } else {
+                runs.push(PlacedRun {
+                    range,
+                    rtl,
+                    x,
+                    width: advance,
+                });
+                x += advance;
+            }
+        }
+        Some(runs)
+    }
+
+    // The same visual runs place glyphs, find emphasis and nested lookup hit targets.
+    fn range_boxes(
+        &self,
+        canvas: &mut Canvas,
+        line: &str,
+        row_start: usize,
+        spans: &[Range<usize>],
+    ) -> Vec<(Range<usize>, i32, i32)> {
+        let mut boxes = Vec::new();
+        for PlacedRun {
+            range,
+            x,
+            width,
+            rtl,
+        } in &self.runs
+        {
+            let edge = |index, canvas: &mut Canvas| {
+                if index == range.start {
+                    0
+                } else if index == range.end {
+                    *width
+                } else {
+                    canvas.measure(&line[range.start..index], FONT_SIZE)
+                }
+            };
+            for span in spans
+                .iter()
+                .filter(|s| s.end > range.start && s.start < range.end)
+            {
+                let a = edge(span.start.max(range.start), canvas);
+                let b = edge(span.end.min(range.end), canvas);
+                let (left, right) = if *rtl { (width - b, width - a) } else { (a, b) };
+                boxes.push((
+                    row_start + span.start..row_start + span.end,
+                    x + left,
+                    x + right,
+                ));
+            }
+        }
+        boxes
+    }
+
+    fn draw(&self, canvas: &mut Canvas, rect: Rect, line: &str) {
+        if self.justified {
+            for run in &self.runs {
+                let bounds = Rect::new(rect.x + run.x, rect.y, rect.w - run.x, rect.h);
+                canvas.text(bounds, &line[run.range.clone()], DEFINITION_TEXT);
+            }
+        } else {
+            canvas.text(rect, line, DEFINITION_TEXT);
+        }
+    }
 }
 
 pub(super) fn definition_vocabulary(popup: Rect) -> Rect {
@@ -385,10 +529,10 @@ impl Reader {
                     .flatten(),
                 ..Default::default()
             };
+            self.definition_expanded = self.dictionary_settings.large_window;
         }
         self.definition_word = word.into();
         self.definitions = results;
-        self.definition_expanded = false;
         self.definition_results_page = None;
         self.show(Screen::Definition);
         if repeated {
@@ -683,7 +827,10 @@ impl Reader {
             Input::PageForward => self.scroll_definition(1, true),
             Input::PageBack => self.scroll_definition(-1, true),
             Input::Tap(x, y) => {
-                if self.definition_expanded && back.contains(x, y) {
+                if self.definition_expanded
+                    && self.back_collapses_definition()
+                    && back.contains(x, y)
+                {
                     self.definition_expanded = false;
                     return Change::Partial;
                 }
@@ -792,6 +939,11 @@ impl Reader {
     pub(super) fn dictionary_editor_active(&self) -> bool {
         self.dictionary_navigation.view.query_editing || self.dictionary_navigation.view.editing
     }
+
+    fn back_collapses_definition(&self) -> bool {
+        !self.dictionary_settings.large_window && self.dictionary_navigation.trail.is_empty()
+    }
+
     pub(super) fn definition_layout(&self) -> (Rect, Rect, usize) {
         let height = if let Some(index) = self.definition_results_page {
             let shown = self
@@ -883,7 +1035,7 @@ impl Reader {
         );
         canvas.button(
             back,
-            if self.definition_expanded
+            if self.definition_expanded && self.back_collapses_definition()
                 || self.definition_results_page.is_some()
                 || !self.dictionary_navigation.trail.is_empty()
             {
@@ -917,11 +1069,18 @@ impl Reader {
             let first = view.first_line(rows);
             for (row, line) in lines.iter().skip(first).take(rows).enumerate() {
                 let y = rect.y + row as i32 * LINE;
+                let content = text[line.range.clone()].trim_end();
+                let placement = line.placed.get_or_init(|| {
+                    PlacedLine::new(
+                        canvas,
+                        content,
+                        rect.w,
+                        self.dictionary_settings.justify_text && line.soft_wrap,
+                    )
+                });
                 line.words.get_or_init(|| {
-                    let words: Vec<_> =
-                        crate::selection::word_ranges(text[line.range.clone()].trim_end())
-                            .collect();
-                    range_boxes(canvas, text, &line.range, &words)
+                    let words: Vec<_> = crate::selection::word_ranges(content).collect();
+                    placement.range_boxes(canvas, content, line.range.start, &words)
                 });
                 if let Some(hit) = current
                     && line.range.start < hit.end
@@ -929,20 +1088,19 @@ impl Reader {
                 {
                     let part = hit.start.max(line.range.start) - line.range.start
                         ..hit.end.min(line.range.end) - line.range.start;
-                    for (_, left, right) in
-                        range_boxes(canvas, text, &line.range, std::slice::from_ref(&part))
-                    {
+                    for (_, left, right) in placement.range_boxes(
+                        canvas,
+                        content,
+                        line.range.start,
+                        std::slice::from_ref(&part),
+                    ) {
                         canvas.fill(
                             Rect::new(rect.x + left, y, (right - left).max(2), LINE),
                             205,
                         );
                     }
                 }
-                canvas.text(
-                    Rect::new(rect.x, y, rect.w, LINE),
-                    text[line.range.clone()].trim_end(),
-                    DEFINITION_TEXT,
-                );
+                placement.draw(canvas, Rect::new(rect.x, y, rect.w, LINE), content);
             }
             if lines.len() > rows {
                 let height = (rect.h * rows as i32 / lines.len() as i32).max(12);

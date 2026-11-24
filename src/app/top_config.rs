@@ -535,7 +535,7 @@ impl Reader {
 
     pub(super) fn preferred_dictionary_item(&self) -> Item {
         Item::new("Dictionaries", Action::ShowDictionaries)
-            .detail("Sources, order and book preferences")
+            .detail("Display, sources and book preferences")
     }
 
     fn document_search_items(&self) -> Vec<Item> {

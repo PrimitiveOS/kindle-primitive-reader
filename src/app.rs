@@ -7434,6 +7434,12 @@ impl Reader {
                         Action::ToggleRomanizations => RowAccessory::Toggle(
                             self.lookup_history.online_languages.show_romanizations,
                         ),
+                        Action::DictionarySource(SourceAction::LargeWindow) => {
+                            RowAccessory::Toggle(self.dictionary_settings.large_window)
+                        }
+                        Action::DictionarySource(SourceAction::JustifyText) => {
+                            RowAccessory::Toggle(self.dictionary_settings.justify_text)
+                        }
                         Action::ChapterLevel(setting) => {
                             RowAccessory::Toggle(self.chapter_level_checked(setting))
                         }
