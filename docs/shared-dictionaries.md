@@ -39,14 +39,33 @@ Lookup still uses each edition's preferred sources and exclusions.
 A preset can report how many saved sources are unavailable.
 
 KOReader's named presets also snapshot membership and disable sources added
-after the snapshot. Its missing-source notice lists the source names, and it
-has a separate one-query **Search with preset** workflow. Those comparisons
-remain open in Reader. The Mac workflow covers management, lookup precedence,
-backup compatibility, and failed-write recovery.
+after the snapshot. Its missing-source notice lists the source names. Reader's
+Mac workflow covers management, lookup precedence, backup compatibility, and
+failed-write recovery.
 [Landscape simulator](screenshots/landscape-dictionary-preset.png) ·
 [Pinned snapshot and apply](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1970-L2013) ·
-[Pinned one-query selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1200-L1230) ·
 [Executable preset management comparison](../scripts/compare-dictionary-presets.py)
+
+## Searching with a preset once
+
+Enter a word, then tap **Search with preset** and choose a saved set.
+The same action is available after a miss and when editing a word from
+a definition. **Cancel** returns to the query. A preset applies to the
+current lookup, including its spelling suggestions and nested definitions.
+A book's preferred and excluded sources still apply. Closing the result
+returns to the original editor or selection and leaves saved dictionary
+settings intact. After a miss with fuzzy search already enabled, Reader
+can use the same word immediately. Use **Edit** to change the word first.
+[Landscape simulator](screenshots/landscape-one-query-dictionary-preset.png) ·
+[Dark mode](screenshots/landscape-one-query-dictionary-preset-dark.png)
+
+The Mac tests exercise an authored EPUB and PDF, including page buttons
+in the picker, restoration of the original selection and query, and
+worker cancellation. The stock check runs the pinned Lua 5.1 callbacks for
+typed lookup, missing results and editing inside a dictionary result.
+[Pinned one-query callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L1153-L1230) ·
+[Pinned result editor](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/dictquicklookup.lua#L1841-L1939) ·
+[Reproducible callback check](../scripts/compare-dictionary-preset-lookup.py)
 
 ## What determines a match
 
