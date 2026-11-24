@@ -13,6 +13,8 @@ use crate::session::PAGE_HEIGHT;
 const MAX_FILE_BYTES: u64 = 4096;
 pub(crate) const MAX_AUTO_TURN_SECONDS: u32 = 86_400;
 pub(crate) const MAX_AUTO_TURN_DISTANCE_TENTHS: i16 = 200;
+pub(crate) const DEFAULT_BOOKMARK_LINES: u8 = 4;
+pub(crate) const MAX_BOOKMARK_LINES: u8 = 10;
 pub(crate) const DEFAULT_VERY_LONG_PRESS_TENTHS: u16 = 30;
 pub(crate) const MIN_VERY_LONG_PRESS_TENTHS: u16 = 9;
 pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
@@ -78,6 +80,9 @@ pub(crate) struct ReadingControls {
     /// Fit more bookmark or note text inside the same fixed-height row.
     #[serde(skip_serializing_if = "is_false")]
     pub bookmark_shrink_to_fit: bool,
+    /// Flexible in-book mark rows are disabled when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bookmark_max_lines: Option<u8>,
     /// Reader-wide appearance of the Contents list.
     #[serde(skip_serializing_if = "ListDensity::is_default")]
     pub contents_density: ListDensity,
@@ -1196,6 +1201,11 @@ impl PageRefresh {
 }
 
 impl ReadingControls {
+    pub(crate) fn bookmark_max_lines(self) -> Option<u8> {
+        self.bookmark_max_lines
+            .filter(|count| (1..=MAX_BOOKMARK_LINES).contains(count))
+    }
+
     pub(crate) fn selection_corner_scroll_enabled(self) -> bool {
         self.selection_corner_scroll.unwrap_or(true)
     }

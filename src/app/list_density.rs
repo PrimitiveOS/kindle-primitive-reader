@@ -6,14 +6,19 @@ use super::{
     Rect, WIDTH,
 };
 use crate::logical_font::ScaleContext;
-use crate::reading_controls::{ListDensity, ReadingControls};
+use crate::reading_controls::{
+    DEFAULT_BOOKMARK_LINES, ListDensity, MAX_BOOKMARK_LINES, ReadingControls,
+};
 
 const PANEL: Rect = Rect::new(192, 480, 880, 710);
 pub(super) const DECREASE: Rect = Rect::new(244, 675, 112, 112);
 pub(super) const INCREASE: Rect = Rect::new(908, 675, 112, 112);
 pub(super) const DEFAULT: Rect = Rect::new(244, 817, 776, 108);
+pub(super) const LINE_DEFAULT: Rect = Rect::new(244, 817, 376, 108);
+pub(super) const DISABLE_LINES: Rect = Rect::new(644, 817, 376, 108);
 pub(super) const CANCEL: Rect = Rect::new(244, 1025, 376, 112);
 pub(super) const APPLY: Rect = Rect::new(644, 1025, 376, 112);
+pub(super) const LIST_HEIGHT: i32 = HEIGHT as i32 - LIST_Y - 250;
 
 #[derive(Clone, Copy)]
 pub(super) enum Scope {
@@ -51,10 +56,9 @@ impl Geometry {
 
     pub(super) fn dense(density: ListDensity) -> Self {
         let rows = density.rows();
-        let available_height = HEIGHT as i32 - LIST_Y - 250;
         Self {
             rows: usize::from(rows),
-            row_height: available_height / i32::from(rows),
+            row_height: LIST_HEIGHT / i32::from(rows),
         }
     }
 
@@ -86,10 +90,11 @@ impl Geometry {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Field {
     Rows,
     Font,
+    Lines,
 }
 
 impl Field {
@@ -98,6 +103,7 @@ impl Field {
             (Self::Rows, _) => "Rows per page",
             (Self::Font, Scope::Contents) => "Entry font size",
             (Self::Font, Scope::Bookmarks) => "Bookmark font size",
+            (Self::Lines, _) => "Max lines per bookmark",
         }
     }
 
@@ -105,6 +111,7 @@ impl Field {
         match self {
             Self::Rows => (ListDensity::MIN_ROWS, ListDensity::MAX_ROWS),
             Self::Font => (ListDensity::MIN_FONT, ListDensity::MAX_FONT),
+            Self::Lines => (1, MAX_BOOKMARK_LINES),
         }
     }
 
@@ -112,6 +119,7 @@ impl Field {
         match self {
             Self::Rows => ListDensity::DEFAULT_ROWS,
             Self::Font => density.automatic_font(),
+            Self::Lines => DEFAULT_BOOKMARK_LINES,
         }
     }
 }
@@ -130,18 +138,36 @@ impl Picker {
 }
 
 impl Reader {
+    pub(super) fn bookmark_lines_item(&self) -> Item {
+        Item::new(
+            Field::Lines.title(Scope::Bookmarks),
+            Action::EditListDensity(Scope::Bookmarks, Field::Lines),
+        )
+        .detail(
+            self.controls
+                .bookmark_max_lines()
+                .map_or_else(|| "Disabled".to_owned(), |value| value.to_string()),
+        )
+    }
+
     pub(super) fn list_density_items(&self, scope: Scope) -> [Item; 2] {
         let density = scope.preferences(&self.controls);
         let font = density.explicit_font().map_or_else(
             || format!("Automatic ({})", density.automatic_font()),
             |value| value.to_string(),
         );
+        let rows =
+            if matches!(scope, Scope::Bookmarks) && self.controls.bookmark_max_lines().is_some() {
+                Item::new(Field::Rows.title(scope), Action::Heading).detail("Flexible")
+            } else {
+                Item::new(
+                    Field::Rows.title(scope),
+                    Action::EditListDensity(scope, Field::Rows),
+                )
+                .detail(density.rows().to_string())
+            };
         [
-            Item::new(
-                Field::Rows.title(scope),
-                Action::EditListDensity(scope, Field::Rows),
-            )
-            .detail(density.rows().to_string()),
+            rows,
             Item::new(
                 Field::Font.title(scope),
                 Action::EditListDensity(scope, Field::Font),
@@ -155,6 +181,11 @@ impl Reader {
         let value = match field {
             Field::Rows => Some(density.rows()),
             Field::Font => density.explicit_font(),
+            Field::Lines => Some(
+                self.controls
+                    .bookmark_max_lines()
+                    .unwrap_or(DEFAULT_BOOKMARK_LINES),
+            ),
         };
         self.notice = None;
         self.list_density_picker = Some(Picker {
@@ -183,17 +214,37 @@ impl Reader {
         );
         canvas.button(DECREASE, "-", false, false);
         canvas.button(INCREASE, "+", false, false);
+        let value = if picker.field == Field::Lines && picker.value.is_none() {
+            "Disabled".to_owned()
+        } else {
+            picker.value(density).to_string()
+        };
         canvas.text(
             Rect::new(371, 686, 522, 105),
-            &picker.value(density).to_string(),
+            &value,
             TextStyle::new(66).bold().center(),
         );
         let default_value = picker.field.default_value(density);
-        let default_label = match picker.field {
-            Field::Rows => format!("Default ({default_value})"),
-            Field::Font => format!("Automatic ({default_value})"),
-        };
-        canvas.button(DEFAULT, &default_label, false, false);
+        match picker.field {
+            Field::Rows => {
+                canvas.button(DEFAULT, &format!("Default ({default_value})"), false, false)
+            }
+            Field::Font => canvas.button(
+                DEFAULT,
+                &format!("Automatic ({default_value})"),
+                false,
+                false,
+            ),
+            Field::Lines => {
+                canvas.button(
+                    LINE_DEFAULT,
+                    &format!("Default ({default_value})"),
+                    false,
+                    false,
+                );
+                canvas.button(DISABLE_LINES, "Disable", false, false);
+            }
+        }
         if let Some(notice) = &self.notice {
             canvas.text(
                 Rect::new(244, 937, 776, 79),
@@ -208,6 +259,11 @@ impl Reader {
     pub(super) fn list_density_input(&mut self, input: Input) -> Option<Change> {
         let picker = self.list_density_picker.as_mut()?;
         let density = picker.scope.preferences(&self.controls);
+        let clear_button = if picker.field == Field::Lines {
+            DISABLE_LINES
+        } else {
+            DEFAULT
+        };
         let step = match input {
             Input::Tap(x, y) if CANCEL.contains(x, y) || !PANEL.contains(x, y) => {
                 self.list_density_picker = None;
@@ -216,10 +272,14 @@ impl Reader {
             }
             Input::Tap(x, y) if APPLY.contains(x, y) => {
                 let mut controls = self.controls;
-                let preference = picker.scope.preferences_mut(&mut controls);
                 match picker.field {
-                    Field::Rows => preference.rows_per_page = picker.value,
-                    Field::Font => preference.font_size = picker.value,
+                    Field::Rows => {
+                        picker.scope.preferences_mut(&mut controls).rows_per_page = picker.value
+                    }
+                    Field::Font => {
+                        picker.scope.preferences_mut(&mut controls).font_size = picker.value
+                    }
+                    Field::Lines => controls.bookmark_max_lines = picker.value,
                 }
                 return Some(match self.activate(Action::SetReadingControls(controls)) {
                     Ok(()) => {
@@ -230,7 +290,12 @@ impl Reader {
                     Err(error) => self.report(error),
                 });
             }
-            Input::Tap(x, y) if DEFAULT.contains(x, y) => {
+            Input::Tap(x, y) if picker.field == Field::Lines && LINE_DEFAULT.contains(x, y) => {
+                picker.value = Some(DEFAULT_BOOKMARK_LINES);
+                self.notice = None;
+                return Some(Change::Partial);
+            }
+            Input::Tap(x, y) if clear_button.contains(x, y) => {
                 picker.value = None;
                 self.notice = None;
                 return Some(Change::Partial);
