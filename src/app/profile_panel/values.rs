@@ -15,11 +15,12 @@ impl Reader {
             return Vec::new();
         };
         let selection = profile.selection();
+        let general = matches!(self.screen, Screen::ReadingProfileValues(_));
         let margins = matches!(self.screen, Screen::ReadingProfileMargins(_));
-        let fields = if margins {
-            ValueField::MARGINS.as_slice()
-        } else {
-            profile.editable_values()
+        let fields = match self.screen {
+            Screen::ReadingProfileMargins(_) => ValueField::MARGINS.as_slice(),
+            Screen::ReadingProfileFontRendering(_) => ValueField::FONT_RENDERING.as_slice(),
+            _ => profile.editable_values(),
         };
         let mut items: Vec<_> = fields
             .iter()
@@ -30,6 +31,8 @@ impl Reader {
                         || field.display(value),
                         |size| format!("{size} px (legacy)"),
                     )
+                } else if let Some(legacy) = profile.legacy_font_rendering(field) {
+                    legacy.into()
                 } else {
                     field.display(value)
                 };
@@ -47,7 +50,7 @@ impl Reader {
                 )
             })
             .collect();
-        if !margins && let Profile::Text { preferences, .. } = profile {
+        if general && let Profile::Text { preferences, .. } = profile {
             let pair = preferences.percent_word_spacing;
             let mut detail = pair.map_or_else(
                 || format!("{:+} px (legacy)", preferences.word_spacing),
@@ -75,7 +78,7 @@ impl Reader {
                     )
                     .detail(if linked { "Linked" } else { "Independent" }),
                 );
-            } else {
+            } else if general {
                 items.push(
                     Item::new(
                         "Page margins",
@@ -86,6 +89,13 @@ impl Reader {
                     } else {
                         "Excluded"
                     }),
+                );
+                items.push(
+                    Item::new(
+                        "Font rendering",
+                        Action::Show(Screen::ReadingProfileFontRendering(index)),
+                    )
+                    .detail("Weight and contrast"),
                 );
             }
         }
@@ -178,7 +188,7 @@ impl Reader {
     fn parse_profile_value_draft(&self, field: ValueField) -> Result<f64> {
         field
             .parse(&self.editor.string())
-            .ok_or_else(|| format!("Enter a value from {}", field.range_label()).into())
+            .ok_or_else(|| field.input_error().into())
     }
 
     pub(in crate::app) fn profile_value_input(&mut self, input: Input) -> Option<Change> {
@@ -191,10 +201,8 @@ impl Reader {
         } else if let Some(delta) =
             StepButtons::new(decrease, increase).delta(input, field.held_steps())
         {
-            let limits = field.limits();
-            self.parse_profile_value_draft(field).map(|value| {
-                (value + f64::from(delta) * field.step()).clamp(*limits.start(), *limits.end())
-            })
+            self.parse_profile_value_draft(field)
+                .map(|value| field.stepped(value, delta))
         } else {
             return None;
         };
@@ -242,14 +250,30 @@ impl Reader {
                 .get(index)
                 .and_then(Profile::legacy_font_size)
                 .is_some();
-        let mut details = format!(
-            "{}\nTap -/+ for {}. Hold for {}.",
-            field.range_label(),
-            field.display(field.step()),
-            field.display(f64::from(field.held_steps()) * field.step()),
-        );
+        let mut details = if field == ValueField::FontContrast {
+            format!(
+                "{} gamma levels, {}\nTap -/+ for one level. Hold for five.",
+                crate::font_render::GAMMA_LEVELS.len(),
+                field.range_label()
+            )
+        } else {
+            format!(
+                "{}\nTap -/+ for {}. Hold for {}.",
+                field.range_label(),
+                field.display(field.step()),
+                field.display(f64::from(field.held_steps()) * field.step()),
+            )
+        };
         if legacy {
             details.push_str("\nSet converts the saved pixel size to a logical size.");
+        }
+        if self
+            .profiles
+            .get(index)
+            .and_then(|profile| profile.legacy_font_rendering(field))
+            .is_some()
+        {
+            details.push_str("\nSet replaces the legacy setting.");
         }
         if matches!(field, ValueField::Margin(edge) if edge.is_vertical())
             && self.profiles.get(index).and_then(Profile::margins_linked) == Some(true)

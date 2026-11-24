@@ -652,3 +652,140 @@ fn saves_word_spacing_as_a_pair_and_honors_expansion_and_spacing_masks_on_apply(
     assert!(!app.viewport_needs_stage(shown));
     assert_eq!(open(&fixture, &fixture.book).profiles[0], app.profiles[0]);
 }
+
+#[test]
+fn saved_font_weight_and_gamma_replace_only_their_legacy_flags_on_set() {
+    let fixture = Fixture::new();
+    let mut app = open(&fixture, &fixture.book);
+    let initial = app.active.as_ref().unwrap().reading.config.settings;
+    app.activate(Action::Text(Settings {
+        bold_text: true,
+        text_contrast: true,
+        ..initial
+    }))
+    .unwrap();
+    app.save_reading_profile("Harbor font rendering").unwrap();
+    app.edit_profile_fields(0).unwrap();
+    app.set_profile_fields(false).unwrap();
+    app.toggle_profile_field(Field::LineSpacing).unwrap();
+    app.save_profile_fields(0).unwrap();
+    let original_profile = app.profiles[0].clone();
+    app.activate(Action::Text(initial)).unwrap();
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .go_to_page(1, 0)
+        .unwrap();
+    let portrait = draw_test_candidate(&mut app, 1, LogicalTurn::Upright, "", false);
+    app.finish_viewport(portrait, ViewportDecision::Commit);
+    app.set_reading_orientation(ReadingOrientation::LandscapeLeft)
+        .unwrap();
+    let turn = LogicalTurn::Counterclockwise;
+    let landscape = draw_test_candidate(&mut app, 2, turn, "", false);
+    app.finish_viewport(landscape, ViewportDecision::Commit);
+    let before = app.active.as_ref().unwrap().reading.config.settings;
+    let position = app.current_position().unwrap();
+
+    app.show(Screen::ReadingProfile(0));
+    let edit_values = field_buttons(app.navigation_layout()).1;
+    tap(&mut app, edit_values);
+    tap_contents_item(&mut app, "Font rendering");
+    assert_eq!(app.screen, Screen::ReadingProfileFontRendering(0));
+    assert_eq!(
+        app.items()[0].detail.as_deref(),
+        Some("Bold (legacy) · Excluded")
+    );
+    assert_eq!(
+        app.items()[1].detail.as_deref(),
+        Some("High contrast (legacy) · Excluded")
+    );
+
+    let weight = ValueField::FontWeight;
+    let gamma = ValueField::FontContrast;
+    tap_contents_item(&mut app, gamma.label());
+    let [minus, default, plus] = app.numeric_layout().steps(STEPS, false);
+    assert_eq!(app.editor.string(), "1");
+    tap(&mut app, plus);
+    assert_eq!(app.editor.string(), "1.02");
+    assert_eq!(
+        app.input(Input::LongTap((plus.x + 12) as f32, (plus.y + 12) as f32)),
+        Change::Partial
+    );
+    assert_eq!(app.editor.string(), "1.25");
+    type_value(&mut app, "1.03");
+    press_key(&mut app, Key::Go);
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap()
+            .contains("supported gamma level")
+    );
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(app.screen, Screen::ReadingProfileFontRendering(0));
+    assert_eq!(app.profiles[0], original_profile);
+
+    tap_contents_item(&mut app, weight.label());
+    tap(&mut app, default);
+    tap(&mut app, minus);
+    assert_eq!(app.editor.string(), "-0.25");
+    assert_eq!(
+        app.input(Input::LongTap((plus.x + 12) as f32, (plus.y + 12) as f32)),
+        Change::Partial
+    );
+    assert_eq!(app.editor.string(), "0.75");
+    press_key(&mut app, Key::Go);
+    assert_eq!(app.profiles[0].value(weight), Some(0.75));
+    assert_eq!(app.profiles[0].legacy_font_rendering(weight), None);
+    assert_eq!(
+        app.profiles[0].legacy_font_rendering(gamma),
+        Some("High contrast (legacy)")
+    );
+
+    tap_contents_item(&mut app, gamma.label());
+    type_value(&mut app, "1.35");
+    let refused = draw_test_candidate(&mut app, 3, LogicalTurn::Upright, "", false);
+    app.finish_viewport(refused, ViewportDecision::Abort);
+    assert_eq!(app.editor.string(), "1.35");
+    assert!(app.profiles[0].legacy_font_rendering(gamma).is_some());
+    let shown = draw_test_candidate(&mut app, 4, turn, "landscape-profile-font-contrast", false);
+    app.finish_viewport(shown, ViewportDecision::Commit);
+    press_key(&mut app, Key::Go);
+    assert_eq!(app.profiles[0].value(gamma), Some(1.35));
+    assert_eq!(app.profiles[0].selection(), [Field::LineSpacing]);
+    let mut expected = original_profile;
+    let Profile::Text { preferences, .. } = &mut expected else {
+        panic!("Expected a reflow profile")
+    };
+    preferences.font_weight_delta = Some(0.75);
+    preferences.font_gamma_index = Some(23);
+    preferences.bold_text = false;
+    preferences.text_contrast = false;
+    assert_eq!(app.profiles[0], expected);
+    assert_eq!(app.active.as_ref().unwrap().reading.config.settings, before);
+    assert_eq!(app.current_position(), Some(position.clone()));
+
+    app.edit_profile_fields(0).unwrap();
+    app.toggle_profile_field(Field::FontWeight).unwrap();
+    app.save_profile_fields(0).unwrap();
+    app.show(Screen::ReadingProfile(0));
+    tap_contents_item(&mut app, "Apply to this book");
+    let only_weight = app.active.as_ref().unwrap().reading.config.settings;
+    assert_eq!(only_weight.font_weight_delta, 0.75);
+    assert_eq!(only_weight.font_gamma_index, before.font_gamma_index);
+    app.edit_profile_fields(0).unwrap();
+    app.toggle_profile_field(Field::FontContrast).unwrap();
+    app.save_profile_fields(0).unwrap();
+    app.show(Screen::ReadingProfile(0));
+    tap_contents_item(&mut app, "Apply to this book");
+    let reading = &app.active.as_ref().unwrap().reading;
+    assert_eq!(reading.config.settings.font_gamma_index, 23);
+    assert_eq!(
+        (reading.probe.settings.width, reading.probe.settings.height),
+        (before.width, before.height)
+    );
+    assert_eq!(app.current_position().unwrap().anchor, position.anchor);
+    assert_eq!(app.viewport_request(), Some(ViewportRequest::Fixed(turn)));
+    assert!(!app.viewport_needs_stage(shown));
+    assert_eq!(open(&fixture, &fixture.book).profiles[0], app.profiles[0]);
+}

@@ -123,6 +123,7 @@ impl Screen {
                 | Self::ReadingProfileFields(_)
                 | Self::ReadingProfileValues(_)
                 | Self::ReadingProfileMargins(_)
+                | Self::ReadingProfileFontRendering(_)
                 | Self::ConfirmProfile(_, _)
                 | Self::ReadingFonts
                 | Self::Typography

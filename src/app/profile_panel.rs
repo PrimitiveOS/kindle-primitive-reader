@@ -71,8 +71,9 @@ impl Reader {
             }));
             return items;
         }
-        if let Screen::ReadingProfileValues(index) | Screen::ReadingProfileMargins(index) =
-            self.screen
+        if let Screen::ReadingProfileValues(index)
+        | Screen::ReadingProfileMargins(index)
+        | Screen::ReadingProfileFontRendering(index) = self.screen
         {
             return self.profile_value_items(index);
         }

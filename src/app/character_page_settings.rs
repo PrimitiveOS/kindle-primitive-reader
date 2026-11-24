@@ -62,6 +62,11 @@ impl NumberField {
             Self::ProfileValue(index, crate::reading_profiles::ValueField::Margin(_)) => {
                 Screen::ReadingProfileMargins(index)
             }
+            Self::ProfileValue(
+                index,
+                crate::reading_profiles::ValueField::FontWeight
+                | crate::reading_profiles::ValueField::FontContrast,
+            ) => Screen::ReadingProfileFontRendering(index),
             Self::ProfileValue(index, _) => Screen::ReadingProfileValues(index),
             Self::AutoTurn => Screen::AutoTurn,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,

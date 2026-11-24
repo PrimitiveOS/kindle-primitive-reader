@@ -237,6 +237,27 @@ assert(spacing_config.left_hold_step == 10 and spacing_config.right_hold_step ==
 assert(expansion_config.value_min == 0 and expansion_config.value_max == 20)
 assert(expansion_config.value_step == 1 and expansion_config.value_hold_step == 4)
 
+local live_gamma = text_live.font_gamma
+local live_weight = text_live.font_base_weight
+local gamma_choices = value_action(text_commands, section, "contrast").sub_item_table_func()
+local weight_choices = value_action(text_commands, section, "font weight").sub_item_table_func()
+local stock_gamma = {10, 15, 25, 30, 36, 43, 49, 56}
+local stock_weight = {-1, -0.5, 0, 0.5, 1, 1.5, 3}
+assert(#gamma_choices == #stock_gamma and gamma_choices[2].checked_func())
+assert(#weight_choices == #stock_weight and weight_choices[3].checked_func())
+for i, level in ipairs(stock_gamma) do
+    gamma_choices[i].callback()
+    assert(text.font_gamma == level and gamma_choices[i].checked_func())
+end
+for i, adjustment in ipairs(stock_weight) do
+    weight_choices[i].callback()
+    assert(text.font_base_weight == adjustment and weight_choices[i].checked_func())
+end
+gamma_choices[3].callback()
+weight_choices[5].callback()
+assert(text.font_gamma == 25 and text.font_base_weight == 1)
+assert(text_live.font_gamma == live_gamma and text_live.font_base_weight == live_weight)
+
 local live_sides = text_live.h_page_margins
 local live_top = text_live.t_page_margin
 local live_bottom = text_live.b_page_margin
@@ -310,6 +331,7 @@ events = {}
 profiles:onProfileExecute("Text", {qm_show = false})
 assert(sent_setting("embedded_css") == nil and sent_setting("line_spacing") == nil)
 assert(sent_setting("font_size") == nil and sent_setting("render_dpi") == nil)
+assert(sent_setting("font_gamma") == nil and sent_setting("font_base_weight") == nil)
 assert(sent_setting("word_spacing") == nil and sent_setting("word_expansion") == nil)
 profile_ui.instance = {rolling = true}
 events = {}
@@ -317,6 +339,7 @@ profiles:onProfileExecute("Text", {qm_show = false})
 assert(sent_setting("embedded_css") ~= nil and sent_setting("zoom_overlap_h") == nil)
 assert(sent_setting("line_spacing") == 137 and sent_setting("zoom_overlap_v") == nil)
 assert(sent_setting("font_size") == 31.5 and sent_setting("render_dpi") == 167)
+assert(sent_setting("font_gamma") == 25 and sent_setting("font_base_weight") == 1)
 local spaces = sent_setting("word_spacing")
 assert(spaces[1] == 100 and spaces[2] == 90 and sent_setting("word_expansion") == 15)
 local applied_margins = sent_setting("h_page_margins")
@@ -330,6 +353,7 @@ choose(commands, "Delete").callback(menu)
 assert(profiles.data["PDF copy"] and visible.ok_text == "Delete")
 visible.ok_callback()
 assert(profiles.data["PDF copy"] == nil)
+print("Stock saved font rendering verified: eight indexed gamma and seven weight presets, with document isolation and reflow dispatch.")
 print("Stock saved word spacing pairs and expansion presets verified, with exact reader options 10–500 / 25–100 and 0–20.")
 print("Stock saved margins: nine L/R pair presets 5–140, T/B exact 0–140 with default 15 and held step 5, and separate link flag.")
 print("Stock saved font size: 12–44, default 22, step 0.5, held step 5; content zoom presets 0/48/96/167/212/300 dpi.")

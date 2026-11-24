@@ -293,6 +293,7 @@ enum Screen {
     ReadingProfileFields(usize),
     ReadingProfileValues(usize),
     ReadingProfileMargins(usize),
+    ReadingProfileFontRendering(usize),
     ConfirmProfile(usize, profile_panel::Confirm),
     Find,
     Matches,
@@ -464,6 +465,7 @@ impl Screen {
             Self::ReadingProfileFields(_) => "Included settings",
             Self::ReadingProfileValues(_) => "Saved profile values",
             Self::ReadingProfileMargins(_) => "Saved page margins",
+            Self::ReadingProfileFontRendering(_) => "Saved font rendering",
             Self::Find => "Find in book",
             Self::Matches => "Search results",
             Self::SearchSettings => "Search settings",
@@ -1677,7 +1679,11 @@ impl Reader {
                     screen,
                     Screen::NumberingValue(
                         NumberField::LogicalFont(_)
-                            | NumberField::ProfileValue(_, reading_profiles::ValueField::FontSize)
+                            | NumberField::ProfileValue(
+                                _,
+                                reading_profiles::ValueField::FontSize
+                                    | reading_profiles::ValueField::FontWeight
+                            )
                     )
                 ) {
                     24
@@ -2118,6 +2124,7 @@ impl Reader {
                 | Screen::ReadingProfileFields(_)
                 | Screen::ReadingProfileValues(_)
                 | Screen::ReadingProfileMargins(_)
+                | Screen::ReadingProfileFontRendering(_)
                 | Screen::ConfirmProfile(_, _)
         ) {
             return self.reading_profile_items();
@@ -8779,7 +8786,8 @@ impl App for Reader {
                     }),
                     Screen::ReadingProfile(_) => self.show(Screen::ReadingProfiles),
                     Screen::ReadingProfileValues(index) => self.show(Screen::ReadingProfile(index)),
-                    Screen::ReadingProfileMargins(index) => {
+                    Screen::ReadingProfileMargins(index)
+                    | Screen::ReadingProfileFontRendering(index) => {
                         self.show(Screen::ReadingProfileValues(index))
                     }
                     Screen::BookDetails => {
