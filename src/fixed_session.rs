@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::io::{self, Read};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::Instant;
 
 use crate::scan_deskew::{DeskewCache, FULL_PAGE, Quad, source_rect};
@@ -28,8 +29,7 @@ use crate::library::{
 };
 use crate::pdf_crop::{self, Seed, Seeds};
 use crate::session::{
-    DONE, PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, ReadingViewport,
-    draw_document_and_footer,
+    PAGE_HEIGHT, PAGE_REFRESH_GAP, PagePaint, PageTurns, ReadingViewport, draw_document_and_footer,
 };
 
 #[path = "fixed_selection_range.rs"]
@@ -41,6 +41,10 @@ mod comic_panel;
 #[path = "pdf_text_session.rs"]
 mod pdf_text_session;
 use pdf_text_session::ReadingPdf;
+
+#[cfg(test)]
+#[path = "fixed_viewport_tests.rs"]
+mod viewport_tests;
 
 pub(crate) const SMALLER: Rect = Rect::new(840, PAGE_HEIGHT as i32 + 5, 120, 60);
 const LARGER: Rect = Rect::new(974, PAGE_HEIGHT as i32 + 5, 120, 60);
@@ -60,7 +64,29 @@ const THUMBNAIL_HEIGHT: u32 = 300;
 const SPREAD_GUTTER: u32 = 12;
 const MAX_CONTRAST_SAMPLES: usize = 32_768;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FrameSize {
+    width: u32,
+    height: u32,
+}
+
+impl FrameSize {
+    const fn portrait(height: u32) -> Self {
+        Self {
+            width: WIDTH,
+            height,
+        }
+    }
+
+    const fn with_height(self, height: u32) -> Self {
+        Self { height, ..self }
+    }
+}
+
 pub(crate) struct FixedReading {
+    viewport: ReadingViewport,
+    viewport_owner: Rc<()>,
+    retained_viewport_point: Option<Point>,
     hidden_flows: Option<PageFlows>,
     crop_seeds: Seeds,
     detected_crops: CropCache,
@@ -78,6 +104,35 @@ pub(crate) struct FixedReading {
     ocr_path: Option<PathBuf>,
     last_ocr: Option<(usize, CachedRecognition)>,
     pub(crate) ocr_language: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct ViewportBasis {
+    viewport: ReadingViewport,
+    frame_size: FrameSize,
+    page: usize,
+    view: View,
+    source_point: Option<Point>,
+}
+
+/// A rendered resize waiting for the runtime's frame and input handoff.
+#[allow(dead_code)] // The live viewport runner will use the staged frame before committing.
+pub(crate) struct PreparedFixedViewport {
+    owner: Rc<()>,
+    basis: ViewportBasis,
+    viewport: ReadingViewport,
+    view: View,
+    frame: GrayImage,
+    visible: Vec<VisiblePage>,
+    source_point: Point,
+    deskew_cache: DeskewCache,
+}
+
+impl PreparedFixedViewport {
+    #[allow(dead_code)]
+    pub(crate) fn frame(&self) -> &GrayImage {
+        &self.frame
+    }
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -412,6 +467,22 @@ pub(crate) fn pdf_bytes(path: &Path, expected_size: Option<u64>) -> io::Result<V
 }
 
 impl FixedReading {
+    fn frame_size(&self) -> FrameSize {
+        FrameSize {
+            width: self.frame.width,
+            height: self.frame.height,
+        }
+    }
+
+    fn zoom_buttons(&self) -> (Rect, Rect) {
+        let dx = self.viewport.dimensions().0 as i32 - WIDTH as i32;
+        let y = self.viewport.page_height() as i32 + 5;
+        (
+            Rect::new(SMALLER.x + dx, y, SMALLER.w, SMALLER.h),
+            Rect::new(LARGER.x + dx, y, LARGER.w, LARGER.h),
+        )
+    }
+
     pub(crate) fn pages_right_to_left(&self) -> bool {
         self.view.right_to_left
     }
@@ -496,7 +567,7 @@ impl FixedReading {
             return Ok(None);
         };
         if self.is_spread()
-            || !(0.0..WIDTH as f32).contains(&x)
+            || !(0.0..self.frame.width as f32).contains(&x)
             || !(0.0..self.frame.height as f32).contains(&y)
         {
             return Ok(None);
@@ -505,7 +576,7 @@ impl FixedReading {
             let image = with_storage(|| comic.decode_page(self.page).map_err(io::Error::other))?;
             let size = image.page_size();
             let mut view = self.view;
-            let request = viewport(size, &mut view, self.frame.height);
+            let request = viewport(size, &mut view, self.frame_size());
             let point = request.page_to_viewport(size)?.inverse()
                 * hayro::kurbo::Point::new(f64::from(x), f64::from(y));
             comic_panel::panel_at(&image, point.x as f32, point.y as f32)?
@@ -542,7 +613,7 @@ impl FixedReading {
             _ => Vec::new(),
         };
         let view = preferences.normalized();
-        let epub_spreads = source.epub_spreads(view, viewport_height);
+        let epub_spreads = source.epub_spreads(view, FrameSize::portrait(viewport_height));
         let mut deskew_cache = DeskewCache::default();
         let detected_crops = RefCell::default();
         let crops = PageCrops::for_view(view, &crop_seeds, &detected_crops);
@@ -552,7 +623,7 @@ impl FixedReading {
                 view,
                 epub_spreads.as_ref(),
                 &mut deskew_cache,
-                viewport_height,
+                FrameSize::portrait(viewport_height),
                 None,
                 crops,
             )
@@ -566,6 +637,9 @@ impl FixedReading {
             book.set_outline_page(page);
         }
         Ok(Self {
+            viewport: ReadingViewport::PORTRAIT,
+            viewport_owner: Rc::new(()),
+            retained_viewport_point: None,
             hidden_flows: None,
             crop_seeds,
             detected_crops,
@@ -786,7 +860,7 @@ impl FixedReading {
         }
         let mut view = self.view;
         let size = pdf.page_size(self.page)?;
-        let center = ((view_metrics(size, &view, self.frame.height).height
+        let center = ((view_metrics(size, &view, self.frame_size()).height
             - self.frame.height as f32)
             / 2.0)
             .max(0.0);
@@ -896,13 +970,13 @@ impl FixedReading {
                 view.tile_zoom = Some(tile_zoom(
                     size,
                     &view,
-                    self.frame.height,
+                    self.frame_size(),
                     tile.axis,
                     tile.count_tenths,
                 ));
             }
-            let metrics = view_metrics(size, &view, self.frame.height);
-            let x_limit = ((metrics.width - WIDTH as f32) / 2.0).max(0.0);
+            let metrics = view_metrics(size, &view, self.frame_size());
+            let x_limit = ((metrics.width - self.frame.width as f32) / 2.0).max(0.0);
             let y_limit = ((metrics.height - self.frame.height as f32) / 2.0).max(0.0);
             let x_start = if view.right_to_left {
                 x_limit * 2.0
@@ -1240,8 +1314,8 @@ impl FixedReading {
             return Ok(view);
         };
         let size = scan.page_size(self.page)?;
-        let metrics = view_metrics(size, &view, height);
-        let mut request = viewport(size, &mut view, height);
+        let metrics = view_metrics(size, &view, self.frame_size().with_height(height));
+        let mut request = viewport(size, &mut view, self.frame_size().with_height(height));
         request.y = -metrics.top;
         let correction = scan.correction(self.page, size, &view, &mut self.deskew_cache)?;
         let point = (request.page_to_viewport(size)? * correction) * anchor;
@@ -1274,7 +1348,7 @@ impl FixedReading {
 
     pub(crate) fn start_crop_preview(&mut self) -> Result<(View, u32)> {
         let height = self.frame.height;
-        self.start_crop_at_height(PAGE_HEIGHT)
+        self.start_crop_at_height(self.viewport.page_height())
             .map(|view| (view, height))
     }
 
@@ -1339,16 +1413,14 @@ impl FixedReading {
     }
 
     pub(crate) fn auto_crop(&self) -> Option<PdfTextRect> {
-        let mut left = WIDTH;
+        let mut left = self.frame.width;
         let mut right = 0;
         let mut top = self.frame.height;
         let mut bottom = 0;
         for (row, pixels) in self
             .frame
             .pixels
-            .as_chunks::<{ WIDTH as usize }>()
-            .0
-            .iter()
+            .chunks_exact(self.frame.width as usize)
             .enumerate()
         {
             let Some(first) = pixels.iter().position(|gray| *gray < 192) else {
@@ -1524,8 +1596,12 @@ impl FixedReading {
 
     /// Use the same transformed, visible word rectangles as fixed-page highlight drawing.
     pub(crate) fn selection_bounds(&self, selection: &PdfSelection) -> Option<Rect> {
-        let viewport =
-            hayro::kurbo::Rect::new(0.0, 0.0, f64::from(WIDTH), f64::from(self.frame.height));
+        let viewport = hayro::kurbo::Rect::new(
+            0.0,
+            0.0,
+            f64::from(self.frame.width),
+            f64::from(self.frame.height),
+        );
         let bounds = selection
             .page_bounds()
             .filter_map(|(page, bounds)| self.visible_rectangle(page, bounds))
@@ -1648,7 +1724,7 @@ impl FixedReading {
     }
 
     fn source_point(&self, index: usize, x: f32, y: f32) -> Option<Point> {
-        if !(0.0..WIDTH as f32).contains(&x) || self.page_at(y) != Some(index) {
+        if !(0.0..self.frame.width as f32).contains(&x) || self.page_at(y) != Some(index) {
             return None;
         }
         let page = self.visible.iter().find(|p| p.index == index)?;
@@ -1693,7 +1769,7 @@ impl FixedReading {
         let clip = hayro::kurbo::Rect::new(
             0.0,
             f64::from(page.rows.start),
-            f64::from(WIDTH),
+            f64::from(self.frame.width),
             f64::from(page.rows.end),
         );
         let rect = quad.bounds().intersect(clip);
@@ -1767,8 +1843,8 @@ impl FixedReading {
         )?;
         if let (Some(target), Some(scan)) = (target, ScanPage::from_document(&self.source)) {
             let size = scan.page_size(page)?;
-            let metrics = view_metrics(size, &view, self.frame.height);
-            let mut request = viewport(size, &mut view, self.frame.height);
+            let metrics = view_metrics(size, &view, self.frame_size());
+            let mut request = viewport(size, &mut view, self.frame_size());
             if self.is_continuous() {
                 request.y = -metrics.top;
             }
@@ -1788,7 +1864,7 @@ impl FixedReading {
                     let all = visible.fold(first, |all, rect| all.union(rect));
                     // A long or multi-column passage can exceed the viewport on one axis.
                     let center = Point::new(
-                        if all.width() <= f64::from(WIDTH) {
+                        if all.width() <= f64::from(self.frame.width) {
                             all.center().x
                         } else {
                             first.center().x
@@ -1799,7 +1875,10 @@ impl FixedReading {
                             first.center().y
                         },
                     );
-                    Point::new(f64::from(WIDTH) * 0.5, f64::from(self.frame.height) * 0.5) - center
+                    Point::new(
+                        f64::from(self.frame.width) * 0.5,
+                        f64::from(self.frame.height) * 0.5,
+                    ) - center
                 }
             };
             view.offset_x = offset.x as f32;
@@ -1831,12 +1910,13 @@ impl FixedReading {
         self.visible
             .iter()
             .find(|page| page.index == self.page)
-            .map(|page| view_metrics(page.size, &self.view, self.frame.height))
+            .map(|page| view_metrics(page.size, &self.view, self.frame_size()))
     }
 
     fn tiled_view_can_pan(&self) -> bool {
         self.tiled_metrics().is_some_and(|metrics| {
-            metrics.width > WIDTH as f32 + 0.5 || metrics.height > self.frame.height as f32 + 0.5
+            metrics.width > self.frame.width as f32 + 0.5
+                || metrics.height > self.frame.height as f32 + 0.5
         })
     }
 
@@ -1845,7 +1925,7 @@ impl FixedReading {
             return Err("Choose a column or row count from 0.1 to 8.0".into());
         }
         let size = self.source.page_size(self.page)?;
-        let tile_zoom = tile_zoom(size, &self.view, self.frame.height, axis, count_tenths);
+        let tile_zoom = tile_zoom(size, &self.view, self.frame_size(), axis, count_tenths);
         let view = View {
             tile_zoom: Some(tile_zoom),
             zoom: 0,
@@ -2022,9 +2102,10 @@ impl FixedReading {
 
     pub(crate) fn input_with_status(&mut self, input: Input, show_zoom: bool) -> Result<bool> {
         let horizontal = if self.view.right_to_left { -1 } else { 1 };
+        let (smaller, larger) = self.zoom_buttons();
         let direction = match input {
-            Input::Tap(x, y) if show_zoom && SMALLER.contains(x, y) => return self.zoom(-1),
-            Input::Tap(x, y) if show_zoom && LARGER.contains(x, y) => return self.zoom(1),
+            Input::Tap(x, y) if show_zoom && smaller.contains(x, y) => return self.zoom(-1),
+            Input::Tap(x, y) if show_zoom && larger.contains(x, y) => return self.zoom(1),
             Input::PageForward => 1,
             Input::PageBack => -1,
             Input::Swipe { dx, dy, .. } if self.is_continuous() => {
@@ -2056,10 +2137,14 @@ impl FixedReading {
                 };
                 if displacement < 0.0 { 1 } else { -1 }
             }
-            Input::Tap(x, y) if y < self.frame.height as f32 && x < WIDTH as f32 / 3.0 => {
+            Input::Tap(x, y)
+                if y < self.frame.height as f32 && x < self.frame.width as f32 / 3.0 =>
+            {
                 -horizontal
             }
-            Input::Tap(x, y) if y < self.frame.height as f32 && x > WIDTH as f32 * 2.0 / 3.0 => {
+            Input::Tap(x, y)
+                if y < self.frame.height as f32 && x > self.frame.width as f32 * 2.0 / 3.0 =>
+            {
                 horizontal
             }
             _ => return Ok(false),
@@ -2117,8 +2202,8 @@ impl FixedReading {
             .map(|visible| visible.size)
             .map(Ok)
             .unwrap_or_else(|| self.source.page_size(page))?;
-        let metrics = view_metrics(size, &current_view, self.frame.height);
-        let x_limit = ((metrics.width - WIDTH as f32) / 2.0).max(0.0);
+        let metrics = view_metrics(size, &current_view, self.frame_size());
+        let x_limit = ((metrics.width - self.frame.width as f32) / 2.0).max(0.0);
         let y_limit = ((metrics.height - self.frame.height as f32) / 2.0).max(0.0);
         let x_extent = x_limit * 2.0;
         let y_extent = y_limit * 2.0;
@@ -2134,7 +2219,7 @@ impl FixedReading {
             } else {
                 1.0
             };
-        let x_visible = metrics.width.min(WIDTH as f32);
+        let x_visible = metrics.width.min(self.frame.width as f32);
         let y_visible = metrics.height.min(self.frame.height as f32);
         let x_position = (x_limit - current_view.offset_x).clamp(0.0, x_extent);
         let y_position = (y_limit - current_view.offset_y).clamp(0.0, y_extent);
@@ -2215,8 +2300,8 @@ impl FixedReading {
 
         let next_size = self.source.page_size(page)?;
         view = self.resolve_crop(page, view)?;
-        let next_metrics = view_metrics(next_size, &view, self.frame.height);
-        let next_x_limit = ((next_metrics.width - WIDTH as f32) / 2.0).max(0.0);
+        let next_metrics = view_metrics(next_size, &view, self.frame_size());
+        let next_x_limit = ((next_metrics.width - self.frame.width as f32) / 2.0).max(0.0);
         let next_y_limit = ((next_metrics.height - self.frame.height as f32) / 2.0).max(0.0);
         let next_x_start = if x_direction > 0.0 {
             0.0
@@ -2280,8 +2365,8 @@ impl FixedReading {
             && let FixedDocument::Pdf(pdf) = &self.source
         {
             let size = pdf.page_size(self.page)?;
-            let old_height = view_metrics(size, &self.view, self.frame.height).height;
-            let new_height = view_metrics(size, &view, self.frame.height).height;
+            let old_height = view_metrics(size, &self.view, self.frame_size()).height;
+            let new_height = view_metrics(size, &view, self.frame_size()).height;
             let old_boundary = old_height.round().max(1.0);
             if self.view.continuous_gap != 0
                 && -view.offset_y >= old_boundary
@@ -2299,6 +2384,144 @@ impl FixedReading {
 
     fn present(&mut self, page: usize, view: View) -> Result<()> {
         self.present_in(page, view, self.frame.height, || Ok(()))
+    }
+
+    fn viewport_basis(&self) -> ViewportBasis {
+        ViewportBasis {
+            viewport: self.viewport,
+            frame_size: self.frame_size(),
+            page: self.page,
+            view: self.view,
+            source_point: self.retained_viewport_point,
+        }
+    }
+
+    fn single_page_projection(&self) -> Result<((f32, f32), Affine)> {
+        if let Some(visible) = self.visible.iter().find(|entry| entry.index == self.page) {
+            return Ok((
+                visible.size,
+                visible.request.page_to_viewport(visible.size)? * visible.correction,
+            ));
+        }
+        let size = self.source.page_size(self.page)?;
+        let mut view = self.view;
+        let request = viewport(size, &mut view, self.frame_size());
+        Ok((size, request.page_to_viewport(size)?))
+    }
+
+    /// Keep the current source point visible while reevaluating the existing
+    /// fit and zoom policy against the new logical canvas.
+    #[allow(dead_code)] // The live viewport runner is gated on the shared handoff.
+    pub(crate) fn prepare_viewport(
+        &self,
+        target: ReadingViewport,
+    ) -> Result<PreparedFixedViewport> {
+        if self.is_continuous()
+            || self.is_spread()
+            || !matches!(
+                self.source,
+                FixedDocument::Pdf(_) | FixedDocument::Image(_) | FixedDocument::Comic(_)
+            )
+        {
+            return Err("This fixed-page layout does not support resizing yet".into());
+        }
+        let basis = self.viewport_basis();
+        let (size, previous) = self.single_page_projection()?;
+        let source_point = self.retained_viewport_point.unwrap_or_else(|| {
+            previous.inverse()
+                * Point::new(
+                    f64::from(basis.frame_size.width) * 0.5,
+                    f64::from(basis.frame_size.height) * 0.5,
+                )
+        });
+        if !source_point.is_finite()
+            || !source_rect(size, self.view.crop.unwrap_or(FULL_PAGE)).contains(source_point)
+        {
+            return Err("The current source point is unavailable".into());
+        }
+
+        let (width, height) = target.dimensions();
+        let viewport_size = FrameSize {
+            width,
+            height: if self.frame.height == self.viewport.dimensions().1 {
+                height
+            } else {
+                target.page_height()
+            },
+        };
+        let mut view = View {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            ..self.view
+        };
+        if let Some(tile) = view.tile_zoom {
+            view.tile_zoom = Some(tile_zoom(
+                size,
+                &view,
+                viewport_size,
+                tile.axis,
+                tile.count_tenths,
+            ));
+        }
+        let mut deskew_cache = DeskewCache::default();
+        let correction = match ScanPage::from_document(&self.source) {
+            Some(scan) => scan.correction(self.page, size, &view, &mut deskew_cache)?,
+            None => Affine::IDENTITY,
+        };
+        let request = viewport(size, &mut view, viewport_size);
+        let projected = (request.page_to_viewport(size)? * correction) * source_point;
+        view.offset_x = (f64::from(width) * 0.5 - projected.x) as f32;
+        view.offset_y = (f64::from(viewport_size.height) * 0.5 - projected.y) as f32;
+        let (page, view, frame, visible) = self.source.presentation(
+            self.page,
+            view,
+            None,
+            &mut deskew_cache,
+            viewport_size,
+            None,
+            None,
+        )?;
+        let (request, correction) = match visible.first() {
+            Some(scan) => (scan.request, scan.correction),
+            None => {
+                let mut view = view;
+                (viewport(size, &mut view, viewport_size), Affine::IDENTITY)
+            }
+        };
+        let target_point = (request.page_to_viewport(size)? * correction) * source_point;
+        if page != self.page
+            || !target_point.is_finite()
+            || !(0.0..f64::from(frame.width)).contains(&target_point.x)
+            || !(0.0..f64::from(frame.height)).contains(&target_point.y)
+        {
+            return Err("The resized page could not keep the current source point visible".into());
+        }
+        Ok(PreparedFixedViewport {
+            owner: self.viewport_owner.clone(),
+            basis,
+            viewport: target,
+            view,
+            frame,
+            visible,
+            source_point,
+            deskew_cache,
+        })
+    }
+
+    /// Commit only after the new frame has been accepted and while its source is still current.
+    #[allow(dead_code)]
+    pub(crate) fn commit_viewport(&mut self, next: PreparedFixedViewport) -> Result<()> {
+        if !Rc::ptr_eq(&next.owner, &self.viewport_owner) || next.basis != self.viewport_basis() {
+            return Err("The fixed reading view changed before the resize was committed".into());
+        }
+        self.viewport = next.viewport;
+        self.view = next.view;
+        self.frame = next.frame;
+        self.visible = next.visible;
+        self.deskew_cache = next.deskew_cache;
+        self.retained_viewport_point = Some(next.source_point);
+        self.pause();
+        Ok(())
     }
 
     pub(crate) fn resize(
@@ -2323,8 +2546,8 @@ impl FixedReading {
                 })?,
                 FixedDocument::Image(image) => image.page_size(),
             };
-            let old = view_metrics(size, &view, self.frame.height);
-            let new = view_metrics(size, &view, viewport_height);
+            let old = view_metrics(size, &view, self.frame_size());
+            let new = view_metrics(size, &view, self.frame_size().with_height(viewport_height));
             let ratio = new.scale / old.scale;
             view.offset_x *= ratio;
             if view.continuous
@@ -2371,17 +2594,19 @@ impl FixedReading {
             || view.epub_spread != self.view.epub_spread
             || view.epub_right_to_left != self.view.epub_right_to_left
         {
-            self.source.epub_spreads(view, viewport_height)
+            self.source
+                .epub_spreads(view, self.frame_size().with_height(viewport_height))
         } else {
             None
         };
         let spreads = new_epub_spreads.as_ref().or(self.epub_spreads.as_ref());
+        let frame_size = self.frame_size().with_height(viewport_height);
         let (page, view, frame, visible) = self.source.presentation(
             page,
             view,
             spreads,
             &mut self.deskew_cache,
-            viewport_height,
+            frame_size,
             self.hidden_flows
                 .as_ref()
                 .filter(|flows| flows.has_hidden()),
@@ -2393,6 +2618,7 @@ impl FixedReading {
         }
         self.frame = frame;
         self.visible = visible;
+        self.retained_viewport_point = None;
         if self.page != page
             && let FixedDocument::Djvu(book) = &mut self.source
         {
@@ -2421,7 +2647,7 @@ impl FixedReading {
             let gray = contrast.as_ref().map_or(gray as u8, |table| table[gray]);
             white_level.map_or(gray, |white| scale_scan_white(gray, white))
         });
-        let width = WIDTH as usize;
+        let width = self.frame.width as usize;
         let start = rows.start as usize;
         let pixels = &mut frame.pixels[start * width..rows.end as usize * width];
         if self.view.dither {
@@ -2522,7 +2748,7 @@ impl FixedReading {
             status_style,
             show_footer_separator,
             None,
-            PAGE_HEIGHT as i32,
+            self.viewport.page_height() as i32,
         );
     }
 
@@ -2571,7 +2797,7 @@ impl FixedReading {
             if let Some((y, height)) = paint_style.line_band(
                 bounds.y0.floor() as i32,
                 bounds.height().ceil() as i32,
-                WIDTH,
+                frame.width,
                 true,
             ) {
                 let page = self
@@ -2580,11 +2806,11 @@ impl FixedReading {
                     .find(|page| page.index == index)
                     .unwrap();
                 let x0 = clip.x0.floor().max(0.) as usize;
-                let x1 = clip.x1.ceil().min(f64::from(WIDTH)) as usize;
+                let x1 = clip.x1.ceil().min(f64::from(self.frame.width)) as usize;
                 let first = y.max(page.rows.start as i32).max(0) as usize;
                 let end = (y + height).min(page.rows.end as i32).max(0) as usize;
                 for row in first..end {
-                    let start = row * WIDTH as usize;
+                    let start = row * frame.width as usize;
                     paint_style.draw_row(&mut frame.pixels[start + x0..start + x1], appearance);
                 }
             } else {
@@ -2599,8 +2825,8 @@ impl FixedReading {
                     last = last.min(fill.end);
                 }
                 for y in first.max(0) as usize..last.max(0) as usize {
-                    let span = quad.row(y, WIDTH as usize);
-                    let start = y * WIDTH as usize;
+                    let span = quad.row(y, frame.width as usize);
+                    let start = y * frame.width as usize;
                     paint_style.draw_row(
                         &mut frame.pixels[start + span.start..start + span.end],
                         appearance,
@@ -2617,7 +2843,7 @@ impl FixedReading {
                     width: b.width().ceil() as i32,
                     height: b.height().ceil() as i32,
                 };
-                let margin = crate::note_marker::margin(WIDTH, 0, 0, paint.note_marker, true);
+                let margin = crate::note_marker::margin(frame.width, 0, 0, paint.note_marker, true);
                 crate::note_marker::paint(
                     &mut frame,
                     rect,
@@ -2630,7 +2856,7 @@ impl FixedReading {
         }
         let Some(full) = draw_document_and_footer(
             canvas,
-            ReadingViewport::PORTRAIT,
+            self.viewport,
             frame,
             paint,
             hidden_status && selection.is_empty(),
@@ -2652,10 +2878,11 @@ impl FixedReading {
             return;
         }
         if !self.is_spread() {
-            canvas.button(SMALLER, "-", false, false);
-            canvas.button(LARGER, "+", false, false);
+            let (smaller, larger) = self.zoom_buttons();
+            canvas.button(smaller, "-", false, false);
+            canvas.button(larger, "+", false, false);
         }
-        canvas.button(DONE, "Exit", false, false);
+        canvas.button(self.viewport.done(), "Exit", false, false);
     }
 }
 
@@ -2693,13 +2920,13 @@ impl FixedDocument {
         }
     }
 
-    fn epub_spreads(&self, view: View, viewport_height: u32) -> Option<EpubSpreads> {
+    fn epub_spreads(&self, view: View, viewport_size: FrameSize) -> Option<EpubSpreads> {
         let Self::Epub(book) = self else { return None };
         // Legacy explicit RTL selections still apply. An unset override otherwise follows the book.
         let right_to_left = view
             .epub_right_to_left
             .unwrap_or_else(|| view.right_to_left || book.right_to_left());
-        let landscape = WIDTH > viewport_height;
+        let landscape = viewport_size.width > viewport_size.height;
         let plan = book.spread_plan(view.epub_spread, right_to_left, landscape);
         let available = plan.has_facing()
             || (view.epub_spread != Some(true)
@@ -2727,7 +2954,7 @@ impl FixedDocument {
         mut view: View,
         epub_spreads: Option<&EpubSpreads>,
         cache: &mut DeskewCache,
-        viewport_height: u32,
+        viewport_size: FrameSize,
         flows: Option<&PageFlows>,
         crops: Option<PageCrops<'_>>,
     ) -> Result<(usize, View, GrayImage, Vec<VisiblePage>)> {
@@ -2748,7 +2975,7 @@ impl FixedDocument {
             && view.width_fit
             && let Self::Pdf(pdf) = self
         {
-            return continuous_frame(pdf, page, view, cache, viewport_height, flows, crops);
+            return continuous_frame(pdf, page, view, cache, viewport_size, flows, crops);
         }
         view.continuous = false;
         let page = if view.spread && epub_spreads.is_none() && flows.is_none() {
@@ -2758,20 +2985,20 @@ impl FixedDocument {
         };
         if let Some(scan) = ScanPage::from_document(self) {
             let size = scan.page_size(page)?;
-            let request = viewport(size, &mut view, viewport_height);
+            let request = viewport(size, &mut view, viewport_size);
             let correction = scan.correction(page, size, &view, cache)?;
             let pixels = scan.render(page, request, correction)?;
             let pixels = mask_crop(pixels, view.crop, size, request, correction)?;
             let frame = GrayImage {
-                width: WIDTH,
-                height: viewport_height,
+                width: viewport_size.width,
+                height: viewport_size.height,
                 pixels,
             };
             let visible = VisiblePage {
                 index: page,
                 size,
                 crop: view.crop,
-                rows: 0..viewport_height,
+                rows: 0..viewport_size.height,
                 request,
                 correction,
             };
@@ -2779,7 +3006,7 @@ impl FixedDocument {
         }
         view.straighten_limit = 0;
         view.force_ocr = false;
-        let frame = self.frame(page, &mut view, epub_spreads, viewport_height, flows)?;
+        let frame = self.frame(page, &mut view, epub_spreads, viewport_size, flows)?;
         Ok((page, view, frame, Vec::new()))
     }
 
@@ -2788,7 +3015,7 @@ impl FixedDocument {
         page: usize,
         view: &mut View,
         epub_spreads: Option<&EpubSpreads>,
-        viewport_height: u32,
+        viewport_size: FrameSize,
         flows: Option<&PageFlows>,
     ) -> Result<GrayImage> {
         let pixels = match self {
@@ -2807,29 +3034,32 @@ impl FixedDocument {
                         };
                     }
                     return book
-                        .compose_spread(spread, WIDTH, viewport_height, view.turns)
+                        .compose_spread(
+                            spread,
+                            viewport_size.width,
+                            viewport_size.height,
+                            view.turns,
+                        )
                         .map_err(io::Error::other);
                 }
                 let image = book.decode_page(page).map_err(io::Error::other)?;
                 image
-                    .render(viewport(image.page_size(), view, viewport_height))
+                    .render(viewport(image.page_size(), view, viewport_size))
                     .map_err(io::Error::other)
             })?,
             Self::Pdf(_) | Self::Djvu(_) => unreachable!("scans use their page transform"),
             Self::Comic(comic) if view.spread => {
-                comic_spread_pixels(comic, page, *view, viewport_height, flows)?
+                comic_spread_pixels(comic, page, *view, viewport_size, flows)?
             }
             Self::Comic(comic) => {
                 let image = with_storage(|| comic.decode_page(page).map_err(io::Error::other))?;
-                image.render(viewport(image.page_size(), view, viewport_height))?
+                image.render(viewport(image.page_size(), view, viewport_size))?
             }
-            Self::Image(image) => {
-                image.render(viewport(image.page_size(), view, viewport_height))?
-            }
+            Self::Image(image) => image.render(viewport(image.page_size(), view, viewport_size))?,
         };
         Ok(GrayImage {
-            width: WIDTH,
-            height: viewport_height,
+            width: viewport_size.width,
+            height: viewport_size.height,
             pixels,
         })
     }
@@ -2921,19 +3151,19 @@ fn comic_spread_pixels(
     comic: &Comic,
     page: usize,
     view: View,
-    viewport_height: u32,
+    viewport_size: FrameSize,
     flows: Option<&PageFlows>,
 ) -> Result<Vec<u8>> {
     Ok(with_storage(|| {
         let fit = |index, width| {
             comic
                 .decode_page(index)
-                .and_then(|image| image.fit(width, viewport_height, view.turns))
+                .and_then(|image| image.fit(width, viewport_size.height, view.turns))
                 .map_err(io::Error::other)
         };
         let first = comic_spread_start(page);
         let Some(partner) = comic_spread_partner(first, comic.page_count()) else {
-            return fit(first, WIDTH);
+            return fit(first, viewport_size.width);
         };
         let mut pages = [Some(first), Some(partner)];
         if let Some(flows) = flows {
@@ -2947,12 +3177,12 @@ fn comic_spread_pixels(
         } else {
             pages
         };
-        let first_width = (WIDTH - SPREAD_GUTTER) / 2;
+        let first_width = (viewport_size.width - SPREAD_GUTTER) / 2;
         let second_x = first_width + SPREAD_GUTTER;
-        let mut pixels = vec![255; (WIDTH * viewport_height) as usize];
+        let mut pixels = vec![255; (viewport_size.width * viewport_size.height) as usize];
         for (index, x, width) in [
             (halves[0], 0, first_width),
-            (halves[1], second_x, WIDTH - second_x),
+            (halves[1], second_x, viewport_size.width - second_x),
         ] {
             let Some(index) = index else {
                 continue;
@@ -2960,9 +3190,7 @@ fn comic_spread_pixels(
             let raster = fit(index, width)?;
             let occupied = x as usize..(x + width) as usize;
             for (row, half_row) in pixels
-                .as_chunks_mut::<{ WIDTH as usize }>()
-                .0
-                .iter_mut()
+                .chunks_exact_mut(viewport_size.width as usize)
                 .zip(raster.chunks_exact(width as usize))
             {
                 row[occupied.clone()].copy_from_slice(half_row);
@@ -2977,12 +3205,12 @@ fn continuous_frame(
     page: usize,
     view: View,
     cache: &mut DeskewCache,
-    viewport_height: u32,
+    viewport_size: FrameSize,
     flows: Option<&PageFlows>,
     crops: Option<PageCrops<'_>>,
 ) -> Result<(usize, View, GrayImage, Vec<VisiblePage>)> {
-    let (page, view) = continuous_position(pdf, page, view, viewport_height, flows, crops)?;
-    let mut pixels = vec![255; (WIDTH * viewport_height) as usize];
+    let (page, view) = continuous_position(pdf, page, view, viewport_size, flows, crops)?;
+    let mut pixels = vec![255; (viewport_size.width * viewport_size.height) as usize];
     let mut visible = Vec::new();
     let mut top = view.offset_y as i32;
     let count = pdf.page_count();
@@ -2992,7 +3220,7 @@ fn continuous_frame(
     for index in std::iter::successors(Some(page), |&page| {
         adjacent_flow_page(page, 1, count, flows)
     }) {
-        if top >= viewport_height as i32 || visible.len() == MAX_VISIBLE_PDF_PAGES {
+        if top >= viewport_size.height as i32 || visible.len() == MAX_VISIBLE_PDF_PAGES {
             break;
         }
         let ContinuousMetrics {
@@ -3000,19 +3228,19 @@ fn continuous_frame(
             metrics,
             height,
             crop,
-        } = continuous_metrics(pdf, index, &view, viewport_height, crops)?;
+        } = continuous_metrics(pdf, index, &view, viewport_size, crops)?;
         let bottom = top + height;
         if bottom <= 0 {
             top = bottom + continuous_gap_after(index, last, &view);
             continue;
         }
-        let rows = top.max(0) as u32..bottom.min(viewport_height as i32) as u32;
-        let offset = clamp_offset(view.offset_x, metrics.width, WIDTH as f32);
+        let rows = top.max(0) as u32..bottom.min(viewport_size.height as i32) as u32;
+        let offset = clamp_offset(view.offset_x, metrics.width, viewport_size.width as f32);
         let request = RenderRequest {
-            width: WIDTH,
-            height: viewport_height,
+            width: viewport_size.width,
+            height: viewport_size.height,
             scale: metrics.scale,
-            x: (WIDTH as f32 - metrics.width) / 2.0 - metrics.left + offset,
+            x: (viewport_size.width as f32 - metrics.width) / 2.0 - metrics.left + offset,
             y: top as f32 - metrics.top,
             turns: view.turns,
         };
@@ -3030,7 +3258,9 @@ fn continuous_frame(
             slice,
             correction,
         )?;
-        pixels[(rows.start * WIDTH) as usize..(rows.end * WIDTH) as usize].copy_from_slice(&raster);
+        pixels[(rows.start * viewport_size.width) as usize
+            ..(rows.end * viewport_size.width) as usize]
+            .copy_from_slice(&raster);
         visible.push(VisiblePage {
             index,
             size,
@@ -3042,8 +3272,8 @@ fn continuous_frame(
         top = bottom + continuous_gap_after(index, last, &view);
     }
     let image = GrayImage {
-        width: WIDTH,
-        height: viewport_height,
+        width: viewport_size.width,
+        height: viewport_size.height,
         pixels,
     };
     Ok((page, view, image, visible))
@@ -3053,7 +3283,7 @@ fn continuous_position(
     pdf: &Pdf,
     mut page: usize,
     mut view: View,
-    viewport_height: u32,
+    viewport_size: FrameSize,
     flows: Option<&PageFlows>,
     crops: Option<PageCrops<'_>>,
 ) -> Result<(usize, View)> {
@@ -3062,7 +3292,7 @@ fn continuous_position(
         .and_then(|flows| flows.allowed_page(count - 1, -1, flows.flow(page)))
         .unwrap_or(count - 1);
     let length = |index| -> Result<i32> {
-        let height = continuous_metrics(pdf, index, &view, viewport_height, crops)?.height;
+        let height = continuous_metrics(pdf, index, &view, viewport_size, crops)?.height;
         Ok(height + continuous_gap_after(index, last, &view))
     };
     let mut offset = (-view.offset_y.round()) as i32;
@@ -3089,12 +3319,12 @@ fn continuous_position(
     for index in std::iter::successors(adjacent_flow_page(page, 1, count, flows), |&page| {
         adjacent_flow_page(page, 1, count, flows)
     }) {
-        if available >= viewport_height as i32 {
+        if available >= viewport_size.height as i32 {
             break;
         }
         available += length(index)?;
     }
-    let mut deficit = (viewport_height as i32 - available).max(0);
+    let mut deficit = (viewport_size.height as i32 - available).max(0);
     let selected_flow = flows.map_or(0, |flows| flows.flow(page));
     while deficit > offset {
         let Some(previous) = adjacent_flow_page(page, -1, count, flows) else {
@@ -3107,9 +3337,13 @@ fn continuous_position(
         page = previous;
         offset = length(page)?;
     }
-    let resolved = continuous_metrics(pdf, page, &view, viewport_height, crops)?;
+    let resolved = continuous_metrics(pdf, page, &view, viewport_size, crops)?;
     view.offset_y = -((offset - deficit).max(0) as f32);
-    view.offset_x = clamp_offset(view.offset_x, resolved.metrics.width, WIDTH as f32);
+    view.offset_x = clamp_offset(
+        view.offset_x,
+        resolved.metrics.width,
+        viewport_size.width as f32,
+    );
     view.crop = resolved.crop;
     Ok((page, view))
 }
@@ -3148,7 +3382,7 @@ fn continuous_metrics(
     pdf: &Pdf,
     page: usize,
     view: &View,
-    viewport_height: u32,
+    viewport_size: FrameSize,
     crops: Option<PageCrops<'_>>,
 ) -> Result<ContinuousMetrics> {
     let size = pdf.page_size(page)?;
@@ -3156,7 +3390,7 @@ fn continuous_metrics(
         Some(crops) => Some(crops.resolve(pdf, page)?),
         None => view.crop,
     };
-    let metrics = view_metrics(size, &View { crop, ..*view }, viewport_height);
+    let metrics = view_metrics(size, &View { crop, ..*view }, viewport_size);
     if !metrics.height.is_finite() || metrics.height <= 0.0 {
         return Err("This PDF page has unsupported dimensions".into());
     }
@@ -3245,11 +3479,11 @@ struct ViewMetrics {
 fn tile_zoom(
     size: (f32, f32),
     view: &View,
-    viewport_height: u32,
+    viewport_size: FrameSize,
     axis: FixedTileAxis,
     count_tenths: u8,
 ) -> FixedTileZoom {
-    let metric = view_metrics(size, view, viewport_height);
+    let metric = view_metrics(size, view, viewport_size);
     let (overlap, basis) = match axis {
         FixedTileAxis::Columns => (view.zoom_overlap_h(), 1.0),
         FixedTileAxis::Rows => (
@@ -3269,13 +3503,13 @@ fn tile_zoom(
 fn view_metrics(
     (mut width, mut height): (f32, f32),
     view: &View,
-    viewport_height: u32,
+    viewport_size: FrameSize,
 ) -> ViewMetrics {
     if !view.turns.is_multiple_of(2) {
         (width, height) = (height, width);
     }
-    let viewport_width = WIDTH as f32;
-    let height_px = viewport_height as f32;
+    let viewport_width = viewport_size.width as f32;
+    let height_px = viewport_size.height as f32;
     let (left, top, right, bottom) = view
         .crop
         .map(|r| match view.turns % 4 {
@@ -3319,15 +3553,15 @@ fn clamp_offset(offset: f32, projected: f32, viewport: f32) -> f32 {
     offset.clamp(-limit, limit)
 }
 
-fn viewport(size: (f32, f32), view: &mut View, viewport_height: u32) -> RenderRequest {
-    let metrics = view_metrics(size, view, viewport_height);
-    let viewport_width = WIDTH as f32;
-    let height_px = viewport_height as f32;
+fn viewport(size: (f32, f32), view: &mut View, viewport_size: FrameSize) -> RenderRequest {
+    let metrics = view_metrics(size, view, viewport_size);
+    let viewport_width = viewport_size.width as f32;
+    let height_px = viewport_size.height as f32;
     view.offset_x = clamp_offset(view.offset_x, metrics.width, viewport_width);
     view.offset_y = clamp_offset(view.offset_y, metrics.height, height_px);
     RenderRequest {
-        width: WIDTH,
-        height: viewport_height,
+        width: viewport_size.width,
+        height: viewport_size.height,
         scale: metrics.scale,
         x: (viewport_width - metrics.width) / 2.0 - metrics.left + view.offset_x,
         y: (height_px - metrics.height) / 2.0 - metrics.top + view.offset_y,
@@ -3425,7 +3659,7 @@ pub(crate) mod tests {
         .unwrap();
         let size = (SOURCE_WIDTH as f32, SOURCE_HEIGHT as f32);
         let mut preferences = original.preferences();
-        let transform = viewport(size, &mut preferences, PAGE_HEIGHT)
+        let transform = viewport(size, &mut preferences, FrameSize::portrait(PAGE_HEIGHT))
             .page_to_viewport(size)
             .unwrap();
         let touch = transform * hayro::kurbo::Point::new(90.0, 106.0);
@@ -3671,7 +3905,7 @@ pub(crate) mod tests {
         // 20% overlap cover exactly 2.2 screen heights in the source.
         assert!((shown.scale * size.0 / PAGE_HEIGHT as f32 - 2.2).abs() < 0.001);
         assert!(shown.y.abs() < 0.01);
-        let other = view_metrics((250.0, 100.0), &view, PAGE_HEIGHT);
+        let other = view_metrics((250.0, 100.0), &view, FrameSize::portrait(PAGE_HEIGHT));
         assert!((other.scale - WIDTH as f32 / 100.0 * tiles.width_factor).abs() < 0.001);
 
         reader.show_search_fit_page(1).unwrap();
@@ -4061,7 +4295,7 @@ pub(crate) mod tests {
         assert_eq!(reader.page(), 0);
         assert!(reader.automatic_turn(5).unwrap());
         assert_eq!(reader.page(), 0);
-        let right_edge = ((view_metrics((120.0, 80.0), &reader.view, reader.frame.height).width
+        let right_edge = ((view_metrics((120.0, 80.0), &reader.view, reader.frame_size()).width
             - WIDTH as f32)
             / 2.0)
             .max(0.0);
@@ -4105,7 +4339,7 @@ pub(crate) mod tests {
         assert!((reader.preferences().offset_x - right_edge).abs() < 1.0);
 
         reader.jump(2).unwrap();
-        let metrics = view_metrics((200.0, 80.0), &reader.view, reader.frame.height);
+        let metrics = view_metrics((200.0, 80.0), &reader.view, reader.frame_size());
         let edge = ((metrics.width - WIDTH as f32) / 2.0).max(0.0);
         reader
             .present(
@@ -4236,7 +4470,7 @@ pub(crate) mod tests {
                 ..View::default()
             },
         );
-        let metrics = view_metrics((80.0, 120.0), &reader.view, reader.frame.height);
+        let metrics = view_metrics((80.0, 120.0), &reader.view, reader.frame_size());
         let bottom_offset = (metrics.height - reader.frame.height as f32) / 2.0;
         assert!(bottom_offset > 0.0);
 
@@ -4414,7 +4648,7 @@ pub(crate) mod tests {
         reader.turns.next_refresh = Instant::now();
         assert!(swipe(&mut reader, 2.0, -100.0));
         assert_eq!(reader.page(), 1);
-        let page_metrics = view_metrics(size, &reader.view, PAGE_HEIGHT);
+        let page_metrics = view_metrics(size, &reader.view, FrameSize::portrait(PAGE_HEIGHT));
         let page_start = ((page_metrics.width - WIDTH as f32) / 2.0).max(0.0);
         assert!((reader.preferences().offset_x - page_start).abs() < 1.0);
 

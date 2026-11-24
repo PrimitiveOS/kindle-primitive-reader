@@ -27,7 +27,6 @@ cache.
 The staged transition covers 1264×1680 and 1680×1264 for single-page and
 continuous horizontal reflow. Facing pages and vertical writing defer the
 transition until their column and writing geometry can be updated safely.
-Fixed pages currently keep the portrait viewport.
 
 The app runtime still has to prepare its chrome and canvas, publish an
 accepted frame through the shared handoff, and change the input generation
@@ -41,3 +40,35 @@ Run the authored EPUB transition tests with
 returned frames. The fixture repeats the same sentence in two distinct
 source blocks, so the test identifies the selected word by its exact anchor
 and checks its hit region before and after changing viewport.
+
+## Fixed-page viewport preparation
+
+`FixedReading::prepare_viewport` stages a fully rendered frame for paged
+PDF, still images and single comic pages. It records the current source
+point in the document's upright coordinates. The target viewport recomputes
+the existing fit or tile policy from its own dimensions. It then positions
+the source point as close to the center as the current crop and pan limits
+allow. A later resize uses the same point until the reader moves the page
+or changes the document view. Document rotation or crop stays part of the
+source projection. Screen rotation belongs to the runtime.
+
+Rendering, hit testing, annotation clipping and footer control bounds use
+the prepared viewport. The stage carries its own frame, projected PDF
+regions and scratch deskew cache. `commit_viewport` accepts it only for
+the same reading session and starting view. A failed stage or stale
+candidate leaves the active view in place. The future runtime can present
+the candidate frame, then commit the page geometry and input generation
+together.
+
+Continuous PDF, fixed EPUB, DjVu and facing comic spreads still use
+their existing session policies. Each needs an explicit viewport transition
+for its page or spread anchor before the app can offer landscape there.
+The full Reader canvas, overlays and device runtime still need the
+negotiated viewport handoff before enabling screen rotation.
+
+Run `cargo test --locked --lib fixed_session::viewport_tests` for the
+fixed-page viewport proofs. Set `READER_FIXED_VIEWPORT_CAPTURE_DIR` to
+save the same authored PDF page in portrait, landscape and returned
+portrait. The tests exercise a link beyond the previous portrait width,
+an exact source annotation, width fitting, rotated row zoom and the
+shared image and comic path.

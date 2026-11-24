@@ -39,7 +39,7 @@ impl ReadingViewport {
         (self.width, self.height)
     }
 
-    const fn page_height(self) -> u32 {
+    pub(crate) const fn page_height(self) -> u32 {
         self.height - FOOTER_HEIGHT
     }
 
@@ -47,7 +47,7 @@ impl ReadingViewport {
         Rect::new(8, self.page_height() as i32 + 5, 148, 60)
     }
 
-    const fn done(self) -> Rect {
+    pub(crate) const fn done(self) -> Rect {
         Rect::new(
             self.width as i32 - 154,
             self.page_height() as i32 + 5,
