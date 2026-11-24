@@ -1,6 +1,7 @@
 //! Tap a painted annotation without leaving the page or losing its viewport.
 use super::*;
 use crate::highlight_style::{HighlightColor, HighlightStyle, NoteMarker};
+use crate::session::ReadingViewport;
 use std::cell::Cell;
 
 const PER_PAGE: usize = 4;
@@ -85,7 +86,7 @@ pub(super) struct SavedPopup {
 }
 
 impl SavedPopup {
-    fn rect(&self) -> Rect {
+    fn layout(&self, viewport: ReadingViewport) -> SavedLayout {
         let height = match self.view {
             View::Choices => {
                 130 + self.hits.len().min(PER_PAGE) as i32 * ROW
@@ -102,30 +103,43 @@ impl SavedPopup {
             View::Adjust(_) => 395,
             View::RemoveNote(_) | View::RemoveMark(_) => 360,
         };
-        let y = if self.anchor_y + 40 + height <= PAGE_HEIGHT as i32 - 28 {
+        let width = 1088;
+        let (viewport_width, _) = viewport.dimensions();
+        let limit = viewport.page_height() as i32 - height - 28;
+        let y = if self.anchor_y + 40 <= limit {
             self.anchor_y + 40
         } else {
             self.anchor_y - height - 40
         };
-        Rect::new(
-            88,
-            y.clamp(28, PAGE_HEIGHT as i32 - height - 28),
-            WIDTH as i32 - 176,
+        SavedLayout(Rect::new(
+            (viewport_width as i32 - width) / 2,
+            y.clamp(28, limit),
+            width,
             height,
-        )
+        ))
     }
 
+    fn change_view(&mut self, view: View) {
+        self.view = view;
+        self.page = 0;
+        self.pages.set(1);
+    }
+}
+
+struct SavedLayout(Rect);
+
+impl SavedLayout {
     fn row(&self, row: usize) -> Rect {
-        let r = self.rect();
+        let r = self.0;
         Rect::new(r.x + 24, r.y + 118 + row as i32 * ROW, r.w - 48, ROW - 4)
     }
 
     fn close(&self) -> Rect {
-        let r = self.rect();
+        let r = self.0;
         Rect::new(r.right() - 182, r.y + 12, 158, 100)
     }
     fn button(&self, i: usize, count: usize) -> Rect {
-        let r = self.rect();
+        let r = self.0;
         let w = (r.w - 48 - 12 * (count as i32 - 1)) / count as i32;
         Rect::new(r.x + 24 + i as i32 * (w + 12), r.bottom() - 116, w, 100)
     }
@@ -142,11 +156,11 @@ impl SavedPopup {
 
     fn style_action(&self) -> Rect {
         let r = self.manage_button(false);
-        Rect::new(r.x, r.bottom() + 12, self.rect().w - 48, r.h)
+        Rect::new(r.x, r.bottom() + 12, self.0.w - 48, r.h)
     }
 
     fn style_cell(&self, index: usize) -> Rect {
-        let r = self.rect();
+        let r = self.0;
         let w = (r.w - 60) / 2;
         Rect::new(
             r.x + 24 + (index % 2) as i32 * (w + 12),
@@ -157,7 +171,7 @@ impl SavedPopup {
     }
 
     fn color_entry(&self, index: Option<usize>, right: bool) -> Rect {
-        let r = self.rect();
+        let r = self.0;
         let w = (r.w - 60) / 2;
         Rect::new(
             r.x + 24 + if right { w + 12 } else { 0 },
@@ -167,7 +181,7 @@ impl SavedPopup {
         )
     }
     fn color_cell(&self, i: usize) -> Rect {
-        let r = self.rect();
+        let r = self.0;
         let w = (r.w - 72) / 3;
         Rect::new(
             r.x + 24 + (i % 3) as i32 * (w + 12),
@@ -178,19 +192,19 @@ impl SavedPopup {
     }
 
     fn amount_entry(&self, i: usize) -> Rect {
-        let r = self.rect();
+        let r = self.0;
         let width = (r.w - 72) / 3;
         Rect::new(r.x + 24 + i as i32 * (width + 12), r.y + 375, width, 105)
     }
 
     fn workflow_entry(&self, right: bool) -> Rect {
-        let r = self.rect();
+        let r = self.0;
         let w = (r.w - 60) / 2;
         Rect::new(r.x + 24 + if right { w + 12 } else { 0 }, r.y + 609, w, 100)
     }
 
     fn adjust(&self, right: bool) -> Rect {
-        let r = self.rect();
+        let r = self.0;
         Rect::new(
             if right { r.right() - 198 } else { r.x + 32 },
             r.y + 127,
@@ -200,13 +214,8 @@ impl SavedPopup {
     }
 
     fn body(&self) -> Rect {
-        let r = self.rect();
+        let r = self.0;
         Rect::new(r.x + 32, r.y + 121, r.w - 64, r.h - 262)
-    }
-    fn change_view(&mut self, view: View) {
-        self.view = view;
-        self.page = 0;
-        self.pages.set(1);
     }
 }
 
@@ -366,10 +375,12 @@ impl Reader {
     }
 
     pub(super) fn tap_saved_mark(&mut self, x: f32, y: f32) -> Option<Change> {
+        let viewport = self.reading_viewport();
+        let (screen_width, screen_height) = viewport.dimensions();
         let bottom = if self.hidden_overlap_footer() {
-            primitive_app::HEIGHT
+            screen_height
         } else {
-            PAGE_HEIGHT
+            viewport.page_height()
         };
         if !(0.0..bottom as f32).contains(&y)
             || self.selection.is_some()
@@ -399,21 +410,9 @@ impl Reader {
                         .into_iter()
                         .enumerate()
                         .any(|(i, r)| {
-                            let width = active.reading.probe.settings.width;
-                            let leaf_x = if active.reading.uses_facing_pages()
-                                && r.x >= (WIDTH / 2) as i32
-                            {
-                                WIDTH - width
-                            } else {
-                                0
-                            };
-                            let margin = crate::note_marker::margin(
-                                width,
-                                active.reading.probe.settings.right_margin(),
-                                leaf_x,
-                                self.controls.note_marker,
-                                false,
-                            );
+                            let margin = active
+                                .reading
+                                .note_marker_margin(r, self.controls.note_marker);
                             Rect::new(r.x, r.y, r.width, r.height).contains(x, y)
                                 || (mark.note.is_some()
                                     && crate::note_marker::hit(
@@ -421,7 +420,7 @@ impl Reader {
                                         self.controls.note_marker,
                                         margin,
                                         i == 0,
-                                        WIDTH,
+                                        screen_width,
                                         x,
                                         y,
                                     ))
@@ -464,7 +463,7 @@ impl Reader {
                                                 height: raw.height().ceil() as i32,
                                             };
                                             let margin = crate::note_marker::margin(
-                                                WIDTH,
+                                                screen_width,
                                                 0,
                                                 0,
                                                 self.controls.note_marker,
@@ -477,7 +476,7 @@ impl Reader {
                                                         self.controls.note_marker,
                                                         margin,
                                                         i == 0,
-                                                        WIDTH,
+                                                        screen_width,
                                                         x,
                                                         y,
                                                     ))
@@ -525,6 +524,14 @@ impl Reader {
         }
     }
 
+    #[cfg(test)]
+    fn saved_layout(&self) -> SavedLayout {
+        self.saved_popup
+            .as_ref()
+            .unwrap()
+            .layout(self.reading_viewport())
+    }
+
     pub(super) fn saved_popup_over_book(&self) -> bool {
         self.saved_popup.is_some()
             && self.range_edit.is_none()
@@ -543,7 +550,8 @@ impl Reader {
         let Some(popup) = &self.saved_popup else {
             return;
         };
-        let rect = popup.rect();
+        let layout = popup.layout(self.reading_viewport());
+        let rect = layout.0;
         canvas.popup(rect);
         let (title, icon) = match popup.view {
             View::Choices => ("Overlapping highlights", bar_icons::HIGHLIGHT),
@@ -570,11 +578,11 @@ impl Reader {
             title,
             BODY.bold(),
         );
-        canvas.button(popup.close(), "Close", false, false);
+        canvas.button(layout.close(), "Close", false, false);
         let buttons = |canvas: &mut Canvas, labels: &[&str]| {
             for (i, label) in labels.iter().enumerate() {
                 if !label.is_empty() {
-                    canvas.button(popup.button(i, labels.len()), label, false, false);
+                    canvas.button(layout.button(i, labels.len()), label, false, false);
                 }
             }
         };
@@ -592,7 +600,7 @@ impl Reader {
                     let Some((quote, note)) = self.mark_text(i) else {
                         continue;
                     };
-                    let row = popup.row(slot);
+                    let row = layout.row(slot);
                     canvas.icon(
                         Rect::new(row.x + 14, row.y + 27, 42, 42),
                         if note.is_some() {
@@ -628,10 +636,10 @@ impl Reader {
                 let Some((_, Some(note))) = self.mark_text(index) else {
                     return;
                 };
-                let pages = canvas.text_pages(popup.body(), note, TEXT);
+                let pages = canvas.text_pages(layout.body(), note, TEXT);
                 popup.pages.set(pages.len().max(1));
                 if let Some(range) = pages.get(popup.page) {
-                    canvas.text(popup.body(), &note[range.clone()], TEXT);
+                    canvas.text(layout.body(), &note[range.clone()], TEXT);
                 }
                 if pages.len() > 1 {
                     buttons(
@@ -661,7 +669,7 @@ impl Reader {
                     BODY.lines(2).break_long_words(),
                 );
                 canvas.button(
-                    popup.manage_button(false),
+                    layout.manage_button(false),
                     if note.is_some() {
                         "Edit note"
                     } else {
@@ -670,9 +678,9 @@ impl Reader {
                     false,
                     false,
                 );
-                canvas.button(popup.manage_button(true), "Extend", false, false);
+                canvas.button(layout.manage_button(true), "Extend", false, false);
                 canvas.button(
-                    popup.style_action(),
+                    layout.style_action(),
                     &format!(
                         "Style · {}",
                         self.mark_style(index).unwrap_or_default().label()
@@ -693,7 +701,7 @@ impl Reader {
                     .and_then(|i| self.mark_style(i))
                     .unwrap_or_else(|| self.effective_highlight_style());
                 for (i, style) in HighlightStyle::ALL.into_iter().enumerate() {
-                    let cell = popup.style_cell(i);
+                    let cell = layout.style_cell(i);
                     let chosen = (style == selected) != canvas.control_pressed(cell, false);
                     canvas.panel(cell, 16, 4, if chosen { 0 } else { 255 });
                     let sample = Rect::new(cell.x + 16, cell.y + 20, 80, 64);
@@ -731,7 +739,7 @@ impl Reader {
                         .label()
                 );
                 if selected == HighlightStyle::Invert {
-                    let r = popup.color_entry(index, false);
+                    let r = layout.color_entry(index, false);
                     canvas.panel(r, 16, 3, 255);
                     canvas.text(
                         Rect::new(r.x + 10, r.y + 25, r.w - 20, 60),
@@ -739,17 +747,17 @@ impl Reader {
                         CAPTION.center().ink(145),
                     );
                 } else {
-                    canvas.button(popup.color_entry(index, false), &color_label, false, false);
+                    canvas.button(layout.color_entry(index, false), &color_label, false, false);
                 }
                 if index.is_none() {
                     canvas.button(
-                        popup.color_entry(index, true),
+                        layout.color_entry(index, true),
                         &format!("Note · {}", self.controls.note_marker.label()),
                         false,
                         false,
                     );
                     for (i, amount) in Amount::ALL.into_iter().enumerate() {
-                        let r = popup.amount_entry(i);
+                        let r = layout.amount_entry(i);
                         let active = amount.enabled(selected);
                         let ink = if active { 0 } else { 145 };
                         if active {
@@ -780,7 +788,7 @@ impl Reader {
                     } else {
                         "Selection color · Off"
                     };
-                    let r = popup.workflow_entry(false);
+                    let r = layout.workflow_entry(false);
                     if selection_active {
                         canvas.button(r, label, false, false);
                     } else {
@@ -792,7 +800,7 @@ impl Reader {
                         );
                     }
                     canvas.button(
-                        popup.workflow_entry(true),
+                        layout.workflow_entry(true),
                         "Apply to all highlights",
                         false,
                         false,
@@ -805,7 +813,7 @@ impl Reader {
                     .and_then(|i| self.mark_color(i))
                     .unwrap_or_else(|| self.effective_highlight_color());
                 for (i, color) in HighlightColor::ALL.into_iter().enumerate() {
-                    let r = popup.color_cell(i);
+                    let r = layout.color_cell(i);
                     let chosen = (color == selected) != canvas.control_pressed(r, false);
                     canvas.panel(r, 16, 4, if chosen { 0 } else { 255 });
                     let sample = Rect::new(r.x + 18, r.y + 26, 48, 48);
@@ -822,7 +830,7 @@ impl Reader {
             }
             View::NoteMarkers => {
                 for (i, marker) in NoteMarker::ALL.into_iter().enumerate() {
-                    let r = popup.style_cell(i);
+                    let r = layout.style_cell(i);
                     let selected =
                         (self.controls.note_marker == marker) != canvas.control_pressed(r, false);
                     canvas.panel(r, 16, 4, if selected { 0 } else { 255 });
@@ -851,7 +859,7 @@ impl Reader {
                     .library
                     .state(book)
                     .map_or(0, |s| s.highlights.len() + s.pdf_highlights.len());
-                let body = popup.body();
+                let body = layout.body();
                 canvas.text(Rect::new(body.x,body.y,body.w,135),&format!("Apply {} and {} to all {count} highlights? Notes, positions and creation dates are kept.",style.label(),color.label()),BODY.lines(3));
                 if let Some(notice) = &self.notice {
                     canvas.text(
@@ -860,13 +868,13 @@ impl Reader {
                         CAPTION.lines(2),
                     );
                 }
-                canvas.button(popup.button(0, 2), "Cancel", false, false);
-                canvas.button(popup.button(1, 2), "Apply", true, false);
+                canvas.button(layout.button(0, 2), "Cancel", false, false);
+                canvas.button(layout.button(1, 2), "Apply", true, false);
             }
             View::Adjust(amount) => {
                 let percent = amount.percent(self.controls.highlight_appearance);
-                let left = popup.adjust(false);
-                let right = popup.adjust(true);
+                let left = layout.adjust(false);
+                let right = layout.adjust(true);
                 for (button, plus) in [(left, false), (right, true)] {
                     canvas.button(button, "", false, false);
                     let (x, y) = (button.x + button.w / 2, button.y + button.h / 2);
@@ -894,7 +902,7 @@ impl Reader {
             }
             View::RemoveNote(_) => {
                 canvas.text(
-                    popup.body(),
+                    layout.body(),
                     "The highlighted passage will stay in your book.",
                     BODY.lines(2),
                 );
@@ -902,7 +910,7 @@ impl Reader {
             }
             View::RemoveMark(_) => {
                 canvas.text(
-                    popup.body(),
+                    layout.body(),
                     "The passage highlight and its note will be removed.",
                     BODY.lines(2),
                 );
@@ -935,6 +943,7 @@ impl Reader {
         let Some(p) = self.saved_popup.as_ref() else {
             return Change::None;
         };
+        let layout = p.layout(self.reading_viewport());
         if matches!(p.view, View::ApplyAll { .. }) && input == Input::PageBack {
             self.saved_popup
                 .as_mut()
@@ -945,9 +954,9 @@ impl Reader {
         if let View::Adjust(amount) = p.view {
             let held = matches!(input, Input::LongTap(..));
             if let Input::Tap(x, y) | Input::LongTap(x, y) = input {
-                let delta = if p.adjust(false).contains(x, y) {
+                let delta = if layout.adjust(false).contains(x, y) {
                     Some(-amount.step(held))
-                } else if p.adjust(true).contains(x, y) {
+                } else if layout.adjust(true).contains(x, y) {
                     Some(amount.step(held))
                 } else {
                     None
@@ -955,7 +964,7 @@ impl Reader {
                 let initial = amount.percent(self.controls.highlight_appearance);
                 let percent = if let Some(delta) = delta {
                     Some((i16::from(initial) + delta).clamp(0, 100) as u8)
-                } else if !held && p.button(0, 2).contains(x, y) {
+                } else if !held && layout.button(0, 2).contains(x, y) {
                     Some(amount.percent(Default::default()))
                 } else {
                     None
@@ -987,11 +996,11 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
-        if p.close().contains(x, y) || !p.rect().contains(x, y) {
+        if layout.close().contains(x, y) || !layout.0.contains(x, y) {
             self.close_saved_popup();
             return Change::Partial;
         }
-        let button = |i, n| p.button(i, n).contains(x, y);
+        let button = |i, n| layout.button(i, n).contains(x, y);
         let next = match p.view {
             View::Choices => {
                 if p.pages.get() > 1 {
@@ -1008,7 +1017,7 @@ impl Reader {
                     .skip(p.page * PER_PAGE)
                     .take(PER_PAGE)
                     .enumerate()
-                    .find_map(|(slot, index)| p.row(slot).contains(x, y).then_some(index))
+                    .find_map(|(slot, index)| layout.row(slot).contains(x, y).then_some(index))
                 else {
                     return Change::None;
                 };
@@ -1032,17 +1041,17 @@ impl Reader {
                 View::Actions(index)
             }
             View::Actions(index) => {
-                if p.style_action().contains(x, y) {
+                if layout.style_action().contains(x, y) {
                     self.saved_popup
                         .as_mut()
                         .unwrap()
                         .change_view(View::Styles(Some(index)));
                     return Change::Partial;
                 }
-                if p.manage_button(false).contains(x, y) {
+                if layout.manage_button(false).contains(x, y) {
                     return self.edit_tapped_note(index);
                 }
-                if p.manage_button(true).contains(x, y) {
+                if layout.manage_button(true).contains(x, y) {
                     self.highlight_index = index;
                     return match self.begin_extending_highlight() {
                         Ok(()) => Change::Partial,
@@ -1058,7 +1067,7 @@ impl Reader {
                 }
             }
             View::Styles(index) => {
-                if p.color_entry(index, false).contains(x, y) {
+                if layout.color_entry(index, false).contains(x, y) {
                     if index
                         .and_then(|i| self.mark_style(i))
                         .unwrap_or_else(|| self.effective_highlight_style())
@@ -1072,7 +1081,7 @@ impl Reader {
                         .change_view(View::Colors(index));
                     return Change::Partial;
                 }
-                if index.is_none() && p.color_entry(index, true).contains(x, y) {
+                if index.is_none() && layout.color_entry(index, true).contains(x, y) {
                     self.saved_popup
                         .as_mut()
                         .unwrap()
@@ -1082,12 +1091,12 @@ impl Reader {
                 if let Some((_, style)) = HighlightStyle::ALL
                     .iter()
                     .enumerate()
-                    .find(|(i, _)| p.style_cell(*i).contains(x, y))
+                    .find(|(i, _)| layout.style_cell(*i).contains(x, y))
                 {
                     return self.save_highlight_style(index, Some(*style));
                 }
                 if index.is_none() {
-                    if p.workflow_entry(false).contains(x, y) {
+                    if layout.workflow_entry(false).contains(x, y) {
                         if self.effective_highlight_style() == HighlightStyle::Invert {
                             return Change::None;
                         }
@@ -1103,7 +1112,7 @@ impl Reader {
                         self.controls = controls;
                         return Change::Partial;
                     }
-                    if p.workflow_entry(true).contains(x, y) {
+                    if layout.workflow_entry(true).contains(x, y) {
                         let Some(book) = self.open_book_id() else {
                             return Change::None;
                         };
@@ -1117,7 +1126,7 @@ impl Reader {
                         return Change::Partial;
                     }
                     for (i, amount) in Amount::ALL.into_iter().enumerate() {
-                        if p.amount_entry(i).contains(x, y)
+                        if layout.amount_entry(i).contains(x, y)
                             && amount.enabled(self.effective_highlight_style())
                         {
                             self.saved_popup
@@ -1149,7 +1158,7 @@ impl Reader {
                 if let Some((_, color)) = HighlightColor::ALL
                     .iter()
                     .enumerate()
-                    .find(|(i, _)| p.color_cell(*i).contains(x, y))
+                    .find(|(i, _)| layout.color_cell(*i).contains(x, y))
                 {
                     return self.save_highlight_color(index, Some(*color));
                 }
@@ -1174,7 +1183,7 @@ impl Reader {
                 if let Some((_, marker)) = NoteMarker::ALL
                     .iter()
                     .enumerate()
-                    .find(|(i, _)| p.style_cell(*i).contains(x, y))
+                    .find(|(i, _)| layout.style_cell(*i).contains(x, y))
                 {
                     let controls = ReadingControls {
                         note_marker: *marker,

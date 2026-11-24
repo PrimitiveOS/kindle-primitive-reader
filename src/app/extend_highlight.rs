@@ -1,7 +1,7 @@
 //! Edit the anchored extent of a saved highlight while leaving its note in place.
 use super::{
-    CAPTION, Canvas, Change, DONE, HEIGHT, HistoryLocation, Input, PAGE_HEIGHT, Reader, Rect,
-    Result, Screen, TextSelection, WIDTH,
+    CAPTION, Canvas, Change, HistoryLocation, Input, PAGE_HEIGHT, Reader, Rect, Result, Screen,
+    TextSelection, WIDTH,
 };
 
 const CANCEL: Rect = Rect::new(24, PAGE_HEIGHT as i32 + 5, 192, 60);
@@ -91,10 +91,16 @@ impl Reader {
     }
 
     pub(super) fn range_input(&mut self, input: Input) -> Change {
+        let viewport = self.reading_viewport();
+        let cancel = Rect {
+            y: viewport.done().y,
+            ..CANCEL
+        };
+        let apply = viewport.bottom_right(APPLY);
         let finish = match input {
-            Input::Tap(x, y) if CANCEL.contains(x, y) => Some(false),
-            Input::Tap(x, y) if APPLY.contains(x, y) => Some(true),
-            Input::Tap(x, y) if DONE.contains(x, y) => {
+            Input::Tap(x, y) if cancel.contains(x, y) => Some(false),
+            Input::Tap(x, y) if apply.contains(x, y) => Some(true),
+            Input::Tap(x, y) if viewport.done().contains(x, y) => {
                 if let Err(error) = self.finish_range(false) {
                     return self.report(error);
                 }
@@ -219,23 +225,31 @@ impl Reader {
 
     pub(super) fn draw_range_tools(&self, canvas: &mut Canvas) {
         let Some(edit) = &self.range_edit else { return };
+        let viewport = self.reading_viewport();
+        let (width, height) = viewport.dimensions();
+        let page_bottom = viewport.page_height() as i32;
+        let cancel = Rect {
+            y: viewport.done().y,
+            ..CANCEL
+        };
+        let apply = viewport.bottom_right(APPLY);
         canvas.fill(
             Rect::new(
                 0,
-                PAGE_HEIGHT as i32,
-                WIDTH as i32 - 155,
-                HEIGHT as i32 - PAGE_HEIGHT as i32,
+                page_bottom,
+                width as i32 - 155,
+                height as i32 - page_bottom,
             ),
             255,
         );
-        canvas.button(CANCEL, "Cancel", false, false);
+        canvas.button(cancel, "Cancel", false, false);
         canvas.text(
-            Rect::new(238, PAGE_HEIGHT as i32 + 4, 600, 64),
+            Rect::new(238, page_bottom + 4, 600, 64),
             self.notice
                 .as_deref()
                 .unwrap_or("Tap a word to extend the highlight"),
             CAPTION,
         );
-        canvas.button(APPLY, "Apply", edit.draft.changed(), false);
+        canvas.button(apply, "Apply", edit.draft.changed(), false);
     }
 }

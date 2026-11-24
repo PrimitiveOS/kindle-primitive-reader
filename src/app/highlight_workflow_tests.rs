@@ -125,7 +125,7 @@ fn original_fields(mut marks: Vec<Value>) -> Vec<Value> {
 }
 fn begin_all(app: &mut Reader) {
     app.open_highlight_styles(None);
-    let entry = app.saved_popup.as_ref().unwrap().workflow_entry(true);
+    let entry = app.saved_layout().workflow_entry(true);
     assert_eq!(app.input(center(entry)), Change::Partial);
     assert!(matches!(
         app.saved_popup.as_ref().unwrap().view,
@@ -137,7 +137,7 @@ fn set_current(app: &mut Reader) {
     app.save_highlight_color(None, Some(HighlightColor::Purple));
 }
 fn finish_all(app: &mut Reader) {
-    let apply = app.saved_popup.as_ref().unwrap().button(1, 2);
+    let apply = app.saved_layout().button(1, 2);
     assert_eq!(app.input(center(apply)), Change::Partial);
 }
 
@@ -156,7 +156,7 @@ fn bulk_restyle_requires_consent_and_preserves_every_saved_passage_note_date_and
             before,
             "opening a confirmation cannot change marks"
         );
-        let cancel = app.saved_popup.as_ref().unwrap().button(0, 2);
+        let cancel = app.saved_layout().button(0, 2);
         app.input(center(cancel));
         assert_eq!(marks(&app), before);
         begin_all(&mut app);
@@ -166,7 +166,7 @@ fn bulk_restyle_requires_consent_and_preserves_every_saved_passage_note_date_and
         let mut canvas = Canvas::new(WIDTH, HEIGHT, &[font.display().to_string()]).unwrap();
         let pixels = primitive_app::frame(&app, &mut canvas, false);
         for (button, tone) in [(0, 255), (1, 0)] {
-            let rect = app.saved_popup.as_ref().unwrap().button(button, 2);
+            let rect = app.saved_layout().button(button, 2);
             assert_eq!(
                 pixels[(rect.y + 30) as usize * WIDTH as usize + (rect.x + 30) as usize],
                 tone,
@@ -246,7 +246,7 @@ fn selection_color_is_global_uses_the_book_color_and_stays_disabled_for_invert()
     let (fixture, mut app, font, _) = fixture(None, false);
     app.save_highlight_color(None, Some(HighlightColor::Blue));
     app.open_highlight_styles(None);
-    let toggle = app.saved_popup.as_ref().unwrap().workflow_entry(false);
+    let toggle = app.saved_layout().workflow_entry(false);
     app.input(center(toggle));
     assert!(app.controls.selection_uses_highlight_color);
     assert_eq!(app.page_paint().selection_color, Some(HighlightColor::Blue));
@@ -374,7 +374,7 @@ fn rendered_selection(app: &mut Reader, font: &Path, capture: bool) {
     app.save_highlight_color(None, Some(HighlightColor::Blue));
     app.save_highlight_style(None, Some(HighlightStyle::Lighten));
     app.open_highlight_styles(None);
-    let toggle = app.saved_popup.as_ref().unwrap().workflow_entry(false);
+    let toggle = app.saved_layout().workflow_entry(false);
     if !app.controls.selection_uses_highlight_color {
         app.input(center(toggle));
     }
@@ -479,7 +479,7 @@ fn native_named_reflow_selection_is_below_saved_invert_marks_as_in_stock_readerv
     app.library.state_mut(id).unwrap().highlights[0].style = HighlightStyle::Invert;
     app.save_highlight_color(None, Some(HighlightColor::Blue));
     app.open_highlight_styles(None);
-    let toggle = app.saved_popup.as_ref().unwrap().workflow_entry(false);
+    let toggle = app.saved_layout().workflow_entry(false);
     app.input(center(toggle));
     app.close_saved_popup();
     let selection = app.library.state(id).unwrap().highlights[0]

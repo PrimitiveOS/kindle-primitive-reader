@@ -148,13 +148,16 @@ impl Reader {
         }
         (matches!(
             self.screen,
-            Screen::Book | Screen::BookTools | Screen::Fixed | Screen::FixedTools | Screen::Skim
+            Screen::Book
+                | Screen::BookTools
+                | Screen::Fixed
+                | Screen::FixedTools
+                | Screen::Skim
+                | Screen::Definition
+                | Screen::OnlineLookup
+                | Screen::OnlineEdit
         ) || self.screen.uses_navigation_viewport())
             && self.open_book_id().is_some()
-            && self
-                .active
-                .as_ref()
-                .is_none_or(|book| !book.reading.probe.is_vertical())
     }
 
     pub(super) fn landscape_choices_available(&self) -> bool {

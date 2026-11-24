@@ -82,6 +82,8 @@ mod saved_highlight_popup;
 mod search_chapter_scope;
 mod selection_html;
 mod selection_popup;
+#[cfg(test)]
+mod selection_viewport_tests;
 mod semi_auto_crop;
 mod sidecar_marks;
 mod skim;
@@ -176,7 +178,6 @@ const FIND_PATTERN: Rect = Rect::new(LIST_X + 795, LIST_Y + 260, 380, 70);
 const FIND_ACCENTS: Rect = Rect::new(LIST_X + 355, LIST_Y + 260, 420, 70);
 const MATCH_PREV: Rect = Rect::new(420, PAGE_HEIGHT as i32 + 5, 196, 60);
 const MATCH_NEXT: Rect = Rect::new(628, PAGE_HEIGHT as i32 + 5, 196, 60);
-const DEFINITION_BOTTOM: i32 = HEIGHT as i32 - 82;
 const OCR_POLL: Duration = Duration::from_millis(120);
 const OVERVIEW_TRACK: Rect = Rect::new(80, 1310, WIDTH as i32 - 160, 75);
 const AUTO_CROP: Rect = Rect::new(674, PAGE_HEIGHT as i32 + 5, 182, 60);
@@ -4960,7 +4961,7 @@ impl Reader {
     fn handle_find(&mut self, input: Input) -> Change {
         let edit = self.screen == Screen::EditNote;
         let note = self.screen == Screen::Note || edit;
-        let navigation = if matches!(self.screen, Screen::BookmarkFind | Screen::LibraryFind) {
+        let navigation = if self.screen.uses_navigation_viewport() {
             self.navigation_layout()
         } else {
             navigation_layout::NavigationLayout::PORTRAIT
@@ -7701,7 +7702,7 @@ impl Reader {
                 self.draw_footnote_font_editor(canvas, mode);
             }
             if self.can_paste_text() {
-                external_link::draw_paste(canvas);
+                canvas.button(self.editor_paste_rect(), "Paste", false, false);
             }
             if self.screen == Screen::BookmarkFind {
                 self.annotation_search
@@ -8553,7 +8554,7 @@ impl App for Reader {
             return self.link_address_input(input);
         }
         if self.can_paste_text()
-            && matches!(input, Input::Tap(x, y) if external_link::PASTE.contains(x,y))
+            && matches!(input, Input::Tap(x, y) if self.editor_paste_rect().contains(x,y))
         {
             return self.paste_text();
         }
@@ -9411,25 +9412,35 @@ fn percent_fraction(input: &str) -> Result<f64> {
     Ok(percent / 100.0)
 }
 
-fn definition_bounds(height: i32, selection: Option<Rect>) -> Rect {
+fn definition_bounds(
+    height: i32,
+    selection: Option<Rect>,
+    viewport: crate::session::ReadingViewport,
+) -> Rect {
     const TOP: i32 = 64;
+    let (screen_width, screen_height) = viewport.dimensions();
     let above_selection = selection.is_some_and(|selected| {
-        selected.y >= PAGE_HEIGHT as i32 / 2 && TOP + height + 24 <= selected.y
+        selected.y >= viewport.page_height() as i32 / 2 && TOP + height + 24 <= selected.y
     });
     let y = if above_selection {
         TOP
     } else {
-        DEFINITION_BOTTOM - height
+        screen_height as i32 - 82 - height
     };
-    Rect::new(64, y, WIDTH as i32 - 128, height)
+    definition_column(screen_width, y, height)
+}
+
+fn definition_column(screen_width: u32, y: i32, height: i32) -> Rect {
+    let width = WIDTH as i32 - 128;
+    Rect::new((screen_width as i32 - width) / 2, y, width, height)
 }
 
 fn definition_actions(popup: Rect) -> [Rect; 3] {
     let y = popup.bottom() - 82;
     [
-        Rect::new(94, y, 214, 66),
-        Rect::new(WIDTH as i32 / 2 - 105, y, 210, 66),
-        Rect::new(WIDTH as i32 - 308, y, 214, 66),
+        Rect::new(popup.x + 30, y, 214, 66),
+        Rect::new(popup.x + popup.w / 2 - 105, y, 210, 66),
+        Rect::new(popup.right() - 244, y, 214, 66),
     ]
 }
 
@@ -11280,8 +11291,9 @@ mod tests {
     fn dictionary_result_moves_to_the_other_side_of_selected_text() {
         let lower_text = Rect::new(410, 1080, 55, 32);
         let upper_text = Rect::new(410, 160, 55, 32);
-        let above = definition_bounds(420, Some(lower_text));
-        let below = definition_bounds(420, Some(upper_text));
+        let viewport = crate::session::ReadingViewport::PORTRAIT;
+        let above = definition_bounds(420, Some(lower_text), viewport);
+        let below = definition_bounds(420, Some(upper_text), viewport);
         assert!(above.bottom() < lower_text.y);
         assert!(below.y > upper_text.bottom());
         for popup in [above, below] {

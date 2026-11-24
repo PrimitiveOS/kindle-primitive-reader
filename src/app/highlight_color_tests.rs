@@ -5,7 +5,7 @@ use primitive_app::App;
 
 fn choose_color(app: &mut Reader, index: Option<usize>, color: HighlightColor) {
     app.open_highlight_styles(index);
-    let entry = app.saved_popup.as_ref().unwrap().color_entry(index, false);
+    let entry = app.saved_layout().color_entry(index, false);
     assert_eq!(app.input(center(entry)), Change::Partial);
     if index.is_none()
         && color == HighlightColor::Red
@@ -27,7 +27,7 @@ fn choose_color(app: &mut Reader, index: Option<usize>, color: HighlightColor) {
             .unwrap();
         }
     }
-    let cell = app.saved_popup.as_ref().unwrap().color_cell(
+    let cell = app.saved_layout().color_cell(
         HighlightColor::ALL
             .iter()
             .position(|&c| c == color)
@@ -37,12 +37,10 @@ fn choose_color(app: &mut Reader, index: Option<usize>, color: HighlightColor) {
 }
 fn note(app: &mut Reader, marker: NoteMarker) {
     app.open_highlight_styles(None);
-    let entry = app.saved_popup.as_ref().unwrap().color_entry(None, true);
+    let entry = app.saved_layout().color_entry(None, true);
     app.input(center(entry));
     let cell = app
-        .saved_popup
-        .as_ref()
-        .unwrap()
+        .saved_layout()
         .style_cell(NoteMarker::ALL.iter().position(|&m| m == marker).unwrap());
     assert_eq!(app.input(center(cell)), Change::Partial);
     if marker == NoteMarker::Sideline
@@ -59,7 +57,7 @@ fn note(app: &mut Reader, marker: NoteMarker) {
         )
         .unwrap();
     }
-    let close = app.saved_popup.as_ref().unwrap().close();
+    let close = app.saved_layout().close();
     app.input(center(close));
 }
 fn save_epub_note(app: &mut Reader) -> crate::selection::TextSelection {
@@ -97,7 +95,7 @@ fn palette_changes_and_global_note_markers_preserve_each_book_mark_and_source() 
         .jump(1, Some("door"))
         .unwrap();
     choose_color(&mut app, None, HighlightColor::Red);
-    let close = app.saved_popup.as_ref().unwrap().close();
+    let close = app.saved_layout().close();
     app.input(center(close));
     let selection = save_epub_note(&mut app);
     let id = app.open_book_id().unwrap();
@@ -297,7 +295,7 @@ fn pdf_note_indicators_follow_rotation_zoom_and_keep_the_saved_pdf_word() {
                     app.saved_popup.as_ref().unwrap().view,
                     View::Note(0)
                 ));
-                let close = app.saved_popup.as_ref().unwrap().close();
+                let close = app.saved_layout().close();
                 app.input(center(close));
             }
         }
@@ -404,7 +402,7 @@ fn new_book_color_defaults_do_not_recolor_the_other_previously_opened_books() {
     assert_eq!(app.effective_highlight_color(), HighlightColor::Gray);
     app.open_path(&fixture.book).unwrap();
     choose_color(&mut app, None, HighlightColor::Red);
-    let set = app.saved_popup.as_ref().unwrap().button(1, 2);
+    let set = app.saved_layout().button(1, 2);
     app.input(center(set));
     assert_eq!(app.controls.highlight_color, HighlightColor::Red);
     app.open_path(&second).unwrap();
@@ -413,7 +411,7 @@ fn new_book_color_defaults_do_not_recolor_the_other_previously_opened_books() {
     assert_eq!(app.effective_highlight_color(), HighlightColor::Red);
     app.open_path(&second).unwrap();
     choose_color(&mut app, None, HighlightColor::Blue);
-    let use_default = app.saved_popup.as_ref().unwrap().button(0, 2);
+    let use_default = app.saved_layout().button(0, 2);
     app.input(center(use_default));
     assert_eq!(app.effective_highlight_color(), HighlightColor::Red);
     app.open_path(&fixture.book).unwrap();

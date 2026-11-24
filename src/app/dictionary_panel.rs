@@ -491,21 +491,21 @@ impl PlacedLine {
 }
 
 pub(super) fn definition_vocabulary(popup: Rect) -> Rect {
-    let width = (popup.right() - 38 - 94 - 4 * 8) / 5;
-    Rect::new(94, popup.bottom() - 152, width, 58)
+    let width = (popup.w - 68 - 4 * 8) / 5;
+    Rect::new(popup.x + 30, popup.bottom() - 152, width, 58)
 }
 
 const RESULTS_PER_PAGE: usize = 5;
 
 fn definition_results_button(popup: Rect) -> Rect {
-    Rect::new(WIDTH as i32 - 434, popup.y + 18, 172, 64)
+    Rect::new(popup.right() - 370, popup.y + 18, 172, 64)
 }
 
 fn definition_edit_button(popup: Rect, has_results_button: bool) -> Rect {
     let before = if has_results_button {
         definition_results_button(popup).x
     } else {
-        WIDTH as i32 - 254
+        popup.right() - 190
     };
     Rect::new(before - 108, popup.y, 100, 100)
 }
@@ -918,8 +918,9 @@ impl Reader {
         self.dictionary_navigation.view.query_editing = true;
     }
     fn edit_query_input(&mut self, input: Input) -> Change {
+        let (width, height) = self.reading_viewport().dimensions();
         if matches!(input, Input::PageBack)
-            || matches!(input,Input::Tap(x,y) if primitive_ui::back_button(WIDTH as i32).contains(x,y))
+            || matches!(input,Input::Tap(x,y) if self.reading_editor_back().contains(x,y))
         {
             self.dictionary_navigation.view.query_editing = false;
             self.notice = None;
@@ -929,7 +930,7 @@ impl Reader {
             return Change::None;
         };
         let Some(key) = keyboard_key(
-            &Layout::new(WIDTH, HEIGHT, 4, 5),
+            &Layout::new(width, height, 4, 5),
             &self.editor,
             "Look up",
             x,
@@ -973,8 +974,9 @@ impl Reader {
         self.find_step(0)
     }
     fn edit_find_input(&mut self, input: Input) -> Change {
+        let (width, height) = self.reading_viewport().dimensions();
         if matches!(input, Input::PageBack)
-            || matches!(input,Input::Tap(x,y) if primitive_ui::back_button(WIDTH as i32).contains(x,y))
+            || matches!(input,Input::Tap(x,y) if self.reading_editor_back().contains(x,y))
         {
             self.dictionary_navigation.view.editing = false;
             self.notice = None;
@@ -984,7 +986,7 @@ impl Reader {
             return Change::None;
         };
         let Some(key) = keyboard_key(
-            &Layout::new(WIDTH, HEIGHT, 4, 5),
+            &Layout::new(width, height, 4, 5),
             &self.editor,
             "Find",
             x,
@@ -1207,38 +1209,48 @@ impl Reader {
             });
             273 + LINE * lines as i32
         };
+        let viewport = self.reading_viewport();
+        let (screen_width, screen_height) = viewport.dimensions();
+        // Keep the column width stable across viewport changes. Nested results
+        // retain cached line breaks and text positions within that column.
         let popup = if self.definition_expanded {
-            Rect::new(64, 24, WIDTH as i32 - 128, HEIGHT as i32 - 70)
+            definition_column(screen_width, 24, screen_height as i32 - 70)
         } else {
-            definition_bounds(height, self.selection_bounds())
+            definition_bounds(height, self.selection_bounds(), viewport)
         };
-        let back = Rect::new(WIDTH as i32 - 254, popup.y + 16, 168, 66);
+        let back = Rect::new(popup.right() - 190, popup.y + 16, 168, 66);
         (popup, back, (body(popup).h / LINE) as usize)
     }
 
     pub(super) fn draw_definition_popup(&self, canvas: &mut Canvas) {
         let view = &self.dictionary_navigation.view;
+        let bounds = canvas.bounds();
         if view.query_editing {
-            canvas.fill(Rect::new(0, 0, WIDTH as i32, HEIGHT as i32), 255);
-            header(canvas, "Edit lookup word", "Back");
+            canvas.fill(bounds, 255);
+            self.draw_reading_editor_header(canvas, "Edit lookup word");
             canvas.single_line_field(
-                Rect::new(40, 160, 1184, 124),
+                Rect::new(40, 160, bounds.w - 80, 124),
                 &self.editor,
                 "Word or phrase",
                 false,
             );
             if let Some(message) = &self.notice {
-                canvas.text(Rect::new(46, 320, 1172, 90), message, CAPTION);
+                canvas.text(Rect::new(46, 320, bounds.w - 92, 90), message, CAPTION);
             }
             canvas.keyboard(self.editor.layer, "Look up", None);
             return;
         }
         if view.editing {
-            canvas.fill(Rect::new(0, 0, WIDTH as i32, HEIGHT as i32), 255);
-            header(canvas, "Find in definition", "Back");
-            canvas.single_line_field(Rect::new(40, 160, 1184, 124), &self.editor, "Find", false);
+            canvas.fill(bounds, 255);
+            self.draw_reading_editor_header(canvas, "Find in definition");
+            canvas.single_line_field(
+                Rect::new(40, 160, bounds.w - 80, 124),
+                &self.editor,
+                "Find",
+                false,
+            );
             if let Some(message) = &self.notice {
-                canvas.text(Rect::new(46, 320, 1172, 90), message, CAPTION);
+                canvas.text(Rect::new(46, 320, bounds.w - 92, 90), message, CAPTION);
             }
             canvas.keyboard(self.editor.layer, "Find", None);
             return;

@@ -1,11 +1,15 @@
 //! Small, anchored actions for the selection already painted on the reading page.
 
-use primitive_app::{Change, WIDTH};
+use primitive_app::Change;
+#[cfg(test)]
+use primitive_app::WIDTH;
 use primitive_ui::{CAPTION, Canvas, Editor, HAIRLINE, Rect, TextStyle};
 
 use super::{Reader, Result, Screen, SelectionSearchOrigin};
 use crate::highlight_style::{HighlightColor, HighlightStyle};
 use crate::reading_controls::{SelectionLongPressAction, SelectionPopupPosition};
+use crate::session::ReadingViewport;
+#[cfg(test)]
 use crate::session::{DONE, PAGE_HEIGHT};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,6 +73,7 @@ impl SelectionAction {
 
 pub(super) struct SelectionPopup {
     rect: Rect,
+    viewport: ReadingViewport,
     large: bool,
     custom_chapters: bool,
     hyphenate: bool,
@@ -81,6 +86,7 @@ pub(super) struct SelectionPopup {
 
 impl SelectionPopup {
     fn new(
+        viewport: ReadingViewport,
         bounds: Option<Rect>,
         position: SelectionPopupPosition,
         large: bool,
@@ -92,8 +98,11 @@ impl SelectionPopup {
         pending_style: Option<HighlightStyle>,
         pending_color: Option<HighlightColor>,
     ) -> Self {
+        let (width, _) = viewport.dimensions();
+        let screen_width = width as i32;
+        let page_bottom = viewport.page_height() as i32;
         if let Some(stage) = prompt_stage {
-            let width = 1040.min(WIDTH as i32 - 48);
+            let width = 1040.min(screen_width - 48);
             let height = match stage {
                 HighlightPromptStage::Style => 340,
                 HighlightPromptStage::Color => 520,
@@ -101,13 +110,13 @@ impl SelectionPopup {
             let edge = 16;
             let y = match position {
                 SelectionPopupPosition::Top => edge,
-                SelectionPopupPosition::Center => (PAGE_HEIGHT as i32 - height) / 2,
-                SelectionPopupPosition::Bottom => PAGE_HEIGHT as i32 - height - edge,
+                SelectionPopupPosition::Center => (page_bottom - height) / 2,
+                SelectionPopupPosition::Bottom => page_bottom - height - edge,
                 SelectionPopupPosition::Highlight => bounds
                     .and_then(|bounds| {
                         let below = bounds.bottom() + 24;
                         let above = bounds.y - height - 24;
-                        if below + height <= PAGE_HEIGHT as i32 - edge {
+                        if below + height <= page_bottom - edge {
                             Some(below)
                         } else if above >= edge {
                             Some(above)
@@ -115,10 +124,11 @@ impl SelectionPopup {
                             None
                         }
                     })
-                    .unwrap_or((PAGE_HEIGHT as i32 - height) / 2),
+                    .unwrap_or((page_bottom - height) / 2),
             };
             return Self {
-                rect: Rect::new((WIDTH as i32 - width) / 2, y.max(edge), width, height),
+                viewport,
+                rect: Rect::new((screen_width - width) / 2, y.max(edge), width, height),
                 large,
                 custom_chapters,
                 hyphenate,
@@ -130,12 +140,13 @@ impl SelectionPopup {
             };
         }
         if select_mode {
-            let width = 700.min(WIDTH as i32 - 72);
+            let width = 700.min(screen_width - 72);
             let height = 180;
             return Self {
+                viewport,
                 rect: Rect::new(
-                    (WIDTH as i32 - width) / 2,
-                    PAGE_HEIGHT as i32 - height - 16,
+                    (screen_width - width) / 2,
+                    page_bottom - height - 16,
                     width,
                     height,
                 ),
@@ -150,8 +161,7 @@ impl SelectionPopup {
             };
         }
         let height = if large { 260 } else { 224 };
-        let width = (WIDTH as i32 - 72).min(950);
-        let page_bottom = PAGE_HEIGHT as i32;
+        let width = (screen_width - 72).min(950);
         // Leave space for the next line and for the canvas's popup border.
         let gap = 56;
         let edge = 16;
@@ -163,7 +173,8 @@ impl SelectionPopup {
         };
         if let Some(y) = fixed_y {
             return Self {
-                rect: Rect::new((WIDTH as i32 - width) / 2, y, width, height),
+                viewport,
+                rect: Rect::new((screen_width - width) / 2, y, width, height),
                 large,
                 custom_chapters,
                 hyphenate,
@@ -186,8 +197,9 @@ impl SelectionPopup {
             };
             if let Some(y) = y {
                 let x =
-                    (bounds.x + bounds.w / 2 - width / 2).clamp(edge, WIDTH as i32 - width - edge);
+                    (bounds.x + bounds.w / 2 - width / 2).clamp(edge, screen_width - width - edge);
                 return Self {
+                    viewport,
                     rect: Rect::new(x, y, width, height),
                     large,
                     custom_chapters,
@@ -203,8 +215,9 @@ impl SelectionPopup {
 
         // A page-spanning selection can leave no clear location for the popup in the text.
         // Put its actions in the footer alongside Done and leave every selected word visible.
-        let width = width.min(DONE.x - 36);
+        let width = width.min(viewport.done().x - 36);
         Self {
+            viewport,
             rect: Rect::new(16, page_bottom + 12, width, 50),
             large,
             custom_chapters,
@@ -219,7 +232,7 @@ impl SelectionPopup {
 
     fn buttons(&self) -> impl Iterator<Item = (SelectionAction, Rect)> + '_ {
         let inner = self.rect.inset(5);
-        let floating = self.rect.y < PAGE_HEIGHT as i32;
+        let floating = self.rect.y < self.viewport.page_height() as i32;
         let actions: Vec<_> = if let Some(stage) = self.prompt_stage {
             match stage {
                 HighlightPromptStage::Style => HighlightStyle::ALL
@@ -296,8 +309,13 @@ impl SelectionPopup {
     }
 
     fn draw(&self, canvas: &mut Canvas, notice: Option<&str>) {
-        let floating = self.rect.y < PAGE_HEIGHT as i32;
-        canvas.fill(Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, 1), HAIRLINE);
+        let floating = self.rect.y < self.viewport.page_height() as i32;
+        let bottom = self.viewport.page_height() as i32;
+        let done = self.viewport.done();
+        canvas.fill(
+            Rect::new(0, bottom, self.viewport.dimensions().0 as i32, 1),
+            HAIRLINE,
+        );
         if let Some(stage) = self.prompt_stage {
             canvas.popup(self.rect);
             canvas.text(
@@ -334,7 +352,7 @@ impl SelectionPopup {
                     _ => canvas.button(rect, action.label(), false, false),
                 }
             }
-            canvas.button(DONE, "Done", false, false);
+            canvas.button(done, "Done", false, false);
             return;
         }
         if self.select_mode {
@@ -352,12 +370,12 @@ impl SelectionPopup {
                     false,
                 );
             }
-            canvas.button(DONE, "Done", false, false);
+            canvas.button(done, "Done", false, false);
             return;
         }
         if floating {
             canvas.text(
-                Rect::new(38, PAGE_HEIGHT as i32 + 12, DONE.x - 62, 48),
+                Rect::new(38, bottom + 12, done.x - 62, 48),
                 notice.unwrap_or("Tap another word to extend"),
                 CAPTION,
             );
@@ -430,11 +448,21 @@ impl SelectionPopup {
                 TextStyle::new(size).bold().center().ink(ink),
             );
         }
-        canvas.button(DONE, "Done", false, false);
+        canvas.button(done, "Done", false, false);
+    }
+}
+
+impl Screen {
+    pub(super) fn uses_reading_text_editor(self) -> bool {
+        matches!(self, Self::Note | Self::EditNote | Self::DictionaryEntry)
     }
 }
 
 impl Reader {
+    pub(super) fn reading_editor_back(&self) -> Rect {
+        self.navigation_layout().back()
+    }
+
     fn copy_selection(&mut self) -> Result<()> {
         let text = self
             .selection
@@ -603,6 +631,7 @@ impl Reader {
     fn selection_popup(&self) -> Option<SelectionPopup> {
         (self.selection.is_some() || self.pdf_selection.is_some()).then(|| {
             SelectionPopup::new(
+                self.reading_viewport(),
                 self.selection_bounds(),
                 self.controls.selection_popup_position,
                 self.controls.large_toolbar,
@@ -679,7 +708,7 @@ impl Reader {
     }
 
     pub(super) fn selection_popup_input(&mut self, x: f32, y: f32) -> Option<Change> {
-        if DONE.contains(x, y) {
+        if self.reading_viewport().done().contains(x, y) {
             return Some(self.exit());
         }
         let popup = self.selection_popup()?;
@@ -818,6 +847,7 @@ mod tests {
             ),
         ] {
             let popup = SelectionPopup::new(
+                ReadingViewport::PORTRAIT,
                 Some(bounds),
                 SelectionPopupPosition::Highlight,
                 large,
@@ -862,6 +892,7 @@ mod tests {
             ),
         ] {
             let popup = SelectionPopup::new(
+                ReadingViewport::PORTRAIT,
                 Some(Rect::new(400, 700, 120, 50)),
                 position,
                 false,
@@ -888,6 +919,7 @@ mod tests {
     #[test]
     fn select_mode_has_full_size_cancel_copy_and_highlight_buttons() {
         let popup = SelectionPopup::new(
+            ReadingViewport::PORTRAIT,
             Some(Rect::new(420, 650, 180, 80)),
             SelectionPopupPosition::Center,
             false,
@@ -929,6 +961,7 @@ mod tests {
             (HighlightPromptStage::Color, HighlightColor::ALL.len() + 1),
         ] {
             let popup = SelectionPopup::new(
+                ReadingViewport::PORTRAIT,
                 Some(Rect::new(450, 700, 180, 60)),
                 SelectionPopupPosition::Highlight,
                 false,

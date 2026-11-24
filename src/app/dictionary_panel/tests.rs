@@ -285,7 +285,11 @@ fn dictionary_popup_defaults_are_saved_and_restore_nested_large_windows() {
     assert!(s.app.definition_over_book());
     assert_eq!(
         compact,
-        definition_bounds(compact.h, s.app.selection_bounds())
+        definition_bounds(
+            compact.h,
+            s.app.selection_bounds(),
+            s.app.reading_viewport()
+        )
     );
     s.draw(Some("dictionary-justify-text.png"));
     let lines = s.app.dictionary_navigation.view.layout.get().unwrap();
@@ -998,4 +1002,60 @@ fn dictionary_navigation_wraps_through_results_and_restores_the_typed_query() {
     s.back();
     assert_eq!(s.app.screen, Screen::DictionaryEntry);
     assert_eq!(s.app.editor, saved);
+}
+
+#[test]
+fn selection_viewport_epub_dictionary_uses_real_lookup_edit_and_held_return() {
+    use crate::app::selection_viewport_tests::{adopt, capture, key, press, tap};
+    use crate::session::ReadingViewport;
+    use primitive_ui::Key;
+
+    let mut s = Simulation::new();
+    s.open_epub_selection();
+    let original = s.app.current_history_location();
+    let selected = s.app.selection.clone();
+    let portrait = s.draw(None);
+    let mut landscape = adopt(&mut s.app, ReadingViewport::LANDSCAPE, 3);
+    let action = s.app.selection_button(SelectionAction::Dictionary);
+    press(&s.app, &mut landscape, action, false);
+    capture(
+        &s.app,
+        &mut landscape,
+        "landscape-selection-actions.png",
+        false,
+    );
+    tap(&mut s.app, action);
+    assert_eq!(s.app.screen, Screen::Definition);
+    assert_eq!(s.app.definition_word, "the");
+    assert!(!s.app.definitions.is_empty());
+    let (popup, close, _) = s.app.definition_layout();
+    assert!(popup.bottom() < 1264 && close.right() > WIDTH as i32);
+    let original_night_pages = s.app.controls.night_pages;
+    s.app.controls.night_pages = true;
+    press(&s.app, &mut landscape, close, true);
+    capture(
+        &s.app,
+        &mut landscape,
+        "landscape-dictionary-dark.png",
+        true,
+    );
+    s.app.controls.night_pages = original_night_pages;
+
+    let edit = definition_edit_button(popup, s.app.definitions.len() > 1);
+    tap(&mut s.app, edit);
+    assert!(s.app.dictionary_editor_active());
+    let delete = key(&s.app, Key::Delete, "Look up");
+    press(&s.app, &mut landscape, delete, false);
+    tap(&mut s.app, delete);
+    let back = s.app.reading_editor_back();
+    assert!(back.x > WIDTH as i32);
+    tap(&mut s.app, back);
+    assert!(!s.app.dictionary_editor_active());
+
+    s.hold_back();
+    assert_eq!(s.app.screen, Screen::Book);
+    assert_eq!(s.app.selection, selected);
+    assert_eq!(s.app.current_history_location(), original);
+    let mut restored = adopt(&mut s.app, ReadingViewport::PORTRAIT, 4);
+    assert!(primitive_app::frame(&s.app, &mut restored, false) == portrait);
 }

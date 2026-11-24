@@ -124,7 +124,7 @@ fn tap_saved_epub_highlights_chooses_overlaps_and_reads_and_edits_the_note_in_pl
     let p = app.saved_popup.as_ref().unwrap();
     assert!(p.view == View::Choices && p.hits == [0, 1]);
     capture(&app, &mut canvas, "READER_TAP_OVERLAP_SCREENSHOT", external);
-    let row = center(app.saved_popup.as_ref().unwrap().row(0));
+    let row = center(app.saved_layout().row(0));
     app.input(row);
     assert!(
         app.saved_popup
@@ -138,12 +138,12 @@ fn tap_saved_epub_highlights_chooses_overlaps_and_reads_and_edits_the_note_in_pl
     assert_eq!(app.saved_popup.as_ref().unwrap().page, 1);
     app.input(Input::PageBack);
     assert_eq!(app.saved_popup.as_ref().unwrap().page, 0);
-    let edit = center(app.saved_popup.as_ref().unwrap().button(1, 4));
+    let edit = center(app.saved_layout().button(1, 4));
     app.input(edit);
     assert!(app.screen == Screen::EditNote && app.editor.string() == long_note.trim());
     app.input(Input::PageBack);
     assert!(app.saved_popup_over_book());
-    let close = center(app.saved_popup.as_ref().unwrap().close());
+    let close = center(app.saved_layout().close());
     app.input(close);
     assert!(
         app.saved_popup.is_none()
@@ -152,11 +152,11 @@ fn tap_saved_epub_highlights_chooses_overlaps_and_reads_and_edits_the_note_in_pl
     );
     assert!(primitive_app::frame(&app, &mut canvas, false) == frame);
     app.input(hit);
-    let row = center(app.saved_popup.as_ref().unwrap().row(1));
+    let row = center(app.saved_layout().row(1));
     app.input(row);
     let p = app.saved_popup.as_ref().unwrap();
     assert!(p.view == View::Actions(1));
-    let extend = center(p.manage_button(true));
+    let extend = center(app.saved_layout().manage_button(true));
     app.input(extend);
     assert!(app.range_edit.is_some());
     app.input(Input::Tap(125.0, HEIGHT as f32 - 43.0));
@@ -164,10 +164,10 @@ fn tap_saved_epub_highlights_chooses_overlaps_and_reads_and_edits_the_note_in_pl
         app.saved_popup_over_book() && app.saved_popup.as_ref().unwrap().view == View::Actions(1)
     );
     assert!(app.current_history_location().as_ref() == Some(&origin));
-    let remove = center(app.saved_popup.as_ref().unwrap().button(1, 2));
+    let remove = center(app.saved_layout().button(1, 2));
     app.input(remove);
     assert!(app.saved_popup.as_ref().unwrap().view == View::RemoveMark(1));
-    let confirm = center(app.saved_popup.as_ref().unwrap().button(1, 2));
+    let confirm = center(app.saved_layout().button(1, 2));
     app.input(confirm);
     assert!(app.saved_popup.is_none() && app.screen == Screen::Book);
     app.input(hit);
@@ -238,7 +238,7 @@ fn tap_saved_pdf_highlights_matches_zoomed_page_geometry_and_preserves_the_viewp
             .as_ref()
             .is_some_and(|p| p.view == View::Choices && p.hits.len() == 2)
     );
-    let row = center(app.saved_popup.as_ref().unwrap().row(0));
+    let row = center(app.saved_layout().row(0));
     app.input(row);
     capture(
         &app,
@@ -251,7 +251,7 @@ fn tap_saved_pdf_highlights_matches_zoomed_page_geometry_and_preserves_the_viewp
             .as_ref()
             .is_some_and(|p| p.view == View::Note(0))
     );
-    let close = center(app.saved_popup.as_ref().unwrap().close());
+    let close = center(app.saved_layout().close());
     app.input(close);
     assert!(app.current_history_location().as_ref() == Some(&origin) && app.back == history);
     assert!(primitive_app::frame(&app, &mut canvas, false) == frame);
@@ -375,15 +375,15 @@ fn multiple_boxes_hit_once_and_a_note_can_be_removed_without_removing_the_passag
     let _ = primitive_app::frame(&app, &mut canvas, false);
     assert_eq!(app.saved_popup.as_ref().unwrap().hits.len(), 6);
     app.input(Input::PageForward);
-    let row = center(app.saved_popup.as_ref().unwrap().row(0));
+    let row = center(app.saved_layout().row(0));
     app.input(row);
     let p = app.saved_popup.as_ref().unwrap();
     assert!(p.view == View::Note(4));
-    let action = center(p.button(1, 2));
+    let action = center(app.saved_layout().button(1, 2));
     app.input(action);
-    let remove = center(app.saved_popup.as_ref().unwrap().button(0, 2));
+    let remove = center(app.saved_layout().button(0, 2));
     app.input(remove);
-    let confirm = center(app.saved_popup.as_ref().unwrap().button(1, 2));
+    let confirm = center(app.saved_layout().button(1, 2));
     app.input(confirm);
     assert!(app.saved_popup.as_ref().unwrap().view == View::Actions(4));
     let marks = &app.library.state(id).unwrap().pdf_highlights;
@@ -460,4 +460,96 @@ fn an_annotated_pdf_link_in_a_custom_gesture_corner_still_follows_the_destinatio
     assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
     app.activate(Action::ReturnToLocation).unwrap();
     assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
+}
+
+#[test]
+fn selection_viewport_pdf_notes_hit_the_painted_marker_and_restore_the_reading_page() {
+    use crate::app::selection_popup::SelectionAction;
+    use crate::app::selection_viewport_tests::{adopt, capture, key, press, tap};
+    use primitive_ui::Key;
+
+    let fixture = Fixture::new();
+    let file = fixture.root.join("Harbor Survey.pdf");
+    let content = "BT /F1 24 Tf 52 358 Td (Harbor Survey) Tj /F1 16 Tf 0 -44 Td (The tide reached the outer jetty at 15:30.) Tj 0 -29 Td (Clear weather let us observe the moored boats.) Tj ET";
+    fs::write(&file, crate::fixed::tests::pdf_objects(&[
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Count 1 /Kids [3 0 R] >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 622 430] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_owned(),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+    ])).unwrap();
+    let fonts = [
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.to_vec()).unwrap();
+    app.open_path(&file).unwrap();
+    app.controls.dictionary_on_single_word = Some(false);
+    app.controls.note_marker = NoteMarker::Sidemark;
+    let mut canvas = adopt(&mut app, ReadingViewport::LANDSCAPE, 2);
+    let original = app.current_history_location();
+    let reading = &app.fixed.as_ref().unwrap().reading;
+    let text = reading.page_text(0).unwrap();
+    let word = text
+        .words
+        .iter()
+        .find(|word| &text.text[word.bytes.clone()] == "tide")
+        .unwrap();
+    let word_bounds = word.bounds;
+    let point = reading.visible_rectangle(0, word_bounds).unwrap().center();
+    assert_eq!(
+        app.input(Input::LongTap(point.x as f32, point.y as f32)),
+        Change::Partial
+    );
+    assert_eq!(app.pdf_selection.as_ref().unwrap().text(), "tide");
+    let note = app.selection_button(SelectionAction::Note);
+    press(&app, &mut canvas, note, false);
+    tap(&mut app, note);
+    for ch in "tidal mark".chars() {
+        let rect = key(
+            &app,
+            if ch == ' ' { Key::Space } else { Key::Char(ch) },
+            "Save",
+        );
+        tap(&mut app, rect);
+    }
+    let save = key(&app, Key::Go, "Save");
+    assert!(save.x > WIDTH as i32);
+    tap(&mut app, save);
+    assert_eq!(app.screen, Screen::Fixed);
+
+    let reading = &app.fixed.as_ref().unwrap().reading;
+    let area = reading.annotation_rectangle(0, word_bounds).unwrap();
+    let rect = crate::selection::HighlightRect {
+        x: area.x0.floor() as i32,
+        y: area.y0.floor() as i32,
+        width: area.width().ceil() as i32,
+        height: area.height().ceil() as i32,
+    };
+    let width = app.reading_viewport().dimensions().0;
+    let margin = crate::note_marker::margin(width, 0, 0, NoteMarker::Sidemark, true);
+    let marker =
+        crate::note_marker::bounds(rect, NoteMarker::Sidemark, margin, true, width).unwrap();
+    assert!(marker.x > WIDTH as i32);
+    tap(
+        &mut app,
+        Rect::new(marker.x, marker.y, marker.width, marker.height),
+    );
+    assert!(app.saved_popup.as_ref().unwrap().view == View::Note(0));
+    assert_eq!(app.mark_text(0), Some(("tide", Some("tidal mark"))));
+    let close = app.saved_layout().close();
+    assert!(close.right() > WIDTH as i32);
+    app.controls.night_pages = true;
+    press(&app, &mut canvas, close, true);
+    capture(&app, &mut canvas, "landscape-saved-note-dark.png", true);
+
+    let edit = app.saved_layout().button(0, 2);
+    tap(&mut app, edit);
+    assert_eq!(app.screen, Screen::EditNote);
+    let back = app.reading_editor_back();
+    tap(&mut app, back);
+    assert!(app.saved_popup_over_book());
+    tap(&mut app, close);
+    assert!(app.saved_popup.is_none());
+    assert_eq!(app.current_history_location(), original);
 }

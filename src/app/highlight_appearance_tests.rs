@@ -14,8 +14,7 @@ fn reading_settings(app: &mut Reader) {
 
 fn choose_amount(app: &mut Reader, amount: Amount) {
     reading_settings(app);
-    let p = app.saved_popup.as_ref().unwrap();
-    let entry = p.amount_entry(match amount {
+    let entry = app.saved_layout().amount_entry(match amount {
         Amount::HighlightOpacity => 0,
         Amount::SelectionOpacity => 1,
         Amount::LineHeight => 2,
@@ -25,7 +24,7 @@ fn choose_amount(app: &mut Reader, amount: Amount) {
 }
 
 fn press(app: &mut Reader, plus: bool, hold: bool) {
-    let area = app.saved_popup.as_ref().unwrap().adjust(plus);
+    let area = app.saved_layout().adjust(plus);
     let Input::Tap(x, y) = center(area) else {
         unreachable!()
     };
@@ -37,7 +36,7 @@ fn press(app: &mut Reader, plus: bool, hold: bool) {
 }
 
 fn dismiss(app: &mut Reader) {
-    let close = app.saved_popup.as_ref().unwrap().close();
+    let close = app.saved_layout().close();
     app.input(center(close));
     assert!(app.saved_popup.is_none());
 }
@@ -72,10 +71,10 @@ pub(super) fn original_saved_opacity(
 ) {
     // Enable gray as the book's drawer; the saved passage itself is edited separately.
     reading_settings(app);
-    app.input(center(app.saved_popup.as_ref().unwrap().style_cell(0)));
+    app.input(center(app.saved_layout().style_cell(0)));
     dismiss(app);
     app.open_highlight_styles(Some(0));
-    app.input(center(app.saved_popup.as_ref().unwrap().style_cell(0)));
+    app.input(center(app.saved_layout().style_cell(0)));
     let id = app.open_book_id().unwrap();
     let location = app.current_history_location().unwrap();
     let before = app.library.state(id).unwrap().clone();
@@ -115,7 +114,7 @@ pub(super) fn original_saved_opacity(
         } else {
             3
         };
-        app.input(center(app.saved_popup.as_ref().unwrap().style_cell(slot)));
+        app.input(center(app.saved_layout().style_cell(slot)));
         let pixels = primitive_app::frame(app, &mut canvas, false);
         for y in fill.start.max(0)..fill.end.min(PAGE_HEIGHT as i32) {
             for x in (rect.x + 2).max(0)..(rect.right() - 2).min(WIDTH as i32) {
@@ -137,7 +136,7 @@ pub(super) fn original_saved_opacity(
     println!("highlight-height-original centered_fill_pixels={compared} unchanged_source_range=1");
     if app.fixed.is_some() {
         app.open_highlight_styles(Some(0));
-        app.input(center(app.saved_popup.as_ref().unwrap().style_cell(0)));
+        app.input(center(app.saved_layout().style_cell(0)));
         let Input::Tap(x, y) = center(rect) else {
             unreachable!()
         };
@@ -159,10 +158,10 @@ pub(super) fn original_saved_opacity(
     }
     // Restore other tests' requested book and stored-mark style.
     reading_settings(app);
-    app.input(center(app.saved_popup.as_ref().unwrap().style_cell(1)));
+    app.input(center(app.saved_layout().style_cell(1)));
     dismiss(app);
     app.open_highlight_styles(Some(0));
-    app.input(center(app.saved_popup.as_ref().unwrap().style_cell(3)));
+    app.input(center(app.saved_layout().style_cell(3)));
     app.save().unwrap();
 }
 
@@ -234,11 +233,9 @@ fn highlight_opacity_changes_both_saved_and_new_marks_and_word_selection_indepen
     app.selection = None;
     choose_amount(&mut app, Amount::HighlightOpacity);
     crate::app::tests::capture_test_screen(&app, &[font.clone()], "READER_OPACITY_SCREEN", false);
-    let p = app.saved_popup.as_ref().unwrap();
-    app.input(center(p.button(0, 2)));
+    app.input(center(app.saved_layout().button(0, 2)));
     assert_eq!(app.controls.highlight_appearance.highlight_opacity, 20);
-    let p = app.saved_popup.as_ref().unwrap();
-    app.input(center(p.button(1, 2)));
+    app.input(center(app.saved_layout().button(1, 2)));
     assert!(matches!(
         app.saved_popup.as_ref().unwrap().view,
         View::Styles(None)

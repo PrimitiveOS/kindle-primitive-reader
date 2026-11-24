@@ -4,9 +4,11 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::time::Instant;
 
-use primitive_app::{Change, HEIGHT, WIDTH};
+#[cfg(test)]
+use primitive_app::HEIGHT;
+use primitive_app::{Change, WIDTH};
 use primitive_ui::{
-    BODY, CAPTION, Canvas, Editor, GrayImage, Input, Layout, PageTurn, Pager, Press, Rect, header,
+    BODY, CAPTION, Canvas, Editor, GrayImage, Input, Layout, PageTurn, Pager, Press, Rect,
     keyboard_key,
 };
 use serde::{Deserialize, Serialize};
@@ -38,6 +40,32 @@ const BODY_LINES: usize = 10;
 const BODY_LINE: i32 = 45;
 const FIGURE_GAP: i32 = 18;
 const PHOTO_LIMIT: Rect = Rect::new(0, 0, BODY_RECT.w / 2, 5 * BODY_LINE - FIGURE_GAP);
+
+// Keep the article's physical column width and line breaks across rotations.
+// Moving the shorter request preview with the results keeps its header in place.
+#[derive(Clone, Copy, Default)]
+struct SheetPosition {
+    x: i32,
+    y: i32,
+}
+
+impl SheetPosition {
+    fn new(viewport: crate::session::ReadingViewport) -> Self {
+        let (width, height) = viewport.dimensions();
+        Self {
+            x: (width as i32 - WIDTH as i32) / 2,
+            y: (height as i32 - SHEET.bottom() - 28).min(0),
+        }
+    }
+
+    fn rect(self, local: Rect) -> Rect {
+        Rect::new(local.x + self.x, local.y + self.y, local.w, local.h)
+    }
+
+    fn local(self, x: f32, y: f32) -> (f32, f32) {
+        (x - self.x as f32, y - self.y as f32)
+    }
+}
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -265,7 +293,8 @@ impl Panel {
         Change::Partial
     }
 
-    fn image_at(&self, x: f32, y: f32) -> Option<usize> {
+    fn image_at(&self, position: SheetPosition, x: f32, y: f32) -> Option<usize> {
+        let (x, y) = position.local(x, y);
         if self.request.full_article {
             return self
                 .pages
@@ -567,9 +596,10 @@ impl Reader {
 
     pub(super) fn draw_online_editor(&self, canvas: &mut Canvas) {
         let Some(p) = &self.online else { return };
-        header(canvas, p.field.title(), "Back");
+        self.draw_reading_editor_header(canvas, p.field.title());
+        let width = canvas.bounds().w;
         canvas.single_line_field(
-            Rect::new(40, 160, 1184, 124),
+            Rect::new(40, 160, width - 80, 124),
             &self.editor,
             p.field.title(),
             false,
@@ -582,7 +612,7 @@ impl Reader {
             _ => "Enter a language code such as en, vi, fr or zh-CN.",
         };
         canvas.text(
-            Rect::new(46, 324, 1172, 180),
+            Rect::new(46, 324, width - 92, 180),
             self.notice.as_deref().unwrap_or(help),
             CAPTION.lines(3),
         );
@@ -591,7 +621,7 @@ impl Reader {
 
     pub(super) fn online_editor_input(&mut self, input: Input) -> Change {
         if matches!(input, Input::PageBack)
-            || matches!(input,Input::Tap(x,y) if primitive_ui::back_button(WIDTH as i32).contains(x,y))
+            || matches!(input,Input::Tap(x,y) if self.reading_editor_back().contains(x,y))
         {
             if self
                 .online
@@ -607,7 +637,8 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
-        let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
+        let (width, height) = self.reading_viewport().dimensions();
+        let layout = Layout::new(width, height, 4, 5);
         let Some(key) = keyboard_key(&layout, &self.editor, "Apply", x, y) else {
             return Change::None;
         };
@@ -687,10 +718,15 @@ impl Reader {
     pub(super) fn draw_online(&self, canvas: &mut Canvas) {
         let Some(p) = &self.online else { return };
         let r = &p.request;
-        canvas.popup(p.sheet());
-        canvas.text(Rect::new(104, 332, 846, 80), r.service.name(), BODY.bold());
+        let position = SheetPosition::new(self.reading_viewport());
+        canvas.popup(position.rect(p.sheet()));
+        canvas.text(
+            position.rect(Rect::new(104, 332, 846, 80)),
+            r.service.name(),
+            BODY.bold(),
+        );
         canvas.button(
-            CLOSE,
+            position.rect(CLOSE),
             if p.job.is_some() {
                 "Cancel"
             } else if p.introductions.is_some() || p.media.current.is_some() {
@@ -705,20 +741,28 @@ impl Reader {
             if let Some(index) = p.media.current
                 && let Some(picture) = p.images().get(index)
             {
-                self.draw_wikipedia_picture(canvas, article, picture, index, p.images().len());
+                self.draw_wikipedia_picture(
+                    canvas,
+                    article,
+                    picture,
+                    index,
+                    p.images().len(),
+                    position,
+                );
                 return;
             }
-            let mut title_rect = TOPIC;
+            let mut title_rect = position.rect(TOPIC);
             if !r.full_article
                 && let Some(picture) = p.images().first()
             {
-                title_rect.w = THUMB.x - title_rect.x - 20;
-                let pressed = canvas.control_pressed(THUMB, false);
-                canvas.panel(THUMB, 16, 4, if pressed { 0 } else { 255 });
-                let mut photo = THUMB.inset(8);
+                let thumbnail = position.rect(THUMB);
+                title_rect.w = thumbnail.x - title_rect.x - 20;
+                let pressed = canvas.control_pressed(thumbnail, false);
+                canvas.panel(thumbnail, 16, 4, if pressed { 0 } else { 255 });
+                let mut photo = thumbnail.inset(8);
                 photo.w -= 54;
                 draw_picture(canvas, photo, picture);
-                let glyph = Rect::new(THUMB.right() - 53, THUMB.y + 35, 36, 36);
+                let glyph = Rect::new(thumbnail.right() - 53, thumbnail.y + 35, 36, 36);
                 canvas.icon(
                     glyph,
                     super::bar_icons::SEARCH,
@@ -731,7 +775,14 @@ impl Reader {
             p.pages.prepare(canvas, &display_text, pictures);
             let current = p.pages.current();
             if let Some(page) = &current {
-                draw_article_page(canvas, &display_text, page, pictures, p.media.show_caption);
+                draw_article_page(
+                    canvas,
+                    &display_text,
+                    page,
+                    pictures,
+                    p.media.show_caption,
+                    position,
+                );
             }
             let index = p.pages.index.get();
             let attribution = if r.service == Service::Wikipedia {
@@ -740,38 +791,48 @@ impl Reader {
                 format!("{} · {} to {}", r.service.name(), r.from, r.to)
             };
             canvas.text(
-                Rect::new(108, 1135, 1038, 84),
+                position.rect(Rect::new(108, 1135, 1038, 84)),
                 &format!("{} / {}   ·   {attribution}", index + 1, p.page_count()),
                 CAPTION,
             );
             if index > 0 {
-                canvas.button(PREV, "Previous", false, false);
+                canvas.button(position.rect(PREV), "Previous", false, false);
             }
             if index + 1 < p.page_count() {
-                canvas.button(NEXT, "Next", false, false);
+                canvas.button(position.rect(NEXT), "Next", false, false);
             }
             if p.articles.len() > 1 {
-                canvas.button(ALTERNATE, "Next result", false, false);
+                canvas.button(position.rect(ALTERNATE), "Next result", false, false);
             }
             if r.service == Service::Wikipedia && !r.full_article {
-                canvas.button(SUBMIT, "Full article", false, false);
+                canvas.button(position.rect(SUBMIT), "Full article", false, false);
             } else if current.is_some_and(|page| page.figure.is_some()) {
-                canvas.button(SUBMIT, "Open image", false, false);
+                canvas.button(position.rect(SUBMIT), "Open image", false, false);
             }
             return;
         }
-        canvas.text(TOPIC, &r.text, BODY.lines(2));
+        canvas.text(position.rect(TOPIC), &r.text, BODY.lines(2));
         if p.job.is_some() {
-            canvas.text(BODY_RECT, "Looking up the text…", BODY);
+            canvas.text(position.rect(BODY_RECT), "Looking up the text…", BODY);
             return;
         }
         if r.service != Service::Wikipedia {
-            canvas.button(PROVIDER, r.service.name(), false, false);
-            canvas.button(FROM, &format!("From {}", r.from), false, false);
+            canvas.button(position.rect(PROVIDER), r.service.name(), false, false);
+            canvas.button(
+                position.rect(FROM),
+                &format!("From {}", r.from),
+                false,
+                false,
+            );
         } else {
-            canvas.button(PROVIDER, "Edit topic", false, false);
+            canvas.button(position.rect(PROVIDER), "Edit topic", false, false);
         }
-        canvas.button(TO, &format!("Language {}", r.to), false, false);
+        canvas.button(
+            position.rect(TO),
+            &format!("Language {}", r.to),
+            false,
+            false,
+        );
         let hint = if r.service == Service::Wikipedia {
             format!("Search sends this topic to {}.wikipedia.org.", r.to)
         } else {
@@ -781,7 +842,7 @@ impl Reader {
             )
         };
         canvas.text(
-            Rect::new(108, 733, 1040, 138),
+            position.rect(Rect::new(108, 733, 1040, 138)),
             p.message
                 .as_deref()
                 .or(self.notice.as_deref())
@@ -789,7 +850,7 @@ impl Reader {
             BODY.lines(3),
         );
         canvas.button(
-            p.submit(),
+            position.rect(p.submit()),
             if r.service == Service::Wikipedia {
                 "Search"
             } else {
@@ -807,17 +868,18 @@ impl Reader {
         picture: &Picture,
         index: usize,
         total: usize,
+        position: SheetPosition,
     ) {
-        canvas.text(TOPIC, &article.title, BODY.bold().lines(2));
-        draw_picture(canvas, GALLERY, picture);
+        canvas.text(position.rect(TOPIC), &article.title, BODY.bold().lines(2));
+        draw_picture(canvas, position.rect(GALLERY), picture);
         let filename = picture.name.replace('_', " ");
         let details = if picture.caption.is_empty() {
             format!("Wikimedia · {filename}")
         } else {
             format!("{}\nWikimedia · {filename}", picture.caption)
         };
-        canvas.text(CAPTION_AREA, &details, CAPTION.lines(4));
-        picture_pager(index, total).draw(canvas, None);
+        canvas.text(position.rect(CAPTION_AREA), &details, CAPTION.lines(4));
+        picture_pager(index, total, position).draw(canvas, None);
     }
 
     fn start_online(&mut self) -> Change {
@@ -838,10 +900,13 @@ impl Reader {
     }
 
     pub(super) fn online_input(&mut self, input: Input) -> Change {
+        let position = SheetPosition::new(self.reading_viewport());
+        let body = position.rect(BODY_RECT);
         let Some(p) = &mut self.online else {
             return Change::None;
         };
-        if matches!(input,Input::Tap(x,y) if CLOSE.contains(x,y) || !p.sheet().contains(x,y)) {
+        if matches!(input,Input::Tap(x,y) if position.rect(CLOSE).contains(x,y) || !position.rect(p.sheet()).contains(x,y))
+        {
             self.close_online();
             return Change::Partial;
         }
@@ -852,7 +917,7 @@ impl Reader {
             let direction = match input {
                 Input::PageForward => Some(PageTurn::Next),
                 Input::PageBack => Some(PageTurn::Previous),
-                Input::Tap(x, y) => picture_pager(index, p.images().len()).hit(x, y),
+                Input::Tap(x, y) => picture_pager(index, p.images().len(), position).hit(x, y),
                 _ => None,
             };
             return match direction {
@@ -868,13 +933,13 @@ impl Reader {
                 Input::Swipe { dx, dy, start_y }
                     if p.request.full_article
                         && dy.abs() > dx.abs()
-                        && (BODY_RECT.y as f32..BODY_RECT.bottom() as f32).contains(&start_y) =>
+                        && (body.y as f32..body.bottom() as f32).contains(&start_y) =>
                 {
                     p.step_page(if dy < 0.0 { 1 } else { -1 })
                 }
-                Input::Tap(x, y) if NEXT.contains(x, y) => p.step_page(1),
-                Input::Tap(x, y) if PREV.contains(x, y) => p.step_page(-1),
-                Input::Tap(x, y) if let Some(index) = p.image_at(x, y) => {
+                Input::Tap(x, y) if position.rect(NEXT).contains(x, y) => p.step_page(1),
+                Input::Tap(x, y) if position.rect(PREV).contains(x, y) => p.step_page(-1),
+                Input::Tap(x, y) if let Some(index) = p.image_at(position, x, y) => {
                     if p.request.full_article {
                         p.media.show_caption = !p.media.show_caption;
                     } else {
@@ -888,26 +953,28 @@ impl Reader {
                     start_y: y,
                     ..
                 } if p.request.full_article
-                    && let Some(index) = p.image_at(x, y) =>
+                    && let Some(index) = p.image_at(position, x, y) =>
                 {
                     p.media.current = Some(index);
                     Change::Partial
                 }
                 Input::Tap(x, y)
-                    if SUBMIT.contains(x, y)
+                    if position.rect(SUBMIT).contains(x, y)
                         && let Some(figure) = p.pages.current().and_then(|page| page.figure) =>
                 {
                     p.media.current = Some(figure.picture);
                     Change::Partial
                 }
-                Input::Tap(x, y) if ALTERNATE.contains(x, y) && p.articles.len() > 1 => {
+                Input::Tap(x, y)
+                    if position.rect(ALTERNATE).contains(x, y) && p.articles.len() > 1 =>
+                {
                     p.article = (p.article + 1) % p.articles.len();
                     p.pages = ArticlePages::default();
                     p.start_media(&self.lookup_history.online_languages);
                     Change::Partial
                 }
                 Input::Tap(x, y)
-                    if SUBMIT.contains(x, y)
+                    if position.rect(SUBMIT).contains(x, y)
                         && p.request.service == Service::Wikipedia
                         && !p.request.full_article =>
                 {
@@ -930,17 +997,18 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
-        if p.submit().contains(x, y) {
+        if position.rect(p.submit()).contains(x, y) {
             return self.start_online();
         }
         p.message = None;
-        if TO.contains(x, y) {
+        if position.rect(TO).contains(x, y) {
             self.edit_online(Field::To);
-        } else if FROM.contains(x, y) && p.request.service != Service::Wikipedia {
+        } else if position.rect(FROM).contains(x, y) && p.request.service != Service::Wikipedia {
             self.edit_online(Field::From);
-        } else if PROVIDER.contains(x, y) && p.request.service == Service::Wikipedia {
+        } else if position.rect(PROVIDER).contains(x, y) && p.request.service == Service::Wikipedia
+        {
             self.edit_online(Field::Topic);
-        } else if PROVIDER.contains(x, y) {
+        } else if position.rect(PROVIDER).contains(x, y) {
             let next = if p.request.service == Service::Google {
                 Service::MyMemory
             } else {
@@ -991,29 +1059,31 @@ fn draw_article_page(
     page: &ArticlePage,
     pictures: &[Picture],
     show_caption: bool,
+    position: SheetPosition,
 ) {
     let Some(figure) = page.figure else {
         canvas.text(
-            BODY_RECT,
+            position.rect(BODY_RECT),
             &text[page.source.clone()],
             BODY.lines(BODY_LINES),
         );
         return;
     };
     canvas.text(
-        figure.beside,
+        position.rect(figure.beside),
         text[page.source.start..figure.split].trim_end(),
         BODY.lines(figure.wrapped_lines).break_long_words(),
     );
     canvas.text(
-        figure.below,
+        position.rect(figure.below),
         text[figure.split..page.source.end].trim_end(),
         BODY.lines(BODY_LINES - figure.wrapped_lines)
             .break_long_words(),
     );
     let picture = &pictures[figure.picture];
+    let photo = position.rect(figure.photo);
     if show_caption {
-        canvas.panel(figure.photo, 12, 2, 255);
+        canvas.panel(photo, 12, 2, 255);
         let name = picture.name.replace('_', " ");
         let details = if picture.caption.is_empty() {
             name
@@ -1021,20 +1091,20 @@ fn draw_article_page(
             format!("{name}\n{}", picture.caption)
         };
         canvas.text(
-            figure.photo.inset(10),
+            photo.inset(10),
             &details,
             CAPTION
                 .break_long_words()
                 .lines(((figure.photo.h - 20) / 35).max(1) as usize),
         );
     } else {
-        draw_picture(canvas, figure.photo, picture);
+        draw_picture(canvas, photo, picture);
     }
 }
 
-fn picture_pager(index: usize, count: usize) -> Pager {
+fn picture_pager(index: usize, count: usize, position: SheetPosition) -> Pager {
     Pager {
-        bounds: IMAGE_PAGER,
+        bounds: position.rect(IMAGE_PAGER),
         page: index,
         pages: count,
     }
@@ -1565,7 +1635,9 @@ mod wikipedia_image_tests {
         );
         assert_eq!(app.online.as_ref().unwrap().media.current, Some(0));
         capture_test_screen(&app, &fonts, "READER_WIKI_FULL_IMAGE", false);
-        let next = picture_pager(0, 2).button(PageTurn::Next).unwrap();
+        let next = picture_pager(0, 2, SheetPosition::default())
+            .button(PageTurn::Next)
+            .unwrap();
         assert_eq!(tap(&mut app, next), Change::Partial);
         assert_eq!(app.online.as_ref().unwrap().media.current, Some(1));
         capture_test_screen(&app, &fonts, "READER_WIKI_FULL_IMAGE_DARK", true);
@@ -1644,4 +1716,138 @@ mod wikipedia_image_tests {
         );
         assert_eq!(app.screen, Screen::Book);
     }
+
+    #[test]
+    fn selection_viewport_wikipedia_figure_captions_and_gallery_share_painted_coordinates() {
+        use crate::app::selection_viewport_tests::adopt;
+        use crate::session::ReadingViewport;
+
+        let fixture = Fixture::new();
+        let (fonts, _) = canvases();
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let viewport = ReadingViewport::LANDSCAPE;
+        let mut canvas = adopt(&mut app, viewport, 2);
+        let origin = app.current_history_location();
+        full_article(&mut app);
+        reply_images(&mut app, &fixture.root, vec![drawing(false), drawing(true)]);
+        let picture_frame = frame(&app, &mut canvas, false);
+        let position = SheetPosition::new(viewport);
+        let figure = app
+            .online
+            .as_ref()
+            .unwrap()
+            .pages
+            .current()
+            .unwrap()
+            .figure
+            .unwrap();
+        let visible = position.rect(figure.photo);
+        let (x, y) = (
+            (visible.x + visible.w / 2) as f32,
+            (visible.y + visible.h / 2) as f32,
+        );
+        assert_eq!(tap(&mut app, visible), Change::Partial);
+        assert!(app.online.as_ref().unwrap().media.show_caption);
+        assert!(frame(&app, &mut canvas, false) != picture_frame);
+        assert_eq!(app.input(Input::LongTap(x, y)), Change::Partial);
+        assert_eq!(app.online.as_ref().unwrap().media.current, Some(0));
+        let next = picture_pager(0, 2, position)
+            .button(PageTurn::Next)
+            .unwrap();
+        assert_eq!(tap(&mut app, next), Change::Partial);
+        assert_eq!(app.online.as_ref().unwrap().media.current, Some(1));
+        let close = position.rect(CLOSE);
+        assert_eq!(tap(&mut app, close), Change::Partial);
+        assert!(app.online.as_ref().unwrap().media.current.is_none());
+        assert_eq!(tap(&mut app, close), Change::Partial);
+        assert_eq!(app.current_history_location(), origin);
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn selection_viewport_translate_keeps_request_result_pager_and_return_inside_landscape() {
+    use crate::app::selection_popup::SelectionAction;
+    use crate::app::selection_viewport_tests::{adopt, capture, key, press, tap};
+    use crate::app::tests::Fixture;
+    use crate::epub::Book;
+    use crate::session::ReadingViewport;
+    use primitive_app::App;
+    use primitive_ui::Key;
+
+    let fixture = Fixture::new();
+    let mut app = Reader::open(
+        &fixture.root,
+        &fixture.state,
+        vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+    )
+    .unwrap();
+    app.controls.dictionary_on_single_word = Some(false);
+    app.open_path(&fixture.book).unwrap();
+    let source = &app.active.as_ref().unwrap().reading.probe.chapter;
+    app.follow(Book::resolve_link(source, "dusk.xhtml#door").unwrap())
+        .unwrap();
+    let viewport = ReadingViewport::LANDSCAPE;
+    let mut canvas = adopt(&mut app, viewport, 2);
+    let original = app.current_history_location();
+    let reading = &app.active.as_ref().unwrap().reading;
+    let start = reading.probe.matches("harbor").into_iter().next().unwrap();
+    let mut end = start.clone();
+    end.offset += "harbor".len();
+    let selected = reading.probe.select_range(&start, &end).unwrap();
+    let word = reading.highlight_rects(&selected)[0];
+    assert_eq!(
+        app.input(Input::LongTap(
+            (word.x + word.width / 2) as f32,
+            (word.y + word.height / 2) as f32
+        )),
+        Change::Partial
+    );
+    assert_eq!(app.selected_passage().unwrap(), "harbor");
+    let translate = app.selection_button(SelectionAction::Translate);
+    tap(&mut app, translate);
+    assert_eq!(app.screen, Screen::OnlineLookup);
+    let position = SheetPosition::new(viewport);
+    let close = position.rect(CLOSE);
+    let language = position.rect(TO);
+    assert!(close.x + close.w / 2 > WIDTH as i32);
+    press(&app, &mut canvas, close, false);
+    assert!(app.online.as_ref().unwrap().job.is_none());
+    tap(&mut app, language);
+    assert_eq!(app.screen, Screen::OnlineEdit);
+    let existing = app.editor.text.len();
+    for _ in 0..existing {
+        let delete = key(&app, Key::Delete, "Apply");
+        tap(&mut app, delete);
+    }
+    for ch in ['f', 'r'] {
+        let letter = key(&app, Key::Char(ch), "Apply");
+        tap(&mut app, letter);
+    }
+    let save = key(&app, Key::Go, "Apply");
+    assert!(save.x > WIDTH as i32);
+    tap(&mut app, save);
+    assert_eq!(app.screen, Screen::OnlineLookup);
+    assert_eq!(app.online.as_ref().unwrap().request.to, "fr");
+
+    // Inject a provider response so the controller and renderer run offline.
+    app.online.as_mut().unwrap().articles = vec![Article {
+        title: "Translation".into(),
+        text: "Port. Abri naturel ou aménagé où les navires peuvent accoster. Les cartes nautiques indiquent la profondeur et les repères à suivre pour entrer dans le port. ".repeat(20),
+        source: Some("harbor".into()),
+        romanization: None,
+        thumbnail: None,
+    }];
+    let next = position.rect(NEXT);
+    let (_, height) = viewport.dimensions();
+    assert!(next.bottom() < height as i32 && NEXT.bottom() > height as i32);
+    press(&app, &mut canvas, next, false);
+    capture(&app, &mut canvas, "landscape-translation-result.png", false);
+    tap(&mut app, next);
+    assert_eq!(app.online.as_ref().unwrap().pages.index.get(), 1);
+    tap(&mut app, close);
+    assert_eq!(app.screen, Screen::Book);
+    assert_eq!(app.current_history_location(), original);
+    assert_eq!(app.selected_passage().unwrap(), "harbor");
 }

@@ -72,6 +72,7 @@ impl NavigationLayout {
 impl Screen {
     pub(super) fn uses_navigation_viewport(self) -> bool {
         self.is_contents()
+            || self.uses_reading_text_editor()
             || self.is_bookmark_list()
             || matches!(
                 self,

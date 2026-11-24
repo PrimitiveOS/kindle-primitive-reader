@@ -10,11 +10,10 @@ fn choose_default(app: &mut Reader) {
     }
     let picker = app.reading_button("Highlight style");
     assert_eq!(app.input(center(picker)), Change::Partial);
-    let popup = app.saved_popup.as_ref().unwrap();
-    let button = popup.style_cell(1);
+    let button = app.saved_layout().style_cell(1);
     app.input(center(button));
     assert_eq!(app.effective_highlight_style(), HighlightStyle::Underline);
-    let close = app.saved_popup.as_ref().unwrap().close();
+    let close = app.saved_layout().close();
     app.input(center(close));
 }
 
@@ -39,9 +38,9 @@ fn check_styles(
             app.saved_popup.as_ref().unwrap().view,
             View::Note(0)
         ));
-        let actions = app.saved_popup.as_ref().unwrap().button(1, 2);
+        let actions = app.saved_layout().button(1, 2);
         app.input(center(actions));
-        let show = app.saved_popup.as_ref().unwrap().style_action();
+        let show = app.saved_layout().style_action();
         app.input(center(show));
         let popup = app.saved_popup.as_ref().unwrap();
         assert!(matches!(popup.view, View::Styles(Some(0))));
@@ -53,7 +52,7 @@ fn check_styles(
                 false,
             );
         }
-        let choose = popup.style_cell(index);
+        let choose = app.saved_layout().style_cell(index);
         app.input(center(choose));
         assert!(app.saved_popup.is_none());
         assert_eq!(app.mark_style(0), Some(style));
@@ -326,13 +325,10 @@ fn highlight_styles_overlap_changes_only_the_selected_saved_mark_and_survive_old
         app.input(hit);
         let p = app.saved_popup.as_ref().unwrap();
         assert_eq!(p.hits, vec![0, 1]);
-        app.input(center(p.row(index)));
-        let p = app.saved_popup.as_ref().unwrap();
-        app.input(center(p.button(1, 2)));
-        let p = app.saved_popup.as_ref().unwrap();
-        app.input(center(p.style_action()));
-        let p = app.saved_popup.as_ref().unwrap();
-        app.input(center(p.style_cell(3)));
+        app.input(center(app.saved_layout().row(index)));
+        app.input(center(app.saved_layout().button(1, 2)));
+        app.input(center(app.saved_layout().style_action()));
+        app.input(center(app.saved_layout().style_cell(3)));
         if index == 1 {
             assert_eq!(app.mark_style(0), Some(HighlightStyle::Lighten));
         }
@@ -346,12 +342,12 @@ fn highlight_styles_overlap_changes_only_the_selected_saved_mark_and_survive_old
         );
     }
     app.open_highlight_styles(None);
-    app.input(center(app.saved_popup.as_ref().unwrap().style_cell(2)));
-    app.input(center(app.saved_popup.as_ref().unwrap().button(1, 2)));
+    app.input(center(app.saved_layout().style_cell(2)));
+    app.input(center(app.saved_layout().button(1, 2)));
     assert_eq!(app.controls.highlight_style, HighlightStyle::Strikethrough);
     app.open_highlight_styles(None);
-    app.input(center(app.saved_popup.as_ref().unwrap().style_cell(1)));
-    app.input(center(app.saved_popup.as_ref().unwrap().button(0, 2)));
+    app.input(center(app.saved_layout().style_cell(1)));
+    app.input(center(app.saved_layout().button(0, 2)));
     assert_eq!(
         app.effective_highlight_style(),
         HighlightStyle::Strikethrough

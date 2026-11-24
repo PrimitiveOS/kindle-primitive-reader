@@ -102,6 +102,14 @@ impl Reader {
         Change::Partial
     }
 
+    pub(super) fn editor_paste_rect(&self) -> Rect {
+        let mut rect = PASTE;
+        if self.screen.uses_reading_text_editor() {
+            rect.x += self.reading_viewport().dimensions().0 as i32 - WIDTH as i32;
+        }
+        rect
+    }
+
     pub(super) fn can_paste_text(&self) -> bool {
         self.clipboard_text.is_some()
             && matches!(
