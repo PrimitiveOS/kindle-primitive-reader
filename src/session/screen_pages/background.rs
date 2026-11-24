@@ -246,7 +246,7 @@ impl Request {
             book: generation.book.clone(),
             publication: generation.publication,
             spine: generation.spine.clone(),
-            settings: generation.settings,
+            settings: reading.config.settings,
             fonts: generation.fonts.clone(),
             sources: generation.sources.clone(),
             styles: generation.styles.clone(),
@@ -423,6 +423,16 @@ mod tests {
         };
 
         begin(&mut worker, &reading);
+        reading
+            .reflow(Settings {
+                font_gamma_index: 24,
+                ..reading.config.settings
+            })
+            .unwrap();
+        assert!(current_generation(
+            &reading,
+            &worker.pending.as_ref().unwrap().generation
+        ));
         worker.cancel();
         drain(&mut worker, None);
         assert_eq!(reading.whole_book_screen_pages(), None);
