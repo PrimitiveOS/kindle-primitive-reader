@@ -88,14 +88,18 @@ Saved profile editing covers reflow typography, hinting, kerning,
 publisher styles and fonts, image rendering, page overlap, PDF crop
 margin, and PDF or comic scan contrast. Reading statistics has a
 whole-second duration editor with the stock bounds, steps, defaults and
-accounting. Local statistics database import remains open. Dictionary
+accounting. It can also preview and import dated visits for the open PDF
+from a closed KOReader statistics database. Reflowable book import
+still needs a stable mapping from KOReader pages to source locations. Dictionary
 result arrows support held jumps to the first and last definition and
 preserve an armed highlight while switching sources. Named dictionary
-presets manage source enablement. Temporary lookup with a chosen preset
-remains open.
+presets manage source enablement. A temporary preset applies to typed
+lookup, retry after a miss and a lookup started from a definition.
 [Saved reading profiles](reading-profiles.md#editing-saved-values) ·
 [Page duration limits](reading-statistics.md#page-duration-limits) ·
-[Dictionary result navigation](dictionary-popup-display.md#first-and-last-results)
+[PDF statistics import](reading-statistics.md#import-a-pdfs-koreader-statistics) ·
+[Dictionary result navigation](dictionary-popup-display.md#first-and-last-results) ·
+[One-query preset](shared-dictionaries.md#searching-with-a-preset-once)
 
 The experimental Parley policies match the pinned KOReader Web mode's
 width and horizontal placement for two authored paragraphs and a

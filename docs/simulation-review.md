@@ -2,6 +2,35 @@
 
 ## Current Mac simulator checkpoint
 
+Reader previewed and imported the three visits written by pinned KOReader
+for an authored PDF. The 60 seconds stayed attached to the same two
+physical pages. Duplicate and conflicting records were reported before
+Apply, and tests checked cancellation, source replacement, a full journal
+and concurrent writes.
+The dictionary picker applies a saved set to one query, including the
+existing spelling worker and nested definitions. The source comparison
+exercises typed lookup, misses and definition edits.
+[PDF statistics import](reading-statistics.md#import-a-pdfs-koreader-statistics) ·
+[Dictionary lookup and light/dark captures](shared-dictionaries.md#searching-with-a-preset-once)
+
+Saved reflowable profiles now edit hinting, kerning, publisher styles and
+fonts, and daytime and night image rendering. The opt-in EPUB layout
+policy matched KOReader Web's 485-pixel centered container at x = 389
+on the authored EPUB fixture. The Rust tests check wrapped text,
+source selection and a background that continues across pages.
+[Profile comparisons](reading-profiles.md#editing-saved-values) ·
+[Centered containers](render-modes.md#sized-wrappers-around-ordinary-paragraphs)
+
+The four-thread Mac suite passed 1,351 library tests, one Kindle entry
+test, 14 EPUB package tests, and four layout tests. Sixty-six opt-in
+tests were skipped. The Reader picker opened cached original EPUB, PDF,
+AZW3, and MOBI files, turned a page, and resumed with identical page
+pixels and source hashes. The separate original EPUB/PDF reading-history
+workflow also passed. Kindle foreground acceptance and the Store release
+remain open.
+
+## Duration and named dictionary preset checkpoint
+
 Reader's page-duration sheet matches the pinned KOReader whole-second
 bounds, tap and hold steps, defaults, and accounting for ordinary visits.
 Reader saves both values with Apply and keeps failed edits for retry.
