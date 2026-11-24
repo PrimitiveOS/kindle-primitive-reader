@@ -2,6 +2,53 @@
 
 ## Current Mac simulator checkpoint
 
+The bottom Layout panel changes **Legacy, Flat, Book, or Web** on eligible
+single-page EPUBs. The Mac workflow checks per-book restore, a separate
+new-book default, and the original frame after returning to Reader layout.
+The pinned KOReader replay checks the four source policies and the
+interaction of floats with a publisher width cap. A private original EPUB
+reopened at the same serialized source anchor in all four policies. Broader
+renderer geometry remains open. [Render modes and captures](render-modes.md#composed-policies-in-reader)
+
+**Hyphenation** has saved dictionary, algorithmic and soft-only methods,
+an enable switch, a preference for fitting publisher marks, and global
+minimum lengths. Mac tests exercise used and unused publisher marks,
+source ranges, new-book defaults, reset, and failed-save rollback. The
+native replay measures both a fitting mark and a later mark that still
+allows an earlier dictionary split. Nine existing DPI checks and one
+original-EPUB DPI check also passed. [Hyphenation controls and captures](english-hyphenation.md#hyphenation-options) · [Content scaling](render-dpi.md)
+
+**In-page EPUB footnotes** can be enabled in Style tweaks for an edition
+or through the live default. Authored tests check a visible note band,
+continuation, source resume, and the normal Kindle-sized viewport.
+Fourteen chapters from two original EPUBs kept their reading position
+and ordinary layout when the option was changed. Interleaving and
+media-heavy chapters remain open. [Footnote comparison and captures](in-page-footnotes.md)
+
+**Current page in chapter** and **Dynamic filler** are independent custom
+footer items. The default chapter-and-page caption, section ticks, bar,
+and rightmost Exit remain in the default configuration. Pinned stock and
+Mac checks exercise chapter counts, filler fitting and fixed-page controls.
+[Footer comparison and capture](footer-composition.md)
+
+The combined replay passed 19 focused Mac tests and reproduced all 16
+new or updated frames byte for byte. The stock menu and render replays
+passed. Original EPUB, PDF, AZW3 and MOBI files also passed the normal
+picker, page turn and reopen workflow. Their source bytes matched.
+
+The full Mac suite passed 1,516 library tests, one Kindle entry test,
+14 EPUB package tests and four layout tests. The standard run skipped
+67 opt-in tests.
+
+The local ARMHF stage verified a stripped, statically linked 38,067,140-byte
+executable with SHA-256
+`4453e69e8570668b5f9c918b308529c3489e65c52eb19c9f595946c0a3973b6e`.
+It assembled 30 files totaling 47,666,640 bytes uncompressed. Both project
+licenses, SQLite notices, Launcher icon and OCR model passed inspection.
+Physical Kindle verification and Store publication remain open for this build.
+
+## Typography language, grouped dictionaries, and inline content checkpoint
+
 **Typography rules** now supports the 53 main language choices, the
 publication language, independent embedded-language tags, and a default or
 fallback for new books. The simulator checks English US and UK break
