@@ -10,12 +10,17 @@ local source, cache, font, headings, fragments = assert(arg[1]), assert(arg[2]),
 Cre.initCache(cache, 0, true, 1)
 Cre.registerFont(font)
 
-local file = assert(io.open(source, "r"))
-local script = file:read("*a")
-file:close()
-local function segment(first, last)
-    local at = assert(script:find(first, 1, true))
-    return script:sub(at, assert(script:find(last, at + #first, true)) - 1)
+local function script_at(path)
+    local file = assert(io.open(path, "r"))
+    local script = file:read("*a")
+    file:close()
+    return script
+end
+local script = script_at(source)
+local function segment(first, last, unit)
+    unit = unit or script
+    local at = assert(unit:find(first, 1, true))
+    return unit:sub(at, assert(unit:find(last, at + #first, true)) - 1)
 end
 local function open(path)
     local view = Cre.newDocView(1264, 1606, 1)
@@ -30,7 +35,10 @@ end
 local popup, scheduled, event, shown, footer, closed, invalidated
 local env = setmetatable({
     _ = function(text) return text end,
-    ReaderToc = {},
+    ReaderToc = {}, ReaderFooter = {}, ReaderRolling = {},
+    Screen = { scaleBySize = function(_, size) return size end },
+    Size = { line = { medium = 2 } },
+    ProgressWidget = { new = function(_, options) return options end },
     UIManager = {
         show = function(_, visual) popup = visual end,
         scheduleIn = function(_, seconds, run) assert(seconds == 0.5) scheduled = run end,
@@ -47,6 +55,19 @@ local menu = pinned("return function(self, menu_items)\n" .. segment(
 ) .. "end")
 pinned(segment("function ReaderToc:fillToc()", "function ReaderToc:validateAndFixToc()"))
 pinned(segment("function ReaderToc:cleanUpTocTitle(", "function ReaderToc:onSetDimensions("))
+pinned(segment("function ReaderToc:getTocTicks(", "function ReaderToc:getNextChapter("))
+local modules = assert(source:match("^(.*/)readertoc%.lua$"))
+pinned(segment("function ReaderFooter:setTocMarkers(", "function ReaderFooter:onUpdateFooter(",
+    script_at(modules .. "readerfooter.lua")))
+pinned(segment("function ReaderRolling:onUpdateTopStatusBarMarkers(", "function ReaderRolling:updateBatteryState(",
+    script_at(modules .. "readerrolling.lua")))
+local skim = pinned("return function(self)\n" .. segment(
+    "    self.progress_bar = ProgressWidget:new{", "    -- Bottom row buttons",
+    script_at(modules .. "../../../ui/widget/skimtowidget.lua")) .. "end")
+local function same(actual, expected)
+    assert(#actual == #expected)
+    for i, value in ipairs(expected) do assert(actual[i] == value) end
+end
 
 local function comparison(path, expected)
     local view = open(path)
@@ -54,7 +75,9 @@ local function comparison(path, expected)
     local custom = false
     local reader = setmetatable({
         alt_toc_symbol = "#", toc_ticks_ignored_levels = {2},
-        resetToc = function(self) self.toc = nil end,
+        resetToc = function(self)
+            self.toc, self.ticks, self.ticks_flattened, self.ticks_flattened_filtered = nil, nil, nil, nil
+        end,
         onShowToc = function() shown = true end,
         validateAndFixToc = function() end,
         view = {footer = {
@@ -101,6 +124,41 @@ local function comparison(path, expected)
         assert(entry.depth == expected[index][1] and title == expected[index][2])
     end
     if #expected == 4 then assert(reader.toc[2].xpointer == reader.toc[3].xpointer) end
+    local function check_markers(ignored)
+        reader.toc_ticks_ignored_levels = ignored
+        reader.ticks_flattened_filtered = nil
+        local pages, seen = {}, {}
+        for _, entry in ipairs(reader.toc) do
+            if not ignored[entry.depth] and not seen[entry.page] then
+                pages[#pages + 1] = entry.page
+                seen[entry.page] = true
+            end
+        end
+        table.sort(pages)
+        same(reader:getTocTicksFlattened(), pages)
+        local header
+        local doc = {
+            hasHiddenFlows = function() return false end,
+            getPageCount = function() return view:getPages() end,
+            setHeaderProgressMarks = function(_, count, ticks)
+                assert(count == view:getPages())
+                header = ticks
+            end,
+        }
+        local ui = {toc = reader, document = doc}
+        env.ReaderRolling.onUpdateTopStatusBarMarkers({ui = ui, cre_top_bar_enabled = true})
+        same(header, pages)
+        local footer_state = {ui = ui, pages = view:getPages(), view = {view_mode = "page"},
+            settings = {toc_markers = true, toc_markers_width = 3}, progress_bar = {ticks = {999}}}
+        assert(env.ReaderFooter.setTocMarkers(footer_state, true))
+        same(footer_state.progress_bar.ticks, pages)
+        local skim_state = {ui = ui, curr_page = 1, page_count = view:getPages()}
+        skim(skim_state)
+        same(skim_state.progress_bar.ticks, pages)
+        assert(skim_state.progress_bar.last == view:getPages())
+    end
+    check_markers({})
+    check_markers({[2] = true})
     -- An ordinary reopen has no alternative cache here. fillToc rebuilds from its saved preference.
     view:close()
     view = open(path)
@@ -119,5 +177,5 @@ end
 
 comparison(headings, {{1, "Harbor Survey"}, {2, "–"}, {3, "East softhyphen quay"}, {2, "West quay"}})
 comparison(fragments, {{1, "–"}, {1, "–"}, {1, "–"}})
-print("Pinned KOReader: per-book toggle, custom gate, heading depth, fragment fallback and restore passed")
+print("Pinned KOReader: per-book toggle, custom gate, heading depth, fragment fallback restore, and shared header/footer/Skim ticks passed")
 Device:exit()

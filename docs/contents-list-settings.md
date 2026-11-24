@@ -51,12 +51,39 @@ restore callbacks from `readertoc.lua` against the native CREngine provider.
 It matched the heading hierarchy, soft-hyphen removal, unnamed
 intermediate levels, and fragment fallback across both authored EPUBs.
 Reader shares alternative anchors with section jumps and chapter-filtered
-search. Its outline scan is bounded. Whole-book footer and Skim marker
-reprojection and the separate CSS `-cr-hint` workflow remain open.
+search. Its outline scan is bounded. The separate CSS `-cr-hint` workflow
+remains open.
 [Confirmation](screenshots/alternative-contents-landscape-confirmation.png) ·
 [Alternative list](screenshots/alternative-contents-landscape.png) ·
 [Reader tests](../src/app/alternative_contents/tests.rs) ·
 [KOReader menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L1199-L1254) ·
+[Native comparison](../scripts/koreader-alternative-contents-check.lua)
+
+### Progress markers in alternative mode
+
+The reading header, book footer and Skim use the alternative outline while
+that mode is active. Depth filters apply before headings on the same page
+merge into a single marker. For supported paged EPUBs, the existing
+background index resolves remote headings against their exact source
+anchors. The header uses whole-book rendered page numbers. Footer and
+Skim place those same headings on their existing source-weighted tracks.
+The footer label, bar, Exit position, and Skim seek behavior stay the same.
+
+Before indexing is ready, the header uses the currently laid-out section.
+Footer and Skim also show known fragment starts for books without headings.
+Remote heading positions in facing-page, scrolling, vertical or oversized
+books depend on the bounded index's availability. Custom hidden flows lack
+whole-book alternative track markers. Enabling custom contents or restoring
+the publisher outline restores their prior marker paths.
+
+The native comparison checks that pinned KOReader flattens, sorts and
+deduplicates the active headings after depth filtering, then supplies the
+same pages to its header, footer and Skim. Reader's Mac test verifies three
+resolved headings in a separate spine item with the current reading anchor
+and history intact.
+[Reading header and footer](screenshots/alternative-progress-reading-landscape.png) ·
+[Skim](screenshots/alternative-progress-skim-landscape.png) ·
+[Stock depth filtering](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertoc.lua#L502-L595) ·
 [Native comparison](../scripts/koreader-alternative-contents-check.lua)
 
 ## Edit a PDF chapter from Page browser
