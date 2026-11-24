@@ -48,6 +48,7 @@ pub(super) enum Page {
     ConfirmReset(Scope),
     ConfirmPeriodReset,
     ImportKoReader,
+    ChooseKoReaderDatabase,
 }
 impl Page {
     pub(super) fn title(self) -> &'static str {
@@ -72,6 +73,7 @@ impl Page {
             Self::ResetBooks => "Choose a book",
             Self::ConfirmReset(_) | Self::ConfirmPeriodReset => "Confirm statistics reset",
             Self::ImportKoReader => "Import KOReader statistics",
+            Self::ChooseKoReaderDatabase => "Choose a statistics database",
         }
     }
 }
@@ -92,6 +94,8 @@ pub(super) enum Command {
     CancelReset,
     BeginKoReaderImport,
     PreviewKoReaderImport,
+    BrowseKoReaderDatabases,
+    PickKoReaderEntry(usize),
     ApplyKoReaderImport,
 }
 pub(super) struct View {
@@ -109,6 +113,7 @@ pub(super) struct View {
     reset_list_page: usize,
     period_reset: Option<period_reset::Pending>,
     koreader_import: Option<sqlite_import::Pending>,
+    koreader_databases: Option<sqlite_import::Picker>,
     import_summary_page: usize,
 }
 impl Default for View {
@@ -128,6 +133,7 @@ impl Default for View {
             reset_list_page: 0,
             period_reset: None,
             koreader_import: None,
+            koreader_databases: None,
             import_summary_page: 0,
         }
     }
@@ -296,6 +302,8 @@ impl Reader {
             CancelReset => self.history_back(),
             BeginKoReaderImport => self.begin_koreader_statistics_import()?,
             PreviewKoReaderImport => self.preview_koreader_statistics_import()?,
+            BrowseKoReaderDatabases => self.browse_koreader_databases()?,
+            PickKoReaderEntry(index) => self.pick_koreader_entry(index)?,
             ApplyKoReaderImport => self.apply_koreader_statistics_import()?,
         }
         Ok(())
@@ -325,6 +333,10 @@ impl Reader {
             self.close_period_reset();
             return;
         }
+        if page == Page::ChooseKoReaderDatabase {
+            self.back_from_koreader_databases();
+            return;
+        }
         let (back, list_page) = match page {
             Page::Summary => (self.history_view.back, None),
             Page::Progress => (
@@ -333,6 +345,7 @@ impl Reader {
             ),
             Page::ImportKoReader => {
                 self.history_view.koreader_import = None;
+                self.history_view.koreader_databases = None;
                 (
                     Screen::ReadingHistory(Page::Summary),
                     Some(self.history_view.import_summary_page),
@@ -554,6 +567,7 @@ impl Reader {
             }
             Page::CalendarChoice(choice) => return self.calendar_choice_items(choice),
             Page::ImportKoReader => return self.koreader_statistics_import_items(),
+            Page::ChooseKoReaderDatabase => return self.koreader_database_items(),
             Page::TimeRange
             | Page::Range(_)
             | Page::Periods(_)
@@ -578,7 +592,16 @@ impl Reader {
         if let Some(change) = self.duration_limits_input(input) {
             return Some(change);
         }
-        if matches!(input,Input::Tap(x,y) if back_button(WIDTH as i32).contains(x,y)) {
+        let back = if matches!(page, Page::ImportKoReader | Page::ChooseKoReaderDatabase) {
+            self.navigation_layout().back()
+        } else {
+            back_button(WIDTH as i32)
+        };
+        if matches!(input, Input::Tap(x, y) if back.contains(x, y))
+            || (page == Page::ChooseKoReaderDatabase
+                && self.list_page == 0
+                && input == Input::PageBack)
+        {
             self.history_back();
             return Some(Change::Partial);
         }

@@ -27,9 +27,9 @@ use crate::selection::TextSelection;
 use crate::{Anchor, Settings, TextAlignment};
 
 pub(crate) const MAX_PATH_DEPTH: usize = 9;
-const MAX_SCAN_ENTRIES: usize = 20_000;
+pub(crate) const MAX_SCAN_ENTRIES: usize = 20_000;
 const MAX_BOOKS: usize = 4_096;
-const MAX_BROWSE_ENTRIES: usize = 4_096;
+pub(crate) const MAX_BROWSE_ENTRIES: usize = 4_096;
 const MAX_RELOCATION_CHECKS: usize = 64;
 const MAX_RELOCATION_READ_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_STATE_BYTES: u64 = 4 * 1024 * 1024;
@@ -2776,7 +2776,7 @@ fn clean_metadata(value: &str) -> String {
         .collect()
 }
 
-fn safe_path(path: &Path) -> bool {
+pub(crate) fn safe_path(path: &Path) -> bool {
     !path.as_os_str().is_empty()
         && path.components().count() <= MAX_PATH_DEPTH
         && path.components().all(|component| matches!(component, Component::Normal(name) if name.to_str().is_some_and(|name| !name.starts_with('.'))))

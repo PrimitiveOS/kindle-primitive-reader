@@ -1,9 +1,11 @@
 use super::*;
 use crate::app::{
     Change, Input,
+    selection_viewport_tests::{adopt, capture, tap},
     tests::{Fixture, capture_test_screen},
 };
 use crate::reading_stats::history::History;
+use crate::session::ReadingViewport;
 use primitive_app::App;
 use std::time::{Duration, Instant};
 
@@ -208,6 +210,178 @@ fn preview(app: &mut Reader, id: u64) {
         "{:?}",
         app.notice
     );
+}
+
+#[test]
+fn sqlite_picker_pages_in_landscape_and_preserves_the_preview_on_cancel() {
+    let (fixture, mut app, id) = setup();
+    let root = &fixture.root;
+    for index in 0..10 {
+        fs::create_dir(root.join(format!("Archive {index:02}"))).unwrap();
+    }
+    let folder = root.join("Reading archive/2026");
+    fs::create_dir_all(&folder).unwrap();
+    let selected = folder.join("February.SQLITE");
+    fs::write(&selected, STOCK).unwrap();
+    fs::write(folder.join("Guide.txt"), b"Use a closed database").unwrap();
+    let location = app.current_position();
+    preview(&mut app, id);
+    tap_row(&mut app, "Browse Documents");
+    let mut canvas = adopt(&mut app, ReadingViewport::LANDSCAPE, 1);
+    assert_eq!(app.list_page, 0);
+    let next = app.navigation_layout().next();
+    tap(&mut app, next);
+    assert_eq!(app.list_page, 1);
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(app.list_page, 0);
+    assert_eq!(app.input(Input::PageForward), Change::Partial);
+    let ordinal = app.reading_list_ordinal();
+    tap_row(&mut app, "Reading archive");
+    let back = app.navigation_layout().back();
+    assert!(back.x > 1264);
+    tap(&mut app, back);
+    assert_eq!(app.reading_list_ordinal(), ordinal);
+    tap_row(&mut app, "Reading archive");
+    tap_row(&mut app, "2026");
+    assert!(
+        app.items()
+            .iter()
+            .any(|item| item.title == "February.SQLITE")
+    );
+    assert!(!app.items().iter().any(|item| item.title == "Guide.txt"));
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(
+        app.history_view
+            .koreader_databases
+            .as_ref()
+            .unwrap()
+            .directory,
+        Path::new("Reading archive")
+    );
+    tap(&mut app, back);
+    tap(&mut app, back);
+    assert_eq!(app.screen, Screen::ReadingHistory(Page::ImportKoReader));
+    assert_eq!(
+        app.history_view.koreader_import.as_ref().unwrap().path,
+        Path::new(DATABASE)
+    );
+    assert!(app.reading_history.visits().is_empty());
+
+    tap_row(&mut app, "Browse Documents");
+    tap(&mut app, next);
+    tap_row(&mut app, "Reading archive");
+    tap_row(&mut app, "2026");
+    capture(
+        &app,
+        &mut canvas,
+        "landscape-statistics-database-picker.png",
+        false,
+    );
+    tap_row(&mut app, "February.SQLITE");
+    let selected_path = Path::new("Reading archive/2026/February.SQLITE");
+    assert_eq!(
+        app.history_view.koreader_import.as_ref().unwrap().path,
+        selected_path
+    );
+    fs::write(root.join(DATABASE), b"different database").unwrap();
+    tap_row(&mut app, "Preview again");
+    assert_eq!(
+        app.history_view.koreader_import.as_ref().unwrap().path,
+        selected_path
+    );
+    capture(
+        &app,
+        &mut canvas,
+        "landscape-statistics-database-preview.png",
+        false,
+    );
+    tap_row(&mut app, "Import records");
+    assert_eq!(app.reading_history.summary(Some(id), None).seconds, 60);
+    assert_eq!(app.current_position(), location);
+    assert_eq!(app.reading_viewport(), ReadingViewport::LANDSCAPE);
+    assert_eq!(fs::read(selected).unwrap(), STOCK);
+}
+
+#[test]
+fn sqlite_picker_rechecks_nested_djvu_sidecars_and_directory_file_replacements() {
+    let (fixture, mut app, id) = setup_book("Beacon Atlas.djv", DJVU, STOCK_DJVU, 2);
+    let outside = Fixture::new();
+    let outside_database = outside.root.join("Saved.db");
+    fs::write(&outside_database, STOCK_DJVU).unwrap();
+    let folder = fixture.root.join("Checkpoint");
+    let archived = fixture.root.join("Retired");
+    fs::create_dir(&folder).unwrap();
+    let source = folder.join("Saved.db");
+    fs::write(&source, STOCK_DJVU).unwrap();
+    std::os::unix::fs::symlink(&outside.root, fixture.root.join("Outside folder")).unwrap();
+    std::os::unix::fs::symlink(&outside_database, folder.join("Outside file.db")).unwrap();
+    fs::write(
+        fixture.root.join("statistics.sqlite3-wal"),
+        b"only the root database is open",
+    )
+    .unwrap();
+    let reading = app.current_position();
+
+    app.activate_reading_history(Command::Open(Some(id)))
+        .unwrap();
+    tap_row(&mut app, "Import KOReader statistics");
+    tap_row(&mut app, "Browse Documents");
+    assert!(
+        !app.items()
+            .iter()
+            .any(|item| item.title == "Outside folder")
+    );
+    tap_row(&mut app, "Checkpoint");
+    assert!(
+        !app.items()
+            .iter()
+            .any(|item| item.title == "Outside file.db")
+    );
+    tap_row(&mut app, "Saved.db");
+    assert_eq!(
+        app.history_view
+            .koreader_import
+            .as_ref()
+            .unwrap()
+            .preview
+            .new_visits,
+        4
+    );
+
+    let sidecar = folder.join("Saved.db-wal");
+    fs::write(&sidecar, b"uncheckpointed frames").unwrap();
+    assert!(
+        app.apply_koreader_statistics_import()
+            .unwrap_err()
+            .to_string()
+            .contains("pending journal")
+    );
+    fs::remove_file(sidecar).unwrap();
+    fs::rename(&folder, &archived).unwrap();
+    std::os::unix::fs::symlink(&outside.root, &folder).unwrap();
+    assert!(app.apply_koreader_statistics_import().is_err());
+    fs::remove_file(&folder).unwrap();
+    fs::rename(&archived, &folder).unwrap();
+    fs::remove_file(&source).unwrap();
+    std::os::unix::fs::symlink(&outside_database, &source).unwrap();
+    assert!(app.apply_koreader_statistics_import().is_err());
+    fs::remove_file(&source).unwrap();
+    let mut changed = STOCK_DJVU.to_vec();
+    changed.push(0);
+    fs::write(&source, &changed).unwrap();
+    assert!(
+        app.apply_koreader_statistics_import()
+            .unwrap_err()
+            .to_string()
+            .contains("database changed")
+    );
+    assert!(app.reading_history.visits().is_empty());
+    fs::write(&source, STOCK_DJVU).unwrap();
+    tap_row(&mut app, "Import records");
+    assert_eq!(app.reading_history.summary(Some(id), None).seconds, 75);
+    assert_eq!(app.current_position(), reading);
+    assert_eq!(fs::read(&source).unwrap(), STOCK_DJVU);
+    assert_eq!(fs::read(&outside_database).unwrap(), STOCK_DJVU);
 }
 
 #[test]

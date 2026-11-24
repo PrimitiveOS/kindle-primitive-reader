@@ -134,6 +134,10 @@ impl Screen {
                 | Self::ReadingProfileChoice(_, _)
                 | Self::ReadingProfileOpening(_, _)
                 | Self::ConfirmProfile(_, _)
+                | Self::ReadingHistory(
+                    super::reading_history::Page::ImportKoReader
+                        | super::reading_history::Page::ChooseKoReaderDatabase
+                )
                 | Self::ReadingFonts
                 | Self::Typography
                 | Self::StyleTweaks
