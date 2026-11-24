@@ -204,6 +204,14 @@ fn typography_pagination_keeps_the_accepted_index_when_a_profile_save_fails() {
     begin_count(&mut app);
     let accepted = wait_for_count(&mut app);
     let position = app.current_position();
+    app.activate(Action::SetHangingPunctuation {
+        enabled: true,
+        for_new_books: false,
+    })
+    .unwrap();
+    assert_eq!(count(&app), Some(accepted));
+    assert_eq!(app.current_position(), position);
+    assert!(!typography_pending(&app));
     fs::remove_file(&fixture.state).unwrap();
     fs::create_dir(&fixture.state).unwrap();
     assert!(app.apply_text_profile(original).is_err());

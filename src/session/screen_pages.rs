@@ -503,6 +503,7 @@ pub(super) fn layout_settings(settings: Settings) -> Settings {
     // These controls only repaint or change interaction state in Reading::reflow.
     Settings {
         font_gamma_index: defaults.font_gamma_index,
+        hanging_punctuation: defaults.hanging_punctuation,
         text_contrast: defaults.text_contrast,
         page_overlap_enabled: defaults.page_overlap_enabled,
         page_overlap_lines: defaults.page_overlap_lines,
