@@ -6,7 +6,7 @@ use primitive_app::{App, frame};
 use super::*;
 use crate::app::contents_position::ContentsNumbers;
 use crate::app::tests::{Fixture, capture_test_screen, tap_contents_item, write_outline_fixture};
-use crate::reading_controls::{ContentsDensity, ReadingControls};
+use crate::reading_controls::{ListDensity, ReadingControls};
 
 fn reader(fixture: &Fixture) -> Reader {
     Reader::open(
@@ -249,7 +249,7 @@ fn dense_contents_keeps_stable_labels_lengths_and_actions_visible() {
         .collect();
 
     app.activate(Action::SetReadingControls(ReadingControls {
-        contents_density: ContentsDensity {
+        contents_density: ListDensity {
             rows_per_page: Some(24),
             ..Default::default()
         },
