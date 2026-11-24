@@ -138,8 +138,8 @@ The native probe asserts each band, text edge, and linked word. Saved source
 quotes survive repagination in Reader and mode changes in KOReader. Reader's
 continued text can wrap differently because the engines shape with different
 metrics. The nonnegative policy covers boxes that fit the containing column
-with room for text. Complex ancestry, floats, and decorated boxes require
-separate work.
+with room for text. Complex ancestry, floats, and decorations on explicit
+widths remain outside this policy.
 
 Regenerate the authored EPUB with
 `python3 scripts/generate-render-width-margins-fixture.py`. Run the Lua
@@ -217,10 +217,10 @@ tolerance for text advance on four samples. Line wrapping and line height
 still differ. Reader restores all ten source quotes and exercises link and
 word taps in the left user margin in Web. A separate 50% indent test adds
 30 pixels to the measured width at a 60-pixel paragraph font, matching
-the stock intrinsic measurement. Coverage is limited to plain
-paragraphs in the body or width-neutral wrappers. Decorated boxes, negative
-and hanging indents, and extremely narrow width constraints use the ordinary
-layout path. The complete Render Mode control remains open.
+the stock intrinsic measurement. Coverage is limited to ordinary
+paragraphs in the body or width-neutral wrappers. Negative and hanging
+indents and extremely narrow width constraints use the ordinary layout
+path. The complete Render Mode control remains open.
 
 Generate the sample with `python3 scripts/generate-render-width-margins-fixture.py --fit-content`.
 Pass `fit-content` after the capture directory to the Lua oracle. Run
@@ -233,6 +233,45 @@ to an existing directory to save Reader frames.
 [KOReader Web](screenshots/render-fit-content-stock-web.png) ·
 [Reader Book policy](screenshots/render-fit-content-reader-book.png) ·
 [Reader Web policy](screenshots/render-fit-content-reader-web.png)
+
+#### Horizontal padding and solid paragraph borders
+
+The same opt-in modes size fitted paragraphs with horizontal padding and
+solid borders. CREngine's intrinsic pass includes the horizontal decoration,
+including the inverse intrinsic contribution for percentage padding. It
+then clips that demand to the available column and adds the resolved
+decoration during placement. `box-sizing` determines when the minimum and
+maximum apply. Web also enforces the resolved limits after placement, and
+Book clips overflow to the containing column.
+
+| Authored case at 1264 px and 96 DPI | KOReader Book x / width | KOReader Web x / width |
+| --- | ---: | ---: |
+| Centered, 20 px left and 12 px right padding | 441 / 382 | 441 / 382 |
+| Same padding, 168 px content-box maximum | 516 / 232 | 532 / 200 |
+| Same padding, 168 px border-box maximum | 532 / 200 | 548 / 168 |
+| Centered, 5% left and 3% right padding | 416 / 432 | 416 / 432 |
+| 5 px and 7 px side strokes with a −24 px left margin | 54 / 409 | 30 / 409 |
+| Horizontal padding, 30% minimum and 22% maximum | 471 / 321 | 449 / 366 |
+| Four-sided 4 px stroke and 400 px border-box minimum | 766 / 420 | 766 / 420 |
+| Long text with 32 px total horizontal padding | 54 / 1,156 | 54 / 1,188 |
+
+The native captures assert the outer paint bands and text origins in all
+four modes. Reader's Book and Web measurements agree within two pixels
+where the font advances differ. Paint includes opaque solid strokes, with
+square joins between different edge shades.
+Selection and text or link taps use the inner text area, including visible
+text in a Web margin. The verification covers exact source quotes,
+default frame equivalence and border paint during fractional scrolling.
+Vertical padding, nonsolid, oversized, or translucent strokes, patterned
+or complex ancestors, and mixed boxes with artwork use the existing layout path.
+Vertical spacing and line wrapping can differ between the engines.
+
+Generate the specimen with `python3 scripts/generate-render-width-margins-fixture.py --fit-decorated`.
+The native script takes the EPUB, scratch cache, Noto Sans Regular font and
+capture directory. Use the same `fit_content` Reader test and capture option.
+[Native decorated width oracle](../scripts/koreader-render-fit-decoration-check.lua) ·
+[KOReader Web capture](screenshots/render-fit-decorated-stock-web.png) ·
+[Reader Web capture](screenshots/render-fit-decorated-reader-web.png)
 
 ### Sized wrappers around ordinary paragraphs
 

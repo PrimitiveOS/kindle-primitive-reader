@@ -89,6 +89,17 @@ pub(super) fn limit(
     settings: Settings,
     percentages: bool,
 ) -> f32 {
+    limit_with_padding(width, parent_width, style, settings, percentages, 0.0)
+}
+
+pub(super) fn limit_with_padding(
+    width: f32,
+    parent_width: u32,
+    style: &Style,
+    settings: Settings,
+    percentages: bool,
+    inset: f32,
+) -> f32 {
     let allowed = |length: &CssLength| percentages || !matches!(length, CssLength::Fraction(_));
     let font = settings.styled_font(style.size_scale);
     let high = style
@@ -96,10 +107,10 @@ pub(super) fn limit(
         .and_then(ImageLength::css_length)
         .filter(allowed)
         .map_or(f32::INFINITY, |length| {
-            length.box_pixels(parent_width, font)
+            length.box_pixels(parent_width, font) + inset
         });
     let low = style.min_width.filter(allowed).map_or(0.0, |length| {
-        length.box_pixels(parent_width, settings.font_size)
+        length.box_pixels(parent_width, settings.font_size) + inset
     });
     width.min(high).max(low)
 }

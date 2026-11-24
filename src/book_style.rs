@@ -71,6 +71,13 @@ pub(crate) enum WritingMode {
     VerticalLr,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum BoxSizing {
+    #[default]
+    ContentBox,
+    BorderBox,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum ImageLength {
     Auto,
@@ -340,6 +347,7 @@ pub(crate) struct Style {
     pub image_max_width: Option<ImageLength>,
     pub image_max_height: Option<ImageLength>,
     pub min_width: Option<CssLength>,
+    pub box_sizing: BoxSizing,
     pub image_align: parley::VerticalAlign,
     pub alignment: Option<Alignment>,
     pub line_break: Option<LineBreak>,
@@ -384,6 +392,7 @@ impl Default for Style {
             image_max_width: None,
             image_max_height: None,
             min_width: None,
+            box_sizing: BoxSizing::default(),
             image_align: parley::VerticalAlign::BASELINE,
             alignment: None,
             line_break: None,
@@ -704,7 +713,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners: Winners = [None; 51];
+            let mut winners: Winners = [None; 52];
             let accept_fit = fit_content && element.tag == "p";
             for (origin, rules) in [
                 (CascadeOrigin::User, &self.user_rules),
@@ -753,6 +762,7 @@ impl BookStyle {
                     Property::Visibility(visibility) => style.visibility = *visibility,
                     Property::Float(side) => style.float_side = *side,
                     Property::Clear(clear) => style.clear = *clear,
+                    Property::BoxSizing(sizing) => style.box_sizing = *sizing,
                     Property::Family(families) => {
                         style.font_family = families
                             .iter()
@@ -1504,7 +1514,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (u8, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 51];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 52];
 
 #[derive(Clone, Copy)]
 enum CascadeOrigin {
@@ -1534,6 +1544,7 @@ fn choose<'a>(
             Property::Clear(_) => 47,
             Property::HorizontalMargin(side, _) => 48 + side,
             Property::MinWidth(_) => 50,
+            Property::BoxSizing(_) => 51,
             Property::Family(_) => 0,
             Property::Size(_) => 1,
             Property::LineHeight(_) => 2,
@@ -1658,6 +1669,7 @@ enum Property {
     MaxWidth(ImageLength),
     MaxHeight(ImageLength),
     MinWidth(ImageLength),
+    BoxSizing(BoxSizing),
     VerticalAlign(parley::VerticalAlign),
 }
 
@@ -1841,6 +1853,13 @@ impl<'i> DeclarationParser<'i> for Properties {
                             _ => return Err(ParseError::unexpected_token()),
                         },
                     )
+                }
+                "box-sizing" => {
+                    Property::BoxSizing(match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "content-box" => BoxSizing::ContentBox,
+                        "border-box" => BoxSizing::BorderBox,
+                        _ => return Err(ParseError::unexpected_token()),
+                    })
                 }
                 "width" | "height" | "max-width" | "max-height" | "min-width" => {
                     let maximum = name.eq_ignore_ascii_case("max-width")

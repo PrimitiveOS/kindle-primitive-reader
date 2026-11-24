@@ -2,9 +2,36 @@
 use super::{TextBoxCandidate, constrained, horizontal_margins, text_box_candidates_with_parent};
 use crate::{
     FitContentMode, Settings,
-    book_style::{ImageLength, Style},
+    book_style::{BoxSizing, CssLength, ImageLength, Style, borders::Pattern},
     source::Source,
+    table_borders::Stroke,
 };
+
+#[derive(Clone, Copy)]
+pub(crate) struct Placed {
+    pub(crate) left: i32,
+    pub(crate) width: u32,
+    pub(crate) text_left: i32,
+    pub(crate) text_width: u32,
+    // Top/right/bottom/left as in publisher table edges.
+    pub(crate) strokes: [Stroke; 4],
+}
+
+fn supported_edges(style: &Style, settings: Settings, width: u32) -> bool {
+    style.clear == Default::default()
+        && style
+            .vertical_padding
+            .iter()
+            .all(|edge| edge.box_pixels(width, settings.font_size) == 0.0)
+        && style.borders.as_ref().is_none_or(|borders| {
+            borders.iter().all(|border| {
+                matches!(border.pattern, Pattern::None | Pattern::Hidden)
+                    || (border.pattern == Pattern::Solid
+                        && border.gray.is_none_or(|(_, alpha)| alpha == 255)
+                        && (0.0..=64.0).contains(&border.width.box_pixels(0, settings.font_size)))
+            })
+        })
+}
 
 pub(crate) fn candidates(
     source: &Source,
@@ -25,7 +52,7 @@ pub(crate) fn candidates(
         styles,
         |style| {
             matches!(style.image_width, Some(ImageLength::FitContent))
-                && constrained::plain_edges(style, settings, width)
+                && supported_edges(style, settings, width)
                 && !style.text_indent.hanging
                 && style.text_indent.pixels(width, settings.font_size) >= 0.0
         },
@@ -40,7 +67,7 @@ pub(crate) fn inset(
     settings: Settings,
     rtl: bool,
     content: f32,
-) -> Option<(i32, u32)> {
+) -> Option<Placed> {
     let web = settings.fit_content == FitContentMode::Web;
     let [left, right] = style.horizontal_margin.map(|edge| {
         horizontal_margins::resolved_edge(edge, width, settings)
@@ -48,26 +75,91 @@ pub(crate) fn inset(
     });
     let sides = [left?, right?];
     let parent = width as f32;
-    // Both modes use absolute constraints for intrinsic measurement. Web
-    // also enforces the resolved constraints after clipping to available width.
-    let natural = constrained::limit(content.ceil(), width, style, settings, false);
-    let fit = natural.min(parent - sides[0] - sides[1]);
+    let font = settings.font_size;
+    let strokes = style
+        .borders
+        .as_ref()
+        .map_or_else(Default::default, |edges| {
+            edges.map(|edge| Stroke::read(edge, font))
+        });
+    let horizontal_border = (strokes[1].width + strokes[3].width) as f32;
+    let fixed_inset = horizontal_border
+        + style
+            .padding
+            .iter()
+            .map(|edge| edge.box_pixels(0, font))
+            .sum::<f32>();
+    let [left_pad, right_pad] = style.padding.map(|edge| edge.box_pixels(width, font));
+    let inset = horizontal_border + left_pad + right_pad;
+    let content_box = style.box_sizing == BoxSizing::ContentBox;
+    // CRE's intrinsic measurement includes this element's borders and
+    // padding even when ignoring its margins. Content-box limits come before
+    // those edges. Border-box limits come before inverse percentage padding.
+    let natural = if content_box {
+        constrained::limit(content.ceil(), width, style, settings, false) + fixed_inset
+    } else {
+        constrained::limit(content.ceil() + fixed_inset, width, style, settings, false)
+    };
+    let natural = add_intrinsic_percentages(natural, style.padding)?;
+    // In fit-content placement CRE treats that intrinsic demand as content,
+    // clips it to the available column, then adds the resolved edges again.
+    let fit = natural.min(parent - sides[0] - sides[1]) + inset;
     let used = if web {
-        constrained::limit(fit, width, style, settings, true)
+        constrained::limit_with_padding(
+            fit,
+            width,
+            style,
+            settings,
+            true,
+            if content_box { inset } else { 0.0 },
+        )
     } else {
         fit
     };
+    let (mut offset, mut used) = constrained::align(parent, used, style, rtl, sides, true)?;
+    if !web {
+        if used > parent {
+            offset = 0.0;
+            used = parent;
+        } else {
+            offset = offset.min(parent - used);
+        }
+    }
     // A narrow word can fit in less than an em. An author constraint that
     // forces a wider run below that floor would leave most glyphs clipped.
-    if used
+    if used - inset
         < content
             .ceil()
             .min(settings.styled_font(style.size_scale).ceil())
     {
         return None;
     }
-    let (offset, used) = constrained::align(parent, used, style, rtl, sides, web)?;
-    horizontal_margins::visible_box(x, offset, used, settings)
+    let (left, width) = horizontal_margins::visible_box(x, offset, used, settings)?;
+    Some(Placed {
+        left,
+        width,
+        text_left: left + strokes[3].width as i32 + left_pad as i32,
+        text_width: width - inset as u32,
+        strokes,
+    })
+}
+
+fn add_intrinsic_percentages(base: f32, padding: [CssLength; 2]) -> Option<f32> {
+    let mut percentage = 0_i64;
+    let mut terms = 0;
+    for edge in padding {
+        if let CssLength::Fraction(value) = edge {
+            percentage = percentage.checked_add((f64::from(value) * 25_600.0).round() as i64)?;
+            terms += 1;
+        }
+    }
+    if !(0..25_600).contains(&percentage) {
+        return None;
+    }
+    Some(
+        base + (f64::from(base) * percentage as f64 / (25_600 - percentage) as f64).floor() as f32
+            + terms as f32,
+    )
 }
 
 #[cfg(test)]

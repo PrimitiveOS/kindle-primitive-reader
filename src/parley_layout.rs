@@ -139,27 +139,87 @@ pub(crate) struct Paragraph {
     text_bottom: f32,
     bottom: f32,
     background: Option<u8>,
+    fitted: Option<crate::publisher_padding::fit_content::Placed>,
     pub(crate) layout: Layout<PaintBrush>,
     ruby: Vec<RubyOverlay>,
     flow: Option<Arc<OwnedProjection>>,
 }
 
 impl Paragraph {
+    fn clip_columns(settings: Settings, columns: Range<f32>) -> Range<usize> {
+        let clip =
+            |x: f32| (settings.left_margin() as f32 + x).clamp(0.0, settings.width as f32) as usize;
+        clip(columns.start)..clip(columns.end)
+    }
+
     fn background_columns(&self, settings: Settings) -> Range<usize> {
         let margin = settings.left_margin() as usize;
         if self.signed_margin {
-            let clip = |x: f32| (margin as f32 + x).clamp(0.0, settings.width as f32) as usize;
-            clip(self.column.start)..clip(self.column.end)
+            Self::clip_columns(settings, self.column.clone())
         } else {
             margin + self.column.start as usize..margin + self.column.end as usize
         }
     }
 
     pub(crate) fn paint_columns(&self, settings: Settings) -> Range<usize> {
-        if self.signed_margin {
+        if self.fitted.is_some() {
+            Self::clip_columns(settings, self.hit_columns())
+        } else if self.signed_margin {
             self.background_columns(settings)
         } else {
             settings.text_columns()
+        }
+    }
+
+    pub(crate) fn hit_columns(&self) -> Range<f32> {
+        self.fitted.map_or_else(
+            || self.column.clone(),
+            |fitted| fitted.text_left as f32..fitted.text_left as f32 + fitted.text_width as f32,
+        )
+    }
+
+    fn painted_top(&self) -> f32 {
+        self.y
+            - self
+                .fitted
+                .map_or(0.0, |fitted| fitted.strokes[0].width as f32)
+    }
+
+    fn paint_fitted_border(&self, page: &mut [u8], settings: Settings, range: &Range<f32>) {
+        let Some(boxed) = self.fitted else {
+            return;
+        };
+        let [top, right, bottom, left] = boxed.strokes;
+        let column = self.column.clone();
+        let y = (self.painted_top() - range.start).floor();
+        let end = (self.bottom - range.start).ceil();
+        let leading = column.start + left.width as f32;
+        let trailing = column.end - right.width as f32;
+        let stride = settings.width as usize;
+        let height = page.len() / stride;
+        let rows = |at: f32| (at.max(0.0) as usize).min(height);
+        for (x, vertical, stroke) in [
+            (column.clone(), y..y + top.width as f32, top),
+            (column.clone(), end - bottom.width as f32..end, bottom),
+            (
+                column.start..leading,
+                y + top.width as f32..end - bottom.width as f32,
+                left,
+            ),
+            (
+                trailing..column.end,
+                y + top.width as f32..end - bottom.width as f32,
+                right,
+            ),
+        ] {
+            if let Some((gray, _)) = stroke.gray
+                && stroke.width != 0
+            {
+                let x = Self::clip_columns(settings, x);
+                for row in rows(vertical.start)..rows(vertical.end) {
+                    page[row * stride + x.start..row * stride + x.end].fill(gray);
+                }
+            }
         }
     }
 }
@@ -800,8 +860,8 @@ impl ParleyChapter {
                 } else {
                     None
                 };
-                let placed_box = if float.is_some() || contour.is_some() {
-                    None
+                let (placed_box, fitted) = if float.is_some() || contour.is_some() {
+                    (None, None)
                 } else if fit_content_candidates.get(block.element)
                     == Some(&TextBoxCandidate::Simple)
                 {
@@ -825,31 +885,43 @@ impl ParleyChapter {
                     )
                     .calculate_content_widths()
                     .max;
-                    crate::publisher_padding::fit_content::inset(
-                        column_x,
-                        column_width,
+                    let (parent_x, parent_width) = source.elements[block.element]
+                        .parent
+                        .and_then(|index| publisher_boxes.as_ref().map(|boxes| boxes[index]))
+                        .map_or((0, outer_width), |area| (area.x, area.width));
+                    let fitted = crate::publisher_padding::fit_content::inset(
+                        parent_x,
+                        parent_width,
                         style,
                         settings,
                         crate::publisher_padding::paragraph_is_rtl(block.direction, block.text),
                         intrinsic,
-                    )
+                    );
+                    (fitted.map(|area| (area.left, area.width)), fitted)
                 } else if signed_margin_candidates.get(block.element)
                     == Some(&TextBoxCandidate::Simple)
                 {
-                    crate::publisher_padding::horizontal_margins::signed_inset(
-                        column_x,
-                        column_width,
-                        style,
-                        settings,
-                        crate::publisher_padding::paragraph_is_rtl(block.direction, block.text),
+                    (
+                        crate::publisher_padding::horizontal_margins::signed_inset(
+                            column_x,
+                            column_width,
+                            style,
+                            settings,
+                            crate::publisher_padding::paragraph_is_rtl(block.direction, block.text),
+                        ),
+                        None,
                     )
                 } else {
-                    None
+                    (None, None)
                 };
-                let (text_x, text_width, indent_base) = placed_box
-                    .map_or((text_x as f32, text_width, indent_base), |(left, width)| {
+                let (text_x, text_width, indent_base) = if let Some(area) = fitted {
+                    y += area.strokes[0].width as f32;
+                    (area.text_left as f32, area.text_width, area.width)
+                } else {
+                    placed_box.map_or((text_x as f32, text_width, indent_base), |(left, width)| {
                         (left as f32, width, width)
-                    });
+                    })
+                };
                 let indent = LineIndent::resolve(
                     style,
                     indent_base,
@@ -962,6 +1034,11 @@ impl ParleyChapter {
                         y = y.max(bottom);
                     }
                 }
+                if let Some(area) = fitted {
+                    let tail = area.strokes[2].width as f32;
+                    bottom += tail;
+                    y += tail;
+                }
                 chapter.paragraphs.push(Paragraph {
                     key: block.key,
                     column: if let Some((left, width)) = placed_box {
@@ -979,6 +1056,14 @@ impl ParleyChapter {
                     text_bottom,
                     bottom,
                     background: style.flow.painted.then_some(style.background).flatten(),
+                    fitted: fitted.map(|mut area| {
+                        if !style.flow.painted {
+                            for stroke in &mut area.strokes {
+                                stroke.gray = None;
+                            }
+                        }
+                        area
+                    }),
                     layout,
                     ruby,
                     flow: flow.shared(block.key),
@@ -1220,7 +1305,9 @@ impl ParleyChapter {
             .iter()
             .take_while(|p| p.y <= y)
             .filter(|p| {
-                p.text_bottom > y && p.column.contains(&x) && (inside_columns || p.signed_margin)
+                p.text_bottom > y
+                    && p.hit_columns().contains(&x)
+                    && (inside_columns || p.signed_margin)
             });
         let hit = |paragraph: &Paragraph| {
             let (cluster, _) = parley::Cluster::from_point_exact(
@@ -1412,7 +1499,7 @@ impl ParleyChapter {
             .paragraphs
             .partition_point(|paragraph| paragraph.max_bottom <= range.start);
         for paragraph in &self.paragraphs[index..] {
-            if paragraph.y >= range.end {
+            if paragraph.painted_top() >= range.end {
                 break;
             }
             if paragraph.bottom <= range.start {
@@ -1421,13 +1508,14 @@ impl ParleyChapter {
             let paint_columns = paragraph.paint_columns(settings);
             let paint_x = paragraph.x + (margin as f32 - paint_columns.start as f32);
             if let Some(gray) = paragraph.background {
-                let top = (paragraph.y - range.start).floor().max(0.0) as usize;
+                let top = (paragraph.painted_top() - range.start).floor().max(0.0) as usize;
                 let bottom = ((paragraph.bottom - range.start).ceil() as usize).min(visible_height);
                 let band = paragraph.background_columns(settings);
                 for row in top.min(bottom)..bottom {
                     page[row * stride + band.start..row * stride + band.end].fill(gray);
                 }
             }
+            paragraph.paint_fitted_border(page, settings, &range);
             for line in paragraph.layout.lines() {
                 let metrics = line.metrics();
                 if paragraph.y + metrics.content_block_max_coord <= range.start {

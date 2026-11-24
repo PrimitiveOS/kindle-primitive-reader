@@ -6,11 +6,14 @@ import zipfile
 
 signed = "--signed" in sys.argv[1:]
 fit_content = "--fit-content" in sys.argv[1:]
+fit_decorated = "--fit-decorated" in sys.argv[1:]
 name = "render-signed-widths.epub" if signed else "render-width-margins.epub"
 if fit_content:
     name = "render-fit-content.epub"
+if fit_decorated:
+    name = "render-fit-decorated.epub"
 fixture = Path(__file__).resolve().parents[1] / "tests/fixtures" / name
-paths = [value for value in sys.argv[1:] if value not in {"--signed", "--fit-content"}]
+paths = [value for value in sys.argv[1:] if value not in {"--signed", "--fit-content", "--fit-decorated"}]
 output = Path(paths[0]) if paths else fixture
 container = """<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
 <rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles>
@@ -92,6 +95,27 @@ body,p {{ margin:0; padding:0; text-align:left; text-indent:0 }}
 <p class="fit" style="background:#515151;margin-left:40px;margin-right:24px;text-align:right" dir="rtl">Turn marker </p>
 <p id="channel">Channel directions</p>
 </body></html>"""
+
+if fit_decorated:
+    opf = opf.replace("reader-width-margins", "reader-fit-decorated").replace(
+        "Width and Margin Soundings", "Framed water marks"
+    )
+    wide = "tidal readings pass along the winding shelf beyond the weather gauge " * 4
+    chapter = f'''<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Framed water marks</title>
+<style>body,p {{margin:0;padding:0;text-align:left;text-indent:0}}
+p {{width:fit-content}}
+.physical {{padding-left:20px;padding-right:12px;margin:0 auto}}
+</style></head><body>
+<p class="physical" style="background:#ddd">Compass marker</p>
+<p class="physical" style="background:#d3d3d3;max-width:168px">Channel marker</p>
+<p class="physical" style="background:#c9c9c9;max-width:168px;box-sizing:border-box">Ripple marker</p>
+<p style="background:#bfbfbf;padding-left:5%;padding-right:3%;margin:0 auto">Measure marker</p>
+<p style="background:#b5b5b5;margin-left:-24px;margin-right:12px;padding-left:18px;padding-right:9px;border-left:5px solid #333;border-right:7px solid #555"><a href="#shore">Boundary marker</a></p>
+<p style="background:#ababab;padding-left:12px;padding-right:8px;min-width:30%;max-width:22%;margin:0 auto">Ledger marker</p>
+<p style="background:#a1a1a1;border:4px solid #444;padding-left:8px;padding-right:4px;min-width:400px;box-sizing:border-box;margin-left:auto;margin-right:24px">Beacon marker</p>
+<p class="physical" style="background:#979797">Wide marker {wide}</p>
+<p id="shore">The shore path</p>
+</body></html>'''
 
 with zipfile.ZipFile(output, "w") as book:
     for name, contents in [

@@ -158,7 +158,7 @@ impl Probe {
             let x = point.x - paragraph.x;
             let layout = &paragraph.layout;
             if (point.inside_columns || paragraph.signed_margin)
-                && paragraph.column.contains(&point.x)
+                && paragraph.hit_columns().contains(&point.x)
                 && (0.0..layout.height()).contains(&y)
                 && (!renderer.uses_float_geometry()
                     || layout.lines().any(|line| {

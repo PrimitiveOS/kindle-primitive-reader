@@ -21,7 +21,7 @@ pub(crate) struct Stroke {
     pub gray: Option<(u8, u8)>,
 }
 impl Stroke {
-    fn read(border: Border, font: f32) -> Self {
+    pub(crate) fn read(border: Border, font: f32) -> Self {
         if matches!(border.pattern, Pattern::None | Pattern::Hidden) {
             return Self::default();
         }
