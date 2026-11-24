@@ -649,7 +649,7 @@ impl FixedPreferences {
             turns: self.turns % 4,
             width_fit,
             height_fit: self.height_fit && !width_fit && tile_zoom.is_none(),
-            continuous: self.continuous && tile_zoom.is_none() && !self.semi_auto_crop,
+            continuous: self.continuous && tile_zoom.is_none(),
             spread: self.spread && tile_zoom.is_none(),
             continuous_gap: self.continuous_gap.min(MAX_CONTINUOUS_GAP),
             straighten_limit: self.straighten_limit.min(MAX_STRAIGHTEN_DEGREES),

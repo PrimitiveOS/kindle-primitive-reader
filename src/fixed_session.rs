@@ -87,9 +87,31 @@ struct CachedRecognition {
 struct VisiblePage {
     index: usize,
     size: (f32, f32),
+    crop: Option<PdfTextRect>,
     rows: Range<u32>,
     request: RenderRequest,
     correction: Affine,
+}
+
+#[derive(Clone, Copy)]
+struct PageCrops<'a> {
+    seeds: &'a Seeds,
+    cache: &'a RefCell<BTreeMap<usize, PdfTextRect>>,
+}
+
+impl PageCrops<'_> {
+    fn resolve(self, pdf: &Pdf, page: usize) -> Result<PdfTextRect> {
+        if let Some(crop) = self.cache.borrow().get(&page).copied() {
+            return Ok(crop);
+        }
+        let crop = pdf_crop::detect(pdf, page, self.seeds.get(page), WIDTH)?;
+        let mut cache = self.cache.borrow_mut();
+        if cache.len() == 64 {
+            cache.pop_first();
+        }
+        cache.insert(page, crop);
+        Ok(crop)
+    }
 }
 
 struct EpubSpreads {
@@ -344,6 +366,7 @@ impl FixedReading {
         preferences: View,
         password: Option<&str>,
         prepared_pdf: Option<Vec<u8>>,
+        crop_seeds: Option<Seeds>,
     ) -> Result<Option<Self>> {
         let source = match format {
             DocumentFormat::Epub => {
@@ -381,7 +404,18 @@ impl FixedReading {
             })?),
             _ => return Ok(None),
         };
-        Self::with_source_height(source, page, preferences, viewport_height).map(Some)
+        let has_seeds = crop_seeds.is_some();
+        let mut reading = Self::with_source_height(
+            source,
+            page,
+            preferences,
+            viewport_height,
+            crop_seeds.unwrap_or_default(),
+        )?;
+        if has_seeds && !reading.is_continuous() {
+            reading.restore_loaded_crop()?;
+        }
+        Ok(Some(reading))
     }
 
     pub(crate) fn inspect_image(image: ImagePage) -> Result<Self> {
@@ -432,7 +466,7 @@ impl FixedReading {
     }
 
     fn with_source(source: FixedDocument, page: usize, preferences: View) -> Result<Self> {
-        Self::with_source_height(source, page, preferences, PAGE_HEIGHT)
+        Self::with_source_height(source, page, preferences, PAGE_HEIGHT, Seeds::default())
     }
 
     fn with_source_height(
@@ -440,6 +474,7 @@ impl FixedReading {
         page: usize,
         preferences: View,
         viewport_height: u32,
+        crop_seeds: Seeds,
     ) -> Result<Self> {
         let page = page.min(source.count() - 1);
         let outline = match &source {
@@ -450,6 +485,11 @@ impl FixedReading {
         let view = preferences.normalized();
         let epub_spreads = source.epub_spreads(view, viewport_height);
         let mut deskew_cache = DeskewCache::default();
+        let detected_crops = RefCell::default();
+        let crops = (view.continuous && view.semi_auto_crop).then_some(PageCrops {
+            seeds: &crop_seeds,
+            cache: &detected_crops,
+        });
         let mut present = || {
             source.presentation(
                 page,
@@ -458,6 +498,7 @@ impl FixedReading {
                 &mut deskew_cache,
                 viewport_height,
                 None,
+                crops,
             )
         };
         let (page, view, frame, visible) = if matches!(&source, FixedDocument::Pdf(_)) {
@@ -470,8 +511,8 @@ impl FixedReading {
         }
         Ok(Self {
             hidden_flows: None,
-            crop_seeds: Seeds::default(),
-            detected_crops: RefCell::default(),
+            crop_seeds,
+            detected_crops,
             source,
             page,
             view,
@@ -681,9 +722,6 @@ impl FixedReading {
     }
 
     pub(crate) fn set_continuous(&mut self, enabled: bool) -> Result<()> {
-        if enabled && self.view.semi_auto_crop {
-            return Err("Reset semi-auto crop before enabling continuous reading".into());
-        }
         let FixedDocument::Pdf(pdf) = &self.source else {
             return Err("Continuous scrolling is available for PDF".into());
         };
@@ -709,6 +747,9 @@ impl FixedReading {
             view.offset_y += center;
         }
         view.continuous = enabled;
+        if enabled && view.semi_auto_crop {
+            view = self.position_continuous_crop(view, self.frame.height, self.history_point())?;
+        }
         self.present(self.page, view)?;
         self.pause();
         Ok(())
@@ -978,12 +1019,17 @@ impl FixedReading {
     }
 
     pub(crate) fn supports_semi_auto_crop(&self) -> bool {
-        matches!(self.source, FixedDocument::Pdf(_)) && !self.is_continuous()
+        matches!(self.source, FixedDocument::Pdf(_))
     }
 
+    #[cfg(test)]
     pub(crate) fn load_crop_seeds(&mut self, seeds: Seeds) -> Result<()> {
         self.crop_seeds = seeds;
         self.detected_crops.get_mut().clear();
+        self.restore_loaded_crop()
+    }
+
+    fn restore_loaded_crop(&mut self) -> Result<()> {
         if self.view.semi_auto_crop {
             let resolved = self.resolve_crop(self.page, self.view)?;
             if resolved != self.view {
@@ -999,7 +1045,7 @@ impl FixedReading {
 
     pub(crate) fn initial_crop_seed(&self) -> Result<(Seed, (f32, f32))> {
         let FixedDocument::Pdf(pdf) = &self.source else {
-            return Err("Semi-auto crop is available for paged PDF".into());
+            return Err("Semi-auto crop is available for PDF".into());
         };
         let size = pdf.page_size(self.page)?;
         let found = self
@@ -1019,6 +1065,7 @@ impl FixedReading {
         original: View,
         viewport_height: u32,
         seed: Seed,
+        anchor: Option<Point>,
         save: impl FnOnce(usize, View, &Seeds) -> io::Result<()>,
     ) -> Result<()> {
         let mut next = self.crop_seeds.clone();
@@ -1039,15 +1086,51 @@ impl FixedReading {
             },
             ..original
         };
-        if let Err(err) = self.present_in_saved(self.page, view, viewport_height, |page, view| {
-            save(page, view, &next)
-        }) {
+        let applied = (|| {
+            let view = if view.continuous && view.width_fit {
+                self.position_continuous_crop(view, viewport_height, anchor)?
+            } else {
+                view
+            };
+            self.present_in_saved(self.page, view, viewport_height, |page, view| {
+                save(page, view, &next)
+            })
+        })();
+        if let Err(err) = applied {
             self.crop_seeds = previous;
             *self.detected_crops.get_mut() = previous_cache;
             return Err(err);
         }
         self.pause();
         Ok(())
+    }
+
+    fn position_continuous_crop(
+        &mut self,
+        view: View,
+        height: u32,
+        anchor: Option<Point>,
+    ) -> Result<View> {
+        let mut view = self.resolve_crop(
+            self.page,
+            View {
+                offset_x: 0.0,
+                offset_y: 0.0,
+                ..view
+            },
+        )?;
+        let (Some(anchor), Some(scan)) = (anchor, ScanPage::from_document(&self.source)) else {
+            return Ok(view);
+        };
+        let size = scan.page_size(self.page)?;
+        let metrics = view_metrics(size, &view, height);
+        let mut request = viewport(size, &mut view, height);
+        request.y = -metrics.top;
+        let correction = scan.correction(self.page, size, &view, &mut self.deskew_cache)?;
+        let point = (request.page_to_viewport(size)? * correction) * anchor;
+        view.offset_x = -point.x as f32;
+        view.offset_y = (-point.y as f32).clamp(-(metrics.height.round() - 1.0).max(0.0), 0.0);
+        Ok(view)
     }
 
     fn resolve_crop(&self, page: usize, mut view: View) -> Result<View> {
@@ -1058,20 +1141,13 @@ impl FixedReading {
             view.semi_auto_crop = false;
             return Ok(view);
         };
-        let cached = self.detected_crops.borrow().get(&page).copied();
-        let crop = match cached {
-            Some(crop) => crop,
-            None => {
-                let crop = pdf_crop::detect(pdf, page, self.crop_seeds.get(page), WIDTH)?;
-                let mut cache = self.detected_crops.borrow_mut();
-                if cache.len() == 64 {
-                    cache.pop_first();
-                }
-                cache.insert(page, crop);
-                crop
+        view.crop = Some(
+            PageCrops {
+                seeds: &self.crop_seeds,
+                cache: &self.detected_crops,
             }
-        };
-        view.crop = Some(crop);
+            .resolve(pdf, page)?,
+        );
         Ok(view)
     }
 
@@ -1462,7 +1538,7 @@ impl FixedReading {
             source.x / f64::from(page.size.0),
             source.y / f64::from(page.size.1),
         );
-        source_rect((1.0, 1.0), self.view.crop.unwrap_or(FULL_PAGE))
+        source_rect((1.0, 1.0), page.crop.unwrap_or(FULL_PAGE))
             .contains(normalized)
             .then_some(normalized)
     }
@@ -1489,7 +1565,7 @@ impl FixedReading {
         let page = self.visible.iter().find(|p| p.index == index)?;
         let transform = page.request.page_to_viewport(page.size).ok()? * page.correction;
         let cropped = source_rect(page.size, bounds)
-            .intersect(source_rect(page.size, self.view.crop.unwrap_or(FULL_PAGE)));
+            .intersect(source_rect(page.size, page.crop.unwrap_or(FULL_PAGE)));
         if cropped.is_zero_area() {
             return None;
         }
@@ -2180,6 +2256,10 @@ impl FixedReading {
             self.hidden_flows
                 .as_ref()
                 .filter(|flows| flows.has_hidden()),
+            view.semi_auto_crop.then_some(PageCrops {
+                seeds: &self.crop_seeds,
+                cache: &self.detected_crops,
+            }),
         )?;
         save(page, view)?;
         if new_epub_spreads.is_some() {
@@ -2515,6 +2595,7 @@ impl FixedDocument {
         cache: &mut DeskewCache,
         viewport_height: u32,
         flows: Option<&PageFlows>,
+        crops: Option<PageCrops<'_>>,
     ) -> Result<(usize, View, GrayImage, Vec<VisiblePage>)> {
         if let Some(epub) = epub_spreads {
             view.spread = epub.plan.has_facing();
@@ -2530,7 +2611,7 @@ impl FixedDocument {
             && view.width_fit
             && let Self::Pdf(pdf) = self
         {
-            return continuous_frame(pdf, page, view, cache, viewport_height, flows);
+            return continuous_frame(pdf, page, view, cache, viewport_height, flows, crops);
         }
         view.continuous = false;
         let page = if view.spread && epub_spreads.is_none() && flows.is_none() {
@@ -2552,6 +2633,7 @@ impl FixedDocument {
             let visible = VisiblePage {
                 index: page,
                 size,
+                crop: view.crop,
                 rows: 0..viewport_height,
                 request,
                 correction,
@@ -2755,8 +2837,9 @@ fn continuous_frame(
     cache: &mut DeskewCache,
     viewport_height: u32,
     flows: Option<&PageFlows>,
+    crops: Option<PageCrops<'_>>,
 ) -> Result<(usize, View, GrayImage, Vec<VisiblePage>)> {
-    let (page, view) = continuous_position(pdf, page, view, viewport_height, flows)?;
+    let (page, view) = continuous_position(pdf, page, view, viewport_height, flows, crops)?;
     let mut pixels = vec![255; (WIDTH * viewport_height) as usize];
     let mut visible = Vec::new();
     let mut top = view.offset_y as i32;
@@ -2770,7 +2853,12 @@ fn continuous_frame(
         if top >= viewport_height as i32 || visible.len() == MAX_VISIBLE_PDF_PAGES {
             break;
         }
-        let (size, metrics, height) = continuous_metrics(pdf, index, &view, viewport_height)?;
+        let ContinuousMetrics {
+            size,
+            metrics,
+            height,
+            crop,
+        } = continuous_metrics(pdf, index, &view, viewport_height, crops)?;
         let bottom = top + height;
         if bottom <= 0 {
             top = bottom + continuous_gap_after(index, last, &view);
@@ -2792,10 +2880,10 @@ fn continuous_frame(
             ..request
         };
         let scan = ScanPage::Pdf(pdf);
-        let correction = scan.correction(index, size, &view, cache)?;
+        let correction = scan.correction(index, size, &View { crop, ..view }, cache)?;
         let raster = mask_crop(
             scan.render(index, slice, correction)?,
-            view.crop,
+            crop,
             size,
             slice,
             correction,
@@ -2804,6 +2892,7 @@ fn continuous_frame(
         visible.push(VisiblePage {
             index,
             size,
+            crop,
             rows,
             request,
             correction,
@@ -2824,13 +2913,14 @@ fn continuous_position(
     mut view: View,
     viewport_height: u32,
     flows: Option<&PageFlows>,
+    crops: Option<PageCrops<'_>>,
 ) -> Result<(usize, View)> {
     let count = pdf.page_count();
     let last = flows
         .and_then(|flows| flows.allowed_page(count - 1, -1, flows.flow(page)))
         .unwrap_or(count - 1);
     let length = |index| -> Result<i32> {
-        let (_, _, height) = continuous_metrics(pdf, index, &view, viewport_height)?;
+        let height = continuous_metrics(pdf, index, &view, viewport_height, crops)?.height;
         Ok(height + continuous_gap_after(index, last, &view))
     };
     let mut offset = (-view.offset_y.round()) as i32;
@@ -2875,9 +2965,10 @@ fn continuous_position(
         page = previous;
         offset = length(page)?;
     }
-    let (_, metrics, _) = continuous_metrics(pdf, page, &view, viewport_height)?;
+    let resolved = continuous_metrics(pdf, page, &view, viewport_height, crops)?;
     view.offset_y = -((offset - deficit).max(0) as f32);
-    view.offset_x = clamp_offset(view.offset_x, metrics.width, WIDTH as f32);
+    view.offset_x = clamp_offset(view.offset_x, resolved.metrics.width, WIDTH as f32);
+    view.crop = resolved.crop;
     Ok((page, view))
 }
 
@@ -2904,19 +2995,36 @@ fn continuous_gap_after(page: usize, last: usize, view: &View) -> i32 {
     }
 }
 
+struct ContinuousMetrics {
+    size: (f32, f32),
+    metrics: ViewMetrics,
+    height: i32,
+    crop: Option<PdfTextRect>,
+}
+
 fn continuous_metrics(
     pdf: &Pdf,
     page: usize,
     view: &View,
     viewport_height: u32,
-) -> Result<((f32, f32), ViewMetrics, i32)> {
+    crops: Option<PageCrops<'_>>,
+) -> Result<ContinuousMetrics> {
     let size = pdf.page_size(page)?;
-    let metrics = view_metrics(size, view, viewport_height);
+    let crop = match crops {
+        Some(crops) => Some(crops.resolve(pdf, page)?),
+        None => view.crop,
+    };
+    let metrics = view_metrics(size, &View { crop, ..*view }, viewport_height);
     if !metrics.height.is_finite() || metrics.height <= 0.0 {
         return Err("This PDF page has unsupported dimensions".into());
     }
     let height = metrics.height.round().max(1.0) as i32;
-    Ok((size, metrics, height))
+    Ok(ContinuousMetrics {
+        size,
+        metrics,
+        height,
+        crop,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -3288,6 +3396,7 @@ pub(crate) mod tests {
                 view,
                 None,
                 None,
+                None,
             )
             .unwrap()
             .unwrap()
@@ -3459,6 +3568,7 @@ pub(crate) mod tests {
                 right_to_left: true,
                 ..View::default()
             },
+            None,
             None,
             None,
         )
@@ -4357,6 +4467,7 @@ pub(crate) mod tests {
             View::default(),
             None,
             None,
+            None,
         )
         .unwrap()
         .unwrap();
@@ -4383,6 +4494,7 @@ pub(crate) mod tests {
                 zoom: 1,
                 ..View::default()
             },
+            None,
             None,
             None,
         )
@@ -4466,6 +4578,7 @@ pub(crate) mod tests {
                 spread: true,
                 ..Default::default()
             },
+            None,
             None,
             None,
         )

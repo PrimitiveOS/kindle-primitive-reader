@@ -2,12 +2,16 @@ use super::*;
 use crate::pdf_crop::Seed;
 use primitive_ui::GrayImage;
 
+#[cfg(test)]
+mod continuous_tests;
+
 const APPLY: Rect = Rect::new(853, PAGE_HEIGHT as i32 + 5, 180, 60);
 
 #[derive(Clone, Copy)]
 pub(super) struct Draft {
     original: FixedPreferences,
     viewport_height: u32,
+    anchor: Option<hayro::kurbo::Point>,
     seed: Seed,
     size: (f32, f32),
 }
@@ -15,16 +19,18 @@ pub(super) struct Draft {
 impl Reader {
     pub(super) fn start_semi_auto_crop(&mut self) -> Result<()> {
         self.close_fixed_search_fit()?;
-        let fixed = self.fixed.as_mut().ok_or("Open a paged PDF first")?;
+        let fixed = self.fixed.as_mut().ok_or("Open a PDF first")?;
         if !fixed.reading.supports_semi_auto_crop() {
-            return Err("Semi-auto crop is available for paged PDF".into());
+            return Err("Semi-auto crop is available for PDF".into());
         }
         let (seed, size) = fixed.reading.initial_crop_seed()?;
+        let anchor = fixed.reading.history_point();
         let (original, viewport_height) = fixed.reading.start_crop_preview()?;
         self.crop_dialog = None;
         self.semi_auto_crop = Some(Draft {
             original,
             viewport_height,
+            anchor,
             seed,
             size,
         });
@@ -48,7 +54,7 @@ impl Reader {
     }
 
     fn adjust_semi_auto_crop(&mut self, draft: Draft, x: f32, y: f32) -> Result<()> {
-        let fixed = self.fixed.as_ref().ok_or("Open a paged PDF first")?;
+        let fixed = self.fixed.as_ref().ok_or("Open a PDF first")?;
         let (x, y) = fixed
             .reading
             .crop_point(x, y)
@@ -63,7 +69,7 @@ impl Reader {
     }
 
     fn cancel_semi_auto_crop(&mut self, draft: Draft) -> Result<()> {
-        let fixed = self.fixed.as_mut().ok_or("Open a paged PDF first")?;
+        let fixed = self.fixed.as_mut().ok_or("Open a PDF first")?;
         fixed
             .reading
             .restore_crop_preview(draft.original, draft.viewport_height)?;
@@ -73,12 +79,13 @@ impl Reader {
     }
 
     fn apply_semi_auto_crop(&mut self, draft: Draft) -> Result<()> {
-        let fixed = self.fixed.as_mut().ok_or("Open a paged PDF first")?;
+        let fixed = self.fixed.as_mut().ok_or("Open a PDF first")?;
         let library = &mut self.library;
         fixed.reading.apply_crop_seed(
             draft.original,
             draft.viewport_height,
             draft.seed,
+            draft.anchor,
             |page, view, seeds| {
                 let state = library.remember(&fixed.entry, fixed.id, &fixed.entry.title);
                 let before = (
@@ -249,6 +256,7 @@ mod tests {
             previous,
             None,
             None,
+            None,
         )
         .unwrap()
         .unwrap();
@@ -271,14 +279,14 @@ mod tests {
         let reading = &mut app.fixed.as_mut().unwrap().reading;
         let (original, height) = reading.start_crop_preview().unwrap();
         reading
-            .apply_crop_seed(original, height, odd_seed(), |_, _, _| Ok(()))
+            .apply_crop_seed(original, height, odd_seed(), None, |_, _, _| Ok(()))
             .unwrap();
         let applied = reading.preferences();
         let (original, height) = reading.start_crop_preview().unwrap();
         let preview = reading.preferences();
         assert!(
             reading
-                .apply_crop_seed(original, height, even_seed(), |_, _, _| {
+                .apply_crop_seed(original, height, even_seed(), None, |_, _, _| {
                     Err(io::Error::other("mock storage failure"))
                 })
                 .is_err()

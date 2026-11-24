@@ -1178,6 +1178,9 @@ impl Reader {
             fixed_preferences,
             password,
             prepared_pdf,
+            self.library
+                .state(id)
+                .map(|state| state.pdf_crop_seeds.clone()),
         );
         let fixed = match fixed {
             Err(error)
@@ -1205,11 +1208,8 @@ impl Reader {
         self.search_result = None;
         self.result_selection = None;
         if let Some(mut reading) = fixed {
-            if let Some(state) = self.library.state(id) {
-                reading.load_crop_seeds(state.pdf_crop_seeds.clone())?;
-                if fixed_preferences.semi_auto_crop {
-                    fixed_preferences = reading.preferences();
-                }
+            if fixed_preferences.semi_auto_crop && !fixed_preferences.continuous {
+                fixed_preferences = reading.preferences();
             }
             let flows = self
                 .library
