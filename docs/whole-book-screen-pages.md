@@ -76,6 +76,10 @@ limits can still collect exact counts through visited layouts where
 supported. Continuous scroll, facing pages and hidden flows retain their
 established page-number semantics.
 
+The Mac simulator framed the same authored chapter before and after counting
+48 screen pages. The page text, chapter footer, progress track and Exit
+matched below the header. [Counting pages](screenshots/whole-book-screen-pages-pending.png) · [Whole-book total](screenshots/whole-book-screen-pages-complete.png)
+
 ## Acceptance checks
 
 Use the authored EPUB 2 and EPUB 3 books for boundary navigation and
