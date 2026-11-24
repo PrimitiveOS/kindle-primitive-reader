@@ -150,6 +150,7 @@ impl Screen {
                 | Self::HyphenationDefaults
                 | Self::HyphenationLimits(_)
                 | Self::HyphenationLimitValue(..)
+                | Self::PublisherRenderDefaults
                 | Self::TypographyRules
                 | Self::TypographyLanguages(_)
                 | Self::FontRendering(_)

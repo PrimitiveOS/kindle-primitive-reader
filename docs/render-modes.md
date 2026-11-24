@@ -86,13 +86,26 @@ source-selection rectangles use the Parley or vertical engines.
 
 The four options depend on independent box geometry, pagination and
 source mappings. Reader’s diagnostic policies combine the measured cases
-below. The Kindle **Render Mode** control remains open.
+below and exposes them through the reading Layout panel.
 
 ## Composed policies in Reader
 
-The Parley probe can apply the four publisher rendering policies together.
-The same typed selection also prepares a live reading session for reflow.
-The choices apply the measured combinations to horizontal Parley pages.
+Open the bottom reading bar and choose **Layout › Render mode** on a
+horizontal, left-to-right, one-page EPUB with Publisher CSS on. Tap
+**Legacy**, **Flat**, **Book**, or **Web** to reflow the current edition.
+Tap **Reader** to return to the established Reader layout. The setting
+uses the same four composed policies as the Parley probe.
+
+**New-book mode** picks a default for EPUBs that Reader has never opened.
+Existing editions continue with their saved mode or the established Reader
+layout. A mode pauses while Publisher CSS is off, in continuous scrolling,
+in two-page spreads, or with custom hidden flows. It takes effect again
+when a supported page view returns. EPUBs with right-to-left spines and
+vertical text keep their existing layout.
+
+[Reader Layout on Mac](screenshots/render-mode-reader-layout.png) ·
+[Landscape Layout](screenshots/render-mode-reader-layout-landscape.png) ·
+[New-book default](screenshots/render-mode-reader-new-book-default.png)
 
 | Policy | Legacy | Flat | Book | Web |
 | --- | --- | --- | --- | --- |
@@ -118,9 +131,11 @@ The native replay switches from Web through the other policies and returns
 to Web at the same XPointer. The Mac reading session preserves the same
 serialized anchor and restores its original Web coordinates and frame.
 Tests also check a tappable link extending into the reading margin, the
-repaired row, and painted empty pages. Broader box composition, the
-older-DOM compatibility path, the Kindle selector and its saved defaults
-remain open. Legacy keeps orphan table cell text readable in source order;
+repaired row, and painted empty pages. The Mac UI replay checks the
+current and global choices, reopen, restoring the original frame and
+graying the setting out when unavailable. Broader box composition, the
+older-DOM compatibility path and Kindle hardware behavior remain open.
+Legacy keeps orphan table cell text readable in source order;
 KOReader’s Legacy layout omits those cells on this specimen. Full-width
 wrapper backgrounds outside the supported Web sizing path remain open.
 

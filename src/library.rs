@@ -492,6 +492,8 @@ pub struct BookPreferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_stylesheet: Option<crate::BaseStylesheet>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher_render_mode: Option<crate::PublisherRenderMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub font_kerning: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_kerning_mode: Option<crate::FontKerningMode>,
@@ -697,6 +699,9 @@ impl BookPreferences {
                 .unwrap_or(settings.page_overlap_style),
             ..settings
         };
+        let adjusted = self
+            .publisher_render_mode
+            .map_or(adjusted, |mode| mode.apply(adjusted));
         // Never silently replace an explicit logical choice with another size.
         if adjusted.logical_font_size.is_some() || adjusted.validate().is_ok() {
             adjusted

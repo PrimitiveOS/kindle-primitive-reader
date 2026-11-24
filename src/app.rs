@@ -81,6 +81,7 @@ mod page_overview;
 mod pdf_password_viewport_tests;
 mod profile_panel;
 mod progress_markers;
+mod publisher_render_settings;
 mod quick_display;
 mod read_alarm;
 mod reader_timer;
@@ -293,6 +294,7 @@ enum Screen {
     ReadingProfiles,
     DocumentDefaults,
     FontRendering(eager_typography::Scope),
+    PublisherRenderDefaults,
     TypographyRules,
     HyphenationOptions,
     HyphenationDefaults,
@@ -484,6 +486,7 @@ impl Screen {
             Self::ReadingFonts => "Reading font",
             Self::ReadingProfiles => "Reading profiles",
             Self::DocumentDefaults => "Document defaults",
+            Self::PublisherRenderDefaults => "Default render mode",
             Self::TypographyRules => "Typography rules",
             Self::HyphenationOptions => "Hyphenation",
             Self::HyphenationDefaults => "Hyphenation defaults",
@@ -647,6 +650,8 @@ enum Action {
     ),
     RespectEmbeddedLanguages(bool),
     Hyphenation(typography_settings::hyphenation_controls::Command),
+    SetBookPublisherRenderMode(crate::PublisherRenderMode),
+    SetPublisherRenderDefault(crate::PublisherRenderMode),
     ShowFonts,
     EmbeddedFontReport,
     ShowFooterFonts,
@@ -1369,6 +1374,9 @@ impl Reader {
             .reflow
             .clone()
             .unwrap_or_else(BookPreferences::for_new_reflow);
+        if entry.format == DocumentFormat::Epub {
+            initial_preferences.publisher_render_mode = self.controls.publisher_render_mode_default;
+        }
         let mut default_font_missing = false;
         let mut settings = initial_preferences.apply_to(self.device_reading_settings());
         let mut scroll = initial_preferences.scroll;
@@ -3355,6 +3363,7 @@ impl Reader {
                 items
             }
             Screen::FontRendering(scope) => return self.font_rendering_items(scope),
+            Screen::PublisherRenderDefaults => return self.publisher_render_default_items(),
             Screen::TypographyRules => return self.typography_items(),
             Screen::HyphenationOptions => return self.hyphenation_items(),
             Screen::HyphenationDefaults => return self.hyphenation_defaults_items(),
@@ -4404,6 +4413,10 @@ impl Reader {
                 self.set_embedded_language_respect(respect)?
             }
             Action::Hyphenation(command) => self.activate_hyphenation(command)?,
+            Action::SetBookPublisherRenderMode(mode) => {
+                self.set_book_publisher_render_mode(mode)?
+            }
+            Action::SetPublisherRenderDefault(mode) => self.set_publisher_render_default(mode)?,
             Action::CancelEagerFont => {
                 self.eager_typography.cancel();
                 self.notice = None;
@@ -4739,6 +4752,9 @@ impl Reader {
         }
         if preferences.respect_embedded_languages.is_none() {
             preferences.respect_embedded_languages = current.respect_embedded_languages;
+        }
+        if preferences.publisher_render_mode.is_none() {
+            preferences.publisher_render_mode = current.publisher_render_mode;
         }
         let fonts = if current.font_file == preferences.font_file {
             active.reading.config.fonts.clone()
@@ -9589,6 +9605,13 @@ impl App for Reader {
                     }
                     Screen::TypographyLanguages(_) | Screen::HyphenationOptions => {
                         self.show(Screen::TypographyRules)
+                    }
+                    Screen::PublisherRenderDefaults => {
+                        self.open_reading_edge(
+                            false,
+                            self.reading_viewport().dimensions().0 as f32 / 2.0,
+                        );
+                        self.reading_panel = Some(BarPanel::TextLayout);
                     }
                     Screen::TypographyRules => {
                         self.open_reading_edge(true, (WIDTH / 2) as f32);

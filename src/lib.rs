@@ -384,6 +384,9 @@ pub struct Settings {
     pub link_vertical_margins: bool,
     pub margin_top: Option<u32>,
     pub margin_bottom: Option<u32>,
+    /// The publisher mode selected through the book setting or the diagnostic probe.
+    #[doc(hidden)]
+    pub publisher_render_mode: Option<PublisherRenderMode>,
     /// The default preserves the existing book layout and preference contract.
     #[doc(hidden)]
     pub block_margins: BlockMarginMode,
@@ -488,6 +491,7 @@ impl Default for Settings {
             link_vertical_margins: false,
             margin_top: None,
             margin_bottom: None,
+            publisher_render_mode: None,
             block_margins: BlockMarginMode::Ignore,
             preserve_forced_page_margins: false,
             block_width: BlockWidthMode::Ignore,
@@ -1207,6 +1211,13 @@ impl Probe {
         if engine == Engine::Blitz && settings.block_margins != BlockMarginMode::Ignore {
             return Err("Publisher block rendering policies require Parley".into());
         }
+        let settings = if settings.publisher_render_mode.is_some()
+            && (!settings.publisher_styles || !book.is_reflowable_epub() || book.spine_rtl)
+        {
+            PublisherRenderMode::Reader.apply(settings)
+        } else {
+            settings
+        };
         if engine == Engine::Blitz
             && (!user_styles.is_empty()
                 || !settings.publisher_styles
@@ -1416,6 +1427,13 @@ impl Probe {
                     }
                 }
             }
+        };
+        let settings = if matches!(&renderer, Renderer::Vertical(_))
+            && settings.publisher_render_mode.is_some()
+        {
+            PublisherRenderMode::Reader.apply(settings)
+        } else {
+            settings
         };
         lines.sort_by(|a, b| a.top.total_cmp(&b.top));
         let height = settings.text_height() as f32;

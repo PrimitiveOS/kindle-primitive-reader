@@ -34,6 +34,8 @@ pub(crate) struct ReadingControls {
     pub trust_soft_hyphens_default: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hyphenation_limits: Option<crate::HyphenationLimits>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publisher_render_mode_default: Option<crate::PublisherRenderMode>,
     #[serde(skip_serializing_if = "is_false")]
     pub remember_opening_location: bool,
     #[serde(skip_serializing_if = "crate::app::back_navigation::BackPreferences::is_default")]

@@ -279,6 +279,33 @@ impl Reader {
                 }
                 BarPanel::TextLayout => {
                     let mut rows = Vec::new();
+                    if active.entry.format == crate::library::DocumentFormat::Epub {
+                        if let Some(reason) = self.publisher_render_mode_unavailable() {
+                            rows.push(ConfigRow::unavailable("Render mode", reason));
+                        } else {
+                            let current = self.book_publisher_render_mode();
+                            rows.push(ConfigRow::new(
+                                "Render mode",
+                                crate::PublisherRenderMode::CHOICES.map(|mode| {
+                                    Choice::option(
+                                        mode.label(),
+                                        Action::SetBookPublisherRenderMode(mode),
+                                        mode == current,
+                                    )
+                                }),
+                            ));
+                            rows.push(ConfigRow::new(
+                                "New-book mode",
+                                [Choice::link(
+                                    self.controls
+                                        .publisher_render_mode_default
+                                        .unwrap_or_default()
+                                        .label(),
+                                    Action::Show(Screen::PublisherRenderDefaults),
+                                )],
+                            ));
+                        }
+                    }
                     if !vertical && !active.reading.config.scroll {
                         let facing_pages = active.reading.config.facing_pages;
                         let title = if facing_pages && !active.reading.uses_facing_pages() {

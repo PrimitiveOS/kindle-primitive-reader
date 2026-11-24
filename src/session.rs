@@ -322,11 +322,16 @@ impl BookConfig {
         self.chapter_offsets
             .get_or_init(|| book.chapter_offsets().unwrap_or_default());
         let facing = self.requested_facing_geometry();
-        let note_layout = !self.scroll && facing.is_none() && !self.hidden_flows.enabled;
-        let user_styles = self.user_styles.for_note_layout(note_layout);
+        let single_page_layout = !self.scroll && facing.is_none() && !self.hidden_flows.enabled;
+        let user_styles = self.user_styles.for_note_layout(single_page_layout);
         let full = Settings {
-            in_page_footnotes: self.settings.in_page_footnotes && note_layout,
+            in_page_footnotes: self.settings.in_page_footnotes && single_page_layout,
             ..self.settings
+        };
+        let full = if full.publisher_render_mode.is_some() && !single_page_layout {
+            crate::PublisherRenderMode::Reader.apply(full)
+        } else {
+            full
         };
         let settings = if let Some(geometry) = facing {
             let width = geometry.leaf_width();

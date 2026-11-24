@@ -112,6 +112,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Skim => JUMP,
         Action::Show(
             Screen::DocumentDefaults
+            | Screen::PublisherRenderDefaults
             | Screen::StyleTweaks
             | Screen::StylePreset
             | Screen::StyleFiles

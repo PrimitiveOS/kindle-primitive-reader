@@ -17,10 +17,11 @@ impl Reader {
         let active = self.active.as_ref().ok_or("Open a book first")?;
         let config = &active.reading.config;
         let settings = config.settings;
-        let font_file = self
+        let saved = self
             .library
             .state(active.id)
-            .and_then(|state| state.preferences.font_file.clone());
+            .map(|state| &state.preferences);
+        let font_file = saved.and_then(|preferences| preferences.font_file.clone());
         Ok(BookPreferences {
             font_size: if settings.logical_font_size.is_some() {
                 self.library
@@ -56,6 +57,7 @@ impl Reader {
             publisher_styles: Some(settings.publisher_styles),
             embedded_fonts: Some(settings.embedded_fonts),
             base_stylesheet: Some(settings.base_stylesheet),
+            publisher_render_mode: saved.and_then(|preferences| preferences.publisher_render_mode),
             font_kerning: Some(settings.font_kerning),
             font_kerning_mode: Some(settings.effective_font_kerning_mode()),
             font_hinting: settings.font_hinting,
@@ -102,6 +104,7 @@ impl Reader {
                 let mut prefs = self.current_text_preferences()?;
                 prefs.typography_language = None;
                 prefs.respect_embedded_languages = None;
+                prefs.publisher_render_mode = None;
                 document_defaults::validate_preferences(&prefs)?;
                 templates.reflow = Some(prefs);
                 self.document_defaults.save(templates)?;
@@ -139,6 +142,11 @@ impl Reader {
         let fonts = self.fonts_for(prefs.font_file.as_deref())?;
         let active = self.active.as_ref().ok_or("Open a reflowable book first")?;
         prefs.record_typography(&active.reading.probe);
+        prefs.publisher_render_mode = self
+            .library
+            .state(active.id)
+            .and_then(|state| state.preferences.publisher_render_mode);
+
         let location = position(&active.reading);
         let mut config = active.reading.config.clone();
         config.settings = prefs.apply_to(self.device_reading_settings_for(config.viewport));
