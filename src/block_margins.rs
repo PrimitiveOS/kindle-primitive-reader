@@ -1,7 +1,7 @@
 //! Opt-in model for vertical publisher margins on retained horizontal blocks.
 use crate::{
     BlockMarginMode, Settings,
-    book_style::{Style, flow::Display},
+    book_style::{ImageLength, Style, WritingMode, borders::Pattern, flow::Display},
     publisher_padding::BoxArea,
     source::Source,
 };
@@ -21,6 +21,37 @@ impl Span {
             has_grid: current.has_grid || other.has_grid,
         }));
     }
+}
+
+#[derive(Clone, Copy, Default)]
+struct Margin {
+    positive: f32,
+    negative: f32,
+}
+
+impl Margin {
+    fn new(length: f32) -> Self {
+        Self {
+            positive: length.max(0.0),
+            negative: length.min(0.0),
+        }
+    }
+
+    fn joined(self, other: Self) -> Self {
+        Self {
+            positive: self.positive.max(other.positive),
+            negative: self.negative.min(other.negative),
+        }
+    }
+
+    fn used(self, signed: bool) -> f32 {
+        let length = self.positive + self.negative;
+        if signed { length } else { length.max(0.0) }
+    }
+}
+
+pub(crate) fn collapsible_wrapper(tag: &str) -> bool {
+    matches!(tag, "div" | "section" | "article")
 }
 
 pub(crate) fn before_blocks(
@@ -70,10 +101,10 @@ pub(crate) fn before_blocks(
 
     let limit = (settings.text_height() as f32 / 2.0).max(1.0);
     let signed = mode == BlockMarginMode::CollapseNegative;
-    let single = |margin: f32| if signed { margin } else { margin.max(0.0) };
+    let collapse = mode != BlockMarginMode::Separate;
     let mut edges = vec![None; spans.len()];
+    let mut child_edges = collapse.then(|| vec![None; spans.len()]);
     let mut previous_visible = vec![None; spans.len()];
-    let mut gaps = vec![0.0; source.blocks.len()];
     for (index, element) in source.elements.iter().enumerate() {
         let previous = element.previous_sibling.and_then(|sibling| {
             if styles[sibling].flow.suppressed {
@@ -83,11 +114,19 @@ pub(crate) fn before_blocks(
             }
         });
         previous_visible[index] = previous;
+        let style = &styles[index];
+        if let (Some(children), Some(parent)) = (&mut child_edges, element.parent)
+            && !element.selector_only
+            && !style.flow.suppressed
+        {
+            let ends = children[parent].get_or_insert([index, index]);
+            ends[1] = index;
+        }
         let Some(span) = spans[index] else {
             continue;
         };
-        let style = &styles[index];
         if span.has_grid
+            || style.flow.suppressed
             || element.selector_only
             || element.anonymous
             || matches!(element.tag.as_str(), "html" | "body")
@@ -108,24 +147,34 @@ pub(crate) fn before_blocks(
         let [top, bottom] = style
             .vertical_margin
             .map(|edge| edge.box_pixels(containing_width, font).clamp(-limit, limit));
-        edges[index] = Some(bottom);
-        gaps[span.first] += single(top);
+        edges[index] = Some([Margin::new(top), Margin::new(bottom)]);
+    }
+    if let Some(children) = child_edges {
+        join_child_margins(
+            source, styles, boxes, settings, &spans, &children, &mut edges,
+        );
+    }
+
+    let mut gaps = vec![0.0; source.blocks.len()];
+    for (index, pair) in edges.iter().enumerate() {
+        let Some([top, bottom]) = *pair else { continue };
+        let span = spans[index].unwrap();
+        gaps[span.first] += top.used(signed);
         if let Some(after) = following[span.last] {
-            gaps[after] += single(bottom);
+            gaps[after] += bottom.used(signed);
         }
 
-        // Parenting, intervening content and table flow each form a boundary.
-        // Replace only the two touching sibling edges; any other margins at the
-        // same source block remain independently owned by their boxes.
-        if mode != BlockMarginMode::Separate
-            && let Some(sibling) = previous
-            && let Some(other) = edges[sibling]
+        // Each edge may already carry adjoining descendant margins. Combine
+        // both extrema before flooring the net value in the unsigned policy.
+        if collapse
+            && let Some(sibling) = previous_visible[index]
+            && let Some([_, other]) = edges[sibling]
             && let Some(left) = spans[sibling]
-            && source.elements[sibling].parent == element.parent
+            && source.elements[sibling].parent == source.elements[index].parent
             && following[left.last] == Some(span.first)
         {
-            let collapsed = other.max(top).max(0.0) + other.min(top).min(0.0);
-            gaps[span.first] += single(collapsed) - single(other) - single(top);
+            gaps[span.first] +=
+                top.joined(other).used(signed) - other.used(signed) - top.used(signed);
         }
     }
     for gap in &mut gaps {
@@ -134,12 +183,68 @@ pub(crate) fn before_blocks(
     Some(gaps)
 }
 
+fn join_child_margins(
+    source: &Source,
+    styles: &[Style],
+    boxes: Option<&[BoxArea]>,
+    settings: Settings,
+    spans: &[Option<Span>],
+    children: &[Option<[usize; 2]>],
+    edges: &mut [Option<[Margin; 2]>],
+) {
+    let ordinary = |style: &Style| {
+        style.display == Display::Block
+            && style.writing_mode == WritingMode::Horizontal
+            && style.float_side.is_none()
+            && style.clear == Default::default()
+            && style.page_breaks == Default::default()
+    };
+    // Descendant extrema move to the enclosing edge before adjacent siblings
+    // are combined. Only boxes with an adjoining source boundary can join.
+    for index in (0..children.len()).rev() {
+        let style = &styles[index];
+        let (Some(children), Some(span), Some(mut pair)) =
+            (children[index], spans[index], edges[index])
+        else {
+            continue;
+        };
+        if !collapsible_wrapper(&source.elements[index].tag)
+            || !ordinary(style)
+            || style.background.is_some()
+            || !matches!(style.image_height, None | Some(ImageLength::Auto))
+            || !matches!(style.image_max_height, None | Some(ImageLength::Auto))
+        {
+            continue;
+        }
+        let width = boxes.map_or(settings.text_width(), |areas| areas[index].outer_width);
+        let font = settings.font_size;
+        for (side, child) in children.into_iter().enumerate() {
+            let child_style = &styles[child];
+            let (Some(child_span), Some(child_pair)) = (spans[child], &mut edges[child]) else {
+                continue;
+            };
+            let border = style.borders.as_ref().map(|sides| sides[side * 2]);
+            if ordinary(child_style)
+                && [span.first, span.last][side] == [child_span.first, child_span.last][side]
+                && style.vertical_padding[side].box_pixels(width, font) == 0.0
+                && !border.is_some_and(|edge| {
+                    !matches!(edge.pattern, Pattern::None | Pattern::Hidden)
+                        && edge.width.box_pixels(width, font) > 0.0
+                })
+            {
+                pair[side] = pair[side].joined(std::mem::take(&mut child_pair[side]));
+            }
+        }
+        edges[index] = Some(pair);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Anchor, Engine, Probe};
 
-    fn spacing(body: &str, mode: BlockMarginMode) -> Vec<(String, f32)> {
+    pub(super) fn spacing(body: &str, mode: BlockMarginMode) -> Vec<(String, f32)> {
         let source = Source::parse(&format!("<html><body>{body}</body></html>")).unwrap();
         let mut book = crate::Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
         let href = book.chapters[0].href.clone();
@@ -167,7 +272,7 @@ mod tests {
             .collect()
     }
 
-    fn gap(layout: &[(String, f32)], block: &str) -> f32 {
+    pub(super) fn gap(layout: &[(String, f32)], block: &str) -> f32 {
         layout.iter().find(|(name, _)| name == block).unwrap().1
     }
 
@@ -358,3 +463,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod parent_tests;

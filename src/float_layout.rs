@@ -11,7 +11,7 @@ pub(crate) enum Side {
     Right = 1,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Clear(u8);
 
 impl Clear {

@@ -80,7 +80,7 @@ source-selection rectangles use the Parley or vertical engines.
 | Mechanism | Reader work required for the observed mode behavior |
 | --- | --- |
 | Legacy | Match the legacy inline model and the old handling of incomplete CSS tables. Separate publisher margins are measured below. |
-| Flat | Extend the measured empty-box geometry below to nested and margin-only boxes, and add the remaining parent collapse, inline float, and anonymous box behavior. |
+| Flat | Extend the measured empty-box geometry below to nested and margin-only boxes, and extend margin grouping to the remaining formatting contexts, inline floats, and anonymous boxes. |
 | Book | Extend the horizontal float model below to complex boxes and inline floats, and implement the remaining style-width and auto-margin behavior |
 | Web | Extend signed margins and float geometry, implement full publisher box sizing and automatic placement, and extend physical break-page painting to complex boxes |
 
@@ -190,16 +190,59 @@ ordinary text metrics.
 [Signed collapse capture](screenshots/render-modes-reader-collapsed-margin.png)
 
 Collapse combines the largest positive edge and the most negative edge of
-adjacent sibling blocks. `Collapse` floors a net negative result at zero.
-`CollapseNegative` allows that gap to reduce the pitch. Parent and child
-edges in the current provider remain independent. An intervening visible
-empty element or a table ends a sibling pair. Table cell tracks retain
+adjoining blocks. `Collapse` floors a net negative result at zero.
+`CollapseNegative` allows that gap to reduce the pitch. An intervening
+visible empty element or a table ends a sibling pair. Table cell tracks retain
 their existing layout, and a positive boundary gap can push the entire
 following grid down. The provider bounds a gap to half a viewport, prevents
 extreme negative values from reversing text origins, and drops terminal
-spine margins. Collapsing through empty or nested boxes, complex float and overflow
-layout, and vertical writing remain pending. Reader has no saved Render
-Mode preference or control yet.
+spine margins. Collapsing through empty boxes, complex float and overflow
+layout, and vertical writing remain pending. These policies are internal.
+
+### Adjoining parent and child margins
+
+Transparent horizontal `div`, `section` and `article` wrappers can
+share their top or bottom margin with the first or last in-flow block
+child. The provider combines each eligible child edge with the parent
+and then combines that group with the adjoining sibling margin. It
+keeps both extrema through nested transparent wrappers, even when
+their own margin is zero.
+
+The first and last edges are checked independently. Parent-owned text
+between the edge and child and physical padding or a recognized border
+at that edge prevent the join. The existing spacing applies to sized or
+painted wrappers, visible empty siblings, tables, list items, and
+complex clearance, float or keep contexts. Reader uses supported
+padding in the rendered box geometry. The stock border examples
+measure the margin contribution separately from the border stroke.
+
+| Authored gap at 1264 × 1606 | Pinned Legacy pitch | Pinned Flat / Book pitch | Pinned Web pitch | Reader extra space in Collapse / CollapseNegative |
+| --- | ---: | ---: | ---: | ---: |
+| Sibling, parent and first child | 190 px | 120 px | 120 px | 56 / 56 px |
+| Last child, parent and next sibling | 178 px | 108 px | 108 px | 44 / 44 px |
+| Negative group after the last child | 79 px | 64 px | 51 px | 0 / −13 px |
+| Leading edge separated by 8 px of padding | 150 px | 135 px | 135 px | 63 / 63 px |
+| Leading edge through a margin-free wrapper | 149 px | 102 px | 102 px | 38 / 38 px |
+| Trailing edge through a margin-free wrapper | 137 px | 94 px | 94 px | 30 / 30 px |
+
+The Reader column subtracts its ordinary 67.8-pixel text pitch and
+independent box padding. The 64-pixel native pitch produces slightly
+different absolute positions and page breaks in the same fixture. The test also restores a
+serialized source selection and checks its live touch target after the
+layout changes, including a new page assignment. The ordinary policy
+preserves the frame byte for byte with or without the unused margin
+declarations.
+
+Generate the fixture with `python3 scripts/generate-render-parent-margins-fixture.py`.
+Run the pinned oracle with the same arguments as the Render Mode probe.
+Run `cargo test --locked --lib block_margins` to compare Reader, and set
+`READER_PARENT_MARGIN_CAPTURES` to an existing folder to capture the
+new layout.
+[CREngine margin accumulation](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L6289-L6332) ·
+[Native oracle](../scripts/koreader-render-parent-margins-check.lua) ·
+[Reader tests](../src/block_margins/parent_tests.rs) ·
+[Stock capture](screenshots/render-parent-margins-stock-web.png) ·
+[Reader capture](screenshots/render-parent-margins-reader-web.png)
 
 The tests reopen a serialized text selection in all policies, hit-test the
 same word at its new geometry, compare the default frames, and resolve a
