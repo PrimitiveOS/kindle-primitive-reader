@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 #[cfg(test)]
 mod css_flow_tests;
 mod hidden_flows;
+#[cfg(test)]
+mod viewport_tests;
 pub(crate) mod screen_pages;
 
 use crate::epub::{Book, Destination};
@@ -15,9 +17,56 @@ use primitive_app::{App, Change, HEIGHT, WIDTH, with_storage};
 use primitive_ui::{CAPTION, Canvas, GrayImage, HAIRLINE, Input, Rect, TextStyle};
 
 const FOOTER_HEIGHT: u32 = 74;
-pub(crate) const PAGE_HEIGHT: u32 = HEIGHT - FOOTER_HEIGHT;
-pub(crate) const SHOW_STATUS: Rect = Rect::new(8, PAGE_HEIGHT as i32 + 5, 148, 60);
-pub(crate) const DONE: Rect = Rect::new(WIDTH as i32 - 154, PAGE_HEIGHT as i32 + 5, 148, 60);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ReadingViewport {
+    width: u32,
+    height: u32,
+}
+
+impl ReadingViewport {
+    pub(crate) const PORTRAIT: Self = Self {
+        width: WIDTH,
+        height: HEIGHT,
+    };
+    #[allow(dead_code)] // The app runtime opts in after the full viewport handshake is available.
+    pub(crate) const LANDSCAPE: Self = Self {
+        width: HEIGHT,
+        height: WIDTH,
+    };
+
+    pub(crate) const fn dimensions(self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    const fn page_height(self) -> u32 {
+        self.height - FOOTER_HEIGHT
+    }
+
+    const fn show_status(self) -> Rect {
+        Rect::new(8, self.page_height() as i32 + 5, 148, 60)
+    }
+
+    const fn done(self) -> Rect {
+        Rect::new(
+            self.width as i32 - 154,
+            self.page_height() as i32 + 5,
+            148,
+            60,
+        )
+    }
+
+    fn caption(self, width: i32, font_size: i32) -> Rect {
+        let caption_region = FOOTER_HEIGHT as i32 - 14;
+        let height = font_size.saturating_add(20).clamp(30, caption_region);
+        let top = self.page_height() as i32 + (caption_region - height) / 2;
+        Rect::new(38, top, width, height)
+    }
+}
+
+pub(crate) const PAGE_HEIGHT: u32 = ReadingViewport::PORTRAIT.page_height();
+pub(crate) const SHOW_STATUS: Rect = ReadingViewport::PORTRAIT.show_status();
+pub(crate) const DONE: Rect = ReadingViewport::PORTRAIT.done();
 const FACING_GUTTER: u32 = 32;
 const FACING_PAGE_WIDTH: u32 = (WIDTH - FACING_GUTTER) / 2;
 const PREFETCH_DELAY: Duration = Duration::from_millis(480);
@@ -25,10 +74,7 @@ const PREFETCH_DELAY: Duration = Duration::from_millis(480);
 pub(crate) const PAGE_REFRESH_GAP: Duration = Duration::from_millis(450);
 
 pub(crate) fn footer_caption_rect(width: i32, font_size: i32) -> Rect {
-    let caption_region = FOOTER_HEIGHT as i32 - 14;
-    let height = font_size.saturating_add(20).clamp(30, caption_region);
-    let top = PAGE_HEIGHT as i32 + (caption_region - height) / 2;
-    Rect::new(38, top, width, height)
+    ReadingViewport::PORTRAIT.caption(width, font_size)
 }
 
 pub(crate) struct PagePaint {
@@ -69,7 +115,8 @@ impl PagePaint {
             guides.paint(&mut page, &visible);
         }
         if visible != (0..page.height) {
-            let rows = (visible.start * WIDTH) as usize..(visible.end * WIDTH) as usize;
+            let stride = page.width as usize;
+            let rows = visible.start as usize * stride..visible.end as usize * stride;
             let length = rows.len();
             page.pixels.copy_within(rows, 0);
             page.pixels.truncate(length);
@@ -80,7 +127,7 @@ impl PagePaint {
                 *pixel = 255 - *pixel;
             }
         }
-        let rect = Rect::new(0, visible.start as i32, WIDTH as i32, page.height as i32);
+        let rect = Rect::new(0, visible.start as i32, page.width as i32, page.height as i32);
         (rect, page)
     }
 }
@@ -125,6 +172,7 @@ pub(crate) struct VisiblePart {
 
 #[derive(Clone)]
 pub(crate) struct BookConfig {
+    pub(crate) viewport: ReadingViewport,
     pub(crate) user_styles: crate::user_styles::Snapshot,
     pub(crate) user_hyphenation: std::rc::Rc<crate::user_hyphenation::Rules>,
     pub(crate) engine: Engine,
@@ -675,6 +723,43 @@ impl Reading {
         config.settings = settings;
         *self = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
         Ok(())
+    }
+
+    /// Prepare a resized session without replacing the frame or reading position.
+    /// The runtime can commit it after its new canvas and the panel both accept it.
+    #[allow(dead_code)] // The first caller will be the negotiated viewport runtime.
+    pub(crate) fn prepare_viewport(&self, viewport: ReadingViewport) -> Result<Self> {
+        if self.config.facing_pages || self.probe.is_vertical() {
+            return Err("This reading layout does not support resizing yet".into());
+        }
+        let anchor = self
+            .anchor()
+            .ok_or("The current reading position is unavailable")?;
+        let mut config = self.config.clone();
+        config.viewport = viewport;
+        let (width, height) = viewport.dimensions();
+        config.settings.width = width;
+        config.settings.height = if self.config.settings.height == self.config.viewport.height {
+            height
+        } else {
+            viewport.page_height()
+        };
+        // Counts and sample positions came from the old geometry. A failed
+        // attempt must leave the currently visible session's cache untouched.
+        config.screen_pages = Default::default();
+        let candidate = Self::restore(config, self.chapter, self.page, Some(&anchor))?;
+        if candidate.probe.is_vertical() {
+            return Err("This reading layout does not support resizing yet".into());
+        }
+        let preserved = candidate.probe.anchor_top(&anchor).is_some_and(|top| {
+            candidate
+                .visible_columns()
+                .any(|(visible, _)| visible.contains(&top))
+        });
+        if !preserved || candidate.anchor().as_ref() != Some(&anchor) {
+            return Err("The new reading layout could not keep the current position".into());
+        }
+        Ok(candidate)
     }
 
     pub(crate) fn set_fonts(&mut self, fonts: Vec<PathBuf>) -> Result<()> {
@@ -1316,7 +1401,7 @@ impl Reading {
             paint,
             show_footer_separator,
             None,
-            PAGE_HEIGHT as i32,
+            self.config.viewport.page_height() as i32,
         );
     }
 
@@ -1338,6 +1423,7 @@ impl Reading {
         let page = self.marked_frame(highlights, selection, &paint);
         let Some(full) = draw_document_and_footer(
             canvas,
+            self.config.viewport,
             page,
             paint,
             hidden_status && action.is_some(),
@@ -1354,7 +1440,7 @@ impl Reading {
             canvas.text(status_rect, &caption, status_style);
         }
         if full {
-            canvas.button(DONE, action, false, false);
+            canvas.button(self.config.viewport.done(), action, false, false);
         }
     }
 
@@ -1459,7 +1545,7 @@ impl Reading {
             }
             for rows in [visible.start..start, end..visible.end] {
                 for row in rows {
-                    let start = (row * WIDTH + x) as usize;
+                    let start = (row * page.width + x) as usize;
                     let end = start + self.probe.settings.width as usize;
                     page.pixels[start..end].fill(255);
                 }
@@ -1570,6 +1656,7 @@ fn draw_highlight_rect(
 /// caller should draw the full set of regular status controls.
 pub(crate) fn draw_document_and_footer(
     canvas: &mut Canvas,
+    viewport: ReadingViewport,
     page: GrayImage,
     mut paint: PagePaint,
     hidden_status: bool,
@@ -1577,15 +1664,20 @@ pub(crate) fn draw_document_and_footer(
     footer_cover_top: i32,
 ) -> Option<bool> {
     let height = page.height;
+    let width = page.width;
+    let page_height = viewport.page_height() as i32;
     let full = paint.visible == (0..height);
     if paint.visible.end != height {
         draw_page_picture(canvas, page, paint);
         return None;
     }
-    if height == HEIGHT && hidden_status {
+    if height == viewport.height && hidden_status {
         if full {
-            draw_page_around_footer_buttons(canvas, page, paint);
-            for (rect, title) in [(SHOW_STATUS, "Status"), (DONE, "Exit")] {
+            draw_page_around_footer_buttons(canvas, viewport, page, paint);
+            for (rect, title) in [
+                (viewport.show_status(), "Status"),
+                (viewport.done(), "Exit"),
+            ] {
                 canvas.fill(rect, 255);
                 canvas.button(rect, title, false, false);
             }
@@ -1594,53 +1686,60 @@ pub(crate) fn draw_document_and_footer(
         }
         return None;
     }
-    let footer_cover_top = footer_cover_top.clamp(0, PAGE_HEIGHT as i32);
-    if height == HEIGHT {
+    let footer_cover_top = footer_cover_top.clamp(0, page_height);
+    if height == viewport.height {
         paint.visible.start = paint.visible.start.min(footer_cover_top as u32);
         paint.visible.end = footer_cover_top as u32;
         canvas.fill(
             Rect::new(
                 0,
                 footer_cover_top,
-                WIDTH as i32,
-                HEIGHT as i32 - footer_cover_top,
+                width as i32,
+                viewport.height as i32 - footer_cover_top,
             ),
             255,
         );
-    } else if footer_cover_top < PAGE_HEIGHT as i32 {
+    } else if footer_cover_top < page_height {
         paint.visible.end = footer_cover_top as u32;
         canvas.fill(
             Rect::new(
                 0,
                 footer_cover_top,
-                WIDTH as i32,
-                PAGE_HEIGHT as i32 - footer_cover_top,
+                width as i32,
+                page_height - footer_cover_top,
             ),
             255,
         );
     }
     draw_page_picture(canvas, page, paint);
     if show_footer_separator {
-        canvas.fill(Rect::new(0, PAGE_HEIGHT as i32, WIDTH as i32, 1), HAIRLINE);
+        canvas.fill(Rect::new(0, page_height, width as i32, 1), HAIRLINE);
     }
     Some(full)
 }
 
 // Canvas paints document bitmaps after its text and buttons. Keep the two controls'
 // rectangles out of the document image while retaining all surrounding page pixels.
-fn draw_page_around_footer_buttons(canvas: &mut Canvas, page: GrayImage, paint: PagePaint) {
+fn draw_page_around_footer_buttons(
+    canvas: &mut Canvas,
+    viewport: ReadingViewport,
+    page: GrayImage,
+    paint: PagePaint,
+) {
     let (rect, mut page) = paint.apply(page);
-    let bottom = SHOW_STATUS.y + SHOW_STATUS.h;
+    let status = viewport.show_status();
+    let done = viewport.done();
+    let bottom = status.y + status.h;
     let width = page.width as i32;
     let strips = [
-        Rect::new(0, SHOW_STATUS.y, SHOW_STATUS.x, SHOW_STATUS.h),
+        Rect::new(0, status.y, status.x, status.h),
         Rect::new(
-            SHOW_STATUS.x + SHOW_STATUS.w,
-            SHOW_STATUS.y,
-            DONE.x - (SHOW_STATUS.x + SHOW_STATUS.w),
-            SHOW_STATUS.h,
+            status.x + status.w,
+            status.y,
+            done.x - (status.x + status.w),
+            status.h,
         ),
-        Rect::new(DONE.x + DONE.w, DONE.y, width - (DONE.x + DONE.w), DONE.h),
+        Rect::new(done.x + done.w, done.y, width - (done.x + done.w), done.h),
         Rect::new(0, bottom, width, rect.bottom() - bottom),
     ];
     for strip in strips {
@@ -1658,7 +1757,7 @@ fn draw_page_around_footer_buttons(canvas: &mut Canvas, page: GrayImage, paint: 
             },
         );
     }
-    page.height = (SHOW_STATUS.y - rect.y) as u32;
+    page.height = (status.y - rect.y) as u32;
     page.pixels.truncate((page.width * page.height) as usize);
     canvas.picture(Rect::new(0, rect.y, width, page.height as i32), page);
 }
@@ -1675,7 +1774,9 @@ impl App for Reading {
             Some("Exit"),
             false,
             None,
-            footer_caption_rect(DONE.x.saturating_sub(60), 28),
+            self.config
+                .viewport
+                .caption(self.config.viewport.done().x.saturating_sub(60), 28),
             CAPTION,
             &[],
             &[],
@@ -1698,6 +1799,7 @@ impl App for Reading {
         } else {
             1
         };
+        let viewport = self.config.viewport;
         let direction = match input {
             Input::Sleep => {
                 self.turns.pending.clear();
@@ -1709,7 +1811,7 @@ impl App for Reading {
                 self.schedule_prefetch();
                 return Change::None;
             }
-            Input::Tap(x, y) if DONE.contains(x, y) => return Change::Exit,
+            Input::Tap(x, y) if viewport.done().contains(x, y) => return Change::Exit,
             Input::PageForward => 1,
             Input::PageBack => -1,
             Input::Swipe { dx, dy, .. } if self.scroll_top.is_some() && dy.abs() >= dx.abs() => {
@@ -1723,8 +1825,8 @@ impl App for Reading {
                     -advance
                 }
             }
-            Input::Tap(x, y) if y < self.frame.height as f32 && x < WIDTH as f32 / 3.0 => -advance,
-            Input::Tap(x, y) if y < self.frame.height as f32 && x > WIDTH as f32 * 2.0 / 3.0 => {
+            Input::Tap(x, y) if y < self.frame.height as f32 && x < viewport.width as f32 / 3.0 => -advance,
+            Input::Tap(x, y) if y < self.frame.height as f32 && x > viewport.width as f32 * 2.0 / 3.0 => {
                 advance
             }
             _ => return Change::None,
@@ -1914,11 +2016,16 @@ fn capture(probe: &mut Probe, chapter: usize, page: usize, top: Option<f32>) -> 
         start.elapsed().as_micros(),
     );
     let height = probe.settings.height;
-    if pixels.len() != (WIDTH * height) as usize {
+    let width = if frame_span(probe) == 2 {
+        WIDTH
+    } else {
+        probe.settings.width
+    };
+    if pixels.len() != (width * height) as usize {
         return Err("The page has incorrect dimensions".into());
     }
     Ok(GrayImage {
-        width: WIDTH,
+        width,
         height,
         pixels,
     })
@@ -1952,6 +2059,7 @@ mod tests {
 
     fn example(book: &str, font_size: f32, facing_pages: bool) -> Reading {
         Reading::open(BookConfig {
+            viewport: ReadingViewport::PORTRAIT,
             user_hyphenation: Default::default(),
             user_styles: Default::default(),
             chapter_offsets: Default::default(),
@@ -2709,6 +2817,7 @@ mod tests {
     #[test]
     fn enters_and_leaves_vertical_chapters_with_scroll_preference_preserved() {
         let mut reading = Reading::open(BookConfig {
+            viewport: ReadingViewport::PORTRAIT,
             user_hyphenation: Default::default(),
             user_styles: Default::default(),
             chapter_offsets: Default::default(),

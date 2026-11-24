@@ -48,6 +48,7 @@ fn css_restore_retains_canonical_focus_across_scroll_spread_reflow_and_reopen_un
     let book = book();
     for (scroll, facing_pages) in [(false, false), (true, false), (false, true)] {
         let config = BookConfig {
+            viewport: crate::session::ReadingViewport::PORTRAIT,
             user_styles: Default::default(),
             user_hyphenation: Default::default(),
             engine: Engine::Parley,
@@ -132,6 +133,7 @@ fn saved_custom_flow_markers_remain_resolved_when_publisher_css_omits_their_text
     };
     let book = book();
     let config = BookConfig {
+        viewport: crate::session::ReadingViewport::PORTRAIT,
         user_styles: Default::default(),
         user_hyphenation: Default::default(),
         engine: Engine::Parley,

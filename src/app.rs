@@ -1325,6 +1325,7 @@ impl Reader {
             .fonts_for(custom_font)
             .unwrap_or_else(|_| self.fonts.clone());
         let config = BookConfig {
+            viewport: crate::session::ReadingViewport::PORTRAIT,
             user_styles: self.style_store.data.snapshot(id)?,
             user_hyphenation: self.user_hyphenation.clone(),
             chapter_offsets: Default::default(),
@@ -9719,6 +9720,7 @@ impl App for ReaderRuntime {
 
 pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path) -> Result<()> {
     let reading = Reading::open(BookConfig {
+        viewport: crate::session::ReadingViewport::PORTRAIT,
         user_styles: Default::default(),
         user_hyphenation: Default::default(),
         chapter_offsets: Default::default(),
