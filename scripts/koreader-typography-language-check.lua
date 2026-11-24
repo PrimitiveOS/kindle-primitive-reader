@@ -27,13 +27,15 @@ view:setPageMargins(54, 54, 54, 54)
 view:setFontFace("Noto Sans")
 view:setFontSize(42)
 assert(view:loadDocument(source, false))
+local publication_language = assert(view:getDocumentProps().language)
+assert(publication_language == "eng")
 local frame = BB.new(width, height, BB.TYPE_BB8)
 local redraws = 0
 local config = Settings:wrap({})
 local doc = setmetatable({
     _document = view,
     file = source,
-    getProps = function() return { language = "eng" } end,
+    getProps = function() return { language = publication_language } end,
 }, { __index = CreDocument })
 local state = Typography:new{
     ui = {
@@ -76,7 +78,7 @@ local function option(tag)
         if tag == candidate then return state.language_submenu[i] end
     end
 end
-check({}, "eng", "en-US", true)
+check({}, publication_language, "en-US", true)
 local toggle
 for _, item in ipairs(state.menu_table) do
     if item.text == "Respect embedded lang tags" then toggle = item end

@@ -222,7 +222,7 @@ It verifies the 53 presets, publication and saved-book precedence, both
 hold choices, toggling embedded tags, and persistence. Native UK and US
 English hyphenation use different break opportunities for “laboratory”.
 The Mac Reader test verifies the corresponding break positions, independent
-language on a Vietnamese span, an unchanged selection anchor after editing,
+language on a Vietnamese span, an unchanged reading anchor after editing,
 and the same position and settings after reopening. The fixture also covers
 a numeric character reference and checks that the EPUB bytes remain intact.
 [KOReader language settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypography.lua#L700-L858) · [Native replay](../scripts/koreader-typography-language-check.lua) · [Mac tests](../src/app/typography_settings/tests.rs)
