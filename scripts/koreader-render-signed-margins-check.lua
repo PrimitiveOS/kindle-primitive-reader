@@ -38,6 +38,12 @@ local cases = {
     {phrase="wind", shade=204, side="right", outer_x=1222, inner_x=1200,
         delta={0, 0, 0, 20}, x={66, 66, 66, 66}, outside={1210, 1229}},
 }
+local clipping = {
+    {phrase="Soundings", shade=187, x=30, width=1196, original_x=54, original_width=1156},
+    {phrase="Headland", shade=170, x=0, width=1198, original_x=54, original_width=1144},
+    {phrase="Ebbward", shade=153, x=66, width=1198, original_x=66, original_width=1144},
+    {phrase="Shoals", shade=136, x=36, width=1188, original_x=54, original_width=1156},
+}
 local function find_pair(view, phrase)
     local hits = view:findAllText(phrase, false, false, 8, true, 0, 255)
     assert(#hits == 2 and view:getTextFromXPointers(hits[2].start, hits[2]["end"]) == phrase)
@@ -91,14 +97,32 @@ for mode = 0, 3 do
         print(string.format("SIGNED %s|%s|delta=%d|x=%d|w=%d|outer_ink=%d|strict_href=%s|word=%s",
             modes[mode+1], case.side, delta, left, right-left+1, outer_ink, href, quote.text))
     end
+    for _, case in ipairs(clipping) do
+        local hits = view:findAllText(case.phrase, false, false, 8, true, 0, 255)
+        assert(#hits == 1 and view:getTextFromXPointers(hits[1].start, hits[1]["end"]) == case.phrase)
+        assert(view:getPageFromXPointer(hits[1].start) == 1)
+        saved[#saved+1] = hits[1]
+        local word = assert(view:getWordBoxesFromPositions(hits[1].start, hits[1]["end"], true)[1])
+        local left, right = width, -1
+        for x = 0, width - 1 do
+            if frame:getPixel(x, word.y0 + 3):getColor8().a == case.shade then
+                left, right = math.min(left, x), math.max(right, x)
+            end
+        end
+        local span = right-left+1
+        print(string.format("CLIP %s|%s|x=%d|w=%d|word_x=%d..%d",
+            modes[mode+1], case.phrase, left, span, word.x0, word.x1))
+        assert(left == (mode == 3 and case.x or case.original_x))
+        assert(span == (mode == 3 and case.width or case.original_width))
+    end
     view:drawCurrentPage(frame, false, false, false, false)
     frame:writePNG(captures .. "/" .. modes[mode+1] .. ".png", false)
     if mode == 3 then
         for _, next_mode in ipairs{0, 1, 2, 3} do
             typeset:setBlockRenderingMode(next_mode)
             view:renderDocument()
-            for index, case in ipairs(cases) do
-                local anchor = saved[index]
+            for index, anchor in ipairs(saved) do
+                local case = cases[index] or clipping[index - #cases]
                 assert(view:getTextFromXPointers(anchor.start, anchor["end"]) == case.phrase)
                 view:gotoXPointer(anchor.start)
             end

@@ -122,6 +122,52 @@ fn publisher_signed_margins_match_native_bands_and_restore_visible_links_and_quo
     capture("reader-signed-margins.png", &inset_frame);
 }
 
+#[test]
+fn publisher_signed_margins_clip_at_the_physical_edges_without_changing_the_quote() {
+    let regular = Settings::default();
+    let mut default = open(regular, None);
+    let mut inset = open(
+        Settings {
+            publisher_signed_horizontal_margins: true,
+            ..regular
+        },
+        None,
+    );
+    let ordinary_frame = default.capture(0).unwrap();
+    let inset_frame = inset.capture(0).unwrap();
+    for (phrase, shade, painted, tap_x, fragment) in [
+        ("Soundings", 187, (30, 1196), 44, "west"),
+        ("Headland", 170, (0, 1198), 22, "west"),
+        ("Ebbward", 153, (66, 1198), 1240, "east"),
+        ("Shoals", 136, (36, 1188), 46, "west"),
+    ] {
+        assert_eq!(widest_band(&ordinary_frame, shade), (54, 1156));
+        assert_eq!(widest_band(&inset_frame, shade), painted);
+        let saved = known_quote(&default, phrase);
+        let page = inset.page_for(&saved.start).unwrap();
+        let rect = inset.selection_rects(page, &saved)[0];
+        assert!((rect.x..rect.x + rect.width).contains(&tap_x));
+        match phrase {
+            "Headland" => assert_eq!(rect.x, 0),
+            "Ebbward" => assert_eq!(rect.x + rect.width, WIDTH as i32),
+            _ => assert_eq!(rect.x, painted.0 as i32),
+        }
+        let y = (rect.y + rect.height / 2) as f32;
+        assert_eq!(inset.word_at(page, tap_x as f32, y), Some(saved.clone()));
+        assert_eq!(
+            inset
+                .link_at(page, tap_x as f32, y)
+                .unwrap()
+                .fragment
+                .as_deref(),
+            Some(fragment)
+        );
+        assert_eq!(inset.select_range(&saved.start, &saved.end), Some(saved));
+        assert!(inset.link_at(page, -1.0, y).is_none());
+        assert!(inset.link_at(page, WIDTH as f32, y).is_none());
+    }
+}
+
 fn same_frames(mut regular: Probe, mut inset: Probe) {
     assert_eq!(regular.page_count(), inset.page_count());
     for page in 0..regular.page_count() {
@@ -153,11 +199,10 @@ fn publisher_signed_margins_leave_unsupported_or_disabled_frames_unchanged() {
         ),
     );
     for css in [
-        "margin-left:-55px",
-        "margin-right:-55px",
         "margin-left:-1000000px",
-        "margin-left:-10px;margin-right:-10px",
+        "margin-right:-1000000px",
         "margin-left:-50px;margin-right:1190px",
+        "margin-left:-1150px;margin-right:1250px",
         "margin-left:-10px;width:400px",
         "margin-left:-10px;max-width:400px",
         "margin-left:-10px;padding-left:4px",
@@ -174,7 +219,7 @@ fn publisher_signed_margins_leave_unsupported_or_disabled_frames_unchanged() {
         );
     }
     let document = String::from(
-        "<html><body><section><p style='margin-right:-20px;background:#ddd'>Nested marker</p></section></body></html>",
+        "<html><body><section style='width:42%'><p style='margin-right:-20px;background:#ddd'>Nested marker</p></section></body></html>",
     );
     same_frames(
         open(regular, Some(document.clone())),

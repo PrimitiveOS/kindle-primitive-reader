@@ -145,9 +145,11 @@ pub(crate) struct Paragraph {
 }
 
 impl Paragraph {
-    fn background_columns(&self, margin: usize) -> Range<usize> {
+    fn background_columns(&self, settings: Settings) -> Range<usize> {
+        let margin = settings.left_margin() as usize;
         if self.signed_margin {
-            (margin as f32 + self.column.start) as usize..(margin as f32 + self.column.end) as usize
+            let clip = |x: f32| (margin as f32 + x).clamp(0.0, settings.width as f32) as usize;
+            clip(self.column.start)..clip(self.column.end)
         } else {
             margin + self.column.start as usize..margin + self.column.end as usize
         }
@@ -155,7 +157,7 @@ impl Paragraph {
 
     pub(crate) fn paint_columns(&self, settings: Settings) -> Range<usize> {
         if self.signed_margin {
-            self.background_columns(settings.left_margin() as usize)
+            self.background_columns(settings)
         } else {
             settings.text_columns()
         }
@@ -505,13 +507,12 @@ impl ParleyChapter {
                 .clamp(0.0, bounds_for(block).1 as f32 * 0.49) as u32
         };
         let signed_margin_candidates = if settings.publisher_signed_horizontal_margins {
-            crate::publisher_padding::text_box_candidates(source, styles, |style| {
-                crate::publisher_padding::horizontal_margins::signed_candidate(
-                    style,
-                    settings,
-                    outer_width,
-                )
-            })
+            crate::publisher_padding::horizontal_margins::signed_candidates(
+                source,
+                styles,
+                settings,
+                outer_width,
+            )
         } else {
             Vec::new()
         };
@@ -1384,7 +1385,7 @@ impl ParleyChapter {
             if let Some(gray) = paragraph.background {
                 let top = (paragraph.y - range.start).floor().max(0.0) as usize;
                 let bottom = ((paragraph.bottom - range.start).ceil() as usize).min(visible_height);
-                let band = paragraph.background_columns(margin);
+                let band = paragraph.background_columns(settings);
                 for row in top.min(bottom)..bottom {
                     page[row * stride + band.start..row * stride + band.end].fill(gray);
                 }

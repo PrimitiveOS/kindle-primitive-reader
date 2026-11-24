@@ -1,4 +1,4 @@
-"""Build the authored left and right negative inset EPUB."""
+"""Build the authored signed-margin and viewport clipping EPUB."""
 
 from pathlib import Path
 import sys
@@ -20,12 +20,20 @@ body,p { margin:0; padding:0; text-align:left; text-indent:0 }
 .leftward { margin-left:-0.5em; margin-right:12px; background:#ddd }
 .rightward { margin-left:12px; margin-right:-0.5em; background:#ccc; text-align:right }
 .rightbound { text-align:right }
+.both { margin-left:-24px; margin-right:-16px; background:#bbb }
+.leftbleed { margin-left:-74px; margin-right:12px; background:#aaa }
+.rightbleed { margin-left:12px; margin-right:-74px; background:#999; text-align:right }
+.nested { margin-left:-18px; margin-right:-14px; background:#888 }
 a { text-decoration:underline }
 </style></head><body>
 <p>Ashore, the first crew waited on the turn of the tide.</p>
 <p class="leftward"><a href="#west">Ashore</a> at low tide, leave the painted post to the west.</p>
 <p class="rightbound">The steersman writes the last word as wind</p>
 <p class="rightward">Pass the beacon before the southwest <a href="#east">wind</a></p>
+<p class="both"><a href="#west">Soundings</a> mark the narrow entrance.</p>
+<p class="leftbleed"><a href="#west">Headland</a> stands beside the channel.</p>
+<p class="rightbleed">Past the channel lies <a href="#east">Ebbward</a></p>
+<div><div><p class="nested"><a href="#west">Shoals</a> collect beside the inlet.</p></div></div>
 <p id="west">West landing instructions</p>
 <p id="east">East landing instructions</p>
 </body></html>"""

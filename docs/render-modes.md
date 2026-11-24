@@ -193,10 +193,10 @@ private list of source passages and prints only the measured shifts.
 ### One negative physical side on an auto-width paragraph
 
 An independent internal policy shapes an ordinary horizontal body paragraph
-against its signed publisher margins when exactly one side is negative and
-the whole box fits the physical screen with room for text. Its background,
-glyphs, underlines, link hits and selection rectangles use the same geometry.
-The default Reader and the positive-inset policy keep their existing frames.
+against its signed publisher margins. Its background, glyphs, underlines,
+link hits and selection rectangles use the same geometry. The first two
+authored examples extend 20 px into either user margin. The default Reader
+and the positive-inset policy keep their existing geometry.
 
 | Authored declaration at 96 DPI and 40 px font | KOReader Legacy, Flat and Book band | KOReader Web and Reader signed band |
 | --- | ---: | ---: |
@@ -209,8 +209,30 @@ Reader uses the visible linked glyphs for taps in those margins. The native
 fixture verifies both painted edges and quote restoration across the four
 stock modes. Reader tests verify the matching paint bands, exact links and
 quotes through page and scroll reading, search anchors and displayed
-highlights. Larger overflow, two negative sides, constrained widths,
-and decorated or complex boxes keep their existing layout.
+highlights.
+
+#### Two negative sides and clipping at the screen edge
+
+KOReader Web sizes each paragraph from its full signed box, including
+parts outside the physical screen. Reader also shapes the full box, then
+clips the background, characters, link underline, and highlight at the
+screen edge. The source anchor and selected quote still refer to the whole
+word. The policy also applies inside width-neutral `div`, `section`, and
+`article` wrappers with ordinary flow and no horizontal box decorations.
+
+| Authored case at 1264 px | Legacy, Flat and Book paint | Web and Reader with the signed policy |
+| --- | ---: | ---: |
+| Left −24 px, right −16 px | x = 54, width = 1,156 px | x = 30, width = 1,196 px |
+| Left −74 px, right 12 px | x = 54, width = 1,144 px | x = 0, width = 1,198 px |
+| Left 12 px, right −74 px | x = 66, width = 1,144 px | x = 66, width = 1,198 px |
+| Nested paragraph, left −18 px, right −14 px | x = 54, width = 1,156 px | x = 36, width = 1,188 px |
+
+Native source boxes extend to x = −20 on the left and x = 1284 on the
+right. The matching visible Reader highlights stop at x = 0 and x = 1264.
+The tests tap the partial words, follow their links, and restore the full
+quotes. The signed policy limits off-screen extent to one viewport per
+side and keeps its original eligibility restrictions for explicit widths,
+decorated wrappers, floats, tables, inline images, and vertical text.
 
 Run `python3 scripts/generate-render-signed-margins-fixture.py` to rebuild
 the specimen. The Lua oracle takes the same arguments as the Render Mode
@@ -218,6 +240,7 @@ probe. Run `cargo test --locked --lib publisher_signed_margins` for Reader.
 Set `READER_SIGNED_MARGIN_CAPTURES` to an existing folder to save the frames.
 [CREngine signed margin and overflow flags](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/include/lvrend.h#L209-L214) ·
 [CREngine auto-width placement](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L7985-L7988) ·
+[CREngine page overflow](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L8251-L8284) ·
 [CREngine strict link bounds](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L2597-L2671) ·
 [Native oracle](../scripts/koreader-render-signed-margins-check.lua) ·
 [KOReader Web](screenshots/render-signed-margins-stock-web.png) ·
