@@ -435,6 +435,7 @@ enum Action {
     OpenTracked(u64),
     OpenPreviousDocument,
     Browse(PathBuf),
+    CurrentBookFolder,
     Continue,
     ClearLibraryFilter,
     ListBooks(BookList),
@@ -3227,6 +3228,7 @@ impl Reader {
             Action::LibraryExport(command) => self.activate_library_export(command)?,
             Action::Open(entry) => self.open_book(entry)?,
             Action::Browse(directory) => self.browse_to(directory)?,
+            Action::CurrentBookFolder => self.current_book_folder()?,
             Action::OpenTracked(id) => {
                 let entry = self.locate_tracked(id)?;
                 self.open_book(entry)?;

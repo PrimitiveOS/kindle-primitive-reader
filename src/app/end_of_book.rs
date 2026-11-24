@@ -55,7 +55,7 @@ impl Reader {
         true
     }
 
-    fn current_document(&self) -> Option<(&LibraryBook, u64)> {
+    pub(super) fn current_document(&self) -> Option<(&LibraryBook, u64)> {
         self.fixed
             .as_ref()
             .map(|book| (&book.entry, book.id))

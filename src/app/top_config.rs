@@ -606,6 +606,10 @@ impl Reader {
             ),
         ]);
         if self.active.is_some() || self.fixed.is_some() {
+            items.insert(
+                1,
+                Item::new("Current book folder", Action::CurrentBookFolder),
+            );
             items.push(Item::new("Book details", Action::OrganizeCurrent));
         }
         items

@@ -5,7 +5,7 @@ use primitive_ui::{BLACK, HAIRLINE, Icon, PAPER, SECONDARY, back_button, chevron
 
 use super::{
     Action, BODY, CAPTION, Canvas, Change, HEIGHT, Input, Item, LIST_X, NEXT, PREV, ROW_HEIGHT,
-    Reader, Rect, Screen, WIDTH, library_book_item, with_storage,
+    Reader, Rect, Result, Screen, WIDTH, library_book_item, with_storage,
 };
 use crate::library::{BrowseEntry, BrowseKind, BrowseList};
 
@@ -48,20 +48,48 @@ impl FileBrowser {
 }
 
 impl Reader {
-    pub(super) fn browse_to(&mut self, directory: PathBuf) -> io::Result<()> {
+    fn read_browser(&self, directory: PathBuf) -> io::Result<FileBrowser> {
         let listing = with_storage(|| self.library.browse(&directory))?;
-        self.browser = FileBrowser {
+        Ok(FileBrowser {
             directory,
             listing,
             page: 0,
-        };
+        })
+    }
+
+    pub(super) fn browse_to(&mut self, directory: PathBuf) -> io::Result<()> {
+        self.browser = self.read_browser(directory)?;
         self.show(Screen::Library);
         Ok(())
     }
 
-    pub(super) fn browse_from_book(&mut self, path: &Path) -> io::Result<()> {
+    fn read_book_folder(&self, path: &Path) -> io::Result<FileBrowser> {
         let directory = path.parent().unwrap_or_else(|| Path::new("")).to_owned();
-        self.browse_to(directory)?;
+        self.read_browser(directory)
+    }
+
+    pub(super) fn current_book_folder(&mut self) -> Result<()> {
+        let path = self
+            .current_document()
+            .ok_or("No open book")?
+            .0
+            .library_path()
+            .to_owned();
+        let browser = self.read_book_folder(&path)?;
+        self.activate(Action::Show(Screen::Library))?;
+        self.browser = browser;
+        self.reveal_book_row(&path);
+        Ok(())
+    }
+
+    pub(super) fn browse_from_book(&mut self, path: &Path) -> io::Result<()> {
+        self.browser = self.read_book_folder(path)?;
+        self.show(Screen::Library);
+        self.reveal_book_row(path);
+        Ok(())
+    }
+
+    fn reveal_book_row(&mut self, path: &Path) {
         self.library_query.clear();
         if let Some(index) = self
             .browser
@@ -74,7 +102,6 @@ impl Reader {
                 self.show_continue() && self.library.recently_read().next().is_some();
             self.browser.page = (index + usize::from(continue_row)) / FILE_ROWS;
         }
-        Ok(())
     }
 
     pub(super) fn refresh_browser(&mut self) -> io::Result<()> {
@@ -428,5 +455,203 @@ fn draw_file(canvas: &mut Canvas, row: Rect, item: &Item) {
             Rect::new(row.right() - 46, row.y + (row.h - 30) / 2, 30, 30),
             ink,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::tests::{Fixture, capture_test_screen, tap_reading_control};
+    use primitive_app::{App, Lifecycle};
+    use std::fs;
+
+    fn app(fixture: &Fixture) -> Reader {
+        Reader::open(
+            &fixture.root,
+            &fixture.state,
+            vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        )
+        .unwrap()
+    }
+
+    fn visible_file(app: &Reader, path: &Path) -> bool {
+        app.library_items()
+            .skip(app.browser.page * FILE_ROWS)
+            .take(FILE_ROWS)
+            .any(|item| match item.action {
+                Action::Open(book) => book.library_path() == path,
+                Action::Browse(folder) => folder == path,
+                _ => false,
+            })
+    }
+
+    #[test]
+    fn current_book_folder_reveals_a_nested_resumed_epub_and_saves_its_bookmark() {
+        let fixture = Fixture::new();
+        let shelf = Path::new("Series/Harbor Shelf");
+        let folder = fixture.root.join(shelf);
+        fs::create_dir_all(&folder).unwrap();
+        fs::create_dir(fixture.root.join("Other books")).unwrap();
+        for volume in (1..=11).chain(std::iter::once(13)) {
+            fs::write(
+                folder.join(format!("Volume {volume}.txt")),
+                "The same harbor at dusk.",
+            )
+            .unwrap();
+        }
+        let relative = shelf.join("Volume 12.epub");
+        let book = fixture.root.join(&relative);
+        fs::copy(&fixture.book, &book).unwrap();
+
+        let mut reader = app(&fixture);
+        reader.open_path(&book).unwrap();
+        reader.follow_reflow_page(1, 0).unwrap();
+        let position = reader.current_position().unwrap();
+        let id = reader.open_book_id().unwrap();
+        reader.activate(Action::Show(Screen::Library)).unwrap();
+        reader.browse_to(PathBuf::from("Other books")).unwrap();
+        reader.library_query = "unrelated".into();
+        reader.activate(Action::Continue).unwrap();
+        assert_eq!(reader.library_query, "unrelated");
+        assert_eq!(reader.current_position(), Some(position.clone()));
+        reader.activate(Action::ToggleBookmark).unwrap();
+        assert!(reader.dirty);
+
+        reader.open_reading_edge(true, 630.0);
+        assert_eq!(tap_reading_control(&mut reader, "Library"), Change::Partial);
+        let rect = reader.reading_button("Current book folder");
+        let paths: Vec<_> = reader
+            .fonts
+            .iter()
+            .map(|font| font.display().to_string())
+            .collect();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
+        let normal = primitive_app::frame(&reader, &mut canvas, false);
+        let pressed = Lifecycle::default()
+            .press_feedback(
+                &reader,
+                &mut canvas,
+                Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32),
+                false,
+            )
+            .unwrap();
+        assert!(normal != pressed);
+        assert!(
+            normal
+                .iter()
+                .zip(&pressed)
+                .enumerate()
+                .all(|(index, (a, b))| {
+                    a == b
+                        || rect.contains(
+                            (index % WIDTH as usize) as f32,
+                            (index / WIDTH as usize) as f32,
+                        )
+                })
+        );
+        capture_test_screen(
+            &reader,
+            &reader.fonts,
+            "READER_BOOK_FOLDER_MENU_SCREENSHOT",
+            false,
+        );
+        assert_eq!(
+            tap_reading_control(&mut reader, "Current book folder"),
+            Change::Partial
+        );
+        assert_eq!(reader.screen, Screen::Library);
+        assert!(reader.open_book_id().is_none());
+        assert_eq!(reader.browser.directory, shelf);
+        assert_eq!(reader.browser.page, 1);
+        assert!(reader.library_query.is_empty());
+        assert!(visible_file(&reader, &relative));
+        capture_test_screen(
+            &reader,
+            &reader.fonts,
+            "READER_BOOK_FOLDER_SCREENSHOT",
+            false,
+        );
+
+        let mut reopened = app(&fixture);
+        assert_eq!(
+            reopened.library.state(id).unwrap().position.as_ref(),
+            Some(&position)
+        );
+        assert_eq!(reopened.library.state(id).unwrap().bookmarks.len(), 1);
+        reopened.activate(Action::Continue).unwrap();
+        assert_eq!(reopened.current_position(), Some(position));
+    }
+
+    #[test]
+    fn current_book_folder_handles_fixed_pdf_and_an_extracted_publication() {
+        let fixture = Fixture::new();
+        let folder = fixture.root.join("Reference");
+        let unpacked = folder.join("Coastal notes.epub");
+        fs::create_dir_all(&unpacked).unwrap();
+        let mut archive = zip::ZipArchive::new(fs::File::open(&fixture.book).unwrap()).unwrap();
+        for index in 0..archive.len() {
+            let mut member = archive.by_index(index).unwrap();
+            let path = unpacked.join(member.enclosed_name().unwrap());
+            if member.is_dir() {
+                fs::create_dir_all(path).unwrap();
+            } else {
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                io::copy(&mut member, &mut fs::File::create(path).unwrap()).unwrap();
+            }
+        }
+        let pdf = folder.join("Harbor charts.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        let mut reader = app(&fixture);
+
+        reader.open_path(&pdf).unwrap();
+        assert!(reader.fixed.is_some());
+        reader.activate(Action::CurrentBookFolder).unwrap();
+        assert_eq!(reader.browser.directory, Path::new("Reference"));
+        assert!(visible_file(
+            &reader,
+            Path::new("Reference/Harbor charts.pdf")
+        ));
+
+        reader.open_path(&unpacked.join("mimetype")).unwrap();
+        assert!(reader.active.is_some());
+        reader.activate(Action::CurrentBookFolder).unwrap();
+        assert_eq!(reader.browser.directory, Path::new("Reference"));
+        assert!(visible_file(
+            &reader,
+            Path::new("Reference/Coastal notes.epub")
+        ));
+    }
+
+    #[test]
+    fn current_book_folder_leaves_the_book_and_picker_intact_on_list_or_save_failure() {
+        let fixture = Fixture::new();
+        let folder = fixture.root.join("Series");
+        fs::create_dir(&folder).unwrap();
+        let file = folder.join("Field Notes.epub");
+        fs::copy(&fixture.book, &file).unwrap();
+        let mut reader = app(&fixture);
+        reader.open_path(&file).unwrap();
+        let id = reader.open_book_id();
+        let position = reader.current_position();
+        let absent = fixture.root.join("Moved");
+        fs::rename(&folder, &absent).unwrap();
+
+        assert!(reader.activate(Action::CurrentBookFolder).is_err());
+        assert_eq!(reader.screen, Screen::Book);
+        assert_eq!(reader.open_book_id(), id);
+        assert_eq!(reader.current_position(), position);
+        assert!(reader.browser.directory.as_os_str().is_empty());
+
+        fs::rename(&absent, &folder).unwrap();
+        reader.save().unwrap();
+        let backup = fixture.root.join("saved-library.json");
+        fs::rename(&fixture.state, &backup).unwrap();
+        fs::create_dir(&fixture.state).unwrap();
+        reader.activate(Action::ToggleBookmark).unwrap();
+        assert!(reader.activate(Action::CurrentBookFolder).is_err());
+        assert_eq!(reader.screen, Screen::Book);
+        assert_eq!(reader.open_book_id(), id);
+        assert_eq!(reader.current_position(), position);
+        assert!(reader.browser.directory.as_os_str().is_empty());
     }
 }
