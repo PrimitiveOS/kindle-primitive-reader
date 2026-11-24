@@ -135,6 +135,40 @@ local function stock_name(initial, new_name)
     visible.input = new_name
     choose(visible.buttons[1], "Save").callback()
 end
+local function commands_for(name)
+    for _, item in ipairs(profiles:getSubMenuItems()) do
+        if item.name == name then return item.sub_item_table end
+    end
+    error("Missing profile " .. name)
+end
+local function value_action(commands, category, label)
+    local edit
+    for _, item in ipairs(commands) do
+        if item.text_func and item.text_func():match("Edit actions") then
+            edit = item
+            break
+        end
+    end
+    assert(edit)
+    local section = choose(edit.sub_item_table_func(), category)
+    for _, item in ipairs(section.sub_item_table) do
+        if item.text_func then
+            local ok, text = pcall(item.text_func)
+            if ok and text and text:lower():sub(1, #label) == label then
+                return item
+            end
+        end
+    end
+    error("Missing editable value " .. label)
+end
+local function set_number(action, menu_instance, initial, minimum, maximum, default, value)
+    assert(action.checked_func())
+    action.callback(menu_instance)
+    assert(visible.value == initial and visible.default_value == default)
+    assert(visible.value_min == minimum and visible.value_max == maximum)
+    assert(visible.value_hold_step == 5)
+    visible.callback({value = value})
+end
 local root_menu = profiles:getSubMenuItems()
 assert(root_menu[1].text == "New" and root_menu[2].enabled)
 root_menu[1].callback(menu)
@@ -147,6 +181,12 @@ assert(text.settings.order[1] == "rotation_mode" and text.set_font == "Harbor Se
 assert(text.font_size == value("ui/data/creoptions", "font_size") and text.kopt_text_wrap == nil)
 assert(text.view_mode ~= nil and text.nightmode_images ~= nil)
 
+local text_live_spacing = profiles.document.configurable.line_spacing
+local line_spacing = value_action(commands_for("Text"), "Reflowable documents (epub, fb2, txt…)", "line spacing")
+set_number(line_spacing, menu, text_live_spacing, 50, 200, 100, 137)
+assert(text.line_spacing == 137)
+assert(profiles.document.configurable.line_spacing == text_live_spacing)
+
 profiles.ui.rolling = nil
 profiles.document = document("ui/data/koptoptions")
 profiles.document.configurable.zoom_overlap_h = 38
@@ -155,32 +195,22 @@ stock_name(nil, "PDF")
 local pdf = profiles.data.PDF
 assert(pdf.kopt_zoom_overlap_h == 38 and pdf.set_font == nil and pdf.font_size == nil)
 assert(pdf.kopt_page_scroll ~= nil and pdf.kopt_zoom_mode_genus ~= nil)
-local commands
-for _, item in ipairs(profiles:getSubMenuItems()) do if item.name == "PDF" then commands = item.sub_item_table end end
-assert(commands)
-local edit
-for _, item in ipairs(commands) do
-    if item.text_func and item.text_func():match("Edit actions") then edit = item end
-end
-assert(edit)
-local fixed = choose(edit.sub_item_table_func(), "Fixed layout documents (pdf, djvu, pics…)")
-local overlap
-for _, item in ipairs(fixed.sub_item_table) do
-    if item.text_func then
-        local ok, label = pcall(item.text_func)
-        if ok and label and label:match("^Horizontal overlap") then overlap = item; break end
-    end
-end
-assert(overlap and overlap.checked_func())
-overlap.callback(menu)
-assert(visible.value == 38 and visible.default_value == value("ui/data/koptoptions", "zoom_overlap_h"))
-visible.callback({value = 45})
-assert(pdf.kopt_zoom_overlap_h == 45)
+local commands = commands_for("PDF")
+local fixed_section = "Fixed layout documents (pdf, djvu, pics…)"
+local horizontal = value_action(commands, fixed_section, "horizontal overlap")
+local vertical = value_action(commands, fixed_section, "vertical overlap")
+local pdf_live_horizontal = profiles.document.configurable.zoom_overlap_h
+local pdf_live_vertical = profiles.document.configurable.zoom_overlap_v
+set_number(horizontal, menu, pdf_live_horizontal, 0, 84, 36, 45)
+set_number(vertical, menu, pdf_live_vertical, 0, 84, 36, 57)
+assert(pdf.kopt_zoom_overlap_h == 45 and pdf.kopt_zoom_overlap_v == 57)
+assert(profiles.document.configurable.zoom_overlap_h == pdf_live_horizontal)
+assert(profiles.document.configurable.zoom_overlap_v == pdf_live_vertical)
 choose(commands, "Duplicate").callback(menu)
 stock_name("PDF", "PDF copy")
 assert(profiles.data["PDF copy"].kopt_zoom_overlap_h == 45)
 -- Holding an action in the stock editor removes both its value and ordered step.
-overlap.hold_callback(menu)
+horizontal.hold_callback(menu)
 assert(pdf.kopt_zoom_overlap_h == nil)
 for _, key in ipairs(pdf.settings.order) do assert(key ~= "kopt_zoom_overlap_h") end
 choose(commands, "Rename: PDF").callback(menu)
@@ -196,17 +226,19 @@ profile_ui.instance = {paging = true}
 events = {}
 profiles:onProfileExecute("PDF copy", {qm_show = false})
 assert(events[1].name == "BatchedUpdate" and events[#events].name == "BatchedUpdateDone")
-assert(sent_setting("zoom_overlap_h") == 45 and sent_setting("embedded_css") == nil)
+assert(sent_setting("zoom_overlap_h") == 45 and sent_setting("zoom_overlap_v") == 57)
+assert(sent_setting("embedded_css") == nil and sent_setting("line_spacing") == pdf.kopt_line_spacing)
 events = {}
 profiles:onProfileExecute("Scanned pages", {qm_show = false})
-assert(sent_setting("zoom_overlap_h") == nil)
+assert(sent_setting("zoom_overlap_h") == nil and sent_setting("zoom_overlap_v") == 57)
 events = {}
 profiles:onProfileExecute("Text", {qm_show = false})
-assert(sent_setting("embedded_css") == nil)
+assert(sent_setting("embedded_css") == nil and sent_setting("line_spacing") == nil)
 profile_ui.instance = {rolling = true}
 events = {}
 profiles:onProfileExecute("Text", {qm_show = false})
 assert(sent_setting("embedded_css") ~= nil and sent_setting("zoom_overlap_h") == nil)
+assert(sent_setting("line_spacing") == 137 and sent_setting("zoom_overlap_v") == nil)
 for _, item in ipairs(profiles:getSubMenuItems()) do
     if item.name == "PDF copy" then commands = item.sub_item_table; break end
 end
@@ -214,4 +246,6 @@ choose(commands, "Delete").callback(menu)
 assert(profiles.data["PDF copy"] and visible.ok_text == "Delete")
 visible.ok_callback()
 assert(profiles.data["PDF copy"] == nil)
-print("Stock factory, reflow/PDF settings, action editor, rename/duplicate/delete, format gate and batched execution verified")
+print("Stock saved line spacing: 50–200%, default 100%, held step 5; profile-only change dispatches 137%.")
+print("Stock saved horizontal and vertical overlap: 0–84%, default 36%, held step 5; profile-only values dispatch independently.")
+print("Stock factory, action removal, rename/duplicate/delete, format gate and batched execution verified.")

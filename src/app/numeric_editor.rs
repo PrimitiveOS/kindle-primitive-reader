@@ -120,6 +120,7 @@ impl Reader {
                 NumberField::ContentDpi(_)
                     | NumberField::LogicalFont(_)
                     | NumberField::LineSpacing(_)
+                    | NumberField::ProfileValue(_, _)
                     | NumberField::WordSpacing(_)
             ) | Screen::FootnoteFontSize(_)
         );

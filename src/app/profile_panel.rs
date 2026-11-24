@@ -71,6 +71,9 @@ impl Reader {
             }));
             return items;
         }
+        if let Screen::ReadingProfileValues(index) = self.screen {
+            return self.profile_value_items(index);
+        }
         if let Screen::ReadingProfileFields(index) = self.screen {
             return self.profile_field_items(index);
         }
@@ -453,6 +456,8 @@ fn profile_format(profile: &Profile) -> &'static str {
         Profile::Fixed { fixed, .. } => fixed.provider.label(),
     }
 }
+
+mod values;
 
 #[cfg(test)]
 mod tests;

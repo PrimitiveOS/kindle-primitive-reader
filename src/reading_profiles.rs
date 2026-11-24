@@ -12,7 +12,9 @@ use crate::document_defaults::{FixedDefaults, validate_preferences};
 use crate::library::{BookPreferences, FixedPreferences, FixedTileAxis};
 
 mod fields;
+mod values;
 pub(crate) use fields::Field;
+pub(crate) use values::ValueField;
 
 const MAX_BYTES: u64 = 32 * 1024;
 const MAX_PROFILES: usize = 16;
@@ -227,6 +229,16 @@ impl FixedProfile {
 
     fn values(self) -> FixedPreferences {
         self.settings.apply(FixedPreferences::default())
+    }
+
+    fn set_overlap(&mut self, horizontal: bool, value: u8) {
+        let mut values = self.values();
+        if horizontal {
+            values.zoom_overlap_h = Some(value);
+        } else {
+            values.zoom_overlap_v = Some(value);
+        }
+        self.settings = FixedDefaults::from_view(values);
     }
 
     pub(crate) fn project(

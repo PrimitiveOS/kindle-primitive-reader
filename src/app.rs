@@ -289,6 +289,7 @@ enum Screen {
     ProfileName(profile_panel::Name),
     ReadingProfile(usize),
     ReadingProfileFields(usize),
+    ReadingProfileValues(usize),
     ConfirmProfile(usize, profile_panel::Confirm),
     Find,
     Matches,
@@ -390,6 +391,7 @@ impl Screen {
             Self::NumberingValue(NumberField::ContentDpi(_)) => "Content zoom",
             Self::NumberingValue(NumberField::LogicalFont(_)) => "Font size",
             Self::NumberingValue(NumberField::LineSpacing(_)) => "Line spacing",
+            Self::NumberingValue(NumberField::ProfileValue(_, field)) => field.label(),
             Self::NumberingValue(NumberField::WordSpacing(_)) => "Word spacing",
             Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
             Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
@@ -450,6 +452,7 @@ impl Screen {
             Self::ProfileName(_) => "Name reading profile",
             Self::ReadingProfile(_) | Self::ConfirmProfile(_, _) => "Reading profile",
             Self::ReadingProfileFields(_) => "Included settings",
+            Self::ReadingProfileValues(_) => "Saved profile values",
             Self::Find => "Find in book",
             Self::Matches => "Search results",
             Self::SearchSettings => "Search settings",
@@ -1834,6 +1837,7 @@ impl Reader {
         self.prepare_content_dpi_editor();
         self.prepare_logical_font_editor();
         self.prepare_line_spacing_editor();
+        self.prepare_profile_value_editor();
         self.prepare_word_spacing_editor();
         self.prepare_footnote_font_editor();
         self.map_window = fixed_book_map::MapWindow::default();
@@ -2086,6 +2090,7 @@ impl Reader {
             Screen::ReadingProfiles
                 | Screen::ReadingProfile(_)
                 | Screen::ReadingProfileFields(_)
+                | Screen::ReadingProfileValues(_)
                 | Screen::ConfirmProfile(_, _)
         ) {
             return self.reading_profile_items();
@@ -5152,6 +5157,9 @@ impl Reader {
         if let Some(change) = self.word_spacing_input(input) {
             return change;
         }
+        if let Some(change) = self.profile_value_input(input) {
+            return change;
+        }
         let navigation = if self.screen.uses_navigation_viewport() {
             self.navigation_layout()
         } else {
@@ -7362,6 +7370,9 @@ impl Reader {
                 Screen::NumberingValue(NumberField::LineSpacing(_)) => {
                     ("Line spacing: 50 to 200%", "Set")
                 }
+                Screen::NumberingValue(NumberField::ProfileValue(_, _)) => {
+                    ("Value in the saved profile", "Set")
+                }
                 Screen::NumberingValue(NumberField::WordSpacing(draft)) => (
                     match draft.field {
                         word_spacing::Field::Scaling => "Scaling: 10 to 500%",
@@ -7440,6 +7451,7 @@ impl Reader {
             self.draw_content_dpi(canvas);
             self.draw_logical_font(canvas);
             self.draw_line_spacing(canvas);
+            self.draw_profile_value_editor(canvas);
             self.draw_word_spacing(canvas);
             if self.screen == Screen::GoToPage {
                 self.draw_page_jump_context(canvas);
@@ -8021,6 +8033,7 @@ impl App for Reader {
         self.draw_archive_confirmation(canvas);
         self.draw_profile_confirmation(canvas);
         self.draw_profile_field_controls(canvas);
+        self.draw_profile_values_button(canvas);
         self.draw_list_density_picker(canvas);
         self.draw_search_results_navigation(canvas);
         self.draw_top_header_default_prompt(canvas);
@@ -8338,6 +8351,9 @@ impl App for Reader {
             return change;
         }
         self.sync_auto_turn(Instant::now());
+        if let Some(change) = self.profile_values_button_input(input) {
+            return change;
+        }
         if let Some(change) = self.profile_field_controls_input(input) {
             return change;
         }
@@ -8681,6 +8697,7 @@ impl App for Reader {
                         Screen::Library
                     }),
                     Screen::ReadingProfile(_) => self.show(Screen::ReadingProfiles),
+                    Screen::ReadingProfileValues(index) => self.show(Screen::ReadingProfile(index)),
                     Screen::BookDetails => {
                         if self
                             .book_details

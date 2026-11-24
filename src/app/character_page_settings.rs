@@ -15,6 +15,7 @@ pub(super) enum NumberField {
     ContentDpi(u64),
     LogicalFont(u64),
     LineSpacing(u64),
+    ProfileValue(usize, crate::reading_profiles::ValueField),
     WordSpacing(super::word_spacing::Draft),
     AutoTurn,
     AutoTurnOverlapHorizontal,
@@ -58,6 +59,7 @@ impl NumberField {
             | Self::LogicalFont(_)
             | Self::LineSpacing(_)
             | Self::WordSpacing(_) => Screen::Book,
+            Self::ProfileValue(index, _) => Screen::ReadingProfileValues(index),
             Self::AutoTurn => Screen::AutoTurn,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
             Self::FixedTileZoom(_) | Self::CropMargin => Screen::Fixed,
@@ -365,6 +367,9 @@ impl Reader {
             NumberField::ContentDpi(owner) => return self.apply_content_dpi(owner),
             NumberField::LogicalFont(owner) => return self.apply_logical_font_input(owner),
             NumberField::LineSpacing(owner) => return self.apply_line_spacing_input(owner),
+            NumberField::ProfileValue(index, field) => {
+                return self.apply_profile_value(index, field);
+            }
             NumberField::WordSpacing(draft) => return self.apply_word_spacing_input(draft),
             NumberField::ReadingGuide(field) => return self.set_reading_guide(field, &value),
             NumberField::AutoTurn => unreachable!("handled above"),
