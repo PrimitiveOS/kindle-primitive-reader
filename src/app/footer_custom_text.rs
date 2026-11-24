@@ -17,6 +17,7 @@ pub(crate) struct ClockTokens {
     pub(crate) short_date: String,
     pub(crate) time: String,
     pub(crate) time_with_seconds: String,
+    local_time: primitive_device::LocalTime,
 }
 
 impl ClockTokens {
@@ -26,7 +27,19 @@ impl ClockTokens {
             short_date: format!("{:02}-{:02}", time.month, time.day),
             time: format!("{:02}:{:02}", time.hour, time.minute),
             time_with_seconds: format!("{:02}-{:02}-{:02}", time.hour, time.minute, time.second),
+            local_time: time,
         }
+    }
+
+    pub(crate) fn reading_time(&self, twelve_hour_clock: bool) -> String {
+        if !twelve_hour_clock {
+            return self.time.clone();
+        }
+        let hour = self.local_time.hour;
+        let minute = self.local_time.minute;
+        let period = if hour < 12 { "AM" } else { "PM" };
+        let hour = (hour + 11) % 12 + 1;
+        format!("{hour}:{minute:02} {period}")
     }
 }
 
@@ -220,6 +233,15 @@ mod tests {
         assert_eq!(clock.short_date, "11-25");
         assert_eq!(clock.time, "01:09");
         assert_eq!(clock.time_with_seconds, "01-09-04");
+        assert_eq!(clock.reading_time(false), "01:09");
+        assert_eq!(clock.reading_time(true), "1:09 AM");
+        for (hour, display) in [(0, "12:09 AM"), (12, "12:09 PM"), (23, "11:09 PM")] {
+            let time = primitive_device::LocalTime {
+                hour,
+                ..clock.local_time
+            };
+            assert_eq!(ClockTokens::from_time(time).reading_time(true), display);
+        }
     }
 
     #[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]

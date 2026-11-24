@@ -2,9 +2,9 @@ use super::*;
 use crate::app::selection_viewport_tests::{adopt, capture};
 use crate::app::tests::{Fixture, write_outline_fixture};
 use crate::epub::Destination;
+use crate::reading_controls::FooterOrder;
 use primitive_app::App;
 use primitive_ui::Input;
-use std::fs;
 
 fn open(fixture: &Fixture, path: &std::path::Path) -> Reader {
     let fonts = vec![
@@ -16,10 +16,162 @@ fn open(fixture: &Fixture, path: &std::path::Path) -> Reader {
     app
 }
 
-fn order(items: &[FooterItem]) -> u64 {
-    items.iter().enumerate().fold(0, |order, (slot, item)| {
+fn order(items: &[FooterItem]) -> FooterOrder {
+    FooterOrder::Legacy(items.iter().enumerate().fold(0, |order, (slot, item)| {
         order | (u64::from(*item as u8) << (slot * 4))
-    })
+    }))
+}
+
+#[test]
+fn footer_hides_inactive_metrics_only_when_combined_and_restores_saved_settings() {
+    use crate::reading_controls::{FooterSeparator, TopHeader};
+
+    let fixture = Fixture::new();
+    let mut app = open(&fixture, &fixture.book);
+    let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
+    let initial = app.current_history_location();
+    let original_frame = primitive_app::frame(&app, &mut canvas, false);
+    app.activate(Action::SetDisplayLevel(DisplayLevel::FrontLight, 0))
+        .unwrap();
+    app.activate(Action::SetReadingControls(ReadingControls {
+        status_bar: StatusBar::Custom,
+        footer_items: FooterItem::BookmarkCount.bit()
+            | FooterItem::BrightnessLevel.bit()
+            | FooterItem::WarmthLevel.bit()
+            | FooterItem::PageTurningInverted.bit(),
+        footer_symbol_style: FooterSymbolStyle::Letters,
+        footer_separator: FooterSeparator::Bar,
+        ..app.controls
+    }))
+    .unwrap();
+    let setting = |app: &Reader, title| {
+        app.footer_items()
+            .into_iter()
+            .find(|item| item.title == title)
+            .unwrap()
+            .action
+    };
+    assert_eq!(
+        app.status_caption().as_deref(),
+        Some("BM: 0 bookmarks | Pg: Off | L: Off | LW: Off")
+    );
+    capture(&app, &mut canvas, "status-inactive-shown.png", false);
+    app.show(Screen::FooterSettings);
+    app.activate(setting(&app, "Hide inactive items")).unwrap();
+    app.activate(setting(&app, "12-hour clock")).unwrap();
+    app.show(Screen::Book);
+    assert_eq!(app.status_caption().as_deref(), Some(""));
+    assert!(!app.custom_footer_icons_enabled());
+    capture(&app, &mut canvas, "status-inactive-hidden.png", false);
+
+    app.activate(Action::SetDisplayLevel(DisplayLevel::FrontLight, 7))
+        .unwrap();
+    app.activate(Action::SetDisplayLevel(DisplayLevel::Warmth, 12))
+        .unwrap();
+    app.activate(Action::ToggleBookmark).unwrap();
+    assert_eq!(
+        app.status_caption().as_deref(),
+        Some("BM: 1 bookmarks | L: 7 | LW: 50%")
+    );
+    let id = app.open_book_id().unwrap();
+    let location = app.active.as_ref().unwrap().reading.anchor().unwrap();
+    let mut end = location.clone();
+    end.offset += 1;
+    app.library
+        .state_mut(id)
+        .unwrap()
+        .highlights
+        .push(crate::library::Highlight {
+            updated_at: None,
+            chapter_title: None,
+            created_at: None,
+            style: Default::default(),
+            color: Default::default(),
+            selection: crate::selection::TextSelection {
+                start: location,
+                end,
+                text: "A".into(),
+            },
+            note: Some("A saved note".into()),
+        });
+    assert_eq!(
+        app.status_caption().as_deref(),
+        Some("BM: 2 bookmarks | L: 7 | LW: 50%")
+    );
+    app.activate(setting(&app, "Move up: Warmth level"))
+        .unwrap();
+    assert_eq!(
+        app.status_caption().as_deref(),
+        Some("BM: 2 bookmarks | LW: 50% | L: 7")
+    );
+    app.notice = None;
+    capture(&app, &mut canvas, "status-active-readouts.png", false);
+    app.activate(Action::SetReadingControls(ReadingControls {
+        footer_symbol_style: FooterSymbolStyle::Icons,
+        ..app.controls
+    }))
+    .unwrap();
+    assert!(app.custom_footer_icons_enabled());
+    capture(&app, &mut canvas, "status-active-icons.png", false);
+    app.activate(Action::SetReadingControls(ReadingControls {
+        footer_symbol_style: FooterSymbolStyle::Letters,
+        ..app.controls
+    }))
+    .unwrap();
+
+    app.activate(Action::SetDisplayLevel(DisplayLevel::FrontLight, 0))
+        .unwrap();
+    app.activate(setting(&app, "Cycle custom items")).unwrap();
+    assert!(
+        app.footer_items()
+            .iter()
+            .all(|row| row.title != "Hide inactive items")
+    );
+    let (_, height) = app.reading_viewport().dimensions();
+    assert_eq!(
+        app.input(Input::Tap(130.0, (height - 32) as f32)),
+        Change::Partial
+    );
+    assert_eq!(app.status_caption().as_deref(), Some("Pg: Off"));
+    assert_eq!(
+        app.input(Input::Tap(130.0, (height - 32) as f32)),
+        Change::Partial
+    );
+    assert_eq!(app.status_caption().as_deref(), Some("LW: Off"));
+    assert_eq!(app.current_history_location(), initial);
+
+    let saved = ReadingControls::load(&app.controls_path, true);
+    assert!(saved.footer_hide_inactive && saved.twelve_hour_clock);
+    assert_eq!(saved.footer_order, app.controls.footer_order);
+    let preset = super::super::footer_presets::Preset::capture(
+        "Quiet status".into(),
+        saved,
+        None,
+        Default::default(),
+    );
+    let restored = preset.apply(ReadingControls::default()).0;
+    assert!(restored.footer_hide_inactive);
+    assert_eq!(restored.footer_items, saved.footer_items);
+    assert_eq!(restored.footer_order, saved.footer_order);
+    app.save().unwrap();
+    let mut reopened = open(&fixture, &fixture.book);
+    assert_eq!(reopened.controls, saved);
+    assert_eq!(reopened.library.state(id).unwrap().bookmarks.len(), 1);
+    reopened.activate(Action::ToggleBookmark).unwrap();
+    reopened.library.state_mut(id).unwrap().highlights.clear();
+    reopened.notice = None;
+    let mut reopened_canvas = adopt(&mut reopened, ReadingViewport::PORTRAIT, 1);
+    reopened
+        .activate(Action::SetReadingControls(ReadingControls {
+            status_bar: StatusBar::Chapter,
+            top_header: TopHeader::default(),
+            ..reopened.controls
+        }))
+        .unwrap();
+    assert!(
+        primitive_app::frame(&reopened, &mut reopened_canvas, false) == original_frame,
+        "the restored default reading frame differs"
+    );
 }
 
 #[test]

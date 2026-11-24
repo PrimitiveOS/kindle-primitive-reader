@@ -160,7 +160,7 @@ impl Reader {
             return None;
         }
         let progress = self.footer_progress()?;
-        let items = self.custom_footer_parts(&progress, None);
+        let items = self.custom_footer_parts(&progress, None, true);
         if items.is_empty() {
             return None;
         }

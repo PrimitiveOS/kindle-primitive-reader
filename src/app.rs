@@ -16340,7 +16340,7 @@ mod tests {
                 StatusBar::BookTime => assert!(app.status_caption().unwrap().contains("in book")),
                 StatusBar::Custom => {
                     app.activate(Action::ToggleBookmark).unwrap();
-                    let footer_order = (0..9).fold(0, |order, _| {
+                    let footer_order = (0..9).fold(Default::default(), |order, _| {
                         FooterItem::move_order(order, FooterItem::BookmarkCount, -1)
                     });
                     app.activate(Action::SetReadingControls(ReadingControls {

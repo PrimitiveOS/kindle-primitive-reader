@@ -36,12 +36,40 @@ and narrow fallback, cycle, presets, reopening, and the original
 chapter-and-page footer frame. [Native stock replay](../scripts/koreader-footer-composition-check.lua) ·
 [Reader regression tests](../src/app/reading_footer/composition_tests.rs)
 
-The custom footer has 16 selectable items. The stock light, warmth,
-memory and Wi-Fi indicators, plug-in supplied items, and physical E Ink
+The custom footer has 18 selectable items, including [brightness and warmth](#inactive-items-and-clock).
+Memory and Wi-Fi indicators, plug-in supplied items, and physical E Ink
 verification remain open.
+
+## Inactive items and clock
+
+**Reading status bar → Hide inactive items** applies when custom items
+share the footer. It hides brightness and warmth when the front light is
+off, the bookmark count when the book has no annotations, and the page-turn
+inversion item while the turn direction is normal. Active items reappear
+with their separators. Cycling shows each item's value or **Off**.
+[KOReader inactive-item setting](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerfooter.lua#L1529-L1547)
+
+**Brightness level** shows the Kindle light level. **Warmth level** shows
+a percentage on devices with the warmth control. Both use the same readings
+as Reader Quick Settings. **12-hour clock** changes the clock in the
+optional EPUB header and the Current time footer item. The device's date,
+time zone, and clock are configured in Launcher. Custom-text date and time
+tokens retain their documented formats.
+[KOReader front light and warmth generators](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerfooter.lua#L145-L178) ·
+[KOReader clock format](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/datetime.lua#L239-L263)
+
+The Mac replay compares active, inactive and cycling readings, saved settings,
+legacy order migration, and a pixel-identical return to the default chapter
+footer. The native KOReader replay uses the pinned stock generators with
+simulated hardware values and deterministic civil time. Physical light,
+warmth, and E Ink updates remain for the Kindle run.
+[Stock replay](../scripts/koreader-footer-inactive-items-check.lua) ·
+[Inactive items shown](screenshots/status-inactive-shown.png) ·
+[Inactive items hidden](screenshots/status-inactive-hidden.png) ·
+[Active items with icons](screenshots/status-active-icons.png)
 
 To replay the Mac workflows and write the simulator capture, create an
 output directory and set it before running the tests.
 
     READER_SELECTION_VIEWPORT_CAPTURES="$output" \
-      cargo test --locked --features kindle --lib footer_composition
+      cargo test --locked --features kindle --lib app::reading_footer::composition_tests

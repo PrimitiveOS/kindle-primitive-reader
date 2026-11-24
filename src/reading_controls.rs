@@ -189,10 +189,10 @@ pub(crate) struct ReadingControls {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contents_dot_leaders: Option<bool>,
     /// Bitset of reading metrics shown when `status_bar` is `Custom`.
-    #[serde(default, skip_serializing_if = "is_zero_u16")]
-    pub footer_items: u16,
-    #[serde(default, skip_serializing_if = "is_zero_u64")]
-    pub footer_order: u64,
+    #[serde(skip_serializing_if = "is_zero_u32")]
+    pub footer_items: u32,
+    #[serde(skip_serializing_if = "FooterOrder::is_default")]
+    pub footer_order: FooterOrder,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footer_item_cycle: Option<FooterItemCycle>,
     #[serde(skip_serializing_if = "FooterSeparator::is_default")]
@@ -226,6 +226,11 @@ pub(crate) struct ReadingControls {
     pub footer_initial_marker: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub footer_auto_refresh: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub footer_hide_inactive: bool,
+    /// Use a 12-hour display clock in Reader. The device's clock and time zone remain system settings.
+    #[serde(skip_serializing_if = "is_false")]
+    pub twelve_hour_clock: bool,
     /// Hide the custom footer battery item when the charge is above this level; absent keeps 100%.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footer_battery_hide_threshold: Option<u8>,
@@ -769,10 +774,12 @@ pub(crate) enum FooterItem {
     CustomText,
     ChapterProgress,
     DynamicFiller,
+    BrightnessLevel,
+    WarmthLevel,
 }
 
 impl FooterItem {
-    pub(crate) const ALL: [Self; 16] = [
+    pub(crate) const ALL: [Self; 18] = [
         Self::CurrentPage,
         Self::ChapterTitle,
         Self::BookProgress,
@@ -789,36 +796,41 @@ impl FooterItem {
         Self::CustomText,
         Self::ChapterProgress,
         Self::DynamicFiller,
+        Self::BrightnessLevel,
+        Self::WarmthLevel,
     ];
 
-    pub(crate) const DEFAULT_MASK: u16 =
+    pub(crate) const DEFAULT_MASK: u32 =
         Self::CurrentPage.bit() | Self::BookProgress.bit() | Self::ChapterPagesLeft.bit();
 
-    pub(crate) const fn bit(self) -> u16 {
-        1 << self as u16
+    pub(crate) const fn bit(self) -> u32 {
+        1 << self as u8
     }
 
-    pub(crate) fn ordered(order: u64) -> Vec<Self> {
-        let mut items = Vec::with_capacity(Self::ALL.len());
-        let mut seen = 0u16;
-        for position in 0..Self::ALL.len() {
-            let value = ((order >> (position * 4)) & 0xf) as usize;
-            if let Some(item) = Self::ALL.get(value)
-                && seen & item.bit() == 0
-            {
-                items.push(*item);
+    pub(crate) fn ordered(order: FooterOrder) -> [Self; Self::ALL.len()] {
+        let mut items = Self::ALL;
+        let mut seen = 0u32;
+        let mut count = 0;
+        let mut append = |item: Self| {
+            if seen & item.bit() == 0 {
+                items[count] = item;
+                count += 1;
                 seen |= item.bit();
             }
-        }
-        for item in Self::ALL {
-            if seen & item.bit() == 0 {
-                items.push(item);
+        };
+        match order {
+            FooterOrder::Legacy(packed) => {
+                for position in 0..16 {
+                    append(Self::ALL[((packed >> (position * 4)) & 0xf) as usize]);
+                }
             }
+            FooterOrder::Explicit(explicit) => explicit.into_iter().for_each(&mut append),
         }
+        Self::ALL.into_iter().for_each(&mut append);
         items
     }
 
-    pub(crate) fn move_order(order: u64, item: Self, direction: i8) -> u64 {
+    pub(crate) fn move_order(order: FooterOrder, item: Self, direction: i8) -> FooterOrder {
         let mut items = Self::ordered(order);
         let Some(index) = items.iter().position(|candidate| *candidate == item) else {
             return order;
@@ -832,12 +844,7 @@ impl FooterItem {
             return order;
         };
         items.swap(index, target);
-        items
-            .iter()
-            .enumerate()
-            .fold(0u64, |packed, (position, item)| {
-                packed | (u64::from(*item as u8) << (position * 4))
-            })
+        FooterOrder::Explicit(items)
     }
 
     pub(crate) fn can_cycle(self) -> bool {
@@ -862,19 +869,38 @@ impl FooterItem {
             Self::CustomText => "Custom text",
             Self::ChapterProgress => "Current page in chapter",
             Self::DynamicFiller => "Dynamic filler",
+            Self::BrightnessLevel => "Brightness level",
+            Self::WarmthLevel => "Warmth level",
         }
     }
 }
 
-fn is_zero_u16(value: &u16) -> bool {
+/// The existing numeric order stores sixteen four-bit item indexes. Explicit
+/// orders support newer items while still opening old settings and presets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub(crate) enum FooterOrder {
+    Legacy(u64),
+    Explicit([FooterItem; FooterItem::ALL.len()]),
+}
+
+impl Default for FooterOrder {
+    fn default() -> Self {
+        Self::Legacy(0)
+    }
+}
+
+impl FooterOrder {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+fn is_zero_u32(value: &u32) -> bool {
     *value == 0
 }
 
 fn is_zero_u8(value: &u8) -> bool {
-    *value == 0
-}
-
-fn is_zero_u64(value: &u64) -> bool {
     *value == 0
 }
 
@@ -940,7 +966,9 @@ impl FooterSymbolStyle {
                 | FooterItem::PageTurningInverted
                 | FooterItem::CustomText
                 | FooterItem::ChapterProgress
-                | FooterItem::DynamicFiller => "",
+                | FooterItem::DynamicFiller
+                | FooterItem::BrightnessLevel
+                | FooterItem::WarmthLevel => "",
             },
             Self::Letters => match item {
                 FooterItem::CurrentPage => "P: ",
@@ -955,6 +983,8 @@ impl FooterSymbolStyle {
                 FooterItem::BookmarkCount => "BM: ",
                 FooterItem::CurrentTime => "",
                 FooterItem::BatteryPercentage => "B: ",
+                FooterItem::BrightnessLevel => "L: ",
+                FooterItem::WarmthLevel => "LW: ",
                 FooterItem::PageTurningInverted => "Pg: ",
                 FooterItem::CustomText => "CT: ",
                 FooterItem::ChapterProgress | FooterItem::DynamicFiller => "",
@@ -970,6 +1000,8 @@ impl FooterSymbolStyle {
                 FooterItem::BookTitle | FooterItem::Author | FooterItem::CurrentTime => "",
                 FooterItem::BookmarkCount => "BM ",
                 FooterItem::BatteryPercentage => "B ",
+                FooterItem::BrightnessLevel => "L ",
+                FooterItem::WarmthLevel => "W ",
                 FooterItem::PageTurningInverted => "⇄ ",
                 FooterItem::CustomText
                 | FooterItem::ChapterProgress
@@ -1673,7 +1705,9 @@ mod tests {
         assert!(reopened.footer_item_bold);
         assert_eq!(reopened.footer_symbol_style, FooterSymbolStyle::Letters);
         assert_eq!(FooterItem::BatteryPercentage.label(), "Battery percentage");
-        assert!(FooterItem::ordered(0).contains(&FooterItem::BatteryPercentage));
+        assert!(
+            FooterItem::ordered(FooterOrder::default()).contains(&FooterItem::BatteryPercentage)
+        );
 
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
         assert_eq!(legacy.status_bar, StatusBar::Chapter);
@@ -1930,7 +1964,7 @@ mod tests {
 
     #[test]
     fn footer_item_order_moves_metrics_and_repairs_partial_or_duplicate_orders() {
-        let mut order = 0;
+        let mut order = FooterOrder::default();
         for _ in 0..9 {
             order = FooterItem::move_order(order, FooterItem::BookmarkCount, -1);
         }
@@ -1952,8 +1986,15 @@ mod tests {
         assert_eq!(FooterItem::ordered(reopened.footer_order), ordered);
 
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
-        assert_eq!(legacy.footer_order, 0);
-        assert_eq!(FooterItem::ordered(0), FooterItem::ALL);
+        assert_eq!(legacy.footer_order, FooterOrder::Legacy(0));
+        assert_eq!(FooterItem::ordered(FooterOrder::Legacy(0)), FooterItem::ALL);
+        let legacy: ReadingControls =
+            serde_json::from_str(r#"{"footer_order":9,"footer_items":512}"#).unwrap();
+        let ordered = FooterItem::ordered(legacy.footer_order);
+        assert_eq!(ordered[0], FooterItem::BookmarkCount);
+        assert_eq!(ordered[1], FooterItem::CurrentPage);
+        assert_eq!(legacy.footer_items, FooterItem::BookmarkCount.bit());
+        assert!(!legacy.footer_hide_inactive && !legacy.twelve_hour_clock);
     }
 
     #[test]

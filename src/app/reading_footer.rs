@@ -3,6 +3,7 @@ mod filler;
 
 use super::character_page_settings::NumberField;
 use super::progress_markers::MarkerPages;
+use super::quick_display::DisplayLevel;
 use super::{Action, ActiveFixed, Item, Reader, Screen};
 use crate::Probe;
 use crate::fixed_session::FixedReading;
@@ -65,6 +66,8 @@ fn footer_item_icon(item: FooterItem, inverted: bool) -> Option<Icon> {
         FooterItem::Author => FOOTER_AUTHOR_ICON,
         FooterItem::BookmarkCount => super::bar_icons::BOOKMARK,
         FooterItem::BatteryPercentage => FOOTER_BATTERY_ICON,
+        FooterItem::BrightnessLevel => primitive_ui::icons::SUN,
+        FooterItem::WarmthLevel => primitive_ui::icons::WARMTH,
         FooterItem::PageTurningInverted => {
             if inverted {
                 PAGE_TURN_INVERTED_ICON
@@ -468,6 +471,29 @@ fn battery_footer_text(level: u32, charging: bool, hide_above: u8) -> Option<Str
     }
     let label = if charging { "Charging" } else { "Battery" };
     Some(format!("{label} {level}%"))
+}
+
+fn light_footer_text(
+    brightness: Option<u32>,
+    warmth: Option<u32>,
+    control: DisplayLevel,
+    hide_inactive: bool,
+) -> Option<String> {
+    let brightness = brightness?;
+    let value = match control {
+        DisplayLevel::FrontLight => format!("{brightness}"),
+        DisplayLevel::Warmth => {
+            let warmth = warmth?;
+            let scale = primitive_app::kindle_device::LEVEL_MAX;
+            let percent = (warmth.min(scale) * 100 + scale / 2) / scale;
+            format!("{percent}%")
+        }
+    };
+    if brightness == 0 {
+        (!hide_inactive).then(|| "Off".to_owned())
+    } else {
+        Some(value)
+    }
 }
 
 pub(super) fn battery_symbol(level: u32, charging: bool, fully_charged: bool) -> String {
@@ -1038,8 +1064,11 @@ impl Reader {
 
         let mut status = Vec::new();
         if header.clock {
-            if let Some(time) = local_footer_time() {
-                status.push(time);
+            if let Some(clock) = super::footer_custom_text::local_clock() {
+                status.push(format!(
+                    "Time {}",
+                    clock.reading_time(self.controls.twelve_hour_clock)
+                ));
             }
         }
         if header.page_number || header.page_count {
@@ -1385,6 +1414,7 @@ impl Reader {
         &self,
         progress: &Progress<'_>,
         cycle: Option<FooterItemCycle>,
+        all_items: bool,
     ) -> Vec<(FooterItem, String, bool)> {
         let (entry, id) = if let Some(book) = &self.fixed {
             (&book.entry, book.id)
@@ -1542,6 +1572,7 @@ impl Reader {
             }
         };
         let mut items = Vec::new();
+        let hide_inactive = all_items && self.controls.footer_hide_inactive;
         for item in FooterItem::ordered(self.controls.footer_order) {
             if self.controls.footer_items & item.bit() == 0
                 || !item.can_cycle()
@@ -1586,22 +1617,46 @@ impl Reader {
                     .map(str::trim)
                     .filter(|author| !author.is_empty())
                     .map(str::to_owned),
-                FooterItem::BookmarkCount => Some(format!(
-                    "{} bookmarks",
-                    self.library
-                        .state(id)
-                        .map_or(0, |state| state.bookmarks.len())
-                )),
-                FooterItem::CurrentTime => clock().map(|time| format!("Time {}", time.time)),
+                FooterItem::BookmarkCount => {
+                    let count = self.library.state(id).map_or(0, |state| {
+                        state.bookmarks.len() + state.highlights.len() + state.pdf_highlights.len()
+                    });
+                    (!hide_inactive || count > 0).then(|| format!("{count} bookmarks"))
+                }
+                FooterItem::CurrentTime => clock().map(|clock| {
+                    format!(
+                        "Time {}",
+                        clock.reading_time(self.controls.twelve_hour_clock)
+                    )
+                }),
                 FooterItem::BatteryPercentage => {
                     let status = battery();
                     status.percent.and_then(|percent| {
                         battery_footer_text(
                             percent,
                             status.charging,
-                            self.controls.footer_battery_hide_threshold.unwrap_or(100),
+                            if all_items {
+                                self.controls.footer_battery_hide_threshold.unwrap_or(100)
+                            } else {
+                                100
+                            },
                         )
                     })
+                }
+                FooterItem::BrightnessLevel | FooterItem::WarmthLevel => light_footer_text(
+                    self.quick_display.level(DisplayLevel::FrontLight),
+                    self.quick_display.level(DisplayLevel::Warmth),
+                    if item == FooterItem::BrightnessLevel {
+                        DisplayLevel::FrontLight
+                    } else {
+                        DisplayLevel::Warmth
+                    },
+                    hide_inactive,
+                ),
+                FooterItem::PageTurningInverted
+                    if hide_inactive && !self.page_turning_inverted() =>
+                {
+                    None
                 }
                 FooterItem::PageTurningInverted => match self.controls.footer_symbol_style {
                     FooterSymbolStyle::Icons | FooterSymbolStyle::Compact => Some(String::new()),
@@ -1634,14 +1689,13 @@ impl Reader {
     }
 
     fn custom_footer_caption(&self, progress: &Progress<'_>) -> String {
-        let items = self.custom_footer_parts(progress, self.controls.footer_item_cycle);
+        let cycle = self.controls.footer_item_cycle;
+        let items = self.custom_footer_parts(progress, cycle, cycle.is_none());
         if items.is_empty() {
-            if self.controls.footer_item_cycle.is_some()
-                || self.controls.footer_items & FooterItem::DynamicFiller.bit() != 0
-            {
-                String::new()
-            } else {
+            if cycle.is_none() && self.controls.footer_items == 0 {
                 "No items selected".to_owned()
+            } else {
+                String::new()
             }
         } else {
             let separator = self.controls.footer_separator.text();
@@ -1668,7 +1722,8 @@ impl Reader {
         self.controls.status_bar == StatusBar::Custom
             && self.controls.footer_symbol_style == FooterSymbolStyle::Icons
             && self.footer_progress().is_some_and(|progress| {
-                self.custom_footer_parts(&progress, self.controls.footer_item_cycle)
+                let cycle = self.controls.footer_item_cycle;
+                self.custom_footer_parts(&progress, cycle, cycle.is_none())
                     .iter()
                     .any(|(item, _, _)| {
                         footer_item_icon(*item, self.page_turning_inverted()).is_some()
@@ -1680,7 +1735,8 @@ impl Reader {
         let Some(progress) = self.footer_progress() else {
             return 0;
         };
-        self.custom_footer_parts(&progress, self.controls.footer_item_cycle)
+        let cycle = self.controls.footer_item_cycle;
+        self.custom_footer_parts(&progress, cycle, cycle.is_none())
             .iter()
             .filter(|(item, _, _)| footer_item_icon(*item, self.page_turning_inverted()).is_some())
             .count() as i32
@@ -1697,7 +1753,8 @@ impl Reader {
         let Some(progress) = self.footer_progress() else {
             return;
         };
-        let items = self.custom_footer_parts(&progress, self.controls.footer_item_cycle);
+        let cycle = self.controls.footer_item_cycle;
+        let items = self.custom_footer_parts(&progress, cycle, cycle.is_none());
         let separator = self.controls.footer_separator.text();
         let mut x = status_rect.x;
         let right = status_rect.right();
@@ -1956,7 +2013,7 @@ impl Reader {
     fn available_custom_footer_items(&self) -> Vec<FooterItem> {
         match self.footer_progress() {
             Some(progress) => self
-                .custom_footer_parts(&progress, None)
+                .custom_footer_parts(&progress, None, false)
                 .into_iter()
                 .map(|(item, _, _)| item)
                 .collect(),
@@ -2316,6 +2373,14 @@ impl Reader {
             ),
             Item::new("Header font size", Action::EditHeaderFontSize)
                 .detail(format!("{} px", header.font_size())),
+            setting(
+                "12-hour clock",
+                on_off(c.twelve_hour_clock),
+                ReadingControls {
+                    twelve_hour_clock: !c.twelve_hour_clock,
+                    ..c
+                },
+            ),
         ]);
         if c.status_bar == StatusBar::Custom {
             let cycle = c.footer_item_cycle.is_none().then(|| FooterItemCycle {
@@ -2402,7 +2467,30 @@ impl Reader {
                     ..c
                 },
             ));
+            if c.footer_item_cycle.is_none() {
+                items.push(setting(
+                    "Hide inactive items",
+                    on_off(c.footer_hide_inactive),
+                    ReadingControls {
+                        footer_hide_inactive: !c.footer_hide_inactive,
+                        ..c
+                    },
+                ));
+            }
             for item in FooterItem::ordered(c.footer_order) {
+                let available = match item {
+                    FooterItem::BrightnessLevel => {
+                        self.quick_display.level(DisplayLevel::FrontLight).is_some()
+                    }
+                    FooterItem::WarmthLevel => {
+                        self.quick_display.level(DisplayLevel::FrontLight).is_some()
+                            && self.quick_display.level(DisplayLevel::Warmth).is_some()
+                    }
+                    _ => true,
+                };
+                if !available {
+                    continue;
+                }
                 let enabled = c.footer_items & item.bit() != 0;
                 let mut row = setting(
                     item.label(),
@@ -2421,7 +2509,9 @@ impl Reader {
                 }
                 items.push(row);
             }
-            if c.footer_items & FooterItem::BatteryPercentage.bit() != 0 {
+            if c.footer_item_cycle.is_none()
+                && c.footer_items & FooterItem::BatteryPercentage.bit() != 0
+            {
                 items.push(
                     Item::new(
                         "Hide battery when above",
@@ -2522,20 +2612,29 @@ fn current_unix_seconds() -> Option<i64> {
     None
 }
 
-#[cfg(feature = "kindle")]
-fn local_footer_time() -> Option<String> {
-    let time = primitive_device::local_time_at(current_unix_seconds()?)?;
-    Some(format!("Time {:02}:{:02}", time.hour, time.minute))
-}
-
-#[cfg(not(feature = "kindle"))]
-fn local_footer_time() -> Option<String> {
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn footer_readouts_distinguish_unsupported_light_from_off_and_zero_warmth() {
+        let render = |brightness, warmth, control, hide| {
+            light_footer_text(brightness, warmth, control, hide)
+        };
+        assert_eq!(
+            render(None, Some(12), DisplayLevel::FrontLight, false),
+            None
+        );
+        assert_eq!(render(Some(0), None, DisplayLevel::Warmth, false), None);
+        assert_eq!(
+            render(Some(1), Some(0), DisplayLevel::Warmth, true).as_deref(),
+            Some("0%")
+        );
+        assert_eq!(
+            render(Some(1), Some(23), DisplayLevel::Warmth, true).as_deref(),
+            Some("96%")
+        );
+    }
 
     #[test]
     fn battery_footer_text_reports_level_and_charging_state() {

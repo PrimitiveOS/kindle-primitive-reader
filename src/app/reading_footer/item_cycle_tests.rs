@@ -34,7 +34,7 @@ fn footer_item_cycle_uses_enabled_order_and_keeps_the_reading_location() {
     app.activate(Action::SetReadingControls(ReadingControls {
         status_bar: StatusBar::Custom,
         footer_items: selected,
-        footer_order: order,
+        footer_order: crate::reading_controls::FooterOrder::Legacy(order),
         ..app.controls
     }))
     .unwrap();

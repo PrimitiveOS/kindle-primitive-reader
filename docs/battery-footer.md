@@ -5,9 +5,10 @@ while plugged in it shows `Charging 57%`. Enable **Battery percentage** under
 Reading Status Bar → Visible status items. The item is optional and off by
 default. **Hide battery when above** sets a 0–100% threshold, default 100%; the
 item hides only when the charge is strictly above that value, then reappears as
-the battery falls. Its battery check uses the existing **Auto refresh items**
-setting; refresh pauses while the device sleeps and stops when the item is
-disabled.
+the battery falls. The threshold applies when the footer shows all selected
+items together. A footer that cycles through individual items can still show
+the battery above the threshold. The battery check uses **Auto refresh items**.
+Refresh pauses while the device sleeps and stops when the item is disabled.
 
 ![Battery percentage enabled in the custom reading footer settings](screenshots/battery-footer-settings.png)
 
