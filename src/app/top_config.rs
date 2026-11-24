@@ -257,6 +257,7 @@ impl Reader {
             1,
             Item::new("Reading profiles", Action::Show(Screen::ReadingProfiles)),
         );
+        items.insert(2, self.reading_guide_entry());
         items
     }
 
@@ -299,6 +300,7 @@ impl Reader {
                 Action::ReversePageDirection,
             ));
         }
+        items.push(self.reading_guide_entry());
         items
     }
 

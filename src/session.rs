@@ -32,6 +32,7 @@ pub(crate) fn footer_caption_rect(width: i32, font_size: i32) -> Rect {
 }
 
 pub(crate) struct PagePaint {
+    pub reading_guides: Option<crate::app::reading_guides::Lines>,
     pub selection_color: Option<crate::highlight_style::HighlightColor>,
     pub highlight_appearance: crate::highlight_style::Appearance,
     pub note_marker: crate::highlight_style::NoteMarker,
@@ -44,6 +45,7 @@ pub(crate) struct PagePaint {
 impl PagePaint {
     pub fn full(inverted: bool) -> Self {
         Self {
+            reading_guides: None,
             selection_color: None,
             highlight_appearance: Default::default(),
             note_marker: Default::default(),
@@ -58,10 +60,14 @@ impl PagePaint {
             visible,
             header_height,
             inverted,
+            reading_guides,
             ..
         } = self;
         let end = visible.end.min(page.height);
         let visible = visible.start.max(header_height).min(end)..end;
+        if let Some(guides) = reading_guides {
+            guides.paint(&mut page, &visible);
+        }
         if visible != (0..page.height) {
             let rows = (visible.start * WIDTH) as usize..(visible.end * WIDTH) as usize;
             let length = rows.len();
@@ -1674,6 +1680,7 @@ impl App for Reading {
             &[],
             &[],
             PagePaint {
+                reading_guides: None,
                 selection_color: None,
                 highlight_appearance: Default::default(),
                 note_marker: Default::default(),

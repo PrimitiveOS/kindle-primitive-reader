@@ -44,6 +44,7 @@ const CROP: Icon = line(&["M7 3 V17 H21 M3 7 H17 V21"]);
 const DISPLAY: Icon = line(&["M3 5 H21 V17 H3 Z M8 21 H16 M12 17 V21"]);
 const SLIDERS: Icon = icons::SETTINGS;
 const READFLOW: Icon = line(&["M5 6 H19 M5 10 H19 M5 14 H19 M5 18 H13"]);
+const READING_GUIDES: Icon = line(&["M5 4 V20 M19 4 V20 M9 9 H15 M9 13 H15 M9 17 H13"]);
 const FAVORITE: Icon = line(&[
     "M12 4 L14.4 9.2 L20 9.8 L15.8 13.6 L17 19.2 L12 16.3 L7 19.2 L8.2 13.6 L4 9.8 L9.6 9.2 Z",
 ]);
@@ -77,6 +78,7 @@ pub(super) fn panel_icon(panel: BarPanel) -> Icon {
 
 pub(super) fn action_icon(action: &Action) -> Icon {
     match action {
+        Action::Show(Screen::ReadingGuides) => READING_GUIDES,
         Action::Show(Screen::Library | Screen::OrganizeLibrary) | Action::CurrentBookFolder => {
             FOLDER
         }

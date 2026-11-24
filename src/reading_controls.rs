@@ -22,6 +22,8 @@ pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct ReadingControls {
+    #[serde(skip_serializing_if = "crate::app::reading_guides::Settings::is_default")]
+    pub reading_guides: crate::app::reading_guides::Settings,
     #[serde(skip_serializing_if = "crate::library::FolderOrder::is_default")]
     pub folder_order: crate::library::FolderOrder,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1321,6 +1323,9 @@ impl ReadingControls {
                 return Err(io::Error::other("Reading controls settings are too large"));
             }
             let mut controls: Self = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            if !controls.reading_guides.valid() {
+                controls.reading_guides = Default::default();
+            }
             if !controls.footnote_font_size.valid() {
                 controls.footnote_font_size = crate::footnotes::font_size::FontSize::default();
             }

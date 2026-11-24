@@ -490,8 +490,15 @@ impl TextFlow {
         self.turns.next_refresh = Instant::now().max(now) + PAGE_REFRESH_GAP;
     }
 
-    pub(crate) fn draw(&self, canvas: &mut Canvas, notice: Option<&str>, inverted: bool) {
+    pub(crate) fn draw(
+        &self,
+        canvas: &mut Canvas,
+        notice: Option<&str>,
+        inverted: bool,
+        guides: Option<crate::app::reading_guides::Lines>,
+    ) {
         let mut paint = PagePaint::full(inverted);
+        paint.reading_guides = guides;
         if self.spacing_draft.is_some() {
             paint.visible.end = SPACING_PANEL.y as u32;
         }

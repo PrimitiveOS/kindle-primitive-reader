@@ -70,6 +70,7 @@ mod reader_timer;
 mod reading_backup;
 mod reading_bars;
 mod reading_footer;
+pub(crate) mod reading_guides;
 mod reading_orientation;
 mod result_context;
 mod saved_highlight_popup;
@@ -190,6 +191,8 @@ enum Screen {
     CollectionName,
     RemoveCollection,
     ReadingControls,
+    ReadingGuides,
+    ReadingGuidesAbout,
     BookmarkListSettings,
     AnnotationListSettings,
     SelectionPosition,
@@ -321,6 +324,8 @@ impl Screen {
             Self::CollectionName => "Collection name",
             Self::RemoveCollection => "Remove collection?",
             Self::ReadingControls => "Reading controls",
+            Self::ReadingGuides => "Reading guides",
+            Self::ReadingGuidesAbout => "About reading guides",
             Self::BookmarkListSettings => "Bookmarks and notes",
             Self::AnnotationListSettings => "Highlight list text",
             Self::SelectionPosition => "Selection dialog position",
@@ -369,6 +374,7 @@ impl Screen {
             Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
             Self::NumberingValue(NumberField::FixedTileZoom(axis)) => axis.label(),
             Self::NumberingValue(NumberField::CropMargin) => "Crop margin",
+            Self::NumberingValue(NumberField::ReadingGuide(field)) => field.title(),
             Self::NumberingValue(NumberField::AutoTurnOverlapVertical) => "Vertical overlap",
             Self::NumberingValue(NumberField::FooterTrackMinimumWidth) => "Progress bar width",
             Self::NumberingValue(NumberField::FooterTrackMarginWidth) => "Progress bar margins",
@@ -784,6 +790,7 @@ pub struct Reader {
     status_battery_last: Option<(u32, bool)>,
     end_dialog: Option<end_of_book::Dialog>,
     pages_since_refresh: u8,
+    reading_guide_progress: reading_guides::Progress,
     touch_locked: bool,
     stats: ReadingStats,
     reading_history: crate::reading_stats::history::History,
@@ -993,6 +1000,7 @@ impl Reader {
             status_battery_last: None,
             end_dialog: None,
             pages_since_refresh: 0,
+            reading_guide_progress: reading_guides::Progress::default(),
             touch_locked: false,
             stats,
             reading_history,
@@ -1619,6 +1627,10 @@ impl Reader {
                 self.editor.caret = self.editor.text.len();
             }
             match screen {
+                Screen::NumberingValue(NumberField::ReadingGuide(field)) => {
+                    self.editor.text = field.value(self.controls.reading_guides).chars().collect();
+                    self.editor.caret = self.editor.text.len();
+                }
                 Screen::NumberingValue(NumberField::FooterTrackMinimumWidth) => {
                     let width = self.controls.footer_track_min_width_pct.unwrap_or(20);
                     self.editor.text = width.to_string().chars().collect();
@@ -1959,6 +1971,17 @@ impl Reader {
     }
 
     fn items(&self) -> Vec<Item> {
+        if self.screen == Screen::ReadingGuides {
+            return self.reading_guide_items();
+        }
+        if self.screen == Screen::ReadingGuidesAbout {
+            return vec![
+                Item::new("Two vertical lines", Action::Heading)
+                    .detail("Use them to mark the area to focus on while reading."),
+                Item::new("Moving guides", Action::Heading)
+                    .detail("The lines can move inward as you turn pages. Set the interval to 0 to keep them still."),
+            ];
+        }
         if self.screen.is_contents() {
             return self.contents_items(0, usize::MAX).1;
         }
@@ -3512,6 +3535,8 @@ impl Reader {
                 if controls.swipe_to_go_back != self.controls.swipe_to_go_back {
                     self.swipe_back_notice_pending = false;
                 }
+                self.reading_guide_progress
+                    .settings_changed(self.controls.reading_guides, controls.reading_guides);
                 self.controls = controls;
                 self.update_footer_clock(Instant::now());
             }
@@ -5667,6 +5692,8 @@ impl Reader {
 
     fn reading_update(&mut self, page_changed: bool) -> Change {
         if page_changed {
+            self.reading_guide_progress
+                .update(self.controls.reading_guides);
             self.controls
                 .page_refresh
                 .after_page(&mut self.pages_since_refresh)
@@ -7074,7 +7101,12 @@ impl Reader {
         if self.screen == Screen::ReadFixedText
             && let Some(flow) = &self.text_flow
         {
-            flow.draw(canvas, self.notice.as_deref(), self.uses_night_pages());
+            flow.draw(
+                canvas,
+                self.notice.as_deref(),
+                self.uses_night_pages(),
+                self.guide_lines(),
+            );
             self.draw_end_dialog(canvas);
             return;
         }
@@ -7588,6 +7620,7 @@ impl Reader {
                 Screen::NumberingValue(NumberField::CropMargin) => {
                     ("Choose 0.00 to 1.50 inches", "Set")
                 }
+                Screen::NumberingValue(NumberField::ReadingGuide(field)) => (field.hint(), "Set"),
                 Screen::NumberingValue(NumberField::FooterTrackMinimumWidth) => {
                     ("Minimum progress bar width: 5 to 90%, in 5% steps", "Set")
                 }
@@ -7741,6 +7774,9 @@ impl Reader {
                         }
                         Action::LibraryExport(library_export::Command::ToggleKindleClippings) => {
                             RowAccessory::Toggle(self.library_export.kindle_clippings_enabled())
+                        }
+                        Action::SetReadingControls(_) if self.screen == Screen::ReadingGuides => {
+                            RowAccessory::Toggle(self.controls.reading_guides.enabled)
                         }
                         Action::SetReadingControls(controls)
                             if self.screen == Screen::FooterSettings
@@ -8691,6 +8727,10 @@ impl App for Reader {
                     Screen::HighlightPromptSettings => self.show(Screen::LongPressSettings),
                     Screen::DocumentDefaults => self.show(Screen::ReadingControls),
                     Screen::StyleTweaks => self.show(self.tools_screen()),
+                    Screen::ReadingGuides => {
+                        self.open_reading_edge(true, WIDTH as f32 / 2.0);
+                    }
+                    Screen::ReadingGuidesAbout => self.show(Screen::ReadingGuides),
                     Screen::StylePreset | Screen::StyleFiles | Screen::StyleClear => {
                         self.show(Screen::StyleTweaks)
                     }

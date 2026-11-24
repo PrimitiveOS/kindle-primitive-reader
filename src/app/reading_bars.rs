@@ -572,6 +572,21 @@ impl Reader {
             0
         };
         PagePaint {
+            reading_guides: if matches!(
+                self.screen,
+                Screen::Book
+                    | Screen::Fixed
+                    | Screen::BookTools
+                    | Screen::FixedTools
+                    | Screen::ScanColumns
+                    | Screen::Footnote
+                    | Screen::OnlineLookup
+            ) || self.definition_over_book()
+            {
+                self.guide_lines()
+            } else {
+                None
+            },
             visible,
             header_height,
             inverted,
