@@ -155,7 +155,9 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Show(Screen::Typography | Screen::ReadingProfiles)
         | Action::ShowFonts
         | Action::Text(_) => TEXT,
-        Action::Show(Screen::BookDetails) | Action::OrganizeCurrent => INFO,
+        Action::Show(Screen::BookDetails) | Action::OrganizeCurrent | Action::AboutTopHeader => {
+            INFO
+        }
         Action::ReturnToLocation => BACK,
         Action::SetDisplayLevel(DisplayLevel::FrontLight, _) => icons::SUN,
         Action::SetDisplayLevel(DisplayLevel::Warmth, _) => icons::WARMTH,

@@ -517,6 +517,7 @@ enum Action {
     ResetText,
     ReadingMode(bool),
     TopStatusHeader(bool),
+    AboutTopHeader,
     EditHeaderFontSize,
     ConfirmTopStatusHeaderDefault(bool),
     FacingPages(bool),
@@ -776,6 +777,7 @@ pub struct Reader {
     auto_turn: AutoTurn,
     read_alarm: read_alarm::ReadAlarm,
     top_header_default_prompt: Option<bool>,
+    top_header_about: bool,
     top_header_font_picker: Option<top_header_font::Picker>,
     list_page: usize,
     matches_page: usize,
@@ -978,6 +980,7 @@ impl Reader {
             auto_turn: AutoTurn::default(),
             read_alarm: read_alarm::ReadAlarm::open(data.join("read-timer.json")),
             top_header_default_prompt: None,
+            top_header_about: false,
             top_header_font_picker: None,
             list_page: 0,
             matches_page: 0,
@@ -1351,6 +1354,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.top_header_about = false;
         self.top_header_font_picker = None;
         let previous = self.screen;
         if screen != previous {
@@ -3741,6 +3745,7 @@ impl Reader {
             Action::DocumentDefaults(command) => self.activate_document_defaults(command)?,
             Action::Style(command) => self.activate_style(command)?,
             Action::TopStatusHeader(enabled) => self.set_book_top_header(enabled)?,
+            Action::AboutTopHeader => self.top_header_about = true,
             Action::EditHeaderFontSize => self.open_header_font_picker(),
             Action::ConfirmTopStatusHeaderDefault(enabled) => {
                 self.top_header_default_prompt = Some(enabled);
@@ -7726,6 +7731,7 @@ impl App for Reader {
         self.draw_flow_popup(canvas);
         self.draw_list_density_picker(canvas);
         self.draw_top_header_default_prompt(canvas);
+        self.draw_top_header_about(canvas);
         self.draw_header_font_picker(canvas);
         self.read_alarm.draw(canvas, self.screen == Screen::Book);
         self.draw_vocabulary_dialog(canvas);
@@ -7757,6 +7763,9 @@ impl App for Reader {
             return self.read_alarm_input(input);
         }
         if let Some(change) = self.top_header_default_input(input) {
+            return change;
+        }
+        if let Some(change) = self.top_header_about_input(input) {
             return change;
         }
         if let Some(change) = self.header_font_picker_input(input) {
@@ -7893,6 +7902,9 @@ impl App for Reader {
             return self.read_alarm_input(input);
         }
         if let Some(change) = self.top_header_default_input(input) {
+            return change;
+        }
+        if let Some(change) = self.top_header_about_input(input) {
             return change;
         }
         if let Some(change) = self.header_font_picker_input(input) {
