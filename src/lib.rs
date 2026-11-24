@@ -781,6 +781,8 @@ pub struct Probe {
     publisher_positions: std::cell::OnceCell<app::publisher_pages::PublisherPositions>,
     #[cfg(feature = "kindle")]
     pub(crate) flow_pages: Option<crate::library::hidden_flows::PageFlows>,
+    #[cfg(feature = "kindle")]
+    screen_page_sources: Option<session::screen_pages::ScreenPageSources>,
     settings: Settings,
     spine_rtl: bool,
     source: Source,
@@ -853,7 +855,7 @@ impl Probe {
     }
 
     fn from_book_with_rules(
-        mut book: Book,
+        book: Book,
         engine: Engine,
         fonts: &[PathBuf],
         settings: Settings,
@@ -861,6 +863,28 @@ impl Probe {
         excerpt: Option<String>,
         user_rules: &user_hyphenation::Rules,
         user_styles: &user_styles::Snapshot,
+    ) -> Result<Self> {
+        Self::from_book_with_font_loader(
+            book,
+            engine,
+            settings,
+            chapter,
+            excerpt,
+            user_rules,
+            user_styles,
+            || font_context(fonts),
+        )
+    }
+
+    fn from_book_with_font_loader(
+        mut book: Book,
+        engine: Engine,
+        settings: Settings,
+        chapter: usize,
+        excerpt: Option<String>,
+        user_rules: &user_hyphenation::Rules,
+        user_styles: &user_styles::Snapshot,
+        load_fonts: impl FnOnce() -> Result<FontContext>,
     ) -> Result<Self> {
         if book.is_fixed_layout() {
             return Err("Open this fixed-layout EPUB in Reader".into());
@@ -910,7 +934,7 @@ impl Probe {
                 source.accept_previous_mobi(previous)?;
             }
         }
-        let mut fonts = font_context(fonts)?;
+        let mut fonts = load_fonts()?;
         #[cfg(feature = "kindle")]
         let mut custom_hyphenation_allowed = Vec::new();
         let mut publisher_edges = Vec::new();
@@ -1085,6 +1109,8 @@ impl Probe {
             publisher_positions: Default::default(),
             #[cfg(feature = "kindle")]
             flow_pages: None,
+            #[cfg(feature = "kindle")]
+            screen_page_sources: None,
             settings,
             #[cfg(feature = "kindle")]
             custom_hyphenation_allowed,
@@ -1247,10 +1273,14 @@ impl Probe {
     }
 
     pub(crate) fn link_in(&self, range: Range<f32>, x: f32, y: f32) -> Option<Destination> {
+        Book::resolve_link(&self.chapter, self.link_href_in(range, x, y)?).ok()
+    }
+
+    pub(crate) fn link_href_in(&self, range: Range<f32>, x: f32, y: f32) -> Option<&str> {
         if let Renderer::Parley(layout) = &self.renderer
             && let Some(href) = layout.image_link_at(range.clone(), self.settings, x, y)
         {
-            return Book::resolve_link(&self.chapter, href).ok();
+            return Some(href);
         }
         let (key, offset) = self.source_at(range, x, y)?;
         let block = self.source.blocks.iter().find(|block| block.key == key)?;
@@ -1258,7 +1288,7 @@ impl Probe {
             .links
             .iter()
             .find(|link| link.bytes.contains(&offset))?;
-        Book::resolve_link(&self.chapter, &link.href).ok()
+        Some(&link.href)
     }
 
     fn source_at(&self, range: Range<f32>, x: f32, y: f32) -> Option<(usize, usize)> {
@@ -1289,6 +1319,38 @@ impl Probe {
     }
 
     pub(crate) fn links_in(&self, bounds: Range<f32>) -> Vec<(String, Destination)> {
+        let mut links: Vec<_> = self
+            .text_link_hrefs_in(bounds.clone())
+            .into_iter()
+            .filter_map(|(label, href)| {
+                Some((label, Book::resolve_link(&self.chapter, href).ok()?))
+            })
+            .collect();
+        if let Renderer::Parley(layout) = &self.renderer {
+            for (label, href) in layout.image_links(bounds, self.settings) {
+                if let Ok(target) = Book::resolve_link(&self.chapter, href)
+                    && !links.iter().any(|(_, existing)| existing == &target)
+                {
+                    links.push((label.to_owned(), target));
+                }
+            }
+        }
+        links
+    }
+
+    pub(crate) fn link_hrefs_in(&self, bounds: Range<f32>) -> Vec<(String, &str)> {
+        let mut links = self.text_link_hrefs_in(bounds.clone());
+        if let Renderer::Parley(layout) = &self.renderer {
+            for (label, href) in layout.image_links(bounds, self.settings) {
+                if !links.iter().any(|(_, existing)| *existing == href) {
+                    links.push((label.to_owned(), href));
+                }
+            }
+        }
+        links
+    }
+
+    fn text_link_hrefs_in(&self, bounds: Range<f32>) -> Vec<(String, &str)> {
         // Several cells may have lines crossing the top of a scrolled view.
         // A paginated line can extend upward by at most one reading viewport.
         let earliest = bounds.start - self.settings.text_height() as f32;
@@ -1306,7 +1368,7 @@ impl Probe {
                             .iter()
                             .any(|span| span.start < link.bytes.end && span.end > link.bytes.start)
                 });
-                if visible && let Ok(destination) = Book::resolve_link(&self.chapter, &link.href) {
+                if visible {
                     let Ok(view) = self.reading_flow.view(&self.source, block) else {
                         continue;
                     };
@@ -1318,17 +1380,8 @@ impl Probe {
                         .map(|span| &view.text()[span.clone()])
                         .collect();
                     if !label.trim().is_empty() {
-                        links.push((label.trim().to_owned(), destination));
+                        links.push((label.trim().to_owned(), link.href.as_str()));
                     }
-                }
-            }
-        }
-        if let Renderer::Parley(layout) = &self.renderer {
-            for (label, href) in layout.image_links(bounds, self.settings) {
-                if let Ok(target) = Book::resolve_link(&self.chapter, href)
-                    && !links.iter().any(|(_, existing)| existing == &target)
-                {
-                    links.push((label.to_owned(), target));
                 }
             }
         }
@@ -1790,17 +1843,32 @@ fn font_context(paths: &[PathBuf]) -> Result<FontContext> {
 }
 
 fn font_context_with_firmware(paths: &[PathBuf], firmware: &Path) -> Result<FontContext> {
+    font_context_with_font_data(paths, firmware, |path| {
+        let metadata = fs::metadata(path)?;
+        if metadata.len() > 64 * 1024 * 1024 {
+            return Err("A reading font exceeds the size limit".into());
+        }
+        Ok(parley::fontique::Blob::new(std::sync::Arc::new(fs::read(
+            path,
+        )?)))
+    })
+}
+
+fn font_context_with_font_data(
+    paths: &[PathBuf],
+    firmware: &Path,
+    mut read: impl FnMut(&Path) -> Result<parley::fontique::Blob<u8>>,
+) -> Result<FontContext> {
     if paths.is_empty() {
         return Err("Provide at least one reading font".into());
     }
     let mut fonts = FontContext::default();
     let mut families = Vec::new();
     for path in paths {
-        let metadata = fs::metadata(path)?;
-        if metadata.len() > 64 * 1024 * 1024 {
-            return Err("A reading font exceeds the size limit".into());
-        }
-        if path.parent() == Some(firmware) && metadata.is_file() {
+        if path.parent() == Some(firmware) && path.is_file() {
+            if fs::metadata(path)?.len() > 64 * 1024 * 1024 {
+                return Err("A reading font exceeds the size limit".into());
+            }
             // The firmware volume stays mounted when books and user fonts are removed
             // over USB. Fontique can safely map these fonts on demand without a heap
             // copy of the whole fallback stack on every chapter open.
@@ -1814,7 +1882,7 @@ fn font_context_with_firmware(paths: &[PathBuf], firmware: &Path) -> Result<Font
             );
             continue;
         }
-        let data = parley::fontique::Blob::new(std::sync::Arc::new(fs::read(path)?));
+        let data = read(path)?;
         families.extend(
             fonts
                 .collection

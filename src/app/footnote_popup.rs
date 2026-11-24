@@ -335,10 +335,8 @@ impl Reader {
             }
             Input::Tap(x, y) if !note.panel().contains(x, y) => {
                 self.show(Screen::Book);
-                if let Some(target) = self
-                    .active
-                    .as_ref()
-                    .and_then(|book| book.reading.link_at(x, y))
+                if let Some((super::link_taps::ReflowLink::Internal(target), x, y)) =
+                    self.reflow_tap_link(x, y)
                 {
                     self.open_note_at(target, x, y);
                 }

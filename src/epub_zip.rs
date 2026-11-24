@@ -2,6 +2,8 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
+#[cfg(feature = "kindle")]
+use std::{io::Cursor, sync::Arc};
 
 use crate::Result;
 use crate::epub::{MAX_ARCHIVE, MAX_ENTRIES};
@@ -101,11 +103,32 @@ pub(crate) struct Archive {
 }
 
 pub(crate) fn open(file: File, len: u64) -> Result<Archive> {
+    open_input(Backing::Disk(BufReader::new(file)), len)
+}
+
+#[cfg(feature = "kindle")]
+pub(crate) fn open_snapshot(bytes: Arc<[u8]>) -> Result<Archive> {
+    let len = bytes.len() as u64;
+    let archive = open_input(Backing::Memory(Cursor::new(bytes)), len)?;
+    if archive
+        .zip
+        .decompressed_size()
+        .is_none_or(|bytes| bytes > 64 * 1024 * 1024)
+    {
+        return Err("The EPUB expands beyond the background pagination limit".into());
+    }
+    Ok(archive)
+}
+
+fn open_input(mut input: Backing, len: u64) -> Result<Archive> {
     if len > MAX_ARCHIVE {
         return Err(invalid().into());
     }
-    let mut input = BufReader::new(file);
     let dir = Directory::read(&mut input, len, true)?;
+    #[cfg(feature = "kindle")]
+    if dir.start != dir.recorded_start && matches!(&input, Backing::Memory(_)) {
+        return Err("The EPUB requires directory recovery".into());
+    }
     let (entries, replacement, missing) = if dir.start != dir.recorded_start {
         let recovered = recovered_directory(&mut input, &dir)?;
         (recovered.kept, Some(recovered.directory), recovered.missing)
@@ -117,7 +140,7 @@ pub(crate) fn open(file: File, len: u64) -> Result<Archive> {
         .map_or(len - dir.padding as u64, |v| dir.start + v.len() as u64);
     input.rewind()?;
     let view = EpubInput {
-        disk: input,
+        input,
         local_end: dir.start,
         replacement,
         logical_len,
@@ -134,18 +157,44 @@ pub(crate) fn open(file: File, len: u64) -> Result<Archive> {
 }
 
 pub(crate) struct EpubInput {
-    disk: BufReader<File>,
+    input: Backing,
     local_end: u64,
     replacement: Option<Vec<u8>>,
     logical_len: u64,
     position: u64,
 }
 
+enum Backing {
+    Disk(BufReader<File>),
+    #[cfg(feature = "kindle")]
+    Memory(Cursor<Arc<[u8]>>),
+}
+
+impl Read for Backing {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Disk(file) => file.read(buffer),
+            #[cfg(feature = "kindle")]
+            Self::Memory(memory) => memory.read(buffer),
+        }
+    }
+}
+
+impl Seek for Backing {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        match self {
+            Self::Disk(file) => file.seek(from),
+            #[cfg(feature = "kindle")]
+            Self::Memory(memory) => memory.seek(from),
+        }
+    }
+}
+
 impl EpubInput {
     /// Library identities always hash the original on-disk central directory and footer.
-    pub(crate) fn original_directory(mut self) -> io::Result<(BufReader<File>, u64)> {
-        self.disk.seek(SeekFrom::Start(self.local_end))?;
-        Ok((self.disk, self.local_end))
+    pub(crate) fn original_directory(mut self) -> io::Result<(impl Read, u64)> {
+        self.input.seek(SeekFrom::Start(self.local_end))?;
+        Ok((self.input, self.local_end))
     }
 }
 
@@ -167,9 +216,9 @@ impl Read for EpubInput {
             }
             Some(_) => {
                 let length = available.min((self.local_end - self.position) as usize);
-                self.disk.read(&mut buf[..length])?
+                self.input.read(&mut buf[..length])?
             }
-            None => self.disk.read(buf)?,
+            None => self.input.read(buf)?,
         };
         self.position += count as u64;
         Ok(count)
@@ -184,7 +233,7 @@ impl Seek for EpubInput {
             SeekFrom::End(n) => self.logical_len.checked_add_signed(n).ok_or_else(invalid)?,
         };
         if self.replacement.is_none() || to < self.local_end {
-            self.disk.seek(SeekFrom::Start(to))?;
+            self.input.seek(SeekFrom::Start(to))?;
         }
         self.position = to;
         Ok(to)

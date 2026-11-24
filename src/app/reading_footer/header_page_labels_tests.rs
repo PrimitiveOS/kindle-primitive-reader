@@ -49,6 +49,7 @@ fn top_header_labels_follow_enabled_publisher_boundaries_and_keep_footer_pixels(
     app.activate(Action::TogglePublisherMargins).unwrap();
     assert_eq!(header(&app), screen_numbers(&app));
     app.activate(Action::TogglePublisherMargins).unwrap();
+    let first_chapter_pages = app.active.as_ref().unwrap().reading.probe.page_count();
 
     let paths: Vec<_> = fonts
         .iter()
@@ -96,7 +97,15 @@ fn top_header_labels_follow_enabled_publisher_boundaries_and_keep_footer_pixels(
     app.activate(selected.action).unwrap();
     assert_eq!(header(&app), "A-19 / A-19");
     app.activate(Action::TogglePublisherFooter).unwrap();
-    assert_eq!(header(&app), screen_numbers(&app));
+    let last_chapter_pages = app.active.as_ref().unwrap().reading.probe.page_count();
+    assert_eq!(
+        header(&app),
+        format!(
+            "{}/{}",
+            first_chapter_pages + 1,
+            first_chapter_pages + last_chapter_pages
+        )
+    );
 }
 
 #[test]

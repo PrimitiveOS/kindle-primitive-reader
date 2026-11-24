@@ -158,7 +158,15 @@ impl Book {
                     .map(|document| Self::from_loose(document, format)),
             };
         }
-        let mut archive = Archive::open(path)?;
+        Self::from_archive(Archive::open(path)?)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn open_snapshot(bytes: std::sync::Arc<[u8]>) -> Result<Self> {
+        Self::from_archive(Archive::Zip(crate::epub_zip::open_snapshot(bytes)?))
+    }
+
+    fn from_archive(mut archive: Archive) -> Result<Self> {
         // Some reader-compatible publications compress this marker or write another member
         // first. Its identity and the following OCF/OPF checks identify the publication.
         let marker = read_entry(&mut archive, "mimetype", 99)?;
@@ -428,6 +436,14 @@ impl Book {
 
     pub(crate) fn revision(&self) -> u64 {
         self.revision
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn supports_screen_page_count(&self) -> bool {
+        matches!(
+            &self.content,
+            Content::Archive { archive: Archive::Zip(archive), .. } if archive.missing.is_empty()
+        )
     }
 
     pub(crate) fn package_xml(&mut self) -> Result<String> {

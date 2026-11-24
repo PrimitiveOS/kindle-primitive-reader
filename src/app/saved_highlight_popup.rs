@@ -429,7 +429,7 @@ impl Reader {
                 })
                 .map(|(i, _)| i)
                 .collect::<Vec<_>>();
-            if !hits.is_empty() && active.reading.link_at(x, y).is_some() {
+            if !hits.is_empty() && self.reflow_tap_link(x, y).is_some() {
                 return Some(self.handle_book(Input::Tap(x, y)));
             }
             hits
@@ -488,7 +488,7 @@ impl Reader {
                     })
                     .map(|(i, _)| i)
                     .collect::<Vec<_>>();
-            if !hits.is_empty() && fixed.reading.link_at(x, y).is_some() {
+            if !hits.is_empty() && self.fixed_tap_link(x, y).is_some() {
                 return Some(self.handle_fixed(Input::Tap(x, y)));
             }
             hits

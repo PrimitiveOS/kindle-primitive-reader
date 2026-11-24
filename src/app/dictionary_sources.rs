@@ -1,11 +1,25 @@
 use super::*;
 
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub(super) struct SourcePreferences {
     order: Vec<PathBuf>,
     disabled: Vec<PathBuf>,
     disable_word_forms: bool,
+    pub(super) large_window: bool,
+    pub(super) justify_text: bool,
+}
+
+impl Default for SourcePreferences {
+    fn default() -> Self {
+        Self {
+            order: Vec::new(),
+            disabled: Vec::new(),
+            disable_word_forms: false,
+            large_window: false,
+            justify_text: true,
+        }
+    }
 }
 
 impl SourcePreferences {
@@ -59,8 +73,7 @@ impl SourcePreferences {
                 .flatten()
                 .into_iter()
                 .collect(),
-            disabled: Vec::new(),
-            disable_word_forms: false,
+            ..Self::default()
         }
     }
 }
@@ -77,6 +90,8 @@ pub(super) enum SourceAction {
     DefaultWordForms,
     BookWordForms,
     ResetBookWordForms,
+    LargeWindow,
+    JustifyText,
 }
 
 fn toggle(paths: &mut Vec<PathBuf>, key: &Path) {
@@ -164,30 +179,50 @@ impl Reader {
     }
 
     pub(super) fn source_rows(&self) -> Vec<Item> {
-        let mut rows: Vec<_> = self
-            .installed_dictionaries
-            .iter()
-            .enumerate()
-            .map(|(i, source)| {
-                let detail = if let Some(rank) = self
-                    .book_dictionaries()
-                    .iter()
-                    .position(|key| key == &source.path)
-                {
-                    format!("Book preference {}", rank + 1)
-                } else if self.dictionary_settings.disabled.contains(&source.path) {
-                    "Disabled".to_owned()
-                } else {
-                    "Enabled".to_owned()
-                };
-                Item::new(
-                    &source.title,
-                    Action::DictionarySource(SourceAction::Open(i)),
-                )
-                .detail(detail)
-            })
-            .collect();
-        if rows.is_empty() {
+        let mut rows = vec![
+            Item::new(
+                "Large window",
+                Action::DictionarySource(SourceAction::LargeWindow),
+            )
+            .detail(if self.dictionary_settings.large_window {
+                "On"
+            } else {
+                "Off"
+            }),
+            Item::new(
+                "Justify text",
+                Action::DictionarySource(SourceAction::JustifyText),
+            )
+            .detail(if self.dictionary_settings.justify_text {
+                "On"
+            } else {
+                "Off"
+            }),
+        ];
+        rows.extend(
+            self.installed_dictionaries
+                .iter()
+                .enumerate()
+                .map(|(i, source)| {
+                    let detail = if let Some(rank) = self
+                        .book_dictionaries()
+                        .iter()
+                        .position(|key| key == &source.path)
+                    {
+                        format!("Book preference {}", rank + 1)
+                    } else if self.dictionary_settings.disabled.contains(&source.path) {
+                        "Disabled".to_owned()
+                    } else {
+                        "Enabled".to_owned()
+                    };
+                    Item::new(
+                        &source.title,
+                        Action::DictionarySource(SourceAction::Open(i)),
+                    )
+                    .detail(detail)
+                }),
+        );
+        if self.installed_dictionaries.is_empty() {
             rows.push(
                 Item::new("Add StarDict dictionaries", Action::Heading)
                     .detail("Copy dictionaries to reader/data/dictionaries"),
@@ -327,6 +362,10 @@ impl Reader {
             next.disable_word_forms = !next.disable_word_forms;
         } else if matches!(action, SourceAction::ResetOrder) {
             next.order.clear();
+        } else if matches!(action, SourceAction::LargeWindow) {
+            next.large_window = !next.large_window;
+        } else if matches!(action, SourceAction::JustifyText) {
+            next.justify_text = !next.justify_text;
         } else {
             let Screen::DictionaryOptions(i) = self.screen else {
                 return Err("Choose a dictionary first".into());
@@ -397,7 +436,9 @@ impl Reader {
                 | SourceAction::Open(_)
                 | SourceAction::DefaultWordForms
                 | SourceAction::BookWordForms
-                | SourceAction::ResetBookWordForms => unreachable!(),
+                | SourceAction::ResetBookWordForms
+                | SourceAction::LargeWindow
+                | SourceAction::JustifyText => unreachable!(),
             }
             selected_key = Some(key);
         }

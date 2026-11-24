@@ -52,6 +52,7 @@ mod hidden_flows;
 mod highlight_palette;
 mod library_export;
 mod library_view;
+mod link_taps;
 mod lookup_history;
 mod metadata_save;
 mod nearby_search;
@@ -242,6 +243,7 @@ enum Screen {
     CustomEdits,
     CustomBookmarks,
     Links,
+    LinkTapSettings,
     Bookmarks,
     Typography,
     ReadingFonts,
@@ -384,6 +386,7 @@ impl Screen {
             Self::CustomTitle => "Chapter title",
             Self::GeneratedContents => "Generated outline",
             Self::Links => "Links on this page",
+            Self::LinkTapSettings => "Link taps",
             Self::Bookmarks | Self::FixedBookmarks => "Bookmarks",
             Self::Typography => "Text settings",
             Self::ReadingFonts => "Reading font",
@@ -477,6 +480,9 @@ enum Action {
     ExportAnnotatedPdf,
     Show(Screen),
     Jump(Destination),
+    OpenFixedLink(crate::fixed::PdfLink),
+    OpenLinkAddress(String),
+    ToggleLinkPreference(link_taps::LinkPreference),
     Chapter(chapter_navigation::Direction),
     ChapterLevel(chapter_navigation::LevelSetting),
     SetCharacterPages(Option<u16>),
@@ -813,6 +819,7 @@ pub struct Reader {
     metadata_checkpoint: metadata_save::Checkpoint,
     editor: Editor,
     nearby: nearby_search::Nearby,
+    screen_page_worker: crate::session::screen_pages::background::Worker,
     find_match_case: bool,
     find_ignore_accents: bool,
     find_regex: bool,
@@ -1019,6 +1026,7 @@ impl Reader {
             metadata_checkpoint: metadata_save::Checkpoint::new(Instant::now()),
             editor: Editor::new(64),
             nearby: nearby_search::Nearby::default(),
+            screen_page_worker: Default::default(),
             find_match_case: false,
             find_ignore_accents: false,
             find_regex: false,
@@ -1087,6 +1095,7 @@ impl Reader {
     }
 
     fn open_with_password(&mut self, mut entry: LibraryBook, password: Option<&str>) -> Result<()> {
+        self.screen_page_worker.cancel();
         self.close_fixed_search_fit()?;
         self.logical_recovery = None;
         self.footer_initial_position = None;
@@ -1248,6 +1257,7 @@ impl Reader {
             user_styles: self.style_store.data.snapshot(id)?,
             user_hyphenation: self.user_hyphenation.clone(),
             chapter_offsets: Default::default(),
+            screen_pages: Default::default(),
             engine: Engine::Parley,
             book: absolute,
             fonts,
@@ -1377,6 +1387,9 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        if screen != Screen::Book {
+            self.screen_page_worker.cancel();
+        }
         self.search_results_navigation.menu_open = false;
         self.top_header_about = false;
         self.top_header_font_picker = None;
@@ -2402,6 +2415,12 @@ impl Reader {
             }
             return items;
         }
+        if self.screen == Screen::Links {
+            return self.page_link_items();
+        }
+        if self.screen == Screen::LinkTapSettings {
+            return self.link_tap_settings_items();
+        }
         if self.screen == Screen::EndActionSettings {
             return self.end_action_rows();
         }
@@ -2606,11 +2625,6 @@ impl Reader {
                     })
                     .collect()
             }),
-            Screen::Links => reading
-                .links()
-                .into_iter()
-                .map(|(label, target)| Item::new(label, Action::Jump(target)))
-                .collect(),
             Screen::Bookmarks => self.bookmark_items(active.id),
             Screen::Typography => {
                 let settings = reading.config.settings;
@@ -3441,6 +3455,12 @@ impl Reader {
             }
             Action::Show(screen) => self.show(screen),
             Action::Jump(target) => self.follow(target)?,
+            Action::OpenFixedLink(link) => self.open_fixed_link(link)?,
+            Action::OpenLinkAddress(address) => {
+                self.show(self.surface_screen());
+                self.show_link_address(address);
+            }
+            Action::ToggleLinkPreference(setting) => self.toggle_link_preference(setting)?,
             Action::Chapter(direction) => self.jump_chapter(direction)?,
             Action::ChapterLevel(setting) => self.set_chapter_level(setting)?,
             Action::Custom(action) => self.custom_action(action)?,
@@ -4547,6 +4567,14 @@ impl Reader {
             && matches!(self.screen, Screen::Book | Screen::Fixed)
     }
 
+    fn needs_screen_page_count(&self) -> bool {
+        self.stats_awake
+            && self.screen == Screen::Book
+            && (self.controls.top_header.page_number || self.controls.top_header.page_count)
+            && self.top_header_visible()
+            && self.top_header_page_labels().is_none()
+    }
+
     fn sync_auto_turn(&mut self, now: Instant) {
         if self.auto_turn_eligible() {
             self.auto_turn.resume(now);
@@ -5386,16 +5414,18 @@ impl Reader {
             if DONE.contains(x, y) {
                 return self.exit();
             }
-            if let Some(target) = self.active.as_ref().and_then(|active| {
-                let reading = &active.reading;
-                reading.link_at(x, y)
-            }) {
-                if self.open_note_at(target.clone(), x, y) {
-                    return Change::Partial;
-                }
-                return match self.follow(target) {
-                    Ok(()) => Change::Partial,
-                    Err(error) => self.report(error),
+            if let Some((link, link_x, link_y)) = self.reflow_tap_link(x, y) {
+                return match link {
+                    link_taps::ReflowLink::Address(address) => self.show_link_address(address),
+                    link_taps::ReflowLink::Internal(target) => {
+                        if self.open_note_at(target.clone(), link_x, link_y) {
+                            return Change::Partial;
+                        }
+                        match self.follow(target) {
+                            Ok(()) => Change::Partial,
+                            Err(error) => self.report(error),
+                        }
+                    }
                 };
             }
             if let Some(change) = self.tap_footer(x, y) {
@@ -5562,23 +5592,10 @@ impl Reader {
                     Err(error) => self.report(error),
                 };
             }
-            if let Some(link) = self
-                .fixed
-                .as_ref()
-                .and_then(|fixed| fixed.reading.link_at(x, y))
-            {
-                return match link.target {
-                    PdfLinkTarget::Page(page) => match self
-                        .follow_fixed(page, link.destination_point.map(FixedJump::LinkPoint))
-                    {
-                        Ok(()) => Change::Partial,
-                        Err(error) => self.report(error),
-                    },
-                    PdfLinkTarget::External => match link.uri {
-                        Some(address) => self.show_link_address(address),
-                        None => self.report("This link refers to a resource outside the PDF"),
-                    },
-                    PdfLinkTarget::Unavailable => self.report("This PDF link is unavailable"),
+            if let Some(link) = self.fixed_tap_link(x, y) {
+                return match self.open_fixed_link(link) {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
                 };
             }
             if let Some(change) = self.tap_footer(x, y) {
@@ -7419,8 +7436,17 @@ impl Reader {
                         Action::ToggleRomanizations => RowAccessory::Toggle(
                             self.lookup_history.online_languages.show_romanizations,
                         ),
+                        Action::DictionarySource(SourceAction::LargeWindow) => {
+                            RowAccessory::Toggle(self.dictionary_settings.large_window)
+                        }
+                        Action::DictionarySource(SourceAction::JustifyText) => {
+                            RowAccessory::Toggle(self.dictionary_settings.justify_text)
+                        }
                         Action::ChapterLevel(setting) => {
                             RowAccessory::Toggle(self.chapter_level_checked(setting))
+                        }
+                        Action::ToggleLinkPreference(setting) => {
+                            RowAccessory::Toggle(setting.checked(self.controls))
                         }
                         Action::SetReadingControls(controls)
                             if self.screen == Screen::SearchSettings
@@ -7945,6 +7971,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if input == Input::Sleep {
+            self.screen_page_worker.cancel();
+        }
         if matches!(
             input,
             Input::HoldStart(..) | Input::HoldPan(..) | Input::HoldRelease { .. }
@@ -8300,7 +8329,9 @@ impl App for Reader {
                             .unwrap()
                             / ROWS_PER_PAGE;
                     }
-                    Screen::Gestures => self.show(Screen::ReadingControls),
+                    Screen::Gestures | Screen::LinkTapSettings => {
+                        self.show(Screen::ReadingControls)
+                    }
                     Screen::ReadingFonts => self.show(Screen::Typography),
                     Screen::DictionaryOptions(i) => {
                         self.show(Screen::Dictionaries);
@@ -8484,8 +8515,14 @@ impl App for Reader {
             .as_ref()
             .filter(|_| matches!(self.screen, Screen::Fixed | Screen::Skim))
             .and_then(|fixed| fixed.reading.deadline());
+        let screen_pages = self
+            .active
+            .as_ref()
+            .filter(|_| self.needs_screen_page_count())
+            .map(|active| &active.reading);
         page.into_iter()
             .chain(fixed_page)
+            .chain(self.screen_page_worker.deadline(screen_pages))
             .chain(self.export_deadline())
             .chain(self.bookmark_metadata_deadline())
             .chain(
@@ -8535,6 +8572,15 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        let needs_screen_page_count = self.needs_screen_page_count();
+        let screen_pages = self
+            .active
+            .as_ref()
+            .filter(|_| needs_screen_page_count)
+            .map(|active| &active.reading);
+        if self.screen_page_worker.tick(now, screen_pages) {
+            return Change::Partial;
+        }
         if self
             .footer_refresh_at
             .is_some_and(|deadline| deadline <= now)
@@ -8733,6 +8779,7 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
+        self.screen_page_worker.cancel();
         self.save_library()?;
         let now = Instant::now();
         self.stats.checkpoint(&self.stats_path, now, true)?;
@@ -8746,6 +8793,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.screen_page_worker.cancel();
         self.document_defaults.reload();
 
         self.cjk_selection_lookup = None;
@@ -9239,6 +9287,7 @@ pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path
         user_styles: Default::default(),
         user_hyphenation: Default::default(),
         chapter_offsets: Default::default(),
+        screen_pages: Default::default(),
         engine,
         book,
         fonts,
@@ -15233,6 +15282,237 @@ mod tests {
             "night pages should invert the header strip with the reading page"
         );
         capture_test_screen(&app, &fonts, "READER_TOP_HEADER_NIGHT_SCREENSHOT", false);
+    }
+
+    #[test]
+    fn exact_screen_pages_feed_the_opt_in_header_and_keep_the_chapter_footer() {
+        let fixture = Fixture::new();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+        ];
+        let mut app = fixture.app();
+        app.fonts = fonts.clone();
+        app.open_path(&fixture.book).unwrap();
+        assert!(app.top_header_caption().is_none());
+        app.activate(Action::TopStatusHeader(true)).unwrap();
+        let reading = &app.active.as_ref().unwrap().reading;
+        let original_position = position(reading);
+        let first = reading.probe.page_count();
+        let hrefs: Vec<_> = reading
+            .probe
+            .chapter_entries()
+            .iter()
+            .map(|entry| entry.href.clone())
+            .collect();
+        assert!(
+            app.top_header_caption()
+                .unwrap()
+                .contains(&format!("1/{first}"))
+        );
+        let original_footer = app.status_caption().unwrap();
+        assert_eq!(
+            original_footer,
+            format!("Chapter 1 of 1 - Page 1 of {first}")
+        );
+        let mut canvas = Canvas::new(
+            WIDTH,
+            HEIGHT,
+            &fonts
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let before = primitive_app::frame(&app, &mut canvas, false);
+        capture_test_screen(&app, &fonts, "READER_LOCAL_SCREEN_PAGE_SCREENSHOT", false);
+        let jump = |path: &str| {
+            Action::Jump(Destination {
+                path: path.to_owned(),
+                fragment: None,
+            })
+        };
+        app.activate(jump(&hrefs[1])).unwrap();
+        let second = app.active.as_ref().unwrap().reading.probe.page_count();
+        let total = first + second;
+        assert!(
+            app.top_header_caption()
+                .unwrap()
+                .contains(&format!("{next}/{total}", next = first + 1))
+        );
+        app.activate(jump(&hrefs[0])).unwrap();
+        assert!(
+            app.top_header_caption()
+                .unwrap()
+                .contains(&format!("1/{total}"))
+        );
+        assert_eq!(
+            app.status_caption().as_deref(),
+            Some(original_footer.as_str())
+        );
+        assert_eq!(
+            position(&app.active.as_ref().unwrap().reading),
+            original_position
+        );
+        let after = primitive_app::frame(&app, &mut canvas, false);
+        let header_end = crate::reading_controls::TopHeader::HEIGHT as usize * WIDTH as usize;
+        assert!(before[..header_end] != after[..header_end]);
+        assert!(
+            before[header_end..] == after[header_end..],
+            "the document pane and chapter footer should have the same pixels"
+        );
+        capture_test_screen(
+            &app,
+            &fonts,
+            "READER_WHOLE_BOOK_SCREEN_PAGE_SCREENSHOT",
+            false,
+        );
+    }
+
+    #[test]
+    fn screen_pages_background_finishes_the_latin_book_without_a_page_turn() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Many Chapters.epub");
+        fs::copy(crate::test_fixture("many-chapters.epub"), &path).unwrap();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = fixture.app();
+        app.fonts = fonts.clone();
+        app.open_path(&path).unwrap();
+        assert!(!app.needs_screen_page_count());
+        assert!(app.screen_page_worker.deadline(None).is_none());
+
+        app.activate(Action::TopStatusHeader(true)).unwrap();
+        assert!(app.needs_screen_page_count());
+        let shown = |reader: &Reader| {
+            reader
+                .active
+                .as_ref()
+                .unwrap()
+                .reading
+                .whole_book_screen_pages()
+        };
+        assert_eq!(shown(&app), None);
+        let initial_caption = app.status_caption().unwrap();
+        let initial_position = position(&app.active.as_ref().unwrap().reading);
+        let mut canvas = Canvas::new(
+            WIDTH,
+            HEIGHT,
+            &fonts
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let before = primitive_app::frame(&app, &mut canvas, false);
+        capture_test_screen(&app, &fonts, "READER_BACKGROUND_SCREEN_PAGE_BEFORE", false);
+        let timeout = Instant::now() + Duration::from_secs(12);
+        while shown(&app).is_none() && Instant::now() < timeout {
+            app.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(shown(&app), Some((1, 48)));
+        assert!(app.top_header_caption().unwrap().contains("1/48"));
+        assert_eq!(
+            position(&app.active.as_ref().unwrap().reading),
+            initial_position
+        );
+        assert_eq!(app.status_caption().unwrap(), initial_caption);
+        let after = primitive_app::frame(&app, &mut canvas, false);
+        let header_end = crate::reading_controls::TopHeader::HEIGHT as usize * WIDTH as usize;
+        assert!(before[..header_end] != after[..header_end]);
+        assert!(before[header_end..] == after[header_end..]);
+        capture_test_screen(&app, &fonts, "READER_BACKGROUND_SCREEN_PAGE_AFTER", false);
+    }
+
+    #[test]
+    #[ignore = "requires a user-authorized DRM-free EPUB in READER_PARITY_EPUB"]
+    fn screen_pages_background_verifies_an_original_epub() {
+        let original = PathBuf::from(
+            std::env::var_os("READER_PARITY_EPUB")
+                .expect("set READER_PARITY_EPUB to the authorized original document"),
+        )
+        .canonicalize()
+        .unwrap();
+        assert!(
+            fs::metadata(&original).unwrap().len() <= 8 * 1024 * 1024,
+            "choose an original EPUB inside the background archive limit"
+        );
+        let digest = md5::compute(fs::read(&original).unwrap());
+        let fixture = Fixture::new();
+        let fonts = simulation_fonts();
+        let paths: Vec<_> = fonts.iter().map(|p| p.display().to_string()).collect();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
+        let mut app = Reader::open(original.parent().unwrap(), &fixture.state, fonts).unwrap();
+        app.controls.top_header.book_default = Some(true);
+        app.controls.top_header.clock = false;
+        let started = Instant::now();
+        app.open_path(&original).unwrap();
+        if app.screen == Screen::PublisherOffer {
+            app.show(Screen::Book);
+        }
+        if app.publisher_footer_enabled() {
+            app.activate(Action::TogglePublisherFooter).unwrap();
+        }
+        assert!(app.needs_screen_page_count());
+        let active = &app.active.as_ref().unwrap().reading;
+        let chapters = active.probe.chapter_count();
+        assert!(
+            (2..=32).contains(&chapters),
+            "choose a short multi-chapter original EPUB"
+        );
+        let reading_position = position(active);
+        let before = primitive_app::frame(&app, &mut canvas, false);
+        let first_frame_ms = started.elapsed().as_millis();
+        let shown = |app: &Reader| {
+            app.active
+                .as_ref()
+                .unwrap()
+                .reading
+                .whole_book_screen_pages()
+        };
+        assert_eq!(shown(&app), None);
+
+        let timeout = Instant::now() + Duration::from_secs(90);
+        while shown(&app).is_none() && Instant::now() < timeout {
+            app.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let (ordinal, total) =
+            shown(&app).expect("the original EPUB should produce a bounded background count");
+        let settled_ms = started.elapsed().as_millis();
+        let peak_rss_kib = fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|status| {
+                status.lines().find_map(|line| {
+                    line.strip_prefix("VmHWM:")?
+                        .split_whitespace()
+                        .next()?
+                        .parse::<u64>()
+                        .ok()
+                })
+            });
+        let reading = &app.active.as_ref().unwrap().reading;
+        assert_eq!(position(reading), reading_position);
+        let after = primitive_app::frame(&app, &mut canvas, false);
+        let header_end = crate::reading_controls::TopHeader::HEIGHT as usize * WIDTH as usize;
+        assert!(before[header_end..] == after[header_end..]);
+        let counts: Vec<_> = (0..chapters)
+            .map(|chapter| reading.config.chapter(chapter).unwrap().page_count())
+            .collect();
+        assert_eq!(
+            ordinal,
+            counts[..reading.chapter].iter().sum::<usize>() + reading.page + 1
+        );
+        assert_eq!(total, counts.iter().sum::<usize>());
+        assert!(md5::compute(fs::read(&original).unwrap()) == digest);
+        println!(
+            "{}",
+            serde_json::json!({
+                "chapters": chapters, "screen_page": ordinal, "screen_pages": total,
+                "first_frame_ms": first_frame_ms, "whole_book_ready_ms": settled_ms,
+                "peak_rss_kib": peak_rss_kib,
+            })
+        );
     }
 
     #[test]

@@ -404,6 +404,7 @@ mod tests {
             hide_nonlinear: false,
             hidden_flows: Default::default(),
             chapter_offsets: Default::default(),
+            screen_pages: Default::default(),
         }
     }
 
@@ -600,6 +601,7 @@ mod logical_configuration_tests {
             hide_nonlinear: false,
             hidden_flows: Default::default(),
             chapter_offsets: Default::default(),
+            screen_pages: Default::default(),
         };
         let json = serde_json::to_value(SessionConfiguration::from(&config)).unwrap();
         assert_eq!(json["font_policy"], "stock_logical");

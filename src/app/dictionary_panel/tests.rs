@@ -60,7 +60,11 @@ impl Simulation {
     }
 
     fn draw(&mut self, name: Option<&str>) -> Vec<u8> {
-        let pixels = primitive_app::frame(&self.app, &mut self.canvas, false);
+        self.draw_in_theme(name, false)
+    }
+
+    fn draw_in_theme(&mut self, name: Option<&str>, dark: bool) -> Vec<u8> {
+        let pixels = primitive_app::frame(&self.app, &mut self.canvas, dark);
         if let Some((dir, name)) = std::env::var_os("READER_DICTIONARY_CAPTURE_DIR").zip(name) {
             primitive_app::write_png(&Path::new(&dir).join(name), WIDTH, HEIGHT, &pixels).unwrap();
         }
@@ -152,6 +156,128 @@ impl Simulation {
     fn back(&mut self) {
         self.tap(self.app.definition_layout().1);
     }
+}
+
+#[test]
+fn dictionary_popup_defaults_are_saved_and_restore_nested_large_windows() {
+    let mut s = Simulation::new();
+    fs::write(
+        &s.app.dictionary_preference,
+        br#"{"order":[],"disable_word_forms":false}"#,
+    )
+    .unwrap();
+    let open = |s: &Simulation| {
+        let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
+        let mut reader = Reader::open(&s.fixture.root, &s.fixture.state, vec![font]).unwrap();
+        reader.controls.dictionary_on_single_word = Some(false);
+        reader
+    };
+    s.app = open(&s);
+    assert!(!s.app.dictionary_settings.large_window);
+    assert!(s.app.dictionary_settings.justify_text);
+
+    s.open_epub_selection();
+    let original = s.app.selection.clone();
+    let location = s.app.current_history_location();
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    let compact = s.app.definition_layout().0;
+    s.tap(definition_results_button(compact));
+    s.tap(definition_result_row(s.app.definition_layout().0, 1));
+    let compact = s.app.definition_layout().0;
+    assert!(s.app.definition_over_book());
+    assert_eq!(
+        compact,
+        definition_bounds(compact.h, s.app.selection_bounds())
+    );
+    s.draw(Some("dictionary-justify-text.png"));
+    let lines = s.app.dictionary_navigation.view.layout.get().unwrap();
+    let first = lines[0].placed.get().unwrap();
+    assert!(first.justified);
+    let end = first.runs.last().unwrap();
+    assert_eq!(end.x + end.width, body(compact).w);
+    s.hold_definition_word("article");
+    s.back();
+    assert_eq!(s.app.list_page, 1);
+    s.back();
+    assert_eq!(s.app.current_history_location(), location);
+    assert_eq!(s.app.selection, original);
+
+    s.app.activate(Action::ShowDictionaries).unwrap();
+    let rows = s.app.items();
+    assert_eq!(rows[0].title, "Large window");
+    assert_eq!(rows[0].detail.as_deref(), Some("Off"));
+    assert_eq!(rows[1].title, "Justify text");
+    assert_eq!(rows[1].detail.as_deref(), Some("On"));
+    for row in 0..2 {
+        s.tap(Rect::new(
+            LIST_X,
+            LIST_Y + row * ROW_HEIGHT,
+            100,
+            ROW_HEIGHT,
+        ));
+    }
+    assert!(s.app.dictionary_settings.large_window);
+    assert!(!s.app.dictionary_settings.justify_text);
+    s.draw(Some("dictionary-popup-settings.png"));
+
+    s.app = open(&s);
+    assert!(s.app.dictionary_settings.large_window);
+    assert!(!s.app.dictionary_settings.justify_text);
+    s.open_epub_selection();
+    let original = s.app.selection.clone();
+    let initial = s.draw(None);
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    let large = s.app.definition_layout().0;
+    assert!(!s.app.definition_over_book());
+    assert_eq!(large.w, compact.w);
+    assert!(large.h > compact.h * 2);
+    s.tap(definition_results_button(large));
+    s.tap(definition_result_row(s.app.definition_layout().0, 1));
+    s.draw_in_theme(Some("dictionary-large-window.png"), true);
+    let lines = s.app.dictionary_navigation.view.layout.get().unwrap();
+    let first = lines[0].placed.get().unwrap();
+    assert!(!first.justified);
+    assert!(first.runs[0].width < body(large).w);
+    s.hold_definition_word("beacon");
+    assert!(s.app.definition_expanded);
+    s.back();
+    assert!(s.app.definition_expanded);
+    assert_eq!(s.app.list_page, 1);
+    s.back();
+    assert_eq!(s.app.screen, Screen::Book);
+    assert_eq!(s.app.current_history_location(), location);
+    assert_eq!(s.app.selection, original);
+    assert_eq!(s.draw(None), initial);
+}
+
+#[test]
+fn dictionary_justification_respects_paragraphs_and_maps_mixed_direction_words() {
+    let mut s = Simulation::new();
+    let text = "A harbour has sheltered water.\nOne more line.\n\nFinally.";
+    let lines = layout(&mut s.canvas, text, 390);
+    assert!(lines[0].soft_wrap);
+    assert!(lines[1..].iter().any(|line| !line.soft_wrap));
+    for line in &lines {
+        if text[line.range.clone()].ends_with('\n') || line.range.end == text.len() {
+            assert!(!line.soft_wrap);
+        }
+    }
+
+    let text = "Coast في الميناء now";
+    let result = PlacedLine::new(&mut s.canvas, text, 480, true);
+    assert!(result.justified);
+    let hits: Vec<_> = crate::selection::word_ranges(text).collect();
+    let boxes = result.range_boxes(&mut s.canvas, text, 0, &hits);
+    let visual: Vec<_> = boxes
+        .iter()
+        .map(|(bytes, _, _)| &text[bytes.clone()])
+        .collect();
+    assert_eq!(visual, ["Coast", "الميناء", "في", "now"]);
+    assert!(boxes.windows(2).all(|pair| pair[0].2 < pair[1].1));
+    assert_eq!(boxes.last().unwrap().2, 480);
+    assert!(!PlacedLine::new(&mut s.canvas, "one\u{00a0}unit", 480, true).justified);
+    assert!(!PlacedLine::new(&mut s.canvas, "  Indented text", 480, true).justified);
+    assert!(!PlacedLine::new(&mut s.canvas, text, 40, true).justified);
 }
 
 #[test]
@@ -485,18 +611,22 @@ fn dictionary_navigation_restores_fixed_page_selection_geometry() {
     assert_eq!(original.text(), "PDF");
     let saved = (original.page(), original.bounds().collect::<Vec<_>>());
     let before = s.draw(None);
-    s.tap(s.app.selection_button(SelectionAction::Dictionary));
-    s.draw(None);
-    s.hold_definition_word("format");
-    s.back();
-    s.back();
-    assert_eq!(s.app.screen, Screen::Fixed);
-    let restored = s.app.pdf_selection.as_ref().unwrap();
-    assert_eq!(
-        (restored.page(), restored.bounds().collect::<Vec<_>>()),
-        saved
-    );
-    assert_eq!(s.draw(None), before);
+    for large in [false, true] {
+        s.app.dictionary_settings.large_window = large;
+        s.tap(s.app.selection_button(SelectionAction::Dictionary));
+        assert_eq!(s.app.definition_expanded, large);
+        s.draw(None);
+        s.hold_definition_word("format");
+        s.back();
+        s.back();
+        assert_eq!(s.app.screen, Screen::Fixed);
+        let restored = s.app.pdf_selection.as_ref().unwrap();
+        assert_eq!(
+            (restored.page(), restored.bounds().collect::<Vec<_>>()),
+            saved
+        );
+        assert_eq!(s.draw(None), before);
+    }
 }
 
 #[test]

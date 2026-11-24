@@ -55,6 +55,13 @@ pub(crate) struct ReadingControls {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub very_long_press_tenths: Option<u16>,
     pub night_pages: bool,
+    /// None keeps ordinary link taps enabled in older saved controls.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tap_links: Option<bool>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub ignore_external_link_taps: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub larger_tap_area_for_links: bool,
     pub footnote_popups: bool,
     pub prefer_footnotes: bool,
     /// Show the all-results list when Find is used on selected text.
