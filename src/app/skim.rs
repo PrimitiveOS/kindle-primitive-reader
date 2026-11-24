@@ -172,6 +172,18 @@ impl Reader {
         if filled > 0 {
             canvas.fill(Rect::new(TRACK.x + 9, TRACK.y + 17, filled, 8), 0);
         }
+        if let Some(markers) = self.whole_book_marker_pages(false) {
+            let last_page = markers.count.saturating_sub(1).max(1);
+            let track_width = TRACK.w - 18;
+            let mut previous = 0;
+            for page in markers.starts {
+                let x = (page as f64 / last_page as f64 * track_width as f64).round() as i32;
+                if x > previous + 2 && x < track_width - 2 {
+                    canvas.fill(Rect::new(TRACK.x + 9 + x, TRACK.y + 11, 2, 20), 0);
+                    previous = x;
+                }
+            }
+        }
         let marker = TRACK.x + 9 + filled - 8;
         canvas.panel(Rect::new(marker, TRACK.y + 7, 18, TRACK.h - 14), 8, 1, 0);
         canvas.button(BACK_PAGE, "‹  Previous", false, false);

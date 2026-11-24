@@ -55,6 +55,7 @@ mod nearby_search;
 #[cfg(test)]
 mod nonlinear_tests;
 mod online_panel;
+mod progress_markers;
 mod quick_display;
 mod read_alarm;
 mod reader_timer;

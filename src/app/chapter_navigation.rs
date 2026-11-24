@@ -98,7 +98,7 @@ impl Reader {
         }
         let mut rows = vec![
             Item::new(
-                "Use selected levels",
+                "Use levels for chapter jumps",
                 if levels.has_ignored() {
                     Action::ChapterLevel(LevelSetting::BindNavigation)
                 } else {
@@ -108,7 +108,7 @@ impl Reader {
             .detail(if !levels.has_ignored() {
                 "Turn off a level to enable this option"
             } else {
-                "Limit Previous and Next Chapter to the levels below"
+                "Previous and next chapter use the included levels"
             }),
         ];
         rows.extend(counts.into_iter().map(|(depth, count)| {
@@ -119,6 +119,13 @@ impl Reader {
             )
             .detail(format!("{count} {unit}"))
         }));
+        rows.push(Item::new("Progress markers", Action::Heading).detail(
+            if self.has_whole_book_marker_coordinates() {
+                "The footer and Skim use the included levels"
+            } else {
+                "The reading header uses the included levels for this book"
+            },
+        ));
         rows
     }
 
