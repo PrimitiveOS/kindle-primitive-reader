@@ -208,6 +208,21 @@ before and after. First frames took 1,489 ms, 18,972 ms, 1,943 ms and
 1,918 ms respectively. [Chapter settings](chapter-level-settings.md)
 records the complete native and simulator evidence.
 
+## Reader 0.1.31 release on the Oasis
+
+The [0.1.31 GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.31)
+passed CI. The ARMHF ZIP contained both licenses and matched SHA-256
+`15307b554c7e785e0f2999b9a255170cae9de2e11e7220b582d2dcc81dcde75b`
+(21,347,826 bytes). The Oasis 3 installed this package through the Store
+transaction. The executable matched release SHA-256
+`261a443309f90a860415e92b98f51dd72628052f51fc9afa4f65b7d0bf19c1e7`.
+
+The normal picker opened one original EPUB, PDF, AZW3 and MOBI from Documents.
+Each rendered, advanced and resumed with a fresh profile. The original
+file hashes matched before and after. The first frames took 1,504 ms,
+12,955 ms, 1,296 ms and 1,954 ms respectively. [Bookmark and header
+verification](bookmark-max-lines.md) records native and simulator evidence.
+
 For a single file under an authorized Documents root, run the example with a fresh
 scratch directory and the same Noto Sans fonts as Launcher.
 
