@@ -58,6 +58,10 @@ pixels for continuous PDF, comics and fixed-layout EPUB staging. Device
 landscape remains gated on the runtime and Launcher handoff. The integrated
 Mac build passed 1,239 checks. The focused captures cover three Skim placements,
 selective profiles in light and dark, and the continuous PDF round trip.
+The Oasis suite passed 1,242 checks. Six frames match byte for byte. The
+Top Skim capture differs at pixel (528, 244) by one grayscale level, from
+140 on Mac to 141 on the Oasis. The comparison verifies every other pixel
+of that frame and retains both original PNGs.
 [Skim controls](navigation-preferences.md#skim-position) · [Reading profiles](reading-profiles.md) · [Publisher geometry](render-modes.md#physical-space-and-paint) · [Fixed-page viewports](reading-edition-orientation.md#fixed-page-viewport-preparation)
 
 ## Reader 0.1.48 verification plan
