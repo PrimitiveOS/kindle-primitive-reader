@@ -45,6 +45,15 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.46 verification plan
+
+Compare the restored opening-page callback and all three Skim positions
+with pinned KOReader. Verify EPUB and PDF resume, the +/-10 actions,
+progress-track drag, Cancel, Read here and Exit. Check legacy settings,
+saved placement and that a preview leaves the reading origin intact until
+it is accepted.
+[Navigation settings and simulator frames](navigation-preferences.md)
+
 ## Reader 0.1.45 verification plan
 
 Compare guide geometry, shades, settings, and the inward step against the
@@ -605,6 +614,9 @@ prepare the same native Rust tests and fixtures for the Oasis 3, run
 `python3 scripts/prepare-device-tests.py build/device-tests`. The bundle's
 `run.sh` executes the suites in a private temporary directory. Its results
 cover ARM execution of the document engines and simulated app inputs.
+Use `--fixtures-only` with a new output directory when staging existing
+matching ARM test binaries. It copies the fixture tree and the packaged
+symbol font used by the footer and font regressions, and writes `run.sh`.
 Run the bundle's `profile.sh` to measure five cold processes per EPUB fixture
 and 30 warm rasterizations per process using the normal Reader or Launcher font.
 It covers the multilingual, long and vertical-page fixtures and writes one
