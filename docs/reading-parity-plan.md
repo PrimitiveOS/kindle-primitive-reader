@@ -86,18 +86,22 @@ input, E Ink refresh, and sleep and USB resume checks remain open. [Exact-value 
 
 Saved profile editing covers reflow typography, hinting, kerning,
 publisher styles and fonts, image rendering, page overlap, PDF crop
-margin, and PDF or comic scan contrast. Reading statistics has a
-whole-second duration editor with the stock bounds, steps, defaults and
-accounting. It can also preview and import dated visits for the open PDF
-from a closed KOReader statistics database. Reflowable book import
-still needs a stable mapping from KOReader pages to source locations. Dictionary
+margin, and PDF or comic scan contrast. Enabled profiles can also apply
+their included settings whenever Reader opens a matching book.
+Reading statistics has a whole-second duration editor with the stock
+bounds, steps, defaults and accounting. It can preview and import dated
+visits for the open PDF or self-contained DjVu book from a closed KOReader
+database. Reflowable book import still needs a stable mapping from
+KOReader pages to source locations. Dictionary
 result arrows support held jumps to the first and last definition and
 preserve an armed highlight while switching sources. Named dictionary
-presets manage source enablement. A temporary preset applies to typed
+presets manage source enablement, report unavailable dictionary titles and
+cycle in alphabetical order. A temporary preset applies to typed
 lookup, retry after a miss and a lookup started from a definition.
 [Saved reading profiles](reading-profiles.md#editing-saved-values) ·
+[Opening profiles](reading-profiles.md#apply-a-profile-on-book-opening) ·
 [Page duration limits](reading-statistics.md#page-duration-limits) ·
-[PDF statistics import](reading-statistics.md#import-a-pdfs-koreader-statistics) ·
+[Fixed-page statistics import](reading-statistics.md#import-koreader-statistics-for-a-pdf-or-djvu-book) ·
 [Dictionary result navigation](dictionary-popup-display.md#first-and-last-results) ·
 [One-query preset](shared-dictionaries.md#searching-with-a-preset-once)
 
@@ -106,8 +110,9 @@ width and horizontal placement for two authored paragraphs and a
 centered container around ordinary paragraphs. They also match
 the measured definite box heights and preserve text and source positions when
 a box's background fills across a page break. In supported ordinary
-paragraphs, the opt-in policy also matches stock's explicit opening
-breaks inside keep groups and beside a sibling keep. Full Render Mode
+paragraphs, the opt-in policies also match stock's positive physical
+margins and explicit opening breaks inside keep groups and beside a
+sibling keep. Full Render Mode
 behavior and its user-facing choices remain open. [Publisher comparisons](render-modes.md)
 
 

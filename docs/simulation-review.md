@@ -2,6 +2,45 @@
 
 ## Current Mac simulator checkpoint
 
+Reader imports reading-history visits for self-contained DjVu books.
+Pinned KOReader's four visits mapped to the same physical pages in
+Reader and totaled 75 seconds across three distinct pages. Import kept
+the zoomed reading position, and reopening the same book as `.djv`
+identified all four records as duplicates. The simulator also checked
+the previously supported PDF flow.
+[Fixed-page history import](reading-statistics.md#import-koreader-statistics-for-a-pdf-or-djvu-book)
+
+Reading profiles can apply when a matching book opens. The Mac tests
+check composition, missing-font recovery, the saved EPUB passage and
+the PDF's physical page and tiled zoom. Dictionary presets now report
+unavailable titles and can cycle through saved sets from the list or
+an assigned reading gesture.
+[Opening profiles](reading-profiles.md#apply-a-profile-on-book-opening) ·
+[Dictionary presets](shared-dictionaries.md#named-dictionary-presets)
+
+The opt-in EPUB layout policy matches KOReader's measured positive
+side margins on supported auto-width paragraphs. Two passages in
+an original EPUB matched the pinned native measurements. The Reader
+test restored their saved quotes and link targets against unchanged
+source bytes. [Publisher margins and captures](render-modes.md#positive-physical-margins-on-auto-width-paragraphs)
+
+The four-thread Mac suite passed 1,365 library tests, one Kindle entry
+test, 14 EPUB package tests, and four layout tests. Sixty-seven opt-in
+tests were skipped. Separate original-file checks passed for the
+publisher margins and the reading-history workflow. The normal picker
+opened an original EPUB, PDF, AZW3, and MOBI document, turned a page, and
+reopened the same rendered page with unchanged source hashes.
+
+The Mac ARMHF release build produced a stripped, statically linked
+37,212,644-byte executable with SHA-256
+`2d515fef108c64d2587c2959b1e717d9794b27cfcc1055cb6a150bc348dbe379`.
+The local stage passed the hard-float binary check and assembled 28
+files totaling 46,786,493 bytes uncompressed, including the SQLite
+notices, Launcher entry and OCR model. Kindle foreground testing and
+the Store release remain open.
+
+## PDF history import checkpoint
+
 Reader previewed and imported the three visits written by pinned KOReader
 for an authored PDF. The 60 seconds stayed attached to the same two
 physical pages. Duplicate and conflicting records were reported before
@@ -10,7 +49,7 @@ and concurrent writes.
 The dictionary picker applies a saved set to one query, including the
 existing spelling worker and nested definitions. The source comparison
 exercises typed lookup, misses and definition edits.
-[PDF statistics import](reading-statistics.md#import-a-pdfs-koreader-statistics) ·
+[PDF statistics import](reading-statistics.md#import-koreader-statistics-for-a-pdf-or-djvu-book) ·
 [Dictionary lookup and light/dark captures](shared-dictionaries.md#searching-with-a-preset-once)
 
 Saved reflowable profiles now edit hinting, kerning, publisher styles and
