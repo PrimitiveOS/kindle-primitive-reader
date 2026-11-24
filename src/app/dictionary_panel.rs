@@ -75,6 +75,7 @@ struct View {
     editing: bool,
     query_editing: Option<QueryEdit>,
     save_highlight: bool,
+    no_sources_for_book: bool,
 }
 impl View {
     fn first_line(&self, visible: usize) -> usize {
@@ -751,6 +752,8 @@ impl Reader {
         }
         self.definition_word = word.into();
         let try_similar = searched && definitions.is_empty() && dictionary::spelling_eligible(word);
+        self.dictionary_navigation.view.no_sources_for_book =
+            !searched && !self.book_dictionary_exclusions().is_empty();
         self.definitions = definitions;
         self.definition_results_page = None;
         self.spelling_lookup = None;
@@ -1543,6 +1546,8 @@ impl Reader {
         } else {
             let message = if self.spelling_lookup.is_some() {
                 "Searching for similar words"
+            } else if view.no_sources_for_book {
+                "No dictionaries enabled for this book"
             } else {
                 "No matches in installed dictionaries"
             };

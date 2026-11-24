@@ -97,6 +97,8 @@ pub(super) enum SourceAction {
     Earlier,
     Later,
     ForBook,
+    ToggleForBook,
+    ResetBookSources,
     EarlierForBook,
     LaterForBook,
     ResetOrder,
@@ -123,6 +125,12 @@ impl Reader {
         self.open_book_id()
             .and_then(|id| self.library.state(id))
             .map_or(&[], |book| book.preferred_dictionaries.as_slice())
+    }
+
+    pub(super) fn book_dictionary_exclusions(&self) -> &[PathBuf] {
+        self.open_book_id()
+            .and_then(|id| self.library.state(id))
+            .map_or(&[], |book| book.excluded_dictionaries.as_slice())
     }
 
     fn book_word_forms(&self) -> Option<bool> {
@@ -157,9 +165,12 @@ impl Reader {
         let prefs = &self.dictionary_settings;
         self.dictionaries.lookup_report(
             word,
-            self.book_dictionaries(),
-            &prefs.order,
-            &prefs.disabled,
+            dictionary::SourceScope {
+                preferred: self.book_dictionaries(),
+                excluded: self.book_dictionary_exclusions(),
+                order: &prefs.order,
+                disabled: &prefs.disabled,
+            },
             self.word_forms_enabled(),
         )
     }
@@ -172,9 +183,20 @@ impl Reader {
         let sources = self.dictionaries.clone();
         let word = word.to_owned();
         let book = self.book_dictionaries().to_vec();
-        let settings = self.dictionary_settings.clone();
+        let excluded = self.book_dictionary_exclusions().to_vec();
+        let (order, disabled) = self.dictionary_settings.paths();
+        let (order, disabled) = (order.to_vec(), disabled.to_vec());
         match dictionary_panel::SpellingLookup::start(move |cancel| {
-            sources.suggested_definitions(&word, &book, &settings.order, &settings.disabled, cancel)
+            sources.suggested_definitions(
+                &word,
+                dictionary::SourceScope {
+                    preferred: &book,
+                    excluded: &excluded,
+                    order: &order,
+                    disabled: &disabled,
+                },
+                cancel,
+            )
         }) {
             Ok(job) => self.spelling_lookup = Some(job),
             Err(error) => {
@@ -234,7 +256,9 @@ impl Reader {
                 .iter()
                 .enumerate()
                 .map(|(i, source)| {
-                    let detail = if let Some(rank) = self
+                    let detail = if self.book_dictionary_exclusions().contains(&source.path) {
+                        "Disabled for this book".to_owned()
+                    } else if let Some(rank) = self
                         .book_dictionaries()
                         .iter()
                         .position(|key| key == &source.path)
@@ -261,6 +285,12 @@ impl Reader {
             rows.push(Item::new(
                 "Reset dictionary order",
                 Action::DictionarySource(SourceAction::ResetOrder),
+            ));
+        }
+        if !self.book_dictionaries().is_empty() || !self.book_dictionary_exclusions().is_empty() {
+            rows.push(Item::new(
+                "Reset book dictionary choices",
+                Action::DictionarySource(SourceAction::ResetBookSources),
             ));
         }
         if !self.installed_dictionaries.is_empty() {
@@ -350,33 +380,49 @@ impl Reader {
                 Action::DictionarySource(SourceAction::Toggle),
             ),
         ];
-        if self.open_book_id().is_some() {
-            let preferred = self.book_dictionaries().contains(&source.path);
-            rows.push(
-                Item::new(
-                    if preferred {
-                        "Remove book preference"
-                    } else {
-                        "Prefer for this book"
-                    },
-                    Action::DictionarySource(SourceAction::ForBook),
-                )
-                .detail("Book preferences take priority over the global list"),
-            );
-        }
         let book_order = self.book_dictionaries();
-        if let Some(rank) = book_order.iter().position(|key| key == &source.path) {
-            if rank > 0 {
+        let rank = book_order.iter().position(|key| key == &source.path);
+        if self.open_book_id().is_some() {
+            let excluded = self.book_dictionary_exclusions().contains(&source.path);
+            if excluded
+                || rank.is_some()
+                || !self.dictionary_settings.disabled.contains(&source.path)
+            {
                 rows.push(Item::new(
-                    "Earlier for this book",
-                    Action::DictionarySource(SourceAction::EarlierForBook),
+                    if excluded {
+                        "Re-enable for this book"
+                    } else {
+                        "Disable for this book"
+                    },
+                    Action::DictionarySource(SourceAction::ToggleForBook),
                 ));
             }
-            if rank + 1 < book_order.len() {
-                rows.push(Item::new(
-                    "Later for this book",
-                    Action::DictionarySource(SourceAction::LaterForBook),
-                ));
+            if !excluded {
+                rows.push(
+                    Item::new(
+                        if rank.is_some() {
+                            "Remove book preference"
+                        } else {
+                            "Prefer for this book"
+                        },
+                        Action::DictionarySource(SourceAction::ForBook),
+                    )
+                    .detail("Book preferences take priority over the global list"),
+                );
+                if let Some(rank) = rank {
+                    if rank > 0 {
+                        rows.push(Item::new(
+                            "Earlier for this book",
+                            Action::DictionarySource(SourceAction::EarlierForBook),
+                        ));
+                    }
+                    if rank + 1 < book_order.len() {
+                        rows.push(Item::new(
+                            "Later for this book",
+                            Action::DictionarySource(SourceAction::LaterForBook),
+                        ));
+                    }
+                }
             }
         }
         if i > 0 {
@@ -438,6 +484,20 @@ impl Reader {
             }
             return Ok(());
         }
+        if matches!(action, SourceAction::ResetBookSources) {
+            let id = self.open_book_id().ok_or("Open a book first")?;
+            let state = self.library.state_mut(id).ok_or("Book unavailable")?;
+            let preferred = std::mem::take(&mut state.preferred_dictionaries);
+            let excluded = std::mem::take(&mut state.excluded_dictionaries);
+            self.mark_dirty();
+            if let Err(error) = self.save_library() {
+                let state = self.library.state_mut(id).unwrap();
+                state.preferred_dictionaries = preferred;
+                state.excluded_dictionaries = excluded;
+                return Err(error.into());
+            }
+            return Ok(());
+        }
         let mut next = self.dictionary_settings.clone();
         let mut selected_key = None;
         if matches!(action, SourceAction::DefaultWordForms) {
@@ -463,16 +523,25 @@ impl Reader {
                 .clone();
             match action {
                 SourceAction::ForBook
+                | SourceAction::ToggleForBook
                 | SourceAction::EarlierForBook
                 | SourceAction::LaterForBook => {
                     let id = self.open_book_id().ok_or("Open a book first")?;
                     let state = self.library.state_mut(id).ok_or("Book unavailable")?;
-                    let book_order = &mut state.preferred_dictionaries;
-                    let previous = book_order.clone();
-                    if matches!(action, SourceAction::ForBook) {
-                        toggle(book_order, &key);
+                    let is_excluded = matches!(action, SourceAction::ToggleForBook);
+                    if !is_excluded && state.excluded_dictionaries.contains(&key) {
+                        return Err("Re-enable this dictionary for the book first".into());
+                    }
+                    let affected = if is_excluded {
+                        &mut state.excluded_dictionaries
                     } else {
-                        let rank = book_order
+                        &mut state.preferred_dictionaries
+                    };
+                    let previous = affected.clone();
+                    if matches!(action, SourceAction::ForBook | SourceAction::ToggleForBook) {
+                        toggle(affected, &key);
+                    } else {
+                        let rank = affected
                             .iter()
                             .position(|k| *k == key)
                             .ok_or("Choose a preferred dictionary")?;
@@ -482,13 +551,18 @@ impl Reader {
                             rank.checked_add(1)
                         };
                         let dest = dest
-                            .filter(|i| *i < book_order.len())
+                            .filter(|i| *i < affected.len())
                             .ok_or("End of book preferences")?;
-                        book_order.swap(rank, dest);
+                        affected.swap(rank, dest);
                     }
                     self.mark_dirty();
                     if let Err(error) = self.save_library() {
-                        self.library.state_mut(id).unwrap().preferred_dictionaries = previous;
+                        let state = self.library.state_mut(id).unwrap();
+                        if is_excluded {
+                            state.excluded_dictionaries = previous;
+                        } else {
+                            state.preferred_dictionaries = previous;
+                        }
                         return Err(error.into());
                     }
                     return Ok(());
@@ -518,6 +592,7 @@ impl Reader {
                     next.order = ordered;
                 }
                 SourceAction::ResetOrder
+                | SourceAction::ResetBookSources
                 | SourceAction::Open(_)
                 | SourceAction::DefaultWordForms
                 | SourceAction::BookWordForms
@@ -906,6 +981,119 @@ mod tests {
                 (done.y + done.h / 2) as f32,
             )),
             Change::Partial,
+        );
+    }
+
+    #[test]
+    fn book_dictionary_exclusions_preserve_priority_and_follow_each_edition() {
+        let fixture = Fixture::new();
+        let dictionaries = fixture.root.join("dictionaries");
+        fs::create_dir(&dictionaries).unwrap();
+        crate::dictionary::tests::write_dictionary(
+            &dictionaries,
+            "Harbour",
+            "sametypesequence=m\n",
+            &[
+                ("tide", b"Harbour tide."),
+                ("carry", b"To transport."),
+                ("beacon", b"Marking light."),
+            ],
+        );
+        crate::dictionary::tests::write_dictionary(
+            &dictionaries,
+            "Reference",
+            "sametypesequence=m\n",
+            &[("tide", b"Reference definition."), ("beacon", b"A light.")],
+        );
+        let pdf = fixture.root.join("Other edition.pdf");
+        fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let open = || Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        let mut app = open();
+        app.open_path(&fixture.book).unwrap();
+        let position = app.current_history_location();
+        app.activate(Action::ShowDictionaries).unwrap();
+        row(&mut app, "Harbour");
+        row(&mut app, "Disable by default");
+        row(&mut app, "Prefer for this book");
+        assert_eq!(app.lookup_sources("tide").unwrap()[0].dictionary, "Harbour");
+        assert_eq!(app.lookup_sources("carried").unwrap()[0].word, "carry");
+        row(&mut app, "Disable for this book");
+        assert_eq!(
+            app.lookup_sources("tide").unwrap()[0].dictionary,
+            "Reference"
+        );
+        assert!(app.lookup_sources("carried").unwrap().is_empty());
+        assert_eq!(app.book_dictionaries(), [PathBuf::from("Harbour.ifo")]);
+        assert_eq!(
+            app.book_dictionary_exclusions(),
+            [PathBuf::from("Harbour.ifo")]
+        );
+        assert!(
+            app.items()
+                .iter()
+                .all(|item| item.title != "Remove book preference")
+        );
+        back(&mut app);
+        crate::app::tests::capture_test_screen(
+            &app,
+            &fonts,
+            "READER_BOOK_DICTIONARIES_CAPTURE",
+            false,
+        );
+        back(&mut app);
+        app.look_up("beacno").unwrap();
+        assert!(app.spelling_lookup.is_some());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app.spelling_lookup.is_some() && Instant::now() < deadline {
+            app.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(app.definitions.len(), 1);
+        assert_eq!(app.definitions[0].dictionary, "Reference");
+        dismiss_definition(&mut app);
+        assert_eq!(app.current_history_location(), position);
+        drop(app);
+
+        let mut app = open();
+        app.open_path(&pdf).unwrap();
+        assert!(app.book_dictionary_exclusions().is_empty());
+        assert!(app.book_dictionaries().is_empty());
+        assert_eq!(
+            app.lookup_sources("tide").unwrap()[0].dictionary,
+            "Reference"
+        );
+        app.open_path(&fixture.book).unwrap();
+        assert_eq!(app.current_history_location(), position);
+        assert_eq!(
+            app.book_dictionary_exclusions(),
+            [PathBuf::from("Harbour.ifo")]
+        );
+        app.activate(Action::ShowDictionaries).unwrap();
+        row(&mut app, "Harbour");
+        row(&mut app, "Re-enable for this book");
+        assert_eq!(app.lookup_sources("tide").unwrap()[0].dictionary, "Harbour");
+        row(&mut app, "Disable for this book");
+        back(&mut app);
+        row(&mut app, "Reference");
+        row(&mut app, "Disable for this book");
+        back(&mut app);
+        row(&mut app, "Fuzzy search by default");
+        back(&mut app);
+        app.look_up("tide").unwrap();
+        assert!(app.definitions.is_empty() && app.spelling_lookup.is_none());
+        dismiss_definition(&mut app);
+        app.activate(Action::ShowDictionaries).unwrap();
+        row(&mut app, "Reset book dictionary choices");
+        assert!(app.book_dictionary_exclusions().is_empty());
+        assert!(app.book_dictionaries().is_empty());
+        assert!(!app.fuzzy_search_enabled());
+        assert_eq!(
+            app.lookup_sources("tide").unwrap()[0].dictionary,
+            "Reference"
         );
     }
 

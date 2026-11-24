@@ -152,6 +152,28 @@ fn late_selection_jobs_cannot_overwrite_manual_ranges_sleep_or_disabled_forms() 
 }
 
 #[test]
+fn book_dictionary_exclusions_keep_automatic_cjk_selection_on_enabled_sources() {
+    let (_fixture, mut app) = authored();
+    let initial = selected(&app, "読み");
+    app.selection = Some(initial.clone());
+    app.start_cjk_selection();
+    settle(&mut app);
+    assert_eq!(app.selection.as_ref().unwrap().text, "読み込みました");
+    let position = app.current_history_location();
+
+    app.activate(Action::ShowDictionaries).unwrap();
+    app.change_source(SourceAction::Open(0)).unwrap();
+    app.change_source(SourceAction::ToggleForBook).unwrap();
+    app.show(Screen::Book);
+    app.selection = Some(initial.clone());
+    app.start_cjk_selection();
+    settle(&mut app);
+    assert_eq!(app.selection, Some(initial));
+    assert!(app.lookup_sources("読み込みました").unwrap().is_empty());
+    assert_eq!(app.current_history_location(), position);
+}
+
+#[test]
 #[ignore = "Requires a cached CJK publication and a supplied local font"]
 fn cached_cjk_publication_selection_preserves_source_and_position() {
     let path = PathBuf::from(std::env::var_os("READER_CJK_ORIGINAL").expect("publication"));

@@ -1188,6 +1188,8 @@ pub struct BookState {
     pub(crate) pdf_crop_seeds: crate::pdf_crop::Seeds,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) preferred_dictionaries: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) excluded_dictionaries: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) dictionary_word_forms: Option<bool>,
     #[serde(default, skip_serializing_if = "DictionaryFuzzySearch::is_legacy")]
@@ -1271,6 +1273,7 @@ impl BookState {
             fixed_preferences: FixedPreferences::default(),
             pdf_crop_seeds: Default::default(),
             preferred_dictionaries: Vec::new(),
+            excluded_dictionaries: Vec::new(),
             dictionary_word_forms: None,
             dictionary_fuzzy_search: DictionaryFuzzySearch::Legacy,
             ocr_language: None,

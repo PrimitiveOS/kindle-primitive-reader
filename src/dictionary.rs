@@ -83,6 +83,14 @@ pub(crate) struct LookupReport {
     pub(crate) searched: bool,
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct SourceScope<'a> {
+    pub(crate) preferred: &'a [PathBuf],
+    pub(crate) excluded: &'a [PathBuf],
+    pub(crate) order: &'a [PathBuf],
+    pub(crate) disabled: &'a [PathBuf],
+}
+
 /// Search a Reader installation and the two standard KOReader dictionary directories.
 #[derive(Clone)]
 pub(crate) struct DictionarySources {
@@ -181,14 +189,14 @@ impl DictionarySources {
 
     fn enabled(
         &self,
-        book_order: &[PathBuf],
-        order: &[PathBuf],
-        disabled: &[PathBuf],
+        scope: SourceScope<'_>,
     ) -> io::Result<(Vec<(DictionaryFile, Info)>, Option<io::Error>)> {
         let mut first_error = None;
         let mut sources = Vec::new();
         for file in self.files()? {
-            if disabled.contains(&file.key) && !book_order.contains(&file.key) {
+            if scope.excluded.contains(&file.key)
+                || scope.disabled.contains(&file.key) && !scope.preferred.contains(&file.key)
+            {
                 continue;
             }
             match open_dictionary_file(&file.root, &file.path).and_then(Info::load) {
@@ -199,9 +207,10 @@ impl DictionarySources {
             }
         }
         sources.sort_by_cached_key(|(file, info)| {
-            let rank = book_order
+            let rank = scope
+                .preferred
                 .iter()
-                .chain(order)
+                .chain(scope.order)
                 .position(|key| key == &file.key)
                 .unwrap_or(usize::MAX);
             (
@@ -232,16 +241,23 @@ impl DictionarySources {
         disabled: &[PathBuf],
         with_word_forms: bool,
     ) -> io::Result<Vec<LookupEntry>> {
-        self.lookup_report(word, book_order, order, disabled, with_word_forms)
-            .map(|report| report.entries)
+        self.lookup_report(
+            word,
+            SourceScope {
+                preferred: book_order,
+                order,
+                disabled,
+                ..SourceScope::default()
+            },
+            with_word_forms,
+        )
+        .map(|report| report.entries)
     }
 
     pub(crate) fn lookup_report(
         &self,
         word: &str,
-        book_order: &[PathBuf],
-        order: &[PathBuf],
-        disabled: &[PathBuf],
+        scope: SourceScope<'_>,
         with_word_forms: bool,
     ) -> io::Result<LookupReport> {
         let word = word.trim();
@@ -253,7 +269,7 @@ impl DictionarySources {
         if term.is_empty() {
             return Ok(LookupReport::default());
         }
-        let (sources, mut first_error) = self.enabled(book_order, order, disabled)?;
+        let (sources, mut first_error) = self.enabled(scope)?;
         let folded = CaseMapper::new().fold_string(term);
         let forms = with_word_forms.then(|| WordForms::for_word(term));
         let query = Query {

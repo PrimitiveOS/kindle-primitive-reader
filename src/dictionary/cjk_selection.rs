@@ -24,9 +24,7 @@ impl DictionarySources {
     pub(crate) fn longest_cjk_prefix(
         &self,
         text: &str,
-        book: &[PathBuf],
-        order: &[PathBuf],
-        disabled: &[PathBuf],
+        scope: SourceScope<'_>,
         with_forms: bool,
         cancel: &AtomicBool,
     ) -> io::Result<Option<usize>> {
@@ -44,8 +42,7 @@ impl DictionarySources {
                 Ok(())
             }
         };
-        let (sources, mut first_error) =
-            primitive_app::with_storage(|| self.enabled(book, order, disabled))?;
+        let (sources, mut first_error) = primitive_app::with_storage(|| self.enabled(scope))?;
         let mut budget = LookupBudget {
             index_bytes: MAX_TOTAL_INDEX_BYTES,
             dictzip_bytes: MAX_DZ_LOOKUP_BYTES,
@@ -198,7 +195,7 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let lookup = |text, forms| {
             sources
-                .longest_cjk_prefix(text, &[], &[], &[], forms, &cancel)
+                .longest_cjk_prefix(text, SourceScope::default(), forms, &cancel)
                 .unwrap()
         };
         assert_eq!(
@@ -211,7 +208,7 @@ mod tests {
         cancel.store(true, Ordering::Relaxed);
         assert_eq!(
             sources
-                .longest_cjk_prefix("読む", &[], &[], &[], true, &cancel)
+                .longest_cjk_prefix("読む", SourceScope::default(), true, &cancel)
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::Interrupted
@@ -288,7 +285,7 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let lookup = || {
             sources
-                .longest_cjk_prefix("読み込みました", &[], &[], &[], true, &cancel)
+                .longest_cjk_prefix("読み込みました", SourceScope::default(), true, &cancel)
                 .unwrap()
         };
         assert_eq!(lookup(), Some("読み込みました".len()));
@@ -314,7 +311,7 @@ mod tests {
         for text in ["か\u{3099}", "ｶﾞ", "か\u{fe00}"] {
             assert_eq!(
                 sources
-                    .longest_cjk_prefix(text, &[], &[], &[], true, &cancel)
+                    .longest_cjk_prefix(text, SourceScope::default(), true, &cancel)
                     .unwrap(),
                 None
             );
@@ -328,7 +325,7 @@ mod tests {
         for text in ["か\u{3099}", "ｶﾞ"] {
             assert_eq!(
                 sources
-                    .longest_cjk_prefix(text, &[], &[], &[], true, &cancel)
+                    .longest_cjk_prefix(text, SourceScope::default(), true, &cancel)
                     .unwrap(),
                 Some(text.len())
             );

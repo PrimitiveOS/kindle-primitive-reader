@@ -140,16 +140,13 @@ impl DictionarySources {
     pub(crate) fn suggested_definitions(
         &self,
         query: &str,
-        book_order: &[PathBuf],
-        order: &[PathBuf],
-        disabled: &[PathBuf],
+        scope: SourceScope<'_>,
         cancel: &AtomicBool,
     ) -> io::Result<Vec<LookupEntry>> {
         if !eligible(query) {
             return Ok(Vec::new());
         }
-        let (sources, mut first_error) =
-            primitive_app::with_storage(|| self.enabled(book_order, order, disabled))?;
+        let (sources, mut first_error) = primitive_app::with_storage(|| self.enabled(scope))?;
         let mut nearest = Nearest::new(query);
         let mut budget = LookupBudget {
             index_bytes: MAX_TOTAL_INDEX_BYTES,

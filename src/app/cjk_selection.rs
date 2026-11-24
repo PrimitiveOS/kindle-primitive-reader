@@ -33,6 +33,7 @@ impl Reader {
         };
         let dictionaries = self.dictionaries.clone();
         let book = self.book_dictionaries().to_vec();
+        let excluded = self.book_dictionary_exclusions().to_vec();
         let (order, disabled) = self.dictionary_settings.paths();
         let (order, disabled) = (order.to_vec(), disabled.to_vec());
         let forms = self.word_forms_enabled();
@@ -43,8 +44,17 @@ impl Reader {
         match std::thread::Builder::new()
             .name("dictionary-selection".into())
             .spawn(move || {
-                let result =
-                    dictionaries.longest_cjk_prefix(&text, &book, &order, &disabled, forms, &flag);
+                let result = dictionaries.longest_cjk_prefix(
+                    &text,
+                    dictionary::SourceScope {
+                        preferred: &book,
+                        excluded: &excluded,
+                        order: &order,
+                        disabled: &disabled,
+                    },
+                    forms,
+                    &flag,
+                );
                 let _ = sender.send(result);
             }) {
             Ok(_) => {
