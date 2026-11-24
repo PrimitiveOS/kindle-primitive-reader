@@ -199,11 +199,11 @@ impl ReadAlarm {
                         .unwrap_or(self.options.minutes);
                     self.panel = Some(Panel::Set(Kind::Interval, minutes));
                 } else if tap(PICK_ALARM) {
-                    let (_, civil) = local_clock(wall)
+                    let civil = local_clock(wall)
                         .ok_or_else(|| io::Error::other("The local clock is unavailable"))?;
                     self.panel = Some(Panel::Set(
                         Kind::Alarm,
-                        (civil.tm_hour * 60 + civil.tm_min) as u16,
+                        (civil.hour * 60 + civil.minute) as u16,
                     ));
                 } else if tap(STOP) && self.running.is_some() {
                     self.stop();

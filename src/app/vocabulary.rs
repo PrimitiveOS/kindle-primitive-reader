@@ -663,31 +663,16 @@ fn source(entry: &Entry) -> &str {
     }
 }
 fn date(seconds: Option<u64>) -> String {
-    let Some(seconds) = seconds.and_then(|s| libc::time_t::try_from(s).ok()) else {
-        return "Unknown".into();
-    };
-    let mut local = std::mem::MaybeUninit::<libc::tm>::uninit();
-    // localtime_r initializes this caller-owned tm or returns null for an invalid instant.
-    let local = unsafe {
-        if libc::localtime_r(&seconds, local.as_mut_ptr()).is_null() {
-            return "Unknown".into();
-        }
-        local.assume_init()
-    };
-    let Some(year) = local
-        .tm_year
-        .checked_add(1900)
-        .filter(|year| (0..=9999).contains(year))
+    let Some(local) = seconds
+        .and_then(|value| i64::try_from(value).ok())
+        .and_then(crate::mark_time::local_parts)
+        .filter(|time| (0..=9999).contains(&time.year))
     else {
         return "Unknown".into();
     };
     format!(
         "{:04}-{:02}-{:02} {:02}:{:02}",
-        year,
-        local.tm_mon + 1,
-        local.tm_mday,
-        local.tm_hour,
-        local.tm_min
+        local.year, local.month, local.day, local.hour, local.minute
     )
 }
 fn due(entry: &Entry) -> String {

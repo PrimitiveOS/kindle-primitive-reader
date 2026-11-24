@@ -40,6 +40,9 @@ fn read_alarm_interval_preserves_page_persists_choices_and_repeats_once() {
     let location = app.current_history_location().unwrap();
     open_tools(&mut app);
     capture_test_screen(&app, &fonts, "READER_ALARM_SETTINGS_SCREEN", false);
+    assert_eq!(app.input(touch(PICK_ALARM)), Change::Partial);
+    capture_test_screen(&app, &fonts, "READER_ALARM_CLOCK_PICKER_SCREEN", false);
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
     assert_eq!(app.input(touch(PICK_INTERVAL)), Change::Partial);
     assert_eq!(app.input(touch(START)), Change::None);
     let Input::Tap(x, y) = touch(MIN_UP) else {
@@ -128,8 +131,8 @@ fn read_alarm_local_clock_selects_the_next_occurrence_and_preserves_other_settin
     let mut timer = ReadAlarm::open(fixture.root.join("timer.json"));
     let now = Instant::now();
     let wall = SystemTime::now();
-    let (_, local) = local_clock(wall).unwrap();
-    let minutes = (local.tm_hour * 60 + local.tm_min) as u16;
+    let local = local_clock(wall).unwrap();
+    let minutes = (local.hour * 60 + local.minute) as u16;
     let next = clock_delay(wall, minutes).unwrap().as_secs();
     // A next-day local occurrence can cross a daylight-saving boundary.
     assert!((22 * 3600..=26 * 3600).contains(&next));
@@ -156,6 +159,58 @@ fn read_alarm_local_clock_selects_the_next_occurrence_and_preserves_other_settin
             && restored.options.footer
             && restored.options.repeat
     );
+}
+
+#[test]
+fn read_alarm_uses_the_local_day_before_resolving_the_requested_minute() {
+    const UTC_PLUS_SEVEN: i32 = 7 * 60 * 60;
+    let resolve_after = |civil, after| {
+        let target = civil - i64::from(UTC_PLUS_SEVEN);
+        (target > after).then_some(target)
+    };
+    // It is 00:10 on the Kindle, even though the UTC date has not rolled over.
+    let utc = 17 * 3600 + 10 * 60;
+    assert_eq!(
+        clock_delay_in_zone(utc, UTC_PLUS_SEVEN, 15, resolve_after),
+        Some(Duration::from_secs(5 * 60))
+    );
+    assert_eq!(
+        clock_delay_in_zone(utc, UTC_PLUS_SEVEN, 5, resolve_after),
+        Some(Duration::from_secs(23 * 3600 + 55 * 60))
+    );
+}
+
+#[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]
+#[test]
+fn read_alarm_picker_matches_the_kindle_system_clock() {
+    let output = std::process::Command::new("date")
+        .arg("+%s %H %M")
+        .env_remove("TZ")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stamp = String::from_utf8(output.stdout).unwrap();
+    let values: Vec<u64> = stamp
+        .split_whitespace()
+        .map(|value| value.parse().unwrap())
+        .collect();
+    let [utc, hour, minute] = values.as_slice() else {
+        panic!("Expected epoch, hour, and minute from the Kindle clock");
+    };
+    let fixture = Fixture::new();
+    let mut timer = ReadAlarm::open(fixture.root.join("timer.json"));
+    timer.panel = Some(Panel::Settings);
+    timer
+        .handle(
+            touch(PICK_ALARM),
+            Instant::now(),
+            UNIX_EPOCH + Duration::from_secs(*utc),
+        )
+        .unwrap();
+    assert!(matches!(
+        timer.panel,
+        Some(Panel::Set(Kind::Alarm, minutes)) if u64::from(minutes) == hour * 60 + minute
+    ));
 }
 
 #[test]

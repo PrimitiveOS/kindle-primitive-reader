@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.27
+
+- Use the Kindle system time zone for reading clocks, alarms, saved marks, vocabulary review dates, and the reading calendar.
+
 ## 0.1.26
 
 - Add the optional Google Translate romanization setting and show returned Latin text with the source and translation.

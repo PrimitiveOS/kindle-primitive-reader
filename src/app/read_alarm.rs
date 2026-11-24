@@ -220,14 +220,13 @@ impl ReadAlarm {
     }
 }
 
-// libc's local calendar uses the Kindle's configured zone and handles the next day across DST.
-fn local_clock(now: SystemTime) -> Option<(libc::time_t, libc::tm)> {
-    let seconds = now
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_secs()
-        .try_into()
-        .ok()?;
+fn unix_seconds(now: SystemTime) -> Option<i64> {
+    i64::try_from(now.duration_since(UNIX_EPOCH).ok()?.as_secs()).ok()
+}
+
+#[allow(clippy::useless_conversion)] // time_t is narrower on some supported targets.
+fn libc_local_time(seconds: i64) -> Option<(libc::time_t, libc::tm)> {
+    let seconds = libc::time_t::try_from(seconds).ok()?;
     let mut civil = std::mem::MaybeUninit::uninit();
     // localtime_r initializes this caller-owned buffer on success.
     unsafe {
@@ -238,23 +237,84 @@ fn local_clock(now: SystemTime) -> Option<(libc::time_t, libc::tm)> {
     }
 }
 
+fn local_clock(now: SystemTime) -> Option<primitive_device::LocalTime> {
+    let seconds = unix_seconds(now)?;
+    #[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]
+    {
+        primitive_device::local_time_at(seconds)
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "arm", target_env = "musl")))]
+    {
+        let (_, civil) = libc_local_time(seconds)?;
+        Some(primitive_device::LocalTime {
+            year: civil.tm_year.checked_add(1900)?,
+            month: civil.tm_mon + 1,
+            day: civil.tm_mday,
+            hour: civil.tm_hour,
+            minute: civil.tm_min,
+            second: civil.tm_sec,
+            weekday: civil.tm_wday,
+            utc_offset: None,
+        })
+    }
+}
+
 fn clock_delay(now: SystemTime, minutes: u16) -> Option<Duration> {
     if minutes >= 24 * 60 {
         return None;
     }
-    let (seconds, mut civil) = local_clock(now)?;
+    let seconds = unix_seconds(now)?;
+    #[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]
+    {
+        let zone = primitive_device::DeviceTimeZone::load();
+        if let Some(offset) = zone.local_time_at(seconds)?.utc_offset {
+            return clock_delay_in_zone(seconds, offset, minutes, |civil, after| {
+                zone.resolve_local_time_after(civil, after)
+            });
+        }
+    }
+    libc_clock_delay(seconds, minutes)
+}
+
+#[cfg(any(
+    test,
+    all(target_os = "linux", target_arch = "arm", target_env = "musl")
+))]
+fn clock_delay_in_zone(
+    seconds: i64,
+    offset: i32,
+    minutes: u16,
+    resolve_after: impl Fn(i64, i64) -> Option<i64>,
+) -> Option<Duration> {
+    const DAY: i64 = 24 * 60 * 60;
+    let local_day = seconds.checked_add(i64::from(offset))?.div_euclid(DAY);
+    let today = local_day
+        .checked_mul(DAY)?
+        .checked_add(i64::from(minutes) * 60)?;
+    let target = resolve_after(today, seconds)
+        .or_else(|| resolve_after(today.checked_add(DAY)?, seconds))?;
+    positive_delay(target.checked_sub(seconds)?)
+}
+
+fn libc_clock_delay(seconds: i64, minutes: u16) -> Option<Duration> {
+    let (seconds, mut civil) = libc_local_time(seconds)?;
     civil.tm_hour = i32::from(minutes / 60);
     civil.tm_min = i32::from(minutes % 60);
     civil.tm_sec = 0;
     civil.tm_isdst = -1;
     let mut next = civil;
-    // mktime normalizes a caller-owned civil date in the device's local time zone.
+    // mktime normalizes the civil date in the host's local time zone.
     let mut target = unsafe { libc::mktime(&mut next) };
     if target <= seconds {
         civil.tm_mday += 1;
         target = unsafe { libc::mktime(&mut civil) };
     }
-    u64::try_from(target.checked_sub(seconds)?)
+    positive_delay(target.checked_sub(seconds)?)
+}
+
+fn positive_delay(seconds: impl TryInto<u64>) -> Option<Duration> {
+    seconds
+        .try_into()
         .ok()
         .filter(|s| *s > 0)
         .map(Duration::from_secs)
