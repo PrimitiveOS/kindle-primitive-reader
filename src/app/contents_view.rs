@@ -10,6 +10,10 @@ use super::{
 };
 use crate::epub::Destination;
 
+mod row_metadata;
+#[cfg(test)]
+mod row_metadata_tests;
+
 const SEARCH: Rect = Rect::new(338, HEIGHT as i32 - 104, 276, 72);
 const CLEAR: Rect = Rect::new(653, HEIGHT as i32 - 104, 276, 72);
 const QUERY_LIMIT: usize = 128;
@@ -35,7 +39,7 @@ pub(super) enum Target {
 #[derive(Eq, PartialEq)]
 pub(super) struct ContentsEntry {
     title: String,
-    depth: usize,
+    pub(super) depth: usize,
     pub(super) target: Target,
 }
 
@@ -323,14 +327,25 @@ impl Reader {
             let text_height = title_height + i32::from(detail.is_some()) * detail_height;
             let title_y = row.y + (row.h - text_height) / 2;
             let width = row.right() - title_x - if link { 86 } else { 32 };
-            let mut title_style = TextStyle::new(title_size).ink(ink);
-            if current || line.heading.is_none() {
-                title_style = title_style.bold();
-            }
-            canvas.text(
+            let numbers = line.heading.and_then(|heading| {
+                self.contents_view
+                    .as_ref()?
+                    .positions
+                    .as_ref()?
+                    .numbers(heading.source_index)
+            });
+            self.draw_contents_title(
+                canvas,
                 Rect::new(title_x, title_y, width, title_height),
                 &line.item.title,
-                title_style,
+                numbers,
+                row_metadata::RowTypography {
+                    title_size,
+                    title_bold: current || line.heading.is_none(),
+                    info_size: list_text_pixels(font.saturating_sub(4), row_height),
+                    ink,
+                    info_ink: detail_ink,
+                },
             );
             if let Some(detail) = detail {
                 canvas.text(

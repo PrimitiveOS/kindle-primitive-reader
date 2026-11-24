@@ -60,7 +60,7 @@ impl Reader {
             || format!("Automatic ({})", density.automatic_font()),
             |value| value.to_string(),
         );
-        vec![
+        let mut items = vec![
             Item::new(
                 Field::Rows.title(),
                 Action::EditContentsDensity(Field::Rows),
@@ -71,7 +71,9 @@ impl Reader {
                 Action::EditContentsDensity(Field::Font),
             )
             .detail(font),
-        ]
+        ];
+        items.extend(self.contents_metadata_settings_items());
+        items
     }
 
     pub(super) fn open_contents_density(&mut self, field: Field) {

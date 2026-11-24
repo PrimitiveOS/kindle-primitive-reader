@@ -75,6 +75,12 @@ pub(crate) struct ReadingControls {
     /// Reader-wide appearance for the Contents list.
     #[serde(skip_serializing_if = "ContentsDensity::is_default")]
     pub contents_density: ContentsDensity,
+    /// Show the known length of each Contents section beside its heading.
+    #[serde(skip_serializing_if = "is_false")]
+    pub contents_chapter_lengths: bool,
+    /// `None` follows KOReader's default of using dot leaders in Contents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contents_dot_leaders: Option<bool>,
     /// Bitset of reading metrics shown when `status_bar` is `Custom`.
     #[serde(default, skip_serializing_if = "is_zero_u16")]
     pub footer_items: u16,
