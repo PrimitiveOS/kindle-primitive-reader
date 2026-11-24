@@ -45,8 +45,10 @@ items without adding an outer separator, matching KOReader's spacer behavior.
 Repeated text is appended without an inserted separator. The Reader uses
 KOReader's battery glyphs for ten percent bands, charging, and fully charged
 state; the symbol font is bundled with the Kindle package.
-Clock tokens use 24-hour local time. The KOReader 12-hour-clock preference is
-not yet applied to `%m`.
+Clock tokens use 24-hour formatting. On the tested Oasis, a static ARM musl
+probe using the same local-time conversion showed UTC while the Kindle clock
+showed UTC+07:00. Reader still needs the system's TZif offset for these tokens.
+The KOReader 12-hour preference for `%m` also remains open.
 
 ## Persistence and safeguards
 
@@ -69,8 +71,8 @@ level glyphs in
 PrimitiveOS exposes an explicit editor row instead of relying on a hidden
 long-press, and uses those same token spellings and battery glyphs.
 
-The Mac test verifies the settings route, editor save, repetition bounds,
-rendered file/page values, and settings after reopening. Unit tests cover the
+The test on both Mac and Oasis verifies the settings route, editor save, repetition
+bounds, rendered file/page values, and settings after reopening. Unit tests cover the
 token engine, file validation, and KOReader battery glyph steps. The rendered
 footer screenshot also confirms the chapter/page caption area, horizontal
 progress track below it, and Exit at the right edge. Kindle visual acceptance

@@ -70,8 +70,19 @@ integration run is archived [here](device-tests/reader-host-suite-20261124.log).
 The pinned source inventory matched all 324 identifiers against KOReader
 commit `9192014d8bd82a91dc1012473be0f238dedfdb54`. Simulator captures accompany
 the [footer spacing](footer-container-layout.md), [custom text](footer-custom-text.md),
-and [page-button mapping](page-turn-inversion.md) checks. The pinned ARMHF
-build and current-release verification on the Oasis are tracked separately.
+and [page-button mapping](page-turn-inversion.md) checks.
+
+The ARMHF 0.1.26 test bundle ran natively on the Oasis 3. The first run passed
+978 Reader tests and failed one because its symbol-font fixture still used a
+Mac build path. Both the 14 EPUB package tests and four layout probes passed.
+After [the fixture fix](https://github.com/PrimitiveOS/kindle-primitive-reader/commit/e4ddd7b),
+the full Reader library suite passed 979 tests with 62 ignored in 294.49 seconds.
+The fixture fix affects tests only. The corrected test executable SHA-256 is
+`3a1bf563c532bc6d7a9eaa94dff4726a319e23b24730d3a9ea12df872ee7eeae`.
+The Mac and Oasis both generated the same 1264 × 1680 footer frame from the same
+authored EPUB, with SHA-256
+`d388a1442b2156f815ce5a0fa0e0c62ffc4421d4a953c9f941325fc07aba5a50`.
+This compares software rendering without measuring E Ink refresh quality.
 
 The latest test-only ARMHF bundle built from the prior v0.1.25 Reader source
 passed 960 Reader tests (62 ignored), 14 EPUB package tests, and four layout

@@ -111,6 +111,37 @@ peak memory. The scratch profile was removed. The source document, Launcher and
 user reading data were not changed. This automated offscreen diagnostic does not
 claim foreground touch or visual acceptance.
 
+## Reader 0.1.26 release on the Oasis
+
+On 24 November 2026 the [GitHub release](https://github.com/PrimitiveOS/kindle-primitive-reader/releases/tag/v0.1.26)
+passed CI and its ARMHF ZIP matched the published checksum
+`a21256b97a4fa22799473b3195ec190da37a5678d5978fe3f6ddedb3472c7428`
+(21,246,669 bytes). It contains the application and documentation licences.
+The same asset is available through the
+[Store listing](https://primitiveos.github.io/kindle-primitive-catalog/v1/apps/primitive-reader.json).
+The verified Store install transaction updated Reader on the Oasis 3.
+The installed binary SHA-256 is
+`d597774be791050cd74bf7a4f9cef044bb7ad1c0ca9f6df75ceb4997ac81de06`.
+
+The release executable used the normal picker, software page input, rendering
+and a fresh profile to exercise six existing Documents files to completion.
+The source file hashes matched before and after these runs.
+
+| Format | Opened, advanced and resumed | First frame |
+| --- | ---: | ---: |
+| EPUB | 2 | 2.00–2.08 s |
+| PDF | 2 | 0.44–16.22 s |
+| AZW3 | 1 | 0.99 s |
+| MOBI | 1 | 2.16 s |
+
+An additional one-page PDF opened and resumed. Its forward action reached the
+end-of-book prompt, and the footer remained at Page 1 of 1, as expected. The
+foreground session belonged to Primitive Browser during installation.
+The [release footer screenshot](screenshots/footer-release-oasis.png) uses the
+exact release binary on the Oasis with an authored EPUB and offscreen rendering.
+It shows the hyphenated caption, progress track and Exit control. E Ink refresh
+timing and a foreground Reader session remain separate checks.
+
 For a single file under an authorized Documents root, run the example with a fresh
 scratch directory and the same Noto Sans fonts as Launcher.
 
