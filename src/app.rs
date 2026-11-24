@@ -798,6 +798,7 @@ pub struct Reader {
     )>,
     accepted_viewport: Option<primitive_app::viewport::Viewport>,
     pending_orientation: Option<reading_orientation::PendingOrientation>,
+    staged_frame_orientation: Option<ReadingOrientation>,
     flow_popup: Option<hidden_flows::FlowPopup>,
     outline: Option<OutlineScan>,
     numbering_scan: Option<character_page_settings::Scan>,
@@ -1020,6 +1021,7 @@ impl Reader {
             staged_viewport: None,
             accepted_viewport: None,
             pending_orientation: None,
+            staged_frame_orientation: None,
             flow_popup: None,
             outline: None,
             numbering_scan: None,
@@ -8182,6 +8184,8 @@ impl App for Reader {
             .staged_viewport
             .take()
             .ok_or_else(|| io::Error::other("No prepared Reader viewport"))?;
+        // The runtime presents this frame before it commits the preference.
+        self.staged_frame_orientation = self.pending_orientation_for_turn(candidate.turn);
         let render = staged
             .as_mut()
             .ok_or_else(|| io::Error::other("No prepared Reader viewport"))
@@ -8189,6 +8193,7 @@ impl App for Reader {
                 self.draw_prepared_reading_viewport(stage, canvas)
                     .map_err(io::Error::other)
             });
+        self.staged_frame_orientation = None;
         self.staged_viewport = Some((candidate, staged));
         render
     }

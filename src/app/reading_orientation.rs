@@ -118,19 +118,32 @@ impl Reader {
         }
     }
 
-    pub(super) fn accept_pending_orientation(&mut self, turn: LogicalTurn) {
-        let pending = self.pending_reading_orientation();
-        self.pending_orientation = None;
-        if let Some(orientation) = pending {
-            let matches = match orientation.viewport_policy() {
+    pub(super) fn pending_orientation_for_turn(
+        &self,
+        turn: LogicalTurn,
+    ) -> Option<ReadingOrientation> {
+        self.pending_reading_orientation().filter(|orientation| {
+            match orientation.viewport_policy() {
                 ViewportRequest::FollowLauncher => {
                     matches!(turn, LogicalTurn::Upright | LogicalTurn::UpsideDown)
                 }
                 ViewportRequest::Fixed(requested) => requested == turn,
-            };
-            if matches && let Err(error) = self.persist_reading_orientation(orientation) {
-                self.notice = Some(error.to_string());
             }
+        })
+    }
+
+    pub(super) fn displayed_reading_orientation(&self) -> ReadingOrientation {
+        self.staged_frame_orientation
+            .unwrap_or_else(|| self.reading_orientation())
+    }
+
+    pub(super) fn accept_pending_orientation(&mut self, turn: LogicalTurn) {
+        let selected = self.pending_orientation_for_turn(turn);
+        self.pending_orientation = None;
+        if let Some(orientation) = selected
+            && let Err(error) = self.persist_reading_orientation(orientation)
+        {
+            self.notice = Some(error.to_string());
         }
     }
 
@@ -177,7 +190,7 @@ impl Reader {
     }
 
     pub(super) fn next_reading_orientation(&self) -> ReadingOrientation {
-        let current = self.reading_orientation();
+        let current = self.displayed_reading_orientation();
         if self.landscape_choices_available() {
             match current {
                 ReadingOrientation::UpsideDown => return ReadingOrientation::LandscapeLeft,
@@ -425,6 +438,87 @@ mod tests {
         assert_eq!(reopened.reading_orientation(), LandscapeRight);
         assert_eq!(reopened.preferred_rotation(), None);
         assert!(!reopened.landscape_choices_available());
+    }
+
+    #[test]
+    fn first_presented_landscape_frame_highlights_the_choice_before_it_is_saved() {
+        let fixture = Fixture::new();
+        let book = document(&fixture, "long-chapter.epub", "Field Notes.epub");
+        let fonts = vec![
+            crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+            crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+        ];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&book).unwrap();
+        present(&mut app, 1, LogicalTurn::Upright, ViewportDecision::Commit);
+        orientation_controls(&mut app);
+        app.reading_top = false;
+        let source = app.current_position().unwrap();
+        let edition = app.open_book_id().unwrap();
+        let saved_choice = app.library.state(edition).unwrap().screen_orientation;
+        let right = app.reading_button_in_row("Landscape", "Right");
+        let tap = Input::Tap(
+            (right.x + right.w / 2) as f32,
+            (right.y + right.h / 2) as f32,
+        );
+        assert_eq!(app.input(tap), Change::Partial);
+        assert_eq!(app.displayed_reading_orientation(), FollowLauncher);
+        let paths: Vec<_> = app
+            .fonts
+            .iter()
+            .map(|font| font.display().to_string())
+            .collect();
+        let mut landscape = Canvas::new_viewport(1680, 1264, 1264, &paths).unwrap();
+        let unmatched = Viewport {
+            generation: 2,
+            turn: LogicalTurn::Counterclockwise,
+            logical_size: (1680, 1264),
+        };
+        app.stage_viewport(unmatched).unwrap();
+        landscape.begin();
+        app.draw_staged_viewport(&mut landscape).unwrap();
+        let unchanged_choice = landscape.finish(false);
+        app.finish_viewport(unmatched, ViewportDecision::Abort);
+        assert_eq!(
+            app.library.state(edition).unwrap().screen_orientation,
+            saved_choice
+        );
+        assert_eq!(app.current_position().unwrap(), source);
+
+        assert_eq!(app.input(tap), Change::Partial);
+        let proposed = Viewport {
+            generation: 3,
+            turn: LogicalTurn::Clockwise,
+            ..unmatched
+        };
+        app.stage_viewport(proposed).unwrap();
+        landscape.begin();
+        app.draw_staged_viewport(&mut landscape).unwrap();
+        let first = landscape.finish(false);
+        assert_eq!(app.displayed_reading_orientation(), FollowLauncher);
+        assert_eq!(
+            app.library.state(edition).unwrap().screen_orientation,
+            saved_choice
+        );
+        assert!(
+            first != unchanged_choice,
+            "a mismatched turn must retain the old selection"
+        );
+
+        app.finish_viewport(proposed, ViewportDecision::Commit);
+        assert_eq!(
+            app.reading_orientation(),
+            ReadingOrientation::LandscapeRight
+        );
+        assert_eq!(app.current_position().unwrap().anchor, source.anchor);
+        let committed = primitive_app::frame(&app, &mut landscape, false);
+        assert!(
+            first == committed,
+            "the presented frame must match the committed selection"
+        );
+        if let Some(path) = std::env::var_os("READER_ORIENTATION_FIRST_FRAME_CAPTURE") {
+            primitive_app::write_png(std::path::Path::new(&path), 1680, 1264, &first).unwrap();
+        }
     }
 
     #[test]

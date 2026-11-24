@@ -102,7 +102,7 @@ impl Reader {
                 .detail(current.palette.label()),
             );
         }
-        let orientation = self.reading_orientation();
+        let orientation = self.displayed_reading_orientation();
         items.extend([
             Item::new(
                 "Screen orientation",

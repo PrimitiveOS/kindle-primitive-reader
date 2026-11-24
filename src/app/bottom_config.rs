@@ -82,13 +82,14 @@ impl Reader {
     pub(super) fn bottom_config_rows(&self, panel: BarPanel) -> Vec<ConfigRow> {
         if matches!(panel, BarPanel::TextScreen | BarPanel::ViewScreen) {
             let controls = self.controls;
+            let selected = self.displayed_reading_orientation();
             let mut rows = vec![ConfigRow::new(
                 "Screen orientation",
                 ReadingOrientation::ALL.map(|orientation| {
                     Choice::option(
                         orientation.label(),
                         Action::SetReadingOrientation(orientation),
-                        self.reading_orientation() == orientation,
+                        selected == orientation,
                     )
                 }),
             )];
@@ -103,7 +104,7 @@ impl Reader {
                         Choice::option(
                             label,
                             Action::SetReadingOrientation(orientation),
-                            self.reading_orientation() == orientation,
+                            selected == orientation,
                         )
                     }),
                 ));
