@@ -210,8 +210,8 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
 - The optional top status header counts rendered pages across supported EPUBs.
   [Page numbering and supported layouts](docs/whole-book-screen-pages.md)
 - Open Settings › Links to set tap behavior, enlarge the tap area around local
-  links in reflowable books, or enable a right swipe to go back. Navigation ›
-  Links on this page opens a list of links on the visible page. [Link controls](docs/link-taps.md)
+  links in reflowable books, or enable swipes to follow a link and go back.
+  Navigation › Links on this page lists links on the visible page. [Link controls](docs/link-taps.md)
 - Choose Large window or Justify text in Search › Dictionaries to change the
   dictionary popup. [Dictionary settings and screenshots](docs/dictionary-popup-display.md)
 
