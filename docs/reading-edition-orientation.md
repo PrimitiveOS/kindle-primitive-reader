@@ -33,10 +33,13 @@ markers. EPUB spine direction controls which side contains the first leaf.
 Page turns still advance two logical leaves. The final unpaired leaf keeps
 its normal side and the empty pane stays blank.
 
-Vertical writing uses the full current viewport and keeps the saved facing
-preference for later horizontal chapters. Resizing while a vertical
-chapter is active remains deferred until its writing-axis placement can
-preserve the source anchor across a size change.
+Vertical `vertical-rl` chapters use one full-width leaf at both screen sizes.
+Text advances down each column, and columns advance toward the left. The
+resize rebreaks the columns and checks the selected source offset on its
+new page. Touch and links use the physical text bounds, independent of the
+logical pagination axis. Facing and scroll preferences still apply when
+returning to a horizontal chapter. A resize that would lose the vertical
+layout preserves the original frame, location and queued turns.
 
 ### Pinned KOReader facing-page behavior
 
@@ -67,6 +70,24 @@ right-to-left links, Arabic word selection, note-marker offsets, and tap and
 physical page-button events. Both returned portrait frames match their
 original pixels. The Arabic test loads the original Noto Sans Arabic 2.013
 font from the test fixtures. [Authored EPUB fixtures](../tests/fixtures) · [Font release](https://github.com/notofonts/arabic/releases/tag/NotoSansArabic-v2.013) · [Font license](../tests/fixtures/fonts/OFL-NotoSansArabic.txt)
+
+### Pinned KOReader vertical-text comparison
+
+The native Mac comparison used KOReader `9192014` with CREngine `b32a88f`.
+For the authored Japanese and Chinese words, `vertical-rl` and an explicit
+`horizontal-tb` override produced identical rasters and horizontal word
+boxes at 1264×1680 and 1680×1264. CREngine's pinned CSS property table
+includes text direction and leaves CSS writing mode unsupported. Reader
+uses its native right-to-left vertical columns for this text subset.
+[Comparison script](../scripts/koreader-vertical-viewport-check.lua) · [Pinned CSS property table](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L153-L260) · [CSS Writing Modes](https://www.w3.org/TR/css-writing-modes-3/#block-flow)
+
+The *Harbor in Rain* EPUB contains two copies of each linked passage. Reader
+retains the later copy's original byte offsets, follows its linked chapter,
+reprojects the actual glyph and word hit at the wider margin, and reproduces
+the original portrait frame. The tall-ruby case checks that a rejected
+resize leaves the visible page and queued turns available. The fixture uses
+a 37 KB subset of Noto Sans CJK JP with its SIL Open Font License inside
+the EPUB. [Authored EPUB](../tests/fixtures/harbor-vertical-viewport.epub) · [Fixture generator](../scripts/generate-vertical-viewport.py) · [Original font](https://github.com/notofonts/noto-cjk/blob/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf) · [Font license](https://github.com/notofonts/noto-cjk/blob/523d033d6cb47f4a80c58a35753646f5c3608a78/LICENSE)
 
 ## Fixed-page viewport preparation
 

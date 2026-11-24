@@ -289,11 +289,11 @@ impl BookConfig {
             &self.user_hyphenation,
             &self.user_styles,
         ) {
-            Ok(probe) if !narrow || !probe.is_vertical() => Ok(probe),
+            Ok(probe) if !narrow || !probe.requests_vertical => Ok(probe),
             Err(error) if !narrow => Err(error),
             _ => {
-                // Retain the full viewport for vertical layout and for a chapter
-                // that only fits the renderer's bounds at its original width.
+                // A vertical source needs the full viewport even when the
+                // narrow attempt already fell back to horizontal rendering.
                 let book = Book::open(&self.book).map_err(|e| e.to_string())?;
                 Probe::from_book_with_rules(
                     book,
@@ -821,9 +821,6 @@ impl Reading {
     /// The runtime can commit it after its new canvas and the panel both accept it.
     #[allow(dead_code)] // The first caller will be the negotiated viewport runtime.
     pub(crate) fn prepare_viewport(&self, viewport: ReadingViewport) -> Result<Self> {
-        if self.probe.is_vertical() {
-            return Err("Vertical EPUB layout does not support resizing yet".into());
-        }
         let anchor = self
             .anchor()
             .ok_or("The current reading position is unavailable")?;
@@ -840,14 +837,19 @@ impl Reading {
         // attempt must leave the currently visible session's cache untouched.
         config.screen_pages = Default::default();
         let candidate = Self::restore(config, self.chapter, self.page, Some(&anchor))?;
-        if candidate.probe.is_vertical() {
-            return Err("Vertical EPUB layout does not support resizing yet".into());
+        if candidate.probe.is_vertical() != self.probe.is_vertical() {
+            return Err("The new viewport could not keep this chapter's writing mode".into());
         }
-        let preserved = candidate.probe.anchor_top(&anchor).is_some_and(|top| {
-            candidate
-                .visible_columns()
-                .any(|(visible, _)| visible.contains(&top))
-        });
+        let preserved = if candidate.probe.is_vertical() {
+            // Vertical columns use a logical page axis independent of screen y.
+            candidate.probe.page_for(&anchor) == Some(candidate.page)
+        } else {
+            candidate.probe.anchor_top(&anchor).is_some_and(|top| {
+                candidate
+                    .visible_columns()
+                    .any(|(visible, _)| visible.contains(&top))
+            })
+        };
         if !preserved || candidate.anchor().as_ref() != Some(&anchor) {
             return Err("The new reading layout could not keep the current position".into());
         }
@@ -971,6 +973,14 @@ impl Reading {
     }
 
     fn column_at(&self, x: f32, y: f32) -> Option<(Range<f32>, f32, f32)> {
+        if self.probe.is_vertical() {
+            let settings = self.probe.settings;
+            let columns = settings.text_columns();
+            let rows =
+                settings.top_margin() as f32..(settings.height - settings.bottom_margin()) as f32;
+            return ((columns.start as f32..columns.end as f32).contains(&x) && rows.contains(&y))
+                .then(|| (self.probe.page_range(self.page), x, y));
+        }
         self.visible_parts().into_iter().find_map(|part| {
             let relative = x - part.x as f32;
             let top = part.y as f32 + self.probe.settings.top_margin() as f32;

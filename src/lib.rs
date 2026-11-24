@@ -857,6 +857,8 @@ pub struct Probe {
     screen_page_sources: Option<session::screen_pages::ScreenPageSources>,
     settings: Settings,
     spine_rtl: bool,
+    #[cfg(feature = "kindle")]
+    requests_vertical: bool,
     source: Source,
     reading_flow: flow_view::ChapterFlow,
     #[cfg(feature = "kindle")]
@@ -1011,6 +1013,8 @@ impl Probe {
         let mut custom_hyphenation_allowed = Vec::new();
         let mut publisher_edges = Vec::new();
         let mut reading_flow = flow_view::ChapterFlow::default();
+        #[cfg(feature = "kindle")]
+        let mut requests_vertical = false;
         let (renderer, mut lines, content_height) = match engine {
             Engine::Blitz => {
                 let (layout, lines, extent) =
@@ -1060,6 +1064,10 @@ impl Probe {
                     }
                 }
                 vertical &= has_text;
+                #[cfg(feature = "kindle")]
+                {
+                    requests_vertical = vertical;
+                }
                 let vertical = vertical.then(|| {
                     vertical_layout::VerticalChapter::with_flow(
                         &source,
@@ -1171,6 +1179,8 @@ impl Probe {
             chapter_label,
             book: publication,
             spine_rtl,
+            #[cfg(feature = "kindle")]
+            requests_vertical,
             chapters,
             toc,
             #[cfg(feature = "kindle")]

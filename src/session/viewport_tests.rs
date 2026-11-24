@@ -423,7 +423,7 @@ fn facing_viewports_reflow_both_leaves_and_keep_the_selected_source_in_each_dire
 }
 
 #[test]
-fn vertical_chapters_use_the_existing_full_width_leaf_and_defer_resizing() {
+fn mixed_chapters_keep_their_layout_preferences_after_vertical_resize() {
     let mut config = authored_config(false, false);
     config.book = crate::test_fixture("vertical-chapters.epub");
     config.facing_pages = true;
@@ -449,15 +449,216 @@ fn vertical_chapters_use_the_existing_full_width_leaf_and_defer_resizing() {
     assert_eq!(landscape.probe.settings.width, 1680);
     let anchor = landscape.anchor();
     let frame = landscape.frame.pixels.clone();
-    assert!(
-        landscape
-            .prepare_viewport(ReadingViewport::PORTRAIT)
-            .is_err()
-    );
+    let returned = landscape
+        .prepare_viewport(ReadingViewport::PORTRAIT)
+        .unwrap();
+    assert!(returned.probe.is_vertical());
+    assert_eq!(returned.probe.settings.width, 1264);
+    assert_eq!(returned.anchor(), anchor);
     assert_eq!(landscape.anchor(), anchor);
     assert_eq!(landscape.frame.pixels, frame);
     assert_eq!(landscape.turn(-1).unwrap(), Change::Partial);
     assert_eq!(landscape.chapter, 0);
     assert!(landscape.uses_facing_pages());
     assert_eq!(landscape.probe.settings.width, 824);
+}
+
+fn vertical_config(scroll: bool) -> BookConfig {
+    let mut config = authored_config(scroll, false);
+    config.book = crate::test_fixture("harbor-vertical-viewport.epub");
+    config.facing_pages = true;
+    config.settings.font_size = 52.0;
+    config
+}
+
+fn vertical_link_selection(reading: &Reading, id: &str, text: &str) -> TextSelection {
+    let start = reading.probe.fragment(id).unwrap();
+    let mut end = start.clone();
+    end.offset += text.len();
+    let selection = reading.anchored_quote(&start, &end).unwrap();
+    assert_eq!(selection.text, text);
+    selection
+}
+
+fn verify_vertical_link(reading: &Reading, selected: &TextSelection, href: &str) -> HighlightRect {
+    let (width, height) = reading.config.viewport.dimensions();
+    assert!(reading.probe.is_vertical());
+    assert!(reading.probe.pages_right_to_left());
+    assert_eq!(reading.probe.settings.width, width);
+    assert_eq!(
+        (reading.frame.width, reading.frame.height),
+        (width, height - 74)
+    );
+    assert_eq!(reading.visible_parts().len(), 1);
+    assert_eq!(reading.visible_parts()[0].x, 0);
+    assert!(!reading.uses_facing_pages());
+    assert!(!reading.is_continuous());
+    assert_eq!(reading.probe.page_for(&selected.start), Some(reading.page));
+    let (painted, available) = reading.probe.coverage();
+    assert_eq!(painted, available);
+
+    let rect = verify_hit(reading, selected);
+    let x = rect.x as f32 + rect.width as f32 / 2.0;
+    let y = rect.y as f32 + rect.height as f32 / 2.0;
+    assert_eq!(reading.link_href_at(x, y), Some(href));
+    assert_eq!(
+        reading.link_at(x, y),
+        Book::resolve_link(&reading.probe.chapter, href).ok()
+    );
+    assert!(
+        reading
+            .link_at(x, reading.probe.settings.top_margin() as f32 - 1.0)
+            .is_none()
+    );
+    assert!(reading.word_at(x, (height - 74) as f32).is_none());
+    assert!(reading.link_at(width as f32 - 1.0, y).is_none());
+    assert!((rect.y..rect.y + rect.height).any(|row| {
+        let left = (row as u32 * width) as usize + rect.x as usize;
+        reading.frame.pixels[left..left + rect.width as usize]
+            .iter()
+            .any(|&ink| ink < 96)
+    }));
+
+    // Source bytes advance toward the bottom of each vertical column.
+    let mut middle = selected.start.clone();
+    middle.offset += selected.text.chars().next().unwrap().len_utf8();
+    let first = reading.anchored_quote(&selected.start, &middle).unwrap();
+    let second = reading.anchored_quote(&middle, &selected.end).unwrap();
+    let first = reading.highlight_rects(&first)[0];
+    let second = reading.highlight_rects(&second)[0];
+    assert_eq!(first.x, second.x);
+    assert!(first.y < second.y);
+    rect
+}
+
+#[test]
+fn vertical_cjk_round_trip_preserves_the_link_and_both_selection_endpoints() {
+    for (chapter, language, text, href, scroll) in [
+        (0, "ja", "灯台", "chinese.xhtml#landing", false),
+        (1, "zh", "港口", "japanese.xhtml#landing", true),
+    ] {
+        let mut portrait = Reading::restore(vertical_config(scroll), chapter, 0, None).unwrap();
+        let earlier = vertical_link_selection(&portrait, "earlier", text);
+        let selected = vertical_link_selection(&portrait, "later", text);
+        assert_ne!(earlier.start.block, selected.start.block);
+        portrait.jump_to_anchor(chapter, &selected.start).unwrap();
+        let anchor = portrait.anchor();
+        let page = portrait.page;
+        let original_hit = verify_vertical_link(&portrait, &selected, href);
+        let original_pixels = render_frame(
+            &portrait,
+            &selected,
+            &format!("vertical-{language}-portrait.png"),
+        );
+
+        let mut landscape = portrait
+            .prepare_viewport(ReadingViewport::LANDSCAPE)
+            .unwrap();
+        assert_eq!(landscape.anchor(), anchor);
+        assert_eq!(portrait.anchor(), anchor);
+        assert!(landscape.config.facing_pages);
+        assert_eq!(landscape.config.scroll, scroll);
+        let wide_hit = verify_vertical_link(&landscape, &selected, href);
+        assert_ne!(wide_hit, original_hit);
+        let (x, y, word) = first_pane_hit(416, landscape.frame.height, |x, y| {
+            landscape.probe.word_at(landscape.page, 1264.0 + x, y)
+        })
+        .unwrap();
+        assert_eq!(landscape.word_at(1264.0 + x, y), Some(word));
+        assert_eq!(
+            landscape
+                .anchored_quote(&selected.start, &selected.end)
+                .unwrap(),
+            selected
+        );
+        render_frame(
+            &landscape,
+            &selected,
+            &format!("vertical-{language}-landscape.png"),
+        );
+        let returned = landscape
+            .prepare_viewport(ReadingViewport::PORTRAIT)
+            .unwrap();
+        assert_eq!(returned.anchor(), anchor);
+        assert_eq!(returned.page, page);
+        assert_eq!(
+            verify_vertical_link(&returned, &selected, href),
+            original_hit
+        );
+        assert_eq!(
+            render_frame(
+                &returned,
+                &selected,
+                &format!("vertical-{language}-returned.png")
+            ),
+            original_pixels
+        );
+
+        let start = landscape.page;
+        assert!(start + 1 < landscape.probe.page_count());
+        for (event, page) in [
+            (Input::Tap(16.0, 500.0), start + 1),
+            (Input::Tap(1664.0, 500.0), start),
+            (Input::PageForward, start + 1),
+            (Input::PageBack, start),
+        ] {
+            landscape.turns.next_refresh = Instant::now();
+            assert_eq!(landscape.input(event), Change::Partial);
+            assert_eq!(landscape.page, page);
+        }
+        landscape.jump_to_anchor(chapter, &selected.start).unwrap();
+        verify_vertical_link(&landscape, &selected, href);
+        let destination = landscape
+            .link_at(
+                wide_hit.x as f32 + wide_hit.width as f32 / 2.0,
+                wide_hit.y as f32 + wide_hit.height as f32 / 2.0,
+            )
+            .unwrap();
+        let chapter = landscape.probe.chapter_index(&destination.path).unwrap();
+        landscape
+            .jump(chapter, destination.fragment.as_deref())
+            .unwrap();
+        assert!(landscape.probe.is_vertical());
+        assert_eq!(landscape.probe.settings.width, 1680);
+        assert_eq!(landscape.anchor(), landscape.probe.fragment("landing"));
+    }
+}
+
+#[test]
+fn vertical_book_with_wide_columns_ignores_the_saved_two_page_choice() {
+    let mut config = vertical_config(false);
+    config.settings.font_size = 120.0;
+    config.settings.line_height = 3.0;
+    config.settings.margin = 100;
+    let portrait = Reading::open(config).unwrap();
+    assert!(portrait.probe.is_vertical());
+    assert!(!portrait.uses_facing_pages());
+    assert_eq!(portrait.probe.settings.width, 1264);
+    let landscape = portrait
+        .prepare_viewport(ReadingViewport::LANDSCAPE)
+        .unwrap();
+    assert!(landscape.probe.is_vertical());
+    assert!(!landscape.uses_facing_pages());
+    assert_eq!(landscape.probe.settings.width, 1680);
+    assert_eq!(landscape.anchor(), portrait.anchor());
+}
+
+#[test]
+fn resize_refuses_a_vertical_ruby_column_that_no_longer_fits() {
+    let mut portrait = Reading::restore(vertical_config(false), 2, 0, None).unwrap();
+    assert!(portrait.probe.is_vertical());
+    portrait.queue_page_turns([1, -1]);
+    let anchor = portrait.anchor();
+    let original = portrait.frame.pixels.clone();
+    let error = portrait
+        .prepare_viewport(ReadingViewport::LANDSCAPE)
+        .err()
+        .unwrap();
+    assert_eq!(
+        error.to_string(),
+        "The new viewport could not keep this chapter's writing mode"
+    );
+    assert_eq!(portrait.anchor(), anchor);
+    assert_eq!(portrait.frame.pixels, original);
+    assert_eq!(portrait.turns.pending.len(), 2);
 }
