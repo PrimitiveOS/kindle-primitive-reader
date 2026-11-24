@@ -186,8 +186,12 @@ impl DefinitionTypography {
     }
 }
 
-const DEFINITION_TOP: i32 = 108;
+const DEFINITION_TOP: i32 = 126;
 const STANDARD_FOOTER: i32 = 165;
+
+fn definition_metadata_bounds(popup: Rect) -> Rect {
+    Rect::new(popup.x + 32, popup.y + 84, popup.w - 84, 38)
+}
 
 #[cfg(test)]
 fn body(popup: Rect) -> Rect {
@@ -1378,11 +1382,8 @@ impl Reader {
             Input::PageForward => self.scroll_definition(1, true),
             Input::PageBack => self.scroll_definition(-1, true),
             Input::Tap(x, y) => {
-                if self.definition_expanded
-                    && self.back_collapses_definition()
-                    && back.contains(x, y)
-                {
-                    self.definition_expanded = false;
+                if found && back.contains(x, y) {
+                    self.dictionary_navigation.view.find = None;
                     return Change::Partial;
                 }
                 if back.contains(x, y) || !popup.contains(x, y) {
@@ -1441,10 +1442,6 @@ impl Reader {
     pub(super) fn dictionary_editor_fullscreen(&self) -> bool {
         self.dictionary_navigation.view.query_editing == Some(QueryEdit::Word)
             || self.dictionary_navigation.view.editing
-    }
-
-    fn back_collapses_definition(&self) -> bool {
-        !self.dictionary_settings.large_window && self.dictionary_navigation.trail.is_empty()
     }
 
     fn definition_typography(&self) -> DefinitionTypography {
@@ -1617,15 +1614,16 @@ impl Reader {
         let choose = definition_results_button(popup);
         let end = edit.x - 12;
         let title = match view.results.active {
-            Some(Menu::Sources) => Some("Dictionary Sources".into()),
+            Some(Menu::Flat) => Some("Dictionary Results"),
+            Some(Menu::Sources) => Some("Dictionary Sources"),
             Some(Menu::Source(index)) => self
                 .definitions
                 .get(index)
-                .map(|result| result.dictionary.clone()),
-            _ => self
+                .map(|result| result.dictionary.as_str()),
+            None => self
                 .definitions
                 .get(self.list_page)
-                .map(|result| format!("{} · {}", result.word, result.dictionary)),
+                .map(|result| result.dictionary.as_str()),
         };
         canvas.icon(
             Rect::new(popup.x + 28, popup.y + 31, 40, 40),
@@ -1634,7 +1632,7 @@ impl Reader {
         );
         canvas.text(
             Rect::new(popup.x + 84, popup.y + 20, end - popup.x - 84, 64),
-            title.as_deref().unwrap_or(&self.definition_word),
+            title.unwrap_or(&self.definition_word),
             BODY.bold(),
         );
         let edit_glyph = definition_edit_glyph(edit);
@@ -1646,10 +1644,7 @@ impl Reader {
         );
         canvas.button(
             back,
-            if self.definition_expanded && self.back_collapses_definition()
-                || view.results.active.is_some()
-                || !self.dictionary_navigation.trail.is_empty()
-            {
+            if view.results.active.is_some() || !self.dictionary_navigation.trail.is_empty() {
                 "Back"
             } else {
                 "Done"
@@ -1664,6 +1659,7 @@ impl Reader {
             self.draw_definition_results(canvas, popup, menu);
             return;
         }
+        self.draw_definition_metadata(canvas, popup);
         let rect = self.definition_body(popup);
         let typography = self.definition_typography();
         let line_height = typography.line();
@@ -1776,40 +1772,57 @@ impl Reader {
             self.draw_dictionary_button(canvas, button, rect);
         }
         grid.draw_pager(canvas);
-        let status = match &view.find {
-            Some(find) => format!(
-                "Match {} of {} · Result {} of {}",
-                find.index + 1,
-                find.hits.len(),
-                self.list_page + 1,
-                self.definitions.len()
-            ),
-            None if !self.definitions.is_empty() => format!(
-                "Result {} of {}",
-                self.list_page + 1,
-                self.definitions.len()
-            ),
-            None => String::new(),
+    }
+
+    fn draw_definition_metadata(&self, canvas: &mut Canvas, popup: Rect) {
+        let bounds = definition_metadata_bounds(popup);
+        let Some(result) = self.definitions.get(self.list_page) else {
+            if let Some(message) = &self.notice {
+                canvas.text(bounds, message, CAPTION);
+            }
+            return;
         };
-        let show_close_hint = self.notice.is_none() && !self.dictionary_navigation.trail.is_empty();
-        let status_width = rect.w - if show_close_hint { 354 } else { 0 };
+        let counter = format!("{} / {}", self.list_page + 1, self.definitions.len());
+        let counter_width = canvas.measure(&counter, 30) + 16;
+        let counter_x = bounds.right() - counter_width;
+        let nested = !self.dictionary_navigation.trail.is_empty();
+        let hint = "Hold Back to close all";
+        let detail = match (&self.notice, &self.dictionary_navigation.view.find) {
+            (Some(notice), _) => notice.clone(),
+            (None, Some(find)) => {
+                let mut text = format!("Match {} / {}", find.index + 1, find.hits.len());
+                if nested {
+                    text.push_str(" · ");
+                    text.push_str(hint);
+                }
+                text
+            }
+            (None, None) if nested => hint.into(),
+            (None, None) => String::new(),
+        };
+        let detail_width = if detail.is_empty() {
+            0
+        } else {
+            (canvas.measure(&detail, 28) + 12).min(bounds.w * 3 / 5)
+        };
+        let detail_x = counter_x - detail_width - 16;
         canvas.text(
-            Rect::new(rect.x, popup.y + 78, status_width, 34),
-            self.notice.as_deref().unwrap_or(&status),
-            CAPTION,
+            Rect::new(bounds.x, bounds.y, detail_x - bounds.x - 12, bounds.h),
+            &result.word,
+            primitive_ui::TextStyle::new(30).bold(),
         );
-        if show_close_hint {
+        if detail_width > 0 {
             canvas.text(
-                Rect::new(
-                    rect.x + status_width,
-                    popup.y + 78,
-                    rect.w - status_width,
-                    34,
-                ),
-                "Hold Back to close all",
+                Rect::new(detail_x, bounds.y, detail_width, bounds.h),
+                &detail,
                 CAPTION.right(),
             );
         }
+        canvas.text(
+            Rect::new(counter_x, bounds.y, counter_width, bounds.h),
+            &counter,
+            primitive_ui::TextStyle::new(30).right(),
+        );
     }
 }
 

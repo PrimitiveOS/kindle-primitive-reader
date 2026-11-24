@@ -26,6 +26,9 @@ pub(super) const SEARCH: Icon = line(&["M12 4 A6 6 0 1 0 12 16 A6 6 0 1 0 12 4 Z
 const FOLDER: Icon = line(&["M3 6 H10 L12 8 H21 V19 H3 Z"]);
 const ARCHIVE: Icon = line(&["M4 5 H20 V9 H4 Z M5 9 V20 H19 V9 M12 11 V17 M9 14 L12 17 L15 14"]);
 pub(super) const HIGHLIGHT: Icon = line(&["M4 15 L13 6 L18 11 L9 20 H4 Z M4 20 H20"]);
+pub(super) const SELECT_TEXT: Icon = line(&[
+    "M4 7 V5 H7 M17 5 H20 V7 M4 17 V19 H7 M17 19 H20 V17 M8 9 V7 H16 V9 M12 7 V17 M10 17 H14",
+]);
 pub(super) const EDIT: Icon = line(&[
     "M4 16.5 L16.5 4 A2.1 2.1 0 0 1 19.5 7 L7 19.5 L3 21 Z",
     "M14 6.5 L17.5 10",

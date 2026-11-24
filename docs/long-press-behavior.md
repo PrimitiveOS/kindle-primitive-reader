@@ -52,6 +52,15 @@ search, dictionary and vocabulary fields. PDF selections that span pages copy
 their document-order text with page breaks. PDF link Copy uses the same clipboard.
 [Selection Copy screenshot](screenshots/selection-copy.png)
 
+Tap **Select** in the same action grid to start extending the marked text.
+Tap or hold the other end, then choose **Highlight**, **Copy**, or **Cancel**.
+Reader keeps an unfinished range in memory until Highlight saves it. This
+action works with the Ask preference and leaves that preference in place for
+the next hold. The Mac workflow exercises the visible button on an EPUB and a
+PDF. The pinned KOReader replay exercises its Select callback, which creates
+a temporary mark, and checks when the saved-mark Extend action is available.
+[Reader Select button](screenshots/selection-select-action.png) · [Pinned KOReader Select callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerhighlight.lua#L91-L105) · [Executable Mac replay](../scripts/koreader-dictionary-header-selection-check.lua)
+
 | Action | Reader behavior |
 | --- | --- |
 | Ask with popup dialog | Keep the selection and show the in-page action panel. |

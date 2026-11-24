@@ -173,6 +173,73 @@ impl Simulation {
 }
 
 #[test]
+fn dictionary_header_separates_the_source_headword_and_result_count() {
+    let mut s = Simulation::new();
+    s.open_epub_selection();
+    let origin = s.app.current_history_location();
+    s.tap(s.app.selection_button(SelectionAction::Dictionary));
+    assert_eq!(s.app.definitions.len(), 3);
+    assert_ne!(s.app.definitions[0].source, s.app.definitions[1].source);
+    assert_eq!(s.app.definitions[1].source, s.app.definitions[2].source);
+    assert_eq!(s.app.definitions[1].word, s.app.definitions[2].word);
+
+    let header = |pixels: &[u8], popup: Rect| {
+        let metadata = definition_metadata_bounds(popup);
+        let read = |left: i32, top: i32, width: i32, height: i32| -> Vec<u8> {
+            (top..top + height)
+                .flat_map(|y| {
+                    let at = y as usize * WIDTH as usize + left as usize;
+                    pixels[at..at + width as usize].iter().copied()
+                })
+                .collect()
+        };
+        (
+            read(popup.x + 84, popup.y + 18, 312, 58),
+            read(metadata.x, metadata.y, 240, metadata.h),
+            read(metadata.right() - 82, metadata.y, 82, metadata.h),
+        )
+    };
+
+    let first = header(&s.draw(None), s.app.definition_layout().0);
+    s.tap(definition_actions(s.app.definition_layout().0)[2]);
+    let second = header(
+        &s.draw(Some("dictionary-result-header.png")),
+        s.app.definition_layout().0,
+    );
+    assert_ne!(
+        first.0, second.0,
+        "changing the source updates its own title"
+    );
+    assert_ne!(first.2, second.2, "changing the result updates the count");
+    assert!(
+        second.1.iter().any(|&gray| gray < 96),
+        "the headword is visible"
+    );
+    assert_eq!(s.app.finish_find("light"), Change::Partial);
+    let finding = header(&s.draw(None), s.app.definition_layout().0);
+    assert_eq!(
+        second, finding,
+        "the result heading survives definition Find"
+    );
+    s.back();
+    assert_eq!(s.app.list_page, 1);
+    assert!(s.app.dictionary_navigation.view.find.is_none());
+
+    s.tap(definition_actions(s.app.definition_layout().0)[2]);
+    let third = header(&s.draw(None), s.app.definition_layout().0);
+    assert!(third.1.iter().any(|&gray| gray < 96));
+    assert_ne!(
+        second.2, third.2,
+        "same-source senses have different result counts"
+    );
+    s.tap(definition_actions(s.app.definition_layout().0)[1]);
+    assert!(s.app.definition_expanded);
+    s.back();
+    assert_eq!(s.app.screen, Screen::Book);
+    assert_eq!(s.app.current_history_location(), origin);
+}
+
+#[test]
 fn dictionary_result_holds_jump_to_the_edges_and_keep_the_armed_highlight() {
     use crate::app::selection_viewport_tests::{adopt, capture, press};
     use crate::session::ReadingViewport;
@@ -244,6 +311,11 @@ fn dictionary_result_holds_jump_to_the_edges_and_keep_the_armed_highlight() {
     assert_eq!(s.app.current_history_location(), source);
     assert_eq!(s.app.selection, selection);
 
+    s.back();
+    assert_eq!(s.app.screen, Screen::Definition);
+    assert_eq!(s.app.list_page, 1);
+    assert!(s.app.dictionary_navigation.view.find.is_none());
+    assert!(s.app.dictionary_navigation.view.save_highlight);
     s.back();
     let id = s.app.active.as_ref().unwrap().id;
     let highlights = &s.app.library.state(id).unwrap().highlights;
@@ -693,6 +765,9 @@ fn dictionary_rich_html_displays_senses_and_preserves_find_and_nested_lookup() {
     assert!(s.app.dictionary_navigation.view.find.is_some());
     assert_eq!(s.draw(None), frame_with_find);
     s.back();
+    assert!(s.app.dictionary_navigation.view.find.is_none());
+    assert!(s.app.definition_expanded);
+    s.tap(definition_actions(s.app.definition_layout().0)[1]);
     assert!(s.app.definition_over_book());
     s.back();
     assert_eq!(s.app.screen, Screen::Book);
@@ -852,6 +927,8 @@ fn dictionary_cross_reference_opens_the_originating_source_and_restores_the_pass
     assert_eq!(s.app.list_page, index);
     assert_eq!(s.draw(None), previous);
     s.back();
+    assert!(s.app.dictionary_navigation.view.find.is_none());
+    s.back();
     assert_eq!(s.app.current_history_location(), location);
     assert_eq!(s.app.selection, selection);
     assert_eq!(s.draw(None), passage);
@@ -956,6 +1033,8 @@ fn dictionary_navigation_restores_each_result_and_the_epub_selection() {
     assert_eq!(s.app.input(Input::Tap(1.0, 1.0)), Change::Partial);
     assert_eq!(s.app.screen, Screen::Definition);
     assert_eq!(s.draw(None), frame);
+    s.back();
+    assert!(s.app.dictionary_navigation.view.find.is_none());
     s.back();
     assert_eq!(s.app.screen, Screen::Book);
     assert_eq!(s.app.selection.as_ref(), Some(&first));

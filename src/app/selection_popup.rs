@@ -20,6 +20,7 @@ pub(super) enum HighlightPromptStage {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SelectionAction {
+    Select,
     Highlight,
     Copy,
     Note,
@@ -37,7 +38,8 @@ pub(super) enum SelectionAction {
 }
 
 impl SelectionAction {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
+        Self::Select,
         Self::Highlight,
         Self::Copy,
         Self::Note,
@@ -53,6 +55,7 @@ impl SelectionAction {
 
     fn label(self) -> &'static str {
         match self {
+            Self::Select => "Select",
             Self::Highlight => "Highlight",
             Self::Copy => "Copy",
             Self::Note => "Note",
@@ -397,24 +400,15 @@ impl SelectionPopup {
                 canvas.fill(Rect::new(rect.x + 10, rect.y, rect.w - 20, 1), HAIRLINE);
             }
             let pressed = canvas.control_pressed(rect, false);
-            let ink = if pressed && action == SelectionAction::Html {
-                255
-            } else {
-                0
-            };
+            let monochrome = matches!(action, SelectionAction::Select | SelectionAction::Html);
+            let ink = if pressed && monochrome { 255 } else { 0 };
             if pressed {
-                canvas.fill(
-                    rect.inset(2),
-                    if action == SelectionAction::Html {
-                        0
-                    } else {
-                        218
-                    },
-                );
+                canvas.fill(rect.inset(2), if monochrome { 0 } else { 218 });
             }
             let text_y = if floating {
                 use super::bar_icons;
                 let icon = match action {
+                    SelectionAction::Select => bar_icons::SELECT_TEXT,
                     SelectionAction::Highlight => bar_icons::HIGHLIGHT,
                     SelectionAction::Copy => bar_icons::COPY,
                     SelectionAction::Note => bar_icons::PAGE,
@@ -716,6 +710,11 @@ impl Reader {
             return None;
         }
         let result = match popup.action_at(x, y) {
+            Some(SelectionAction::Select) => {
+                return Some(
+                    self.apply_selection_long_press_action(SelectionLongPressAction::Select),
+                );
+            }
             Some(SelectionAction::Highlight) => self.begin_highlight(),
             Some(SelectionAction::Copy) => self.copy_selection(),
             Some(SelectionAction::PromptStyle(style)) => self.choose_prompt_style(style),
@@ -835,6 +834,103 @@ mod copy_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selection_popup_select_action_extends_epub_and_pdf_without_changing_the_hold_default() {
+        use crate::app::selection_viewport_tests::{canvas, capture, press, tap};
+        use crate::app::tests::Fixture;
+        use primitive_app::App;
+        use primitive_ui::Input;
+
+        for pdf in [false, true] {
+            let fixture = Fixture::new();
+            let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+            let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+            app.controls.dictionary_on_single_word = Some(false);
+            assert_eq!(
+                app.controls.selection_long_press_action,
+                SelectionLongPressAction::Ask
+            );
+            let (first, second) = if pdf {
+                let path = fixture.root.join("Selection sample.pdf");
+                std::fs::copy(crate::test_fixture("scan-reflow/vector.pdf"), &path).unwrap();
+                app.open_path(&path).unwrap();
+                let reading = &app.fixed.as_ref().unwrap().reading;
+                let words = reading.page_text(0).unwrap();
+                let (size, viewport) = reading.page_viewport().unwrap();
+                let point = |index: usize| {
+                    let bounds = words.words[index]
+                        .bounds
+                        .in_viewport(size, viewport)
+                        .unwrap();
+                    let center = bounds.center();
+                    (center.x as f32, center.y as f32)
+                };
+                (point(0), point(1))
+            } else {
+                app.open_path(&fixture.book).unwrap();
+                let reading = &app.active.as_ref().unwrap().reading;
+                let start = reading.probe.fragment("tide-note").unwrap();
+                let point = |offset: usize, length: usize| {
+                    let mut word = start.clone();
+                    word.offset += offset;
+                    let mut end = word.clone();
+                    end.offset += length;
+                    let selection = reading.probe.select_range(&word, &end).unwrap();
+                    let rect = reading.highlight_rects(&selection)[0];
+                    (
+                        (rect.x + rect.width / 2) as f32,
+                        (rect.y + rect.height / 2) as f32,
+                    )
+                };
+                (point(0, "The".len()), point("The ".len(), "first".len()))
+            };
+            let location = app.current_history_location();
+            let selected_text = |app: &Reader| {
+                if pdf {
+                    app.pdf_selection.as_ref().unwrap().text().to_owned()
+                } else {
+                    app.selection.as_ref().unwrap().text.clone()
+                }
+            };
+            assert_eq!(app.input(Input::LongTap(first.0, first.1)), Change::Partial);
+            assert!(!app.selection_mode);
+            let first_word = selected_text(&app);
+            let select = app.selection_button(SelectionAction::Select);
+            let mut view = canvas(&app, ReadingViewport::PORTRAIT);
+            assert!(select.w >= 100 && select.h >= 100);
+            if !pdf {
+                press(&app, &mut view, select, false);
+                capture(&app, &mut view, "selection-select-action.png", false);
+            }
+            tap(&mut app, select);
+            assert!(app.selection_mode);
+            assert_eq!(selected_text(&app), first_word);
+            assert_eq!(
+                app.input(Input::LongTap(second.0, second.1)),
+                Change::Partial
+            );
+            let range = selected_text(&app);
+            assert!(range.starts_with(&first_word) && range.len() > first_word.len());
+            let id = app.open_book_id().unwrap();
+            let state = app.library.state(id).unwrap();
+            assert!(state.highlights.is_empty() && state.pdf_highlights.is_empty());
+            let highlight = app.selection_button(SelectionAction::Highlight);
+            tap(&mut app, highlight);
+            assert!(!app.selection_mode);
+            let state = app.library.state(id).unwrap();
+            if pdf {
+                assert_eq!(state.pdf_highlights[0].text, range);
+            } else {
+                assert_eq!(state.highlights[0].selection.text, range);
+            }
+            assert_eq!(app.current_history_location(), location);
+            assert_eq!(
+                app.controls.selection_long_press_action,
+                SelectionLongPressAction::Ask
+            );
+        }
+    }
 
     #[test]
     fn popup_avoids_selected_text_and_the_done_control() {

@@ -21,6 +21,15 @@ and restoring the original selection. Text tests cover paragraph endings,
 nonbreaking spaces and mixed left-to-right and right-to-left word positions.
 [Settings](screenshots/dictionary-popup-settings.png) · [Compact with justified text](screenshots/dictionary-justify-text.png) · [Large window in dark mode](screenshots/dictionary-large-window.png) · [Workflow tests](../src/app/dictionary_panel/tests.rs)
 
+## Source and result count
+
+The popup title shows the active dictionary. The next row shows the matched
+headword on the left and the result position on the right, such as **2 / 3**.
+Results from the same dictionary each have their own position. Find shows its
+match count alongside the result count. The Mac tests use actual StarDict
+lookups to check both counts, changing dictionaries, and returning to the
+selected passage. [Reader result heading](screenshots/dictionary-result-header.png) · [Pinned KOReader result heading](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/dictquicklookup.lua#L425-L462)
+
 ## Definition font size
 
 Tap **Dictionary font size** to change definition text from 8 to 32.
@@ -70,11 +79,13 @@ translation confirmation and return to the original reading passage.
 
 ## Closing nested lookups
 
-Tap **Back** to return to the previous definition. Hold the same control to close
-the lookup stack and return to the selected passage or original dictionary
-editor. The hold also works with Find active or the Results chooser open. An
-armed highlight becomes one saved mark for the original selection. The nested
-popup's status line shows the hold gesture. [Desktop capture](screenshots/dictionary-close-stack.png)
+Tap the popup's top **Back** or **Done** to leave the current definition. During
+definition Find, the first tap ends Find and keeps the current result open.
+Hold the control to close the entire lookup stack and return to the selected
+passage or the original dictionary editor. The hold works with Find active or
+the Results chooser open. An armed highlight becomes one saved mark for the
+original selection. Use the **Expand** or **Collapse** action to change the
+current popup size. [Desktop capture](screenshots/dictionary-close-stack.png)
 
 The stock comparison executes KOReader's pinned close callbacks in Lua 5.1 with
 test doubles for the window manager and selection. It verifies that a tap closes
@@ -82,6 +93,16 @@ one window, a hold closes the open Results menu and all three test windows in
 reverse order, and the original armed highlight is saved once. Reader's desktop
 tests exercise the same input actions on authored EPUB and PDF passages and
 check the original query editor's text and caret. [KOReader close callbacks](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/dictquicklookup.lua#L1618-L1672) · [Stock comparison script](../scripts/compare-dictionary-close-stack.py)
+
+The native Mac SDL replay also builds the pinned dictionary popup with three
+authored results. It checks the displayed source, headword and count, the
+arrow holds, a Find dismissal, and held close across two actual windows.
+Run it inside the pinned runtime with a private `KO_HOME` and
+`SDL_VIDEODRIVER=dummy`. [Mac replay](../scripts/koreader-dictionary-header-selection-check.lua)
+
+Set `READER_DICTIONARY_CAPTURE_DIR` to an existing scratch directory and run
+`cargo test --locked --features kindle --lib dictionary_header_separates` to
+regenerate the result heading screenshot.
 
 Run the comparison with a Python environment providing `lupa` and the pinned
 `dictquicklookup.lua` file.
