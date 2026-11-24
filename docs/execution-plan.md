@@ -45,6 +45,15 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.43 verification plan
+
+Compare detected PDF crop padding and fit to the pinned native provider.
+Change a preset and a custom margin on two adjacent scrolling pages. Check
+saved source links and annotations, and compare Manual and full-page fit.
+Verify all eight Time range choices, cutoff inclusion, New Year week groups,
+day and book drill-down, page restoration, and an unchanged reading journal.
+[Crop margins](continuous-semi-auto-crop.md) · [Time range reports](reading-statistics.md#time-range-reports)
+
 ## Reader 0.1.42 verification plan
 
 Compare scan contrast presets and a fine step against the pinned grayscale

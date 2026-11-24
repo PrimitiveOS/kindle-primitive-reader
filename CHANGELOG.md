@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.43
+
+- Choose the margin around detected PDF crops for each document.
+- Browse all eight reading time reports with matching week and date cutoffs.
+
 ## 0.1.42
 
 - Adjust fixed-page scan contrast with numeric presets and fine steps.
