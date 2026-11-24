@@ -45,12 +45,33 @@ pub(crate) struct Request {
     pub to: String,
     #[serde(default)]
     pub full_article: bool,
+    #[serde(default)]
+    pub with_romanization: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Article {
     pub title: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub romanization: Option<String>,
+}
+
+impl Article {
+    pub(crate) fn display_text(&self) -> String {
+        match (&self.source, &self.romanization) {
+            (Some(source), Some(romanization)) => format!(
+                "Source:\n{source}\n\nRomanization:\n{romanization}\n\nTranslation:\n{}",
+                self.text
+            ),
+            (Some(source), None) => {
+                format!("Source:\n{source}\n\nTranslation:\n{}", self.text)
+            }
+            (None, _) => self.text.clone(),
+        }
+    }
 }
 
 pub(crate) fn language(code: &str) -> bool {
@@ -153,6 +174,9 @@ fn endpoint(request: &Request, text: &str) -> Url {
                 ("dt", "t"),
                 ("q", text),
             ]);
+            if request.with_romanization {
+                params.append_pair("dt", "rm");
+            }
         }
         Service::MyMemory => {
             params
@@ -187,6 +211,8 @@ fn wikipedia(json: &Value) -> Result<Vec<Article>, String> {
             articles.push(Article {
                 title: title.to_owned(),
                 text: text.to_owned(),
+                source: None,
+                romanization: None,
             });
         }
     }
@@ -196,14 +222,44 @@ fn wikipedia(json: &Value) -> Result<Vec<Article>, String> {
     Ok(articles)
 }
 
-fn translation(json: &Value, service: Service) -> Result<String, String> {
-    let text = if service == Service::Google {
-        json.pointer("/0")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|s| s.get(0)?.as_str())
-            .collect::<String>()
+struct Translation {
+    text: String,
+    source: Option<String>,
+    romanization: Option<String>,
+}
+
+fn translation(
+    json: &Value,
+    service: Service,
+    with_romanization: bool,
+) -> Result<Translation, String> {
+    let (text, source, romanization) = if service == Service::Google {
+        let segments = json.pointer("/0").and_then(Value::as_array);
+        let segments = segments.into_iter().flatten().collect::<Vec<_>>();
+        let text = segments
+            .iter()
+            .filter_map(|segment| segment.get(0)?.as_str())
+            .collect::<String>();
+        let source = with_romanization.then(|| {
+            segments
+                .iter()
+                .filter_map(|segment| segment.get(1)?.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
+        let romanization = with_romanization.then(|| {
+            segments
+                .iter()
+                .filter_map(|segment| segment.get(3)?.as_str())
+                .filter(|part| !part.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
+        (
+            text,
+            source.filter(|value| !value.is_empty()),
+            romanization.filter(|value| !value.is_empty()),
+        )
     } else {
         if json["quotaFinished"].as_bool() == Some(true)
             || json["responseStatus"].as_u64() == Some(429)
@@ -214,15 +270,23 @@ fn translation(json: &Value, service: Service) -> Result<String, String> {
         if status.as_u64() != Some(200) && status.as_str() != Some("200") {
             return Err("MyMemory could not translate this language pair.".into());
         }
-        json.pointer("/responseData/translatedText")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned()
+        (
+            json.pointer("/responseData/translatedText")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+            None,
+            None,
+        )
     };
     if text.trim().is_empty() {
         return Err(format!("{} returned no translation.", service.name()));
     }
-    Ok(text)
+    Ok(Translation {
+        text,
+        source,
+        romanization,
+    })
 }
 
 fn resolve(
@@ -239,6 +303,8 @@ fn resolve(
                 1400
             };
             let mut result = String::new();
+            let mut sources = Vec::new();
+            let mut romanized = Vec::new();
             for range in translation_chunks(&request.text, limit) {
                 let chunk = &request.text[range];
                 let content = chunk.trim();
@@ -246,19 +312,37 @@ fn resolve(
                     result.push_str(chunk);
                     continue;
                 }
-                let received = translation(&fetch(endpoint(request, content))?, service)?;
+                let received = translation(
+                    &fetch(endpoint(request, content))?,
+                    service,
+                    request.with_romanization,
+                )?;
+                if let Some(part) = received.source {
+                    sources.push(part);
+                }
+                if let Some(part) = received.romanization {
+                    romanized.push(part);
+                }
                 let prefix = chunk.len() - chunk.trim_start().len();
                 let end = chunk.trim_end().len();
                 result.push_str(&chunk[..prefix]);
-                result.push_str(received.trim());
+                result.push_str(received.text.trim());
                 result.push_str(&chunk[end..]);
                 if result.len() > MAX_RESULT {
                     return Err("The translation exceeds the display limit.".into());
                 }
             }
             vec![Article {
-                title: service.name().into(),
+                title: "Translation".into(),
                 text: result,
+                source: (service == Service::Google && request.with_romanization).then(|| {
+                    if sources.is_empty() {
+                        request.text.clone()
+                    } else {
+                        sources.join(" ")
+                    }
+                }),
+                romanization: (!romanized.is_empty()).then(|| romanized.join(" ")),
             }]
         }
     };
@@ -395,6 +479,7 @@ mod tests {
             from: "en".into(),
             to: "vi".into(),
             full_article: false,
+            with_romanization: false,
         }
     }
 
@@ -462,6 +547,63 @@ mod tests {
         let mut invalid = request(Service::MyMemory, "A");
         invalid.from = "auto".into();
         assert!(resolve(&invalid, |_| panic!("needs source language")).is_err());
+    }
+
+    #[test]
+    fn google_romanization_is_opt_in_and_keeps_the_source_and_translation() {
+        let mut r = request(Service::Google, "你好");
+        let plain = resolve(&r, |url| {
+            assert!(
+                !url.query_pairs()
+                    .any(|(key, value)| key == "dt" && value == "rm")
+            );
+            Ok(json!([[["Hello", "你好", null, "nǐ hǎo"]]]))
+        })
+        .unwrap();
+        assert_eq!(plain[0].text, "Hello");
+        assert_eq!(plain[0].source, None);
+        assert_eq!(plain[0].romanization, None);
+
+        r.with_romanization = true;
+        let result = resolve(&r, |url| {
+            assert!(
+                url.query_pairs()
+                    .any(|(key, value)| key == "dt" && value == "rm")
+            );
+            Ok(json!([[["Hello", "你好!", null, "nǐ hǎo"]]]))
+        })
+        .unwrap();
+        assert_eq!(result[0].text, "Hello");
+        assert_eq!(result[0].source.as_deref(), Some("你好!"));
+        assert_eq!(result[0].romanization.as_deref(), Some("nǐ hǎo"));
+        assert_eq!(
+            result[0].display_text(),
+            "Source:\n你好!\n\nRomanization:\nnǐ hǎo\n\nTranslation:\nHello"
+        );
+
+        let mut memory = request(Service::MyMemory, "hello");
+        memory.with_romanization = true;
+        let result = resolve(&memory, |url| {
+            assert!(!url.query_pairs().any(|(key, _)| key == "dt"));
+            Ok(json!({"responseStatus":200,"responseData":{"translatedText":"xin chào"}}))
+        })
+        .unwrap();
+        assert_eq!(result[0].text, "xin chào");
+        assert!(result[0].source.is_none());
+        assert!(result[0].romanization.is_none());
+    }
+
+    #[test]
+    fn old_translation_requests_without_romanization_stay_valid() {
+        let r: Request = serde_json::from_value(json!({
+            "service":"Google",
+            "text":"hello",
+            "from":"en",
+            "to":"vi",
+            "full_article":false
+        }))
+        .unwrap();
+        assert!(!r.with_romanization);
     }
 
     #[test]

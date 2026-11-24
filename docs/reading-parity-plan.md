@@ -44,20 +44,38 @@ only to find and compare relevant controls.
 
 ### Execution checklist
 
-**Milestone status:** 26 of 31 checklist items (84%) have desktop, scope, or
+**Milestone status:** 33 of 39 checklist items (85%) have desktop, scope, or
 device-system evidence. This count tracks plan milestones, not overall feature
 parity; many reading requirements and the foreground Kindle acceptance gates
 remain open.
 
-**Control evidence snapshot:** 189 of 541 in-scope reading-control rows are
-marked as complete workflows; 216 are partial, 86 are gaps, and 50 need
-audit. Adjustable footer text size (8–36, default 14) and optional bold text
-(default Off), half-logical font steps for legacy pixel settings, and the
-custom footer's Icons/Letters/Compact symbol styles and left/center/right
-alignment each move one control from gap to partial. Font face and foreground
-Kindle appearance remain open.
+**Control evidence snapshot:** 195 of 535 in-scope reading-control rows are
+marked as complete workflows; 224 are partial, 67 are gaps, and 49 need audit.
+The saved, opt-in Google romanization setting and response display close the
+matching KOReader control. Global physical page-turn inversion and its
+custom-footer status indicator close one button control and one footer control;
+the saved, default-Off footer separator closes one more footer control. Named
+status-bar presets move one footer control from gap to partial; their CRUD flow
+is host-tested, with freeform footer text and Kindle acceptance still open.
+KOReader's container height and bottom margin are now saved footer settings,
+closing two more control rows with EPUB/PDF simulator evidence.
+Footer font-face selection now offers local TTF/OTF files, persists the choice,
+restores it in status-bar presets, and measures/draws EPUB and PDF footers with
+the same face. Desktop workflow coverage and simulator captures pass; the
+source-matrix row remains partial while Kindle appearance and acceptance are
+open. Eight legacy stylesheet rows were corrected from gaps to partial after
+reviewing the current base-style implementation: Reader supplies per-book
+Auto/None/Traditional/HTML/FB2 choices but does not reproduce the old KOReader
+CSS files or complete legacy stylesheet catalog.
+Foreground Kindle acceptance remains open. Adjustable footer text size
+(8–36, default 14) and optional bold text (default Off), half-logical font
+steps for legacy pixel settings, and the custom footer's Icons/Letters/Compact
+symbol styles and left/center/right alignment each move one control from gap to
+partial. Foreground Kindle appearance remains open.
 Six Kindle display/runtime controls were reclassified as Launcher-owned
-or outside reading scope. This unweighted inventory is a status breakdown, not
+or outside reading scope. Six D-pad crosshair-acceleration controls are also
+excluded for the current Oasis 3 target, which has touch and previous/next page
+buttons but no D-pad. This unweighted inventory is a status breakdown, not
 a feature-weighted completion score. Current Kindle acceptance and publication
 remain separate gates.
 
@@ -72,10 +90,13 @@ remain separate gates.
 - [x] Implement temporary highlight, hold-release/hold-pan selection, configurable very-long-press timing and the stock On/Off corner auto-scroll preference (On by default; active for continuous reflow). Desktop EPUB/PDF tests cover both preference states and the temporary-selection screenshot passes. PDF Select mode extends in both directions across pages when enabled, persists page continuations and rejects unreadable intermediate pages; see the [cross-page selection capture](screenshots/pdf-cross-page-selection.png).
 - [x] Add KOReader's dictionary-popup Highlight/Unhighlight toggle. Save the selected EPUB or PDF passage as a persistent annotation when the lookup closes; toggling back cancels the save. Automated EPUB/PDF interaction tests pass and the desktop popup screenshot has been inspected. Kindle acceptance remains open. [Dictionary evidence](reading-control-evidence.md#dictionary-navigation-checks)
 - [x] Add KOReader's dictionary pencil: tap edits the original query and long press edits the active result headword. Submitting creates a nested lookup; Back restores the prior result and source passage. EPUB interaction tests pass and the editor screenshot has been inspected. Kindle acceptance remains open. [Dictionary evidence](reading-control-evidence.md#dictionary-navigation-checks)
+- [x] Add KOReader's saved, opt-in “Show romanizations” translation setting. Google requests include the romanization response field only when enabled, and results show source text, Latin romanization when returned, and translation. Keep MyMemory unchanged and older settings Off by default. The persistence and provider-response tests pass; inspect the [Off](screenshots/translation-settings-romanization-off.png) and [On](screenshots/translation-settings-romanization-on.png) settings captures. Device acceptance remains open. [Romanization behavior](translation-romanization.md)
+- [x] Match KOReader's global physical page-turn inversion and status-footer indicator. Apply inversion only to hardware page-button inputs, preserve touch and gesture behavior, default Off, and expose Page turning inverted in custom-footer Icons/Letters/Compact modes. Unit and app-level tests pass; inspect the light/dark [settings](screenshots/page-turn-inversion-settings.png) and [footer](screenshots/page-turn-inversion-footer.png) captures. Foreground Kindle acceptance remains open. [Behavior and source comparison](page-turn-inversion.md)
 - [ ] Compare selection placement, hold timing, corner zones and cross-page PDF selection behavior against KOReader on Kindle.
 - [ ] Compare selection-dialog placement, long-press behavior, highlight appearance and dismissal against KOReader on the Kindle.
-- [x] Run the current desktop library, binary, package and layout test suites against the pinned shared-input revision. The latest full Mac and test-only ARMHF runs each pass 960 Reader tests with 62 ignored, one Kindle binary test on Mac, 14 EPUB package tests, and four layout probes. The isolated shared-input worktree passes 140 `kl-core`, eight `primitive-app` and four `primitive-input` tests. [Build hashes and device test limits](execution-plan.md#current-host-and-device-integration-gate)
-- [x] Build the static ARMHF footer candidate, run its native suites on the Oasis, and install the verified binary in place. Foreground UI acceptance and release remain open. [Build hashes and device test limits](execution-plan.md#current-host-and-device-integration-gate)
+- [x] Run the desktop library, binary, package and layout suites with the published shared tools pin. The Mac run passed 979 Reader tests (62 ignored), one Kindle binary test, 14 EPUB package tests and four layout probes. [Verification record](execution-plan.md#current-host-and-device-integration-gate)
+- [ ] Run the 0.1.26 ARMHF test bundle on the Oasis, install the verified release, and compare the foreground reading footer. [Verification record](execution-plan.md#current-host-and-device-integration-gate)
+- [x] Run the previous v0.1.25 static ARMHF footer candidate on the Oasis and install it in place. This earlier device result does not cover the later romanization, button-inversion, footer separator, presets, or container settings. [Previous-device result and build hashes](execution-plan.md#current-host-and-device-integration-gate)
 - [x] Add user-reorderable status metrics, KOReader-style footer separator and Icons/Letters/Compact symbol choices, “pages left includes current page,” and 0–2 decimal-place progress percentages. Verify settings persistence, item movement, and actual combined/custom captions; capture and inspect the [footer](screenshots/footer-item-symbols.png) and [settings](screenshots/footer-item-symbols-settings.png) simulator frames. Kindle acceptance remains open.
 - [x] Add KOReader's Left, Center, and Right footer alignment choices. Preserve Left as the default, persist the selection, keep the progress track and Exit target fixed, and inspect the [Left](screenshots/footer-alignment-left.png), [Center](screenshots/footer-alignment-center.png), and [Right](screenshots/footer-alignment-right.png) simulator captures. The ARMHF suite passes; foreground visual acceptance remains open.
 - [x] Add a selectable local current-time footer item and optional minute-boundary refresh, default Off. Verify local-time rendering, settings persistence, timer scheduling, sleep/wake pause and resume, and inspect the simulator capture; Kindle acceptance remains open. [Clock capture](screenshots/current-time-footer.png)
@@ -83,9 +104,14 @@ remain separate gates.
 - [x] Match KOReader's battery hide threshold: saved 0–100% value, default 100%, and hide only when the battery level is higher than the configured threshold. Verify the exact boundary, clamping, persistence and conditional setting row. Kindle battery reporting remains open. [Battery footer behavior and capture](battery-footer.md)
 - [x] Add KOReader's optional top status header for paged reflow reading, with title, author, clock, page count, progress, chapter marks, battery state and adjustable font size. Preserve the source anchor on relayout; hide the header in continuous scroll; verify battery/clock refresh scheduling, light/night screenshots and desktop behavior. Kindle appearance and battery checks remain open. [Header behavior and screenshots](top-status-header.md)
 - [x] Match KOReader's progress-track positions and thickness choices, with an owner-requested default below the chapter/page caption, Thick 7 px, and 20% minimum width. Keep the horizontal track and vertical section ticks clear of the Exit target; expose adjustable widths, persist them, and verify EPUB/PDF layouts and light/dark simulator captures. Kindle acceptance remains open.
+- [x] Add KOReader's optional horizontal footer separator, default Off. Persist it and draw the hairline at the reading-page/footer boundary for EPUB and fixed-page documents without moving the caption, progress track, chapter ticks, or Exit target. Verify the boundary pixels, settings persistence, EPUB/PDF render paths, and light/dark simulator captures. Kindle appearance remains open. [Source comparison and screenshots](footer-separator.md)
+- [x] Add named status bar presets with KOReader-style create, apply, update, rename, and delete operations. Preserve non-footer preferences, enforce bounded case-insensitive unique names, and verify persistence with unit and application workflow tests. Inspect the settings, list, actions, and confirmation simulator captures. [Source comparison and screenshots](status-bar-presets.md)
+- [x] Add KOReader's editable custom footer text item with its token set, a visible editor and token guide, 1–99 repetitions, whitespace-only separator merging, preference backup, and preset capture/apply. Verify save/reopen behavior, bounded expansion, battery glyph levels, settings, editor and reading screenshots in the Mac simulator. Kindle acceptance and battery refresh on hardware remain open. [Source comparison and screenshots](footer-custom-text.md)
 - [x] Add KOReader's adjustable progress-track inset (0–140 px, 10 px default) and Thin/Medium/Thick chapter ticks (1/2/3 px, 2 px default). Persist both; test their EPUB/PDF geometry and ensure the track stays clear of Zoom, Exit, and the Next Comic control.
+- [x] Add KOReader's status item container height (7–98, default 14) and bottom margin (0–49, default 1). Save them in Reader controls and footer presets, keep the default caption/track/Exit layout intact, and clip document pixels under larger footer settings. Verify minimum/maximum and invalid values, persistence, EPUB/PDF drawing, light/dark simulator captures, and screenshots. Kindle appearance remains open. [Behavior and source comparison](footer-container-layout.md)
 - [x] Add KOReader's optional lock-at-minimum width for Alongside progress tracks. Persist it; verify short and long captions and EPUB/PDF geometry, and capture the simulator frame. Kindle acceptance remains open.
-- [x] Add adjustable footer item text size using KOReader's 8–36 range and 14 default, plus the independently persisted bold toggle (default Off). Measure the caption at the selected weight so the adjacent progress track remains clear of Exit. Verify setting persistence, exact hyphen caption, EPUB rendering and the bold/regular [simulator captures](footer-font-size.md); footer font face and foreground Kindle appearance remain open. [Footer text size and weight](footer-font-size.md)
+- [x] Add adjustable footer item text size using KOReader's 8–36 range and 14 default, plus the independently persisted bold toggle (default Off). Measure the caption at the selected weight so the adjacent progress track remains clear of Exit. Verify setting persistence, exact hyphen caption, EPUB rendering and the bold/regular [simulator captures](footer-font-size.md). Foreground Kindle appearance remains open. [Footer text size and weight](footer-font-size.md)
+- [x] Add KOReader's selectable footer item font face using local TTF/OTF files, defaulting to Noto Sans. Persist the choice, include it in named status-bar presets, and use the same registered face for caption measurement and drawing in EPUB and PDF. Verify selection, persistence, preset restore and both render paths with the host workflow test; inspect the [chooser](screenshots/footer-font-faces.png), [selected setting](screenshots/footer-font-face-settings.png), [EPUB](screenshots/footer-font-face.png) and [PDF](screenshots/footer-font-face-pdf.png) captures. Foreground Kindle appearance remains open. [Font and footer controls](footer-font-size.md)
 - [x] Match KOReader's ±0.5 logical font-size tap interval for books with legacy pixel-size preferences. Scale the interval through each book's captured screen/DPI context in both Text › Type and Text settings, preserve the legacy saved unit and reading anchor, and capture the simulator panel. Kindle raster comparison remains open. [Logical font behavior](logical-font-size.md)
 - [x] Add KOReader's starting-position marker to book and chapter progress. Keep it anchored to the opened position, hide it after changing books, chapters, or hidden flows as appropriate, and reset it on wake. Verify its settings, EPUB/PDF behavior, and simulator capture. Kindle acceptance remains open.
 - [x] Add per-book base stylesheet choices for Auto, None, Traditional, HTML Standard, and format-appropriate FictionBook. Author native CSS subsets, preserve publisher and inline cascade precedence, cover the choices with focused tests, and capture the Rendering panel. Exact CREngine CSS parity and Kindle appearance remain open. [Base stylesheet behavior and screenshot](base-stylesheets.md)
@@ -95,9 +121,10 @@ remain separate gates.
 - [ ] Publish and list the candidate after the desktop and Kindle gates pass, then record the release checksum, Store listing, screenshots, and device evidence.
 
 The checklist applies to PrimitiveOS Reader. Device-wide settings remain in
-Launcher. The footer-alignment ARMHF build is installed and its automated suites
-pass on the Oasis. Foreground UI, physical E Ink behavior, a fresh real-document
-sweep, and publication still need acceptance. Recheck device connectivity and
+Launcher. The installed v0.1.25 ARMHF build and its automated suites have prior Oasis
+acceptance. Newer working-tree changes pass the Mac suite but still need an
+ARMHF run and foreground Kindle check. Physical E Ink behavior, a fresh
+real-document sweep, and publication remain open. Recheck device connectivity and
 the keep-awake state before foreground acceptance.
 
 The Text → Rendering panel now offers per-book base styles. Auto follows the

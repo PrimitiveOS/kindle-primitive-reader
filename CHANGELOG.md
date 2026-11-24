@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.1.26
+
+- Add the optional Google Translate romanization setting and show returned Latin text with the source and translation.
+- Add KOReader-style physical page-button inversion and the matching custom-footer status item.
+- Add KOReader's optional, saved footer separator line, off by default.
+- Add named status bar presets with create, apply, update, rename and delete actions.
+- Add editable footer text with reading, clock and battery tokens, repetition, and backup support.
+- Match KOReader's footer container height and bottom margin controls, including the default reading layout.
+- Choose a local TTF/OTF face for the reading footer, persist it, and restore it through named status-bar presets.
+- Show `Chapter x of y - Page m of n` above the progress bar, including when custom reading flows are active.
 
 ## 0.1.25
 

@@ -115,6 +115,7 @@ fn canonical(key: Key, value: Value) -> io::Result<Value> {
             }
             serde_json::to_value(controls).map_err(io::Error::other)
         }
+        Key::FooterCustomText => footer_custom_text::backup_value(&bytes),
         Key::Profiles => {
             let profiles: Vec<crate::reading_profiles::Profile> = serde_json::from_value(value)?;
             let mut names = BTreeSet::new();

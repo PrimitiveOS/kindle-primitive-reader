@@ -117,10 +117,10 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::ToggleNonlinear => BOOK,
         Action::Flow(_) | Action::Show(Screen::HiddenFlows) => BOOK,
         Action::Show(Screen::Links) | Action::Wikipedia => LINK,
-        Action::TranslatePage => TEXT,
         Action::ReadAlarm | Action::Show(Screen::OnlineHistory) | Action::ReadingHistory(_) => {
             CLOCK
         }
+        Action::Show(Screen::TranslationSettings) | Action::TranslatePage => TEXT,
         Action::SaveBookData
         | Action::ExportBackup
         | Action::PreviewBackup
