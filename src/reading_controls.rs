@@ -62,6 +62,8 @@ pub(crate) struct ReadingControls {
     pub ignore_external_link_taps: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub larger_tap_area_for_links: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub swipe_to_go_back: bool,
     pub footnote_popups: bool,
     pub prefer_footnotes: bool,
     /// Show the all-results list when Find is used on selected text.

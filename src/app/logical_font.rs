@@ -275,8 +275,7 @@ impl Reader {
         self.saved_popup = None;
         self.style_view = Default::default();
         self.restore_character_pages();
-        self.back.clear();
-        self.forward.clear();
+        self.clear_location_history();
         self.auto_turn.configure(None, Instant::now());
         self.annotation_search = annotation_search::AnnotationSearch::default();
         self.restore_reading_menus(recovery.id);

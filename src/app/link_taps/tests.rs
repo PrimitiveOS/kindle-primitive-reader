@@ -13,11 +13,15 @@ fn test_fonts() -> Vec<PathBuf> {
 }
 
 fn write_book(path: &Path) {
+    write_book_with_leading_text(path, "");
+}
+
+fn write_book_with_leading_text(path: &Path, leading: &str) {
     let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
     let options = zip::write::SimpleFileOptions::default();
     let first = format!(
         r#"<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>Harbor field guide</h1>
-        <p>Consult the <a href="{ADDRESS}">online tide chart</a> before crossing the harbor.</p>
+        {leading}<p id="approach">Consult the <a href="{ADDRESS}">online tide chart</a> before crossing the harbor.</p>
         <p><a href="routes.xhtml#route">Local route</a> passes the eastern beacon.</p>
         <p>Check the wind and current before returning.</p>
         <p><a href="javascript:alert('script')">Incorrect link</a></p></body></html>"#
@@ -61,8 +65,8 @@ fn open_preferences(app: &mut Reader) {
     if app.top_group != Some(TopGroup::Settings) {
         assert_eq!(tap_reading_control(app, "Settings"), Change::Partial);
     }
-    assert_eq!(tap_reading_control(app, "Link taps"), Change::Partial);
-    assert_eq!(app.screen, Screen::LinkTapSettings);
+    assert_eq!(tap_reading_control(app, "Links"), Change::Partial);
+    assert_eq!(app.screen, Screen::LinkSettings);
 }
 
 #[test]
@@ -160,12 +164,9 @@ fn reflow_link_tap_settings_match_defaults_preserve_explicit_links_and_enlarge_i
     assert!(LinkPreference::LargerArea.checked(reopened.controls));
 }
 
-#[test]
-fn pdf_external_filter_keeps_internal_and_explicit_links_without_a_larger_tap_area() {
-    let fixture = Fixture::new();
-    let path = fixture.root.join("Harbor links.pdf");
+fn write_pdf(path: &Path) {
     fs::write(
-        &path,
+        path,
         pdf_objects(&[
             "<< /Type /Catalog /Pages 2 0 R >>".into(),
             "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] /MediaBox [0 0 600 800] >>".into(),
@@ -178,6 +179,13 @@ fn pdf_external_filter_keeps_internal_and_explicit_links_without_a_larger_tap_ar
         ]),
     )
     .unwrap();
+}
+
+#[test]
+fn pdf_external_filter_keeps_internal_and_explicit_links_without_a_larger_tap_area() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Harbor links.pdf");
+    write_pdf(&path);
     let mut app = Reader::open(&fixture.root, &fixture.state, test_fonts()).unwrap();
     app.open_path(&path).unwrap();
     let original = app.current_history_location();
@@ -218,4 +226,184 @@ fn pdf_external_filter_keeps_internal_and_explicit_links_without_a_larger_tap_ar
     tap_contents_item(&mut app, "External link");
     assert!(app.link_popup.is_some());
     assert_eq!(app.current_history_location(), original);
+}
+
+fn back_swipe(app: &mut Reader) -> Change {
+    app.swipe(
+        Input::Swipe {
+            dx: 300.0,
+            dy: 15.0,
+            start_y: 700.0,
+        },
+        500.0,
+    )
+}
+
+#[test]
+fn epub_swipe_back_restores_the_exact_passage_then_yields_to_paging() {
+    let fixture = Fixture::new();
+    let long_approach =
+        "<p>Follow the path from the marsh behind the harbor toward the eastern beacon.</p>"
+            .repeat(65);
+    write_book_with_leading_text(&fixture.book, &long_approach);
+    let fonts = test_fonts();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    assert!(!app.controls.swipe_to_go_back);
+    app.active
+        .as_mut()
+        .unwrap()
+        .reading
+        .jump(0, Some("approach"))
+        .unwrap();
+    let origin = app.current_history_location().unwrap();
+    assert!(origin.position.page > 0 && origin.position.anchor.is_some());
+
+    app.follow(Destination {
+        path: "routes.xhtml".into(),
+        fragment: Some("route".into()),
+    })
+    .unwrap();
+    let target = app.current_history_location().unwrap();
+    assert_eq!(target.position.chapter, 1);
+    back_swipe(&mut app);
+    assert_eq!(app.back, [origin.clone()]);
+    app.restore_position(&target.position).unwrap();
+
+    open_preferences(&mut app);
+    tap_contents_item(&mut app, "Tap to follow links");
+    tap_contents_item(&mut app, "Swipe to go back");
+    assert!(app.controls.swipe_to_go_back);
+    capture_test_screen(&app, &fonts, "READER_LINK_SWIPE_BACK_FRAME", false);
+    app.show(Screen::Book);
+
+    app.input(Input::PageBack);
+    app.tick(Instant::now() + Duration::from_secs(1));
+    assert_eq!(app.back, [origin.clone()]);
+    app.restore_position(&target.position).unwrap();
+
+    app.show_link_address(ADDRESS.into());
+    assert_eq!(back_swipe(&mut app), Change::Partial);
+    assert!(app.link_popup.is_some());
+    assert_eq!(app.back, [origin.clone()]);
+    app.input(Input::Tap(30.0, 30.0));
+
+    app.gestures
+        .set(gestures::Gesture::TopRight, gestures::Binding::Bookmarks)
+        .unwrap();
+    assert_eq!(
+        app.swipe(
+            Input::Swipe {
+                dx: 300.0,
+                dy: 0.0,
+                start_y: 30.0,
+            },
+            500.0,
+        ),
+        Change::Partial
+    );
+    assert_eq!(app.screen, Screen::Bookmarks);
+    assert_eq!(app.back, [origin.clone()]);
+    app.show(Screen::Book);
+    assert_eq!(
+        app.swipe(
+            Input::Swipe {
+                dx: 40.0,
+                dy: 230.0,
+                start_y: 30.0,
+            },
+            500.0,
+        ),
+        Change::Partial
+    );
+    assert_eq!(app.screen, Screen::BookTools);
+    assert!(app.reading_top);
+    assert_eq!(app.back, [origin.clone()]);
+    app.show(Screen::Book);
+
+    let reading = &app.active.as_ref().unwrap().reading;
+    app.selection = (30..220).step_by(5).find_map(|y| {
+        (50..550)
+            .step_by(5)
+            .find_map(|x| reading.word_at(x as f32, y as f32))
+    });
+    assert!(app.selection.is_some());
+    back_swipe(&mut app);
+    assert_eq!(app.back, [origin.clone()]);
+    app.restore_position(&target.position).unwrap();
+
+    assert_eq!(back_swipe(&mut app), Change::Partial);
+    assert_eq!(app.current_history_location(), Some(origin.clone()));
+    assert!(app.back.is_empty());
+    assert_eq!(app.forward, [target]);
+    assert_eq!(back_swipe(&mut app), Change::Partial);
+    assert_eq!(app.notice.as_deref(), Some("Location history is empty."));
+    assert_eq!(app.current_history_location(), Some(origin.clone()));
+    assert!(!app.swipe_back_notice_pending);
+    back_swipe(&mut app);
+    app.tick(Instant::now() + Duration::from_secs(1));
+    assert_ne!(app.current_history_location(), Some(origin));
+    assert!(app.notice.is_none());
+
+    app.save().unwrap();
+    let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    reopened.open_path(&fixture.book).unwrap();
+    assert!(reopened.controls.swipe_to_go_back);
+    assert!(!reopened.swipe_back_notice_pending);
+    let reopened_position = reopened.current_position().unwrap();
+    back_swipe(&mut reopened);
+    reopened.tick(Instant::now() + Duration::from_secs(1));
+    assert_ne!(reopened.current_position(), Some(reopened_position));
+    assert!(reopened.notice.is_none());
+}
+
+#[test]
+fn pdf_swipe_back_restores_a_panned_viewport_before_normal_zoom_panning() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Harbor links.pdf");
+    write_pdf(&path);
+    let mut app = Reader::open(&fixture.root, &fixture.state, test_fonts()).unwrap();
+    app.open_path(&path).unwrap();
+    open_preferences(&mut app);
+    tap_contents_item(&mut app, "Swipe to go back");
+    app.show(Screen::Fixed);
+    app.activate(Action::SetFixedZoom(3)).unwrap();
+    app.swipe(
+        Input::Swipe {
+            dx: -130.0,
+            dy: -120.0,
+            start_y: 700.0,
+        },
+        500.0,
+    );
+    let original = app.current_history_location().unwrap();
+    let origin = original.scan_point.unwrap();
+    app.show(Screen::Links);
+    tap_contents_item(&mut app, "Page 2");
+    assert_eq!(app.current_position().unwrap().page, 1);
+    assert_eq!(app.back, [original.clone()]);
+
+    let linked_viewport = app.current_history_location().unwrap();
+    app.follow_fixed(1, Some(FixedJump::LinkPoint(kurbo::Point::ORIGIN)))
+        .unwrap();
+    assert_eq!(app.back, [original.clone(), linked_viewport.clone()]);
+    assert_eq!(back_swipe(&mut app), Change::Partial);
+    let same_page_return = app.current_history_location().unwrap();
+    assert_eq!(same_page_return.position, linked_viewport.position);
+    assert!(
+        (same_page_return.scan_point.unwrap() - linked_viewport.scan_point.unwrap()).hypot() < 1.0
+    );
+
+    assert_eq!(back_swipe(&mut app), Change::Partial);
+    let returned = app.current_history_location().unwrap();
+    assert_eq!(returned.position, original.position);
+    assert!((returned.scan_point.unwrap() - origin).hypot() < 1.0);
+    assert_eq!(back_swipe(&mut app), Change::Partial);
+    assert_eq!(app.notice.as_deref(), Some("Location history is empty."));
+    assert_eq!(app.current_history_location(), Some(returned));
+    assert_eq!(back_swipe(&mut app), Change::Partial);
+    let panned = app.current_history_location().unwrap();
+    assert_eq!(panned.position, original.position);
+    assert!((panned.scan_point.unwrap() - origin).hypot() > 10.0);
+    assert!(app.notice.is_none());
 }

@@ -1,5 +1,5 @@
-//! Apply ordinary-tap policies at the reading surface. Explicit link rows
-//! and links inside a footnote preview use their own direct actions.
+//! Apply link tap and location swipe policies on the reading surface.
+//! Explicit link rows and footnote previews use their own direct actions.
 use super::*;
 use crate::fixed::PdfLink;
 use crate::selection::HighlightRect;
@@ -13,6 +13,7 @@ pub(super) enum LinkPreference {
     Follow,
     LargerArea,
     IgnoreExternal,
+    SwipeBack,
 }
 
 impl LinkPreference {
@@ -21,6 +22,7 @@ impl LinkPreference {
             Self::Follow => controls.tap_links.unwrap_or(true),
             Self::LargerArea => controls.larger_tap_area_for_links,
             Self::IgnoreExternal => controls.ignore_external_link_taps,
+            Self::SwipeBack => controls.swipe_to_go_back,
         }
     }
 
@@ -29,7 +31,12 @@ impl LinkPreference {
             Self::Follow => "Tap to follow links",
             Self::LargerArea => "Allow larger tap area around links",
             Self::IgnoreExternal => "Ignore external links on tap",
+            Self::SwipeBack => "Swipe to go back",
         }
+    }
+
+    fn requires_tap_following(self) -> bool {
+        matches!(self, Self::LargerArea | Self::IgnoreExternal)
     }
 }
 
@@ -54,17 +61,18 @@ impl ReflowLink {
 }
 
 impl Reader {
-    pub(super) fn link_tap_settings_items(&self) -> Vec<Item> {
+    pub(super) fn link_settings_items(&self) -> Vec<Item> {
         [
             LinkPreference::Follow,
             LinkPreference::LargerArea,
             LinkPreference::IgnoreExternal,
+            LinkPreference::SwipeBack,
         ]
         .into_iter()
         .filter(|setting| !matches!(setting, LinkPreference::LargerArea) || self.active.is_some())
         .map(|setting| {
-            let enabled = matches!(setting, LinkPreference::Follow)
-                || LinkPreference::Follow.checked(self.controls);
+            let enabled =
+                !setting.requires_tap_following() || LinkPreference::Follow.checked(self.controls);
             let item = Item::new(
                 setting.label(),
                 if enabled {
@@ -73,19 +81,19 @@ impl Reader {
                     Action::Heading
                 },
             );
-            if enabled {
-                item
-            } else {
+            if !enabled {
                 item.detail("Available when tap to follow links is on")
+            } else if matches!(setting, LinkPreference::SwipeBack) {
+                item.detail("Swipe right to return to your previous location")
+            } else {
+                item
             }
         })
         .collect()
     }
 
     pub(super) fn toggle_link_preference(&mut self, setting: LinkPreference) -> Result<()> {
-        if !matches!(setting, LinkPreference::Follow)
-            && !LinkPreference::Follow.checked(self.controls)
-        {
+        if setting.requires_tap_following() && !LinkPreference::Follow.checked(self.controls) {
             return Ok(());
         }
         let checked = setting.checked(self.controls);
@@ -94,8 +102,38 @@ impl Reader {
             LinkPreference::Follow => controls.tap_links = Some(!checked),
             LinkPreference::LargerArea => controls.larger_tap_area_for_links = !checked,
             LinkPreference::IgnoreExternal => controls.ignore_external_link_taps = !checked,
+            LinkPreference::SwipeBack => controls.swipe_to_go_back = !checked,
         }
         self.activate(Action::SetReadingControls(controls))
+    }
+
+    pub(super) fn swipe_back_input(&mut self, input: Input) -> Option<Change> {
+        let Input::Swipe { dx, dy, .. } = input else {
+            return None;
+        };
+        if !self.controls.swipe_to_go_back
+            || !matches!(self.screen, Screen::Book | Screen::Fixed)
+            || self.selection.is_some()
+            || self.pdf_selection.is_some()
+            || self.selection_mode
+            || !dx.is_finite()
+            || !dy.is_finite()
+            || dx <= dy.abs() * 1.5
+        {
+            return None;
+        }
+        if let Some(index) = self.back.len().checked_sub(1) {
+            return Some(match self.return_to_location(index) {
+                Ok(()) => {
+                    self.swipe_back_notice_pending = self.back.is_empty();
+                    self.applied_change()
+                }
+                Err(error) => self.report(error),
+            });
+        }
+        // Let the reader see that the next swipe will turn the page.
+        std::mem::take(&mut self.swipe_back_notice_pending)
+            .then(|| self.report("Location history is empty."))
     }
 
     pub(super) fn reflow_tap_link(&self, x: f32, y: f32) -> Option<(ReflowLink, f32, f32)> {
