@@ -144,7 +144,6 @@ impl Reader {
     }
 }
 
-#[derive(Clone)]
 pub(super) struct ReadingListAnchor {
     page: usize,
     ordinal: usize,

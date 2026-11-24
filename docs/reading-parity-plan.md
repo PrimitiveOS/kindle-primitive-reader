@@ -74,6 +74,11 @@ refresh, touch, routed page keys, sleep, USB and exit tests.
 [Document and navigation screens](landscape-navigation.md) ·
 [Selection and lookup screens](landscape-selection.md)
 
+Exact-value reading editors and the Cancel OCR control still need active
+viewport geometry and matching hardware and touch exit paths. The scan
+text and illustration viewers need staged sizing that preserves their
+source page and the reading position on rollback and return.
+
 
 - [x] Set the active Reader goal to KOReader's core Kindle reading workflows: document open/render, navigation/layout, search/lookup, bookmarks/annotations, reading progress, accessibility, offline scans, and local reading data.
 - [x] Audit all four native CREngine Render Mode masks against authored CSS and compare Reader’s existing Parley and Blitz paths. The mode control remains open for the measured layout and source-position work. [Reference and captures](render-modes.md)
