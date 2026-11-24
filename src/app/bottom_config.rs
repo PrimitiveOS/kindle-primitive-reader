@@ -135,6 +135,36 @@ impl Reader {
                     ),
                 ]);
             }
+            if panel == BarPanel::TextScreen
+                && let Some(book) = &self.active
+            {
+                let displayed = self.top_header_for_book(book.id);
+                let choices = [("Off", false), ("On", true)];
+                rows.push(ConfigRow::new(
+                    if book.reading.is_continuous() {
+                        "Top status header (page turns)"
+                    } else {
+                        "Top status header"
+                    },
+                    choices.map(|(label, enabled)| {
+                        Choice::option(
+                            label,
+                            Action::TopStatusHeader(enabled),
+                            enabled == displayed,
+                        )
+                    }),
+                ));
+                rows.push(ConfigRow::new(
+                    "Default for new books",
+                    choices.map(|(label, enabled)| {
+                        Choice::option(
+                            label,
+                            Action::ConfirmTopStatusHeaderDefault(enabled),
+                            enabled == controls.top_header.default_enabled(),
+                        )
+                    }),
+                ));
+            }
             return rows;
         }
         if let Some(active) = &self.active {
