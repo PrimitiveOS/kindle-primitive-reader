@@ -36,7 +36,7 @@ KOReader maps the Oasis 3 raw key codes `104` and `109` to forward and back at t
 
 KOReader computes both visual navigation surfaces from the current screen dimensions. Book Map centers on a source page and lets the reader browse the map before opening a destination. The page browser computes its grid and ribbon from the available width and height. Selecting a thumbnail records a return location, and holding a thumbnail provides bookmark access. Physical page buttons and gestures browse the grid. [Book Map sizing and focus](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/bookmapwidget.lua#L697-L715) · [Book Map input](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/bookmapwidget.lua#L1776-L1825) · [Page browser sizing](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L320-L369) · [Page browser actions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1586-L1703)
 
-PrimitiveOS Page Overview adapts its four thumbnail slots from two rows in portrait to one row in landscape. Vertical swipes move by a row. Horizontal swipes, buttons and physical keys move a batch. The track browses chapters in EPUB and source pages in fixed books. Resizing keeps the previewed EPUB source anchor visible even while browsing a different chapter. Book Map repaginates the reflow chapter list around a visible chapter and projects its fixed-page groups from six columns by eight rows to eight columns by six rows. Jumping to an entry preserves the prior reading location in jump history.
+With the adaptive layout, Page Overview uses four thumbnail slots in two portrait rows or one landscape row. Vertical swipes move by a row. Horizontal swipes, buttons and physical keys move a batch. The track browses chapters in EPUB and source pages in fixed books. Resizing keeps the previewed EPUB source anchor visible even while browsing a different chapter. Book Map repaginates the reflow chapter list around a visible chapter and projects its fixed-page groups from six columns by eight rows to eight columns by six rows. Jumping to an entry preserves the prior reading location in jump history.
 
 **Page browser on tap** is on by default in Book Map. A PDF page or EPUB
 chapter opens a browser focused on the tapped page or the chapter's first
@@ -57,6 +57,28 @@ routes, and Page Browser return to the parent.
 [Stock tap routing](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/bookmapwidget.lua#L1918-L1948) ·
 [Stock parent return](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1206-L1223) ·
 [Executable comparison](../scripts/koreader-book-map-tap-check.py)
+
+### Thumbnail grid
+
+Open **Grid** in Page Browser to set one to six thumbnail columns and
+rows independently. Tap a step button to change one count, or hold to
+change it by two. The setting takes effect as you edit and is saved for
+the open edition. A book without its own setting uses the last chosen grid.
+Until a grid is chosen, Reader keeps its adaptive four-thumbnail layout.
+KOReader starts from three columns by two rows.
+[Grid controls](screenshots/page-browser-grid-controls.png) ·
+[PDF with six thumbnails](screenshots/page-browser-grid-landscape.png) ·
+[EPUB focus after a turn](screenshots/page-browser-grid-reflow-landscape.png)
+
+Changing the grid keeps the focused page visible and preserves its EPUB
+source anchor through a turn. Page buttons and horizontal swipes step one
+grid at a time. Vertical swipes step by one row. Canceling a browser opened
+from Book Map returns to its map window, and changing the grid leaves the
+reading position intact. The per-edition choice and the last-used grid are
+saved together in the existing library file and included in its backup.
+[Pinned widget bounds and settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1005-L1077) ·
+[Stock persistence](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1249-L1268) ·
+[Executable comparison](../scripts/koreader-page-browser-grid-check.py)
 
 The host `visual_navigation` tests render authored EPUB and PDF fixtures through the viewport transaction at 1264 × 1680 and 1680 × 1264. They cover both landscape turns, portrait return, aborted presentation, far-right taps, track swipes, physical page events and bookmark actions. Set `READER_VISUAL_NAVIGATION_CAPTURE_DIR` when running `cargo test --locked --lib visual_navigation` to write the portrait and landscape captures.
 
