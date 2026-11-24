@@ -63,6 +63,16 @@ impl Date {
     pub(crate) fn weekday(self) -> u8 {
         (self.ordinal() + 4).rem_euclid(7) as u8
     }
+    pub(super) fn monday_week(self) -> u8 {
+        let first = Self {
+            year: self.year,
+            month: 1,
+            day: 1,
+        };
+        let first_monday = first.ordinal() + i64::from((8 - first.weekday()) % 7);
+        let days = self.ordinal() - first_monday;
+        if days < 0 { 0 } else { 1 + (days / 7) as u8 }
+    }
     pub(crate) fn label(self) -> String {
         format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
     }

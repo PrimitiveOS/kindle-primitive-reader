@@ -6,6 +6,7 @@ use super::{Date, History, Visit, Zone};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Period {
+    Day,
     Week,
     Month,
 }
@@ -13,16 +14,86 @@ pub(crate) enum Period {
 impl Period {
     fn start(self, date: Date) -> Option<Date> {
         match self {
-            Self::Week => date.add_days(-i32::from((date.weekday() + 6) % 7)),
+            Self::Day => Some(date),
+            Self::Week => {
+                let first = Date::new(date.year, 1, 1)?;
+                Some(
+                    date.add_days(-i32::from((date.weekday() + 6) % 7))?
+                        .max(first),
+                )
+            }
             Self::Month => Some(date.first()),
         }
     }
 
     pub(crate) fn label(self, start: Date) -> String {
         match self {
-            Self::Week => format!("Week of {}", start.label()),
+            Self::Day => start.label(),
+            Self::Week => format!("{} Week {:02}", start.year, start.monday_week()),
             Self::Month => start.month_label(),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Range {
+    LastWeek,
+    LastMonthByDay,
+    LastYearByDay,
+    LastYearByWeek,
+    AllMonths,
+}
+
+impl Range {
+    pub(crate) const ALL: [Self; 5] = [
+        Self::LastWeek,
+        Self::LastMonthByDay,
+        Self::LastYearByDay,
+        Self::LastYearByWeek,
+        Self::AllMonths,
+    ];
+
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Self::LastWeek => "Last week",
+            Self::LastMonthByDay => "Last month by day",
+            Self::LastYearByDay => "Last year by day",
+            Self::LastYearByWeek => "Last year by week",
+            Self::AllMonths => "All stats by month",
+        }
+    }
+
+    pub(crate) fn period(self) -> Period {
+        match self {
+            Self::LastWeek | Self::LastMonthByDay | Self::LastYearByDay => Period::Day,
+            Self::LastYearByWeek => Period::Week,
+            Self::AllMonths => Period::Month,
+        }
+    }
+
+    pub(crate) fn date_label(self, date: Date) -> String {
+        match self {
+            Self::LastWeek | Self::LastMonthByDay => format!(
+                "{} ({})",
+                date.label(),
+                ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][usize::from(date.weekday())]
+            ),
+            _ => self.period().label(date),
+        }
+    }
+
+    pub(crate) fn cutoff(self, now: Option<i64>, zone: Zone) -> i64 {
+        let days = match self {
+            Self::LastWeek => 7,
+            Self::LastMonthByDay => 30,
+            Self::LastYearByDay | Self::LastYearByWeek => 365,
+            Self::AllMonths => return 0,
+        };
+        let Some(now) = now else { return i64::MAX };
+        let Some((hour, minute, second)) = zone.clock(now) else {
+            return i64::MAX;
+        };
+        now - (days - 1) * 86_400 - i64::from(hour * 3600 + minute * 60 + second)
     }
 }
 
@@ -65,15 +136,7 @@ impl History {
         book: Option<u64>,
         zone: Zone,
     ) -> Vec<(Date, Totals)> {
-        let mut groups = BTreeMap::<Date, Group>::new();
-        for (start, visit) in self.dated_by_period(period, book, zone) {
-            groups.entry(start).or_default().add(visit);
-        }
-        groups
-            .into_iter()
-            .rev()
-            .map(|(date, group)| (date, group.totals()))
-            .collect()
+        self.periods_since(period, book, zone, 0)
     }
 
     pub(crate) fn books_in_period(
@@ -83,18 +146,51 @@ impl History {
         book: Option<u64>,
         zone: Zone,
     ) -> Vec<(u64, Totals)> {
-        let mut groups = BTreeMap::<u64, Group>::new();
-        for (date, visit) in self.dated_by_period(period, book, zone) {
-            if date == start {
-                groups.entry(visit.book).or_default().add(visit);
-            }
-        }
-        let mut groups: Vec<_> = groups.into_iter().collect();
-        groups.sort_by_key(|(id, group)| (Reverse(group.last_read), *id));
-        groups
-            .into_iter()
-            .map(|(id, group)| (id, group.totals()))
-            .collect()
+        group_books(
+            self.dated_by_period(period, book, zone, 0)
+                .filter_map(|(date, visit)| (date == start).then_some(visit)),
+        )
+    }
+
+    pub(crate) fn periods_since(
+        &self,
+        period: Period,
+        book: Option<u64>,
+        zone: Zone,
+        cutoff: i64,
+    ) -> Vec<(Date, Totals)> {
+        group_dates(self.dated_by_period(period, book, zone, cutoff))
+    }
+
+    pub(crate) fn days_in_period(
+        &self,
+        period: Period,
+        start: Date,
+        book: Option<u64>,
+        zone: Zone,
+        cutoff: i64,
+    ) -> Vec<(Date, Totals)> {
+        group_dates(
+            self.dated_by_period(Period::Day, book, zone, cutoff)
+                .filter(|&(date, _)| period.start(date) == Some(start)),
+        )
+    }
+
+    pub(crate) fn books_on_report_day(
+        &self,
+        day: Date,
+        book: Option<u64>,
+        zone: Zone,
+        cutoff: i64,
+    ) -> Vec<(u64, Totals)> {
+        group_books(
+            self.dated_by_period(Period::Day, book, zone, cutoff)
+                .filter_map(|(date, visit)| (date == day).then_some(visit)),
+        )
+    }
+
+    pub(crate) fn all_books_report(&self) -> Vec<(u64, Totals)> {
+        group_books(self.visits().iter())
     }
 
     fn dated_by_period(
@@ -102,16 +198,46 @@ impl History {
         period: Period,
         book: Option<u64>,
         zone: Zone,
+        cutoff: i64,
     ) -> impl Iterator<Item = (Date, &Visit)> {
         let calendar = zone.calendar();
         self.visits().iter().filter_map(move |visit| {
             if book.is_some_and(|book| visit.book != book) {
                 return None;
             }
-            let date = period.start(calendar.date(visit.start?)?)?;
+            let start = visit.start?;
+            if start < cutoff {
+                return None;
+            }
+            let date = period.start(calendar.date(start)?)?;
             Some((date, visit))
         })
     }
+}
+
+fn group_dates<'a>(visits: impl Iterator<Item = (Date, &'a Visit)>) -> Vec<(Date, Totals)> {
+    let mut groups = BTreeMap::<Date, Group>::new();
+    for (date, visit) in visits {
+        groups.entry(date).or_default().add(visit);
+    }
+    groups
+        .into_iter()
+        .rev()
+        .map(|(date, group)| (date, group.totals()))
+        .collect()
+}
+
+fn group_books<'a>(visits: impl Iterator<Item = &'a Visit>) -> Vec<(u64, Totals)> {
+    let mut groups = BTreeMap::<u64, Group>::new();
+    for visit in visits {
+        groups.entry(visit.book).or_default().add(visit);
+    }
+    let mut groups: Vec<_> = groups.into_iter().collect();
+    groups.sort_by_key(|(id, group)| (Reverse(group.last_read), *id));
+    groups
+        .into_iter()
+        .map(|(id, group)| (id, group.totals()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -149,20 +275,28 @@ mod tests {
             history.by_period(Period::Week, None, zone),
             vec![
                 (
+                    january,
+                    Totals {
+                        seconds: 80,
+                        screens: 2,
+                        books: 2
+                    }
+                ),
+                (
                     monday,
                     Totals {
-                        seconds: 105,
-                        screens: 2,
-                        books: 2,
-                    },
+                        seconds: 25,
+                        screens: 1,
+                        books: 1
+                    }
                 ),
                 (
                     Date::new(2025, 12, 22).unwrap(),
                     Totals {
                         seconds: 15,
                         screens: 1,
-                        books: 1,
-                    },
+                        books: 1
+                    }
                 ),
             ]
         );
@@ -189,9 +323,71 @@ mod tests {
         );
         assert_eq!(
             history.books_in_period(Period::Week, monday, None, zone),
+            vec![(
+                1,
+                Totals {
+                    seconds: 25,
+                    screens: 1,
+                    books: 1
+                }
+            )]
+        );
+        assert_eq!(Period::Week.label(january), "2026 Week 00");
+        assert_eq!(history.prior(Some(9)), 300);
+    }
+
+    #[test]
+    fn rolling_reading_reports_use_stock_cutoff_week_buckets_and_book_totals() {
+        let mut history = History::load(std::path::PathBuf::new(), BTreeMap::new());
+        let zone = Zone::Fixed(0);
+        let december = Date::new(2025, 12, 31).unwrap();
+        let january = Date::new(2026, 1, 1).unwrap();
+        let today = Date::new(2026, 1, 6).unwrap();
+        let start = |day| zone.range(day, 0).unwrap().0;
+        let now = start(today) + 13 * 3600 + 53;
+        let cutoff = Range::LastWeek.cutoff(Some(now), zone);
+        assert_eq!(cutoff, start(december));
+        assert_eq!(
+            Range::LastMonthByDay.cutoff(Some(now), zone),
+            start(today) - 29 * 86400
+        );
+        assert_eq!(
+            Range::LastYearByWeek.cutoff(Some(now), zone),
+            start(today) - 364 * 86400
+        );
+        assert_eq!(Range::AllMonths.cutoff(None, zone), 0);
+        assert_eq!(Range::LastWeek.date_label(december), "2025-12-31 (Wed)");
+        let now = Instant::now();
+        for (book, at, seconds) in [
+            (3, Some(cutoff - 1), 6),
+            (1, Some(cutoff), 30),
+            (1, Some(cutoff + 90), 20),
+            (2, Some(start(january)), 45),
+            (1, Some(start(today)), 10),
+            (4, None, 25),
+        ] {
+            history.discard_active();
+            history.set_page_at(Some((book, 7)), now, at);
+            history.set_page_at(
+                None,
+                now + Duration::from_secs(seconds),
+                at.map(|v| v + seconds as i64),
+            );
+        }
+        let reports = history.periods_since(Period::Day, None, zone, cutoff);
+        assert_eq!(
+            reports,
             vec![
                 (
-                    2,
+                    today,
+                    Totals {
+                        seconds: 10,
+                        screens: 1,
+                        books: 1
+                    }
+                ),
+                (
+                    january,
                     Totals {
                         seconds: 45,
                         screens: 1,
@@ -199,16 +395,37 @@ mod tests {
                     }
                 ),
                 (
-                    1,
+                    december,
                     Totals {
-                        seconds: 60,
+                        seconds: 50,
                         screens: 1,
                         books: 1
                     }
                 ),
             ]
         );
-        assert_eq!(history.prior(Some(9)), 300);
+        assert_eq!(
+            history.books_on_report_day(december, None, zone, cutoff)[0]
+                .1
+                .seconds,
+            50
+        );
+        assert_eq!(
+            history.periods_since(Period::Week, None, zone, cutoff)[1].0,
+            january
+        );
+        assert_eq!(
+            history.days_in_period(Period::Week, january, None, zone, cutoff),
+            vec![reports[1]]
+        );
+        assert_eq!(
+            history
+                .all_books_report()
+                .iter()
+                .map(|(_, totals)| totals.seconds)
+                .sum::<u64>(),
+            136
+        );
     }
 
     #[test]
