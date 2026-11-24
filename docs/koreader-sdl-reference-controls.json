@@ -29,8 +29,8 @@
     "statuses": {
       "workflow": 232,
       "group": 63,
-      "open-audit": 22,
-      "partial": 236,
+      "open-audit": 21,
+      "partial": 237,
       "gap": 46,
       "system-owned": 84,
       "excluded": 91

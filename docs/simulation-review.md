@@ -2,6 +2,31 @@
 
 ## Current Mac simulator checkpoint
 
+Dictionary popup actions can be reordered, hidden and arranged one to four
+per row. The pinned KOReader callbacks cover sorting, toggling, paired
+arrows, preview and reset. The Mac simulator checks a saved layout after
+reopen, action paging, Translate confirmation and a highlight saved at the
+starting EPUB passage.
+[Popup layout comparison and captures](dictionary-popup-display.md#arrange-popup-buttons)
+
+An alternative table of contents can use document headings in the normal
+Contents list and remember that mode for the edition. The pinned native
+comparison verifies the hierarchy, placeholder levels, soft-hyphen
+cleanup and fragment fallback across two authored EPUBs. The Mac simulator
+checks the confirmed switch, nested touch jumps, publisher restore, and
+preserved source location.
+[Alternative contents and captures](contents-list-settings.md#alternative-table-of-contents)
+
+Fitted EPUB paragraphs in the internal Book and Web policies resolve
+vertical padding and keep its edges with the first and last text lines
+through page turns. The pinned native comparison checks 40 geometry
+and page-position cases. Mac tests verify the text links, selection
+and resume across a forced break and a naturally split paragraph.
+The engines still make different line and page cuts.
+[Vertical padding comparison and captures](render-modes.md#vertical-padding-at-page-boundaries)
+
+## Dictionary size, ribbon navigation, closing profiles and decorated widths checkpoint
+
 Dictionary definitions use a saved font size from 8 to 32. The pinned
 KOReader callbacks and Mac tests check the default of 20, tap and hold
 steps, bounds and Apply. The simulator checks line wrapping, long-press
