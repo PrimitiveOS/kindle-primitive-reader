@@ -764,3 +764,388 @@ fn exports_original_kindle_clippings_to_an_isolated_profile() {
         "Original Kindle clippings: {count} recognized records, {exported} exported after deduplication"
     );
 }
+
+#[test]
+fn local_annotation_export_settings_persist_and_preserve_existing_outputs() {
+    use crate::app::export_settings::{Origin, Page as SettingsPage};
+    let fixture = Fixture::new();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let sources = fixture.root.join("Books");
+    let destination = fixture.root.join("Study").join("Reading notes");
+    fs::create_dir(&sources).unwrap();
+    fs::create_dir_all(&destination).unwrap();
+    let source = sources.join("Field Notes.epub");
+    fs::rename(&fixture.book, &source).unwrap();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    let id = save_reflow_mark(&mut app, &source);
+    app.mark_book_changed();
+    app.save().unwrap();
+    let reading_data = fs::read(&fixture.state).unwrap();
+
+    app.show(Screen::ExportAnnotations);
+    let default = app.exports.join(format!("{id:016x}.txt"));
+    tap_row(&mut app, "Plain text");
+    let text = fs::read(&default).unwrap();
+    assert!(String::from_utf8_lossy(&text).contains("Keep <this> & compare [notes]"));
+    fs::write(&default, b"previous default export").unwrap();
+    tap_row(&mut app, "Plain text");
+    assert_eq!(fs::read(&default).unwrap(), text);
+
+    let back_button = primitive_ui::back_button(super::super::WIDTH as i32);
+    let back = Input::Tap((back_button.x + 20) as f32, (back_button.y + 20) as f32);
+    tap_row(&mut app, "Export settings");
+    assert_eq!(
+        app.screen,
+        Screen::ExportSettings(Origin::Book, SettingsPage::Settings)
+    );
+    tap_row(&mut app, "Choose export folder");
+    tap_row(&mut app, "Study");
+    tap_row(&mut app, "Reading notes");
+    app.input(back);
+    let (_, rows) = app.list_window();
+    assert_eq!(rows[0].detail.as_deref(), Some("Reader data / exports"));
+
+    tap_row(&mut app, "Choose export folder");
+    tap_row(&mut app, "Study");
+    capture_test_screen(&app, &fonts, "READER_EXPORT_FOLDER_SCREEN", false);
+    tap_row(&mut app, "Reading notes");
+    tap_row(&mut app, "Use this folder");
+    tap_row(&mut app, "Use book titles for filenames");
+    capture_test_screen(&app, &fonts, "READER_EXPORT_SETTINGS_SCREEN", false);
+    app.input(back);
+    assert_eq!(app.screen, Screen::ExportAnnotations);
+
+    let occupied = destination.join("Field Notes at Dusk (EPUB 3).txt");
+    fs::write(&occupied, b"keep my file").unwrap();
+    let alias = destination.join("Field Notes at Dusk (EPUB 3)-2.txt");
+    std::os::unix::fs::symlink(&occupied, &alias).unwrap();
+    tap_row(&mut app, "Plain text");
+    assert_eq!(fs::read(&occupied).unwrap(), b"keep my file");
+    assert_eq!(fs::read_link(&alias).unwrap(), occupied);
+    assert_eq!(
+        fs::read(destination.join("Field Notes at Dusk (EPUB 3)-3.txt")).unwrap(),
+        text
+    );
+    assert!(
+        app.notice
+            .as_ref()
+            .unwrap()
+            .contains("/Field Notes at Dusk (EPUB 3)-3.txt")
+    );
+
+    tap_row(&mut app, "Export settings");
+    tap_row(&mut app, "Export beside the book");
+    assert_eq!(fs::read(&fixture.state).unwrap(), reading_data);
+    drop(app);
+
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.activate(Action::Continue).unwrap();
+    app.show(Screen::ExportAnnotations);
+    tap_row(&mut app, "Kindle clippings text");
+    let alongside = sources.join("Field Notes at Dusk (EPUB 3).clippings.txt");
+    assert!(
+        fs::read_to_string(alongside)
+            .unwrap()
+            .contains("copper lantern")
+    );
+    assert!(
+        !destination
+            .join("Field Notes at Dusk (EPUB 3).clippings.txt")
+            .exists()
+    );
+    assert_eq!(
+        fs::read(&source).unwrap(),
+        include_bytes!("../../../tests/fixtures/field-notes-epub3.epub")
+    );
+
+    // A single surviving book uses the same alongside rule but keeps the bundle name.
+    app.show(Screen::ReadingData);
+    tap_row(&mut app, "Export highlights");
+    tap_row(&mut app, "History");
+    tap_row(&mut app, "Export settings");
+    assert_eq!(
+        app.screen,
+        Screen::ExportSettings(Origin::Library, SettingsPage::Settings)
+    );
+    app.input(back);
+    tap_row(&mut app, "Choose export format");
+    let owned = sources.join("library-highlights.md");
+    fs::write(&owned, "existing library notes").unwrap();
+    tap_row(&mut app, "Markdown");
+    settle(&mut app);
+    assert_eq!(
+        fs::read_to_string(&owned).unwrap(),
+        "existing library notes"
+    );
+    assert!(
+        fs::read_to_string(sources.join("library-highlights-2.md"))
+            .unwrap()
+            .contains("copper lantern")
+    );
+    assert!(!destination.join("library-highlights.md").exists());
+    capture_test_screen(&app, &fonts, "READER_EXPORT_SAVED_SCREEN", false);
+
+    app.show(Screen::LibraryExport(Page::Options));
+    tap_row(&mut app, "Export settings");
+    tap_row(&mut app, "Use Reader exports");
+    tap_row(&mut app, "Export beside the book");
+    app.input(back);
+    tap_row(&mut app, "Choose export format");
+    tap_row(&mut app, "HTML");
+    settle(&mut app);
+    assert!(app.exports.join("library-highlights.html").is_file());
+}
+
+#[test]
+fn local_annotation_library_job_freezes_settings_and_revalidates_destination() {
+    use crate::app::export_settings::{Command as Setting, Origin};
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let chosen = fixture.root.join("Notes");
+    let other = fixture.root.join("Unselected");
+    fs::create_dir(&chosen).unwrap();
+    fs::create_dir(&other).unwrap();
+    std::os::unix::fs::symlink(&other, fixture.root.join("Shortcut")).unwrap();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    save_reflow_mark(&mut app, &fixture.book);
+    let open = |app: &mut Reader, directory: &str| {
+        app.export_settings_command(Origin::Library, Setting::Open)
+            .unwrap();
+        app.export_settings_command(Origin::Library, Setting::Browse(Path::new("").into()))
+            .unwrap();
+        assert!(!app.items().iter().any(|row| row.title == "Shortcut"));
+        app.export_settings_command(
+            Origin::Library,
+            Setting::Browse(Path::new(directory).into()),
+        )
+        .unwrap();
+        app.export_settings_command(Origin::Library, Setting::UseFolder)
+            .unwrap();
+    };
+    let start = |app: &mut Reader| {
+        app.activate_library_export(Command::Open).unwrap();
+        app.activate_library_export(Command::History).unwrap();
+        app.activate_library_export(Command::Start(Format::Text))
+            .unwrap();
+    };
+
+    open(&mut app, "Notes");
+    start(&mut app);
+    open(&mut app, "Unselected");
+    settle(&mut app);
+    assert!(chosen.join("library-highlights.txt").is_file());
+    assert!(fs::read_dir(&other).unwrap().next().is_none());
+
+    start(&mut app);
+    app.activate_library_export(Command::Cancel).unwrap();
+    settle(&mut app);
+    assert!(fs::read_dir(&other).unwrap().next().is_none());
+
+    start(&mut app);
+    fs::remove_dir(&other).unwrap();
+    std::os::unix::fs::symlink(&chosen, &other).unwrap();
+    settle(&mut app);
+    assert_eq!(app.screen, Screen::LibraryExport(Page::Options));
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap()
+            .contains("Choose a folder from the library")
+    );
+    assert!(app.library_export.saved.is_none());
+    assert!(!chosen.join("library-highlights-2.txt").exists());
+    assert!(!app.exports.exists());
+
+    // A missing configured directory falls back to the Documents chooser, only for browsing.
+    app.export_settings_command(Origin::Library, Setting::Open)
+        .unwrap();
+    tap_row(&mut app, "Choose export folder");
+    assert_eq!(app.items()[0].detail.as_deref(), Some("Documents"));
+}
+
+fn tap_export_control(app: &mut Reader, rect: primitive_ui::Rect) {
+    let x = rect.x + rect.w / 2;
+    let y = rect.y + rect.h / 2;
+    assert_eq!(app.input(Input::Tap(x as f32, y as f32)), Change::Partial);
+}
+
+fn tap_export_key(app: &mut Reader, target: primitive_ui::Key) {
+    use super::super::{HEIGHT, WIDTH};
+    let (_, key) = primitive_ui::Layout::new(WIDTH, HEIGHT, 4, 5)
+        .keyboard_keys_with(app.editor.layer, "Save")
+        .into_iter()
+        .find(|(key, _)| key.key == target)
+        .unwrap();
+    tap_export_control(app, key);
+}
+
+fn save_export_template(app: &mut Reader, text: &str) {
+    if !text.is_empty() {
+        app.clipboard_text = Some(text.into());
+        tap_export_control(app, super::super::external_link::PASTE);
+        app.clipboard_text = None;
+    }
+    tap_export_key(app, primitive_ui::Key::Go);
+}
+
+#[test]
+fn export_filename_templates_include_real_metadata_and_keep_template_scope_after_reopen() {
+    use crate::app::export_settings::{Command as Setting, Origin, Page as SettingsPage, Scope};
+    let fixture = Fixture::new();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let folder = fixture.root.join("Exported notes");
+    let books = fixture.root.join("Books");
+    fs::create_dir(&folder).unwrap();
+    fs::create_dir(&books).unwrap();
+    let first = books.join("First Book.epub");
+    fs::rename(&fixture.book, &first).unwrap();
+    let second = fixture.root.join("Last Book.epub");
+    fs::copy(crate::test_fixture("field-notes-epub2.epub"), &second).unwrap();
+
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    let first_id = save_reflow_mark(&mut app, &first);
+    let state = app.library.state_mut(first_id).unwrap();
+    state.title = "Dusk: Relay/%A".into();
+    state.author = Some("Linh|Nguyen".into());
+    app.mark_book_changed();
+    app.save().unwrap();
+
+    app.show(Screen::ExportAnnotations);
+    tap_row(&mut app, "Export settings");
+    tap_row(&mut app, "Choose export folder");
+    tap_row(&mut app, "Exported notes");
+    tap_row(&mut app, "Use this folder");
+    tap_row(&mut app, "Single-book filename");
+    assert_eq!(
+        app.screen,
+        Screen::ExportSettings(Origin::Book, SettingsPage::Template(Scope::Single))
+    );
+    assert_eq!(app.editor.string(), "");
+    save_export_template(&mut app, "%%T - %A - %Z");
+    tap_row(&mut app, "Single-book filename");
+    assert_eq!(app.editor.string(), "%%T - %A - %Z");
+    capture_test_screen(&app, &fonts, "READER_EXPORT_TEMPLATE_EDITOR", false);
+    let clear = primitive_ui::Rect::new(super::super::LIST_X, super::super::LIST_Y + 240, 320, 96);
+    tap_export_control(&mut app, clear);
+    assert!(app.editor.string().is_empty());
+    use primitive_ui::{Key, Layer};
+    tap_export_key(&mut app, Key::Layer(Layer::Symbols));
+    tap_export_key(&mut app, Key::Layer(Layer::More));
+    tap_export_key(&mut app, Key::Char('%'));
+    assert_eq!(app.editor.string(), "%");
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+
+    tap_row(&mut app, "Multiple-book filename");
+    save_export_template(&mut app, "Bundle %f - %T %%");
+    tap_row(&mut app, "Filename tokens");
+    capture_test_screen(&app, &fonts, "READER_EXPORT_TEMPLATE_TOKENS", false);
+    let back = primitive_ui::back_button(super::super::WIDTH as i32);
+    tap_export_control(&mut app, back);
+    capture_test_screen(&app, &fonts, "READER_EXPORT_TEMPLATE_SETTINGS", false);
+    tap_export_control(&mut app, back);
+
+    let existing = folder.join("%Dusk- Relay-%A - Linh-Nguyen - N-A.txt");
+    fs::write(&existing, "User file").unwrap();
+    tap_row(&mut app, "Plain text");
+    assert_eq!(fs::read_to_string(&existing).unwrap(), "User file");
+    assert!(
+        fs::read_to_string(folder.join("%Dusk- Relay-%A - Linh-Nguyen - N-A-2.txt"))
+            .unwrap()
+            .contains("copper lantern")
+    );
+
+    let second_id = save_reflow_mark(&mut app, &second);
+    app.mark_book_changed();
+    app.save().unwrap();
+    drop(app);
+
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.activate(Action::Continue).unwrap();
+    assert_eq!(app.open_book_id(), Some(second_id));
+    let last_title = "Desk log";
+    app.library.state_mut(second_id).unwrap().title = last_title.into();
+    app.export_settings_command(Origin::Library, Setting::Open)
+        .unwrap();
+    tap_row(&mut app, "Single-book filename");
+    assert_eq!(app.editor.string(), "%%T - %A - %Z");
+    tap_export_control(&mut app, back);
+    tap_row(&mut app, "Multiple-book filename");
+    assert_eq!(app.editor.string(), "Bundle %f - %T %%");
+    tap_export_control(&mut app, back);
+    tap_row(&mut app, "Export beside the book");
+
+    app.activate_library_export(Command::Open).unwrap();
+    app.activate_library_export(Command::History).unwrap();
+    app.activate_library_export(Command::Start(Format::Json))
+        .unwrap();
+    // The multi-book scope and original last-opened metadata are frozen at launch.
+    app.library.state_mut(second_id).unwrap().title = "Title edited while the job runs".into();
+    app.export_settings_command(Origin::Library, Setting::Open)
+        .unwrap();
+    tap_row(&mut app, "Multiple-book filename");
+    tap_export_control(&mut app, clear);
+    save_export_template(&mut app, "New queued template");
+    settle(&mut app);
+    let bundle_name = format!("Bundle Last Book.epub - {last_title} %%.json");
+    let bundle = folder.join(&bundle_name);
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&bundle).unwrap()).unwrap();
+    assert_eq!(value["documents"].as_array().unwrap().len(), 2);
+    assert!(!folder.join("New queued template.json").exists());
+    assert!(!books.join(&bundle_name).exists());
+    capture_test_screen(&app, &fonts, "READER_EXPORT_TEMPLATE_SAVED", false);
+
+    // The final number after selection and filtering determines the template and the folder.
+    app.activate_library_export(Command::ToggleBook(second_id))
+        .unwrap();
+    app.activate_library_export(Command::Start(Format::Markdown))
+        .unwrap();
+    settle(&mut app);
+    assert!(
+        fs::read_to_string(books.join("%Dusk- Relay-%A - Linh-Nguyen - N-A.md"))
+            .unwrap()
+            .contains("copper lantern")
+    );
+
+    app.export_settings_command(Origin::Library, Setting::Open)
+        .unwrap();
+    tap_row(&mut app, "Single-book filename");
+    tap_export_control(&mut app, clear);
+    save_export_template(&mut app, "");
+    app.activate_library_export(Command::Start(Format::Html))
+        .unwrap();
+    settle(&mut app);
+    assert!(books.join("library-highlights.html").is_file());
+    assert!(!books.join("New queued template.html").exists());
+
+    // A sole Kindle clipping can supply its title, while its missing source cannot override the folder.
+    let kindle = fixture.root.join(kindle_clippings::FILE);
+    fs::write(
+        &kindle,
+        "Kindle fixture\n- Your Highlight on page 9 | Added on 2024-03-01 00:00:00\n\nPaper shore.\n==========\n",
+    )
+    .unwrap();
+    app.export_settings_command(Origin::Library, Setting::Open)
+        .unwrap();
+    tap_row(&mut app, "Single-book filename");
+    save_export_template(&mut app, "Notes %T from %f");
+    app.activate_library_export(Command::Open).unwrap();
+    app.activate_library_export(Command::History).unwrap();
+    app.activate_library_export(Command::ToggleBook(first_id))
+        .unwrap();
+    app.activate_library_export(Command::ToggleBook(second_id))
+        .unwrap();
+    app.activate_library_export(Command::Start(Format::KindleClippings))
+        .unwrap();
+    settle(&mut app);
+    assert!(
+        fs::read_to_string(folder.join("Notes Kindle fixture from N-A.clippings.txt"))
+            .unwrap()
+            .contains("Paper shore.")
+    );
+}

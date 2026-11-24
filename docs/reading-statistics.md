@@ -64,6 +64,19 @@ tests cover all three paths, exact threshold behavior, write failure, reopening,
 old pace samples and the unchanged source EPUB. Kindle verification is pending.
 [Reset menu](screenshots/reading-statistics-reset-menu.png) · [Confirmation](screenshots/reading-statistics-reset-confirm.png) · [Pinned KOReader callbacks](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L2338-L2534) · [Executable comparison](../scripts/koreader-statistics-reset-check.lua)
 
+### Reset one book for a day, week or month
+
+Open the list of books for the date or period, then hold a book row. The
+confirmation shows the selected book, dates and number of recorded visits.
+Reset removes those visits and refreshes the report. Other books, visits
+outside the displayed dates, undated screen time and the reading pace are
+preserved. Cancel leaves the report intact.
+
+The pinned comparison exercises Cancel and Reset, checks the selected book
+and interval in the SQLite statement and verifies the refresh callback. Reader
+uses an exclusive upper date boundary to preserve visits at the next midnight.
+[Simulator](screenshots/reading-statistics-period-reset.png) · [Pinned KOReader period reset](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L2222-L2265)
+
 ## Counting time
 
 New history defaults to the stock five-second minimum and 120-second maximum per visit. Quick skims do not count. Re-reading keeps a new visit. Reading time includes those rereads; capped page time sums at most the configured maximum for each distinct reading screen. These are separate values, as in KOReader's uncapped and capped book queries. Finished books continue recording by default, with an option to freeze them. [Stock defaults and total queries](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L29-L90) · [Page visit accounting](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2560-L2652)
@@ -87,7 +100,7 @@ Deterministic tests cover min/max boundaries, rereads, capped and uncapped total
 Reflow uses source-position reading-screen identities, so page numbers
 and totals need separate layout-change comparisons with KOReader's
 rescaling view. Reader's pace estimator has its own sample policy.
-Minute-level day-origin editing, configurable book-span labels, local
-statistics database import and day- or period-specific reset remain open. Reader records the
-actual pre- and post-pause portions of each visit.
+Minute-level day-origin editing, configurable book-span labels and local
+statistics database import remain open. Reader records the actual pre- and
+post-pause portions of each visit.
 [Stock layout rescaling](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L439-L441) · [Stock pause and resume timestamps](https://github.com/koreader/koreader/blob/v2026.07.1/plugins/statistics.koplugin/main.lua#L2694-L2732)

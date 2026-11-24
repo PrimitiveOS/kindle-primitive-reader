@@ -45,6 +45,26 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+## Reader 0.1.45 verification plan
+
+Compare guide geometry, shades, settings, and the inward step against the
+pinned overlay. Check the EPUB and PDF reflow captures, footer clearance,
+disabled guides, and resume. Compare selection markup for identical quotes
+in different source elements, validate escaped entities and original chapter
+identity, and confirm Back restores the same selection. Keep the four-mode
+CREngine reference as evidence for the remaining provider work.
+[Reading guides](reading-guides.md) · [EPUB selection markup](selection-html.md) · [Render modes](render-modes.md)
+
+## Reader 0.1.44 verification plan
+
+Compare scan and text reflow spacing with the pinned PDF provider. Verify
+that changing spacing preserves the source anchor and Cancel restores the
+page. Check annotation folders, filename substitutions, selection scope,
+and duplicate filenames. Reset a book for a selected day or period and
+verify cutoff boundaries, preserved visits and failed writes. Test portrait
+defaults and per-book choices with both supported and earlier Launchers.
+[Scan reflow](scan-controls.md) · [Annotation export](library-highlights-export.md) · [Statistics](reading-statistics.md#reset-one-book-for-a-day-week-or-month) · [Portrait orientation](reading-edition-orientation.md)
+
 ## Reader 0.1.43 verification plan
 
 Compare detected PDF crop padding and fit to the pinned native provider.

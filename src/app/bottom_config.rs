@@ -82,24 +82,28 @@ impl Reader {
     pub(super) fn bottom_config_rows(&self, panel: BarPanel) -> Vec<ConfigRow> {
         if matches!(panel, BarPanel::TextScreen | BarPanel::ViewScreen) {
             let controls = self.controls;
-            let mut rows = vec![ConfigRow::new(
-                "Screen orientation",
-                [
-                    ReadingOrientation::FollowLauncher,
-                    ReadingOrientation::Upright,
-                    ReadingOrientation::UpsideDown,
-                ]
-                .map(|orientation| {
-                    Choice::option(
-                        orientation.label(),
-                        Action::SetReadingControls(crate::reading_controls::ReadingControls {
-                            orientation,
-                            ..controls
-                        }),
-                        controls.orientation == orientation,
-                    )
-                }),
-            )];
+            let mut rows = vec![
+                ConfigRow::new(
+                    "Screen orientation",
+                    ReadingOrientation::ALL.map(|orientation| {
+                        Choice::option(
+                            orientation.label(),
+                            Action::SetReadingOrientation(orientation),
+                            self.reading_orientation() == orientation,
+                        )
+                    }),
+                ),
+                ConfigRow::new(
+                    "Keep orientation",
+                    [("Off", false), ("On", true)].map(|(title, keep)| {
+                        Choice::option(
+                            title,
+                            Action::KeepReadingOrientation(keep),
+                            controls.sticky_orientation.is_some() == keep,
+                        )
+                    }),
+                ),
+            ];
             // Under Primitive Launcher the theme is the launcher's: no light or dark switch here.
             if !self.under_launcher() {
                 rows.extend([

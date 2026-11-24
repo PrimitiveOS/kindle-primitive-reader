@@ -1,6 +1,6 @@
 [package]
 name = "reader"
-version = "0.1.43"
+version = "0.1.45"
 edition = "2024"
 license = "PolyForm-Noncommercial-1.0.0"
 description = "Offline book reader for PrimitiveOS on Kindle"
@@ -46,9 +46,9 @@ md5 = "=0.8.0"
 parley = { version = "=0.12.0", default-features = false, features = ["std", "complex-scripts"] }
 percent-encoding = "=2.3.2"
 png = "=0.17.16"
-primitive-device = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "50035cf068c0157abf97477ef64eb28bc984b6b7", optional = true }
-primitive-app = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "50035cf068c0157abf97477ef64eb28bc984b6b7", optional = true }
-primitive-ui = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "50035cf068c0157abf97477ef64eb28bc984b6b7", optional = true }
+primitive-device = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "6cf02e82797b95ffb2f38e7e4aaf6f3cae8888d2", optional = true }
+primitive-app = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "6cf02e82797b95ffb2f38e7e4aaf6f3cae8888d2", optional = true }
+primitive-ui = { git = "https://github.com/PrimitiveOS/kindle-primtitive-tools.git", rev = "6cf02e82797b95ffb2f38e7e4aaf6f3cae8888d2", optional = true }
 pulldown-cmark = { version = "=0.13.0", default-features = false, features = ["html"] }
 rars = { version = "=0.12.3", default-features = false }
 resvg = { version = "=0.50.0", default-features = false, features = ["raster-images"] }

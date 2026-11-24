@@ -189,6 +189,29 @@ impl Calendar {
         // empty or reversed interval, even if it crosses that instant.
         (start < end).then_some((start, end))
     }
+    pub(super) fn midnight_boundary(&self, date: Date) -> Option<i64> {
+        let start = self.start(date, 0)?;
+        if self.date(start)? >= date {
+            return Some(start);
+        }
+        // libc can normalize a skipped midnight back into the previous date.
+        // Find the first instant belonging to this civil date or a later one.
+        let mut earlier = start;
+        let mut later = self.start(date.add_days(1)?, 0)?;
+        if earlier >= later || self.date(later)? < date {
+            return None;
+        }
+        while later - earlier > 1 {
+            let middle = earlier + (later - earlier) / 2;
+            if self.date(middle)? < date {
+                earlier = middle;
+            } else {
+                later = middle;
+            }
+        }
+        Some(later)
+    }
+
     fn start(&self, date: Date, minutes: u16) -> Option<i64> {
         #[cfg(all(target_os = "linux", target_arch = "arm", target_env = "musl"))]
         if let Some(device) = &self.device {

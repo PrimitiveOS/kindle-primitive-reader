@@ -22,6 +22,8 @@ pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct ReadingControls {
+    #[serde(skip_serializing_if = "crate::app::reading_guides::Settings::is_default")]
+    pub reading_guides: crate::app::reading_guides::Settings,
     #[serde(skip_serializing_if = "crate::library::FolderOrder::is_default")]
     pub folder_order: crate::library::FolderOrder,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,6 +101,12 @@ pub(crate) struct ReadingControls {
     pub auto_turn_distance_tenths: i16,
     pub both_toolbars: bool,
     pub orientation: ReadingOrientation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reflow_orientation_default: Option<ReadingOrientation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_orientation_default: Option<ReadingOrientation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sticky_orientation: Option<ReadingOrientation>,
     pub palette: ScreenPalette,
     pub status_bar: StatusBar,
     /// Sort in-book bookmark rows by creation time instead of document location.
@@ -1117,6 +1125,8 @@ pub(crate) enum ReadingOrientation {
 }
 
 impl ReadingOrientation {
+    pub const ALL: [Self; 3] = [Self::FollowLauncher, Self::Upright, Self::UpsideDown];
+
     pub fn label(self) -> &'static str {
         match self {
             Self::FollowLauncher => "Follow Launcher",
@@ -1313,6 +1323,9 @@ impl ReadingControls {
                 return Err(io::Error::other("Reading controls settings are too large"));
             }
             let mut controls: Self = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            if !controls.reading_guides.valid() {
+                controls.reading_guides = Default::default();
+            }
             if !controls.footnote_font_size.valid() {
                 controls.footnote_font_size = crate::footnotes::font_size::FontSize::default();
             }

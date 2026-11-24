@@ -13,6 +13,7 @@ pub(super) const BOOK: Icon = line(&[
     "M4 6 H10 A2 2 0 0 1 12 8 V19 A2 2 0 0 0 10 17 H4 Z",
     "M20 6 H14 A2 2 0 0 0 12 8 V19 A2 2 0 0 1 14 17 H20 Z",
 ]);
+pub(super) const CODE: Icon = line(&["M9 6 L3 12 L9 18 M15 6 L21 12 L15 18"]);
 pub(super) const TEXT: Icon = line(&["M4 19 L9 6 L14 19 M6.5 14 H11.5 M16 19 L19 11 L22 19"]);
 pub(super) const EXIT: Icon = line(&["M14 5 H19 V19 H14", "M4 12 H15 M11 8 L15 12 L11 16"]);
 pub(super) const BOOKMARK: Icon = line(&["M7 4 H17 V20 L12 16 L7 20 Z"]);
@@ -44,6 +45,7 @@ const CROP: Icon = line(&["M7 3 V17 H21 M3 7 H17 V21"]);
 const DISPLAY: Icon = line(&["M3 5 H21 V17 H3 Z M8 21 H16 M12 17 V21"]);
 const SLIDERS: Icon = icons::SETTINGS;
 const READFLOW: Icon = line(&["M5 6 H19 M5 10 H19 M5 14 H19 M5 18 H13"]);
+const READING_GUIDES: Icon = line(&["M5 4 V20 M19 4 V20 M9 9 H15 M9 13 H15 M9 17 H13"]);
 const FAVORITE: Icon = line(&[
     "M12 4 L14.4 9.2 L20 9.8 L15.8 13.6 L17 19.2 L12 16.3 L7 19.2 L8.2 13.6 L4 9.8 L9.6 9.2 Z",
 ]);
@@ -77,6 +79,7 @@ pub(super) fn panel_icon(panel: BarPanel) -> Icon {
 
 pub(super) fn action_icon(action: &Action) -> Icon {
     match action {
+        Action::Show(Screen::ReadingGuides) => READING_GUIDES,
         Action::Show(Screen::Library | Screen::OrganizeLibrary) | Action::CurrentBookFolder => {
             FOLDER
         }
@@ -169,7 +172,10 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::ReturnToLocation => BACK,
         Action::SetDisplayLevel(DisplayLevel::FrontLight, _) => icons::SUN,
         Action::SetDisplayLevel(DisplayLevel::Warmth, _) => icons::WARMTH,
-        Action::RefreshDisplay | Action::RotatePage | Action::SetFixedRotation(_) => icons::ROTATE,
+        Action::RefreshDisplay
+        | Action::RotatePage
+        | Action::SetFixedRotation(_)
+        | Action::SetReadingOrientation(_) => icons::ROTATE,
         Action::FixedScroll(_)
         | Action::ReadingMode(_)
         | Action::ReadFixedText

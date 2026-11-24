@@ -723,6 +723,8 @@ pub struct FixedPreferences {
     pub semi_auto_crop: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub continuous_crop: Option<ContinuousCrop>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_reflow_spacing: Option<FixedReflowSpacing>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -730,6 +732,27 @@ pub struct FixedPreferences {
 pub enum ContinuousCrop {
     Manual,
     Auto,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixedReflowSpacing {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl FixedReflowSpacing {
+    #[cfg(feature = "kindle")]
+    pub(crate) fn scaled_pitch(self, pitch: u32) -> u32 {
+        let stock = match self {
+            Self::Small => 100,
+            Self::Medium => 120,
+            Self::Large => 140,
+        };
+        (pitch * stock + 60) / 120
+    }
 }
 
 impl FixedPreferences {
@@ -783,6 +806,9 @@ impl FixedPreferences {
             offset_x: normalized_offset(f64::from(self.offset_x)),
             offset_y: normalized_offset(f64::from(self.offset_y)),
             continuous_crop: self.continuous_crop.filter(|_| !self.semi_auto_crop),
+            fixed_reflow_spacing: self
+                .fixed_reflow_spacing
+                .filter(|value| *value != FixedReflowSpacing::Medium),
             crop_margin_hundredths: self
                 .crop_margin_hundredths
                 .filter(|&value| value != DEFAULT_CROP_MARGIN && value <= MAX_CROP_MARGIN),
@@ -867,6 +893,9 @@ impl<'de> Deserialize<'de> for FixedPreferences {
             semi_auto_crop: switch("semi_auto_crop"),
             continuous_crop: values
                 .get("continuous_crop")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
+            fixed_reflow_spacing: values
+                .get("fixed_reflow_spacing")
                 .and_then(|value| serde_json::from_value(value.clone()).ok()),
         }
         .normalized())
@@ -1108,6 +1137,12 @@ pub struct BookState {
     pub(crate) character_page_stride: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) top_status_header: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "read_orientation",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) screen_orientation: Option<crate::reading_controls::ReadingOrientation>,
     #[serde(default)]
     pub preferences: BookPreferences,
     #[serde(default)]
@@ -1161,6 +1196,13 @@ fn read_ocr_language<'de, D: serde::Deserializer<'de>>(
         .map(str::to_owned))
 }
 
+fn read_orientation<'de, D: serde::Deserializer<'de>>(
+    reader: D,
+) -> Result<Option<crate::reading_controls::ReadingOrientation>, D::Error> {
+    let value = serde_json::Value::deserialize(reader)?;
+    Ok(serde_json::from_value(value).ok())
+}
+
 fn read_pdf_crop_seeds<'de, D: serde::Deserializer<'de>>(
     reader: D,
 ) -> Result<crate::pdf_crop::Seeds, D::Error> {
@@ -1189,6 +1231,7 @@ impl BookState {
             publisher_page_margins: false,
             character_page_stride: None,
             top_status_header: None,
+            screen_orientation: None,
             preferences: BookPreferences::default(),
             fixed_preferences: FixedPreferences::default(),
             pdf_crop_seeds: Default::default(),
@@ -1497,7 +1540,7 @@ impl Library {
         Ok(list)
     }
 
-    fn browse_folder(&self, relative: &Path) -> io::Result<PathBuf> {
+    pub(crate) fn browse_folder(&self, relative: &Path) -> io::Result<PathBuf> {
         let denied = || {
             io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -2396,6 +2439,9 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
         }
         if target.top_status_header.is_none() {
             target.top_status_header = source.top_status_header;
+        }
+        if target.screen_orientation.is_none() {
+            target.screen_orientation = source.screen_orientation;
         }
         merge_text_marks(target, &source.bookmarks, &source.highlights, &mut summary);
         for mark in &source.pdf_highlights {
@@ -3634,6 +3680,7 @@ mod tests {
                 crop_margin_hundredths: None,
                 semi_auto_crop: false,
                 continuous_crop: None,
+                fixed_reflow_spacing: None,
             }
         );
         assert!(state.fixed_preferences.is_valid());

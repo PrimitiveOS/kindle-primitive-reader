@@ -10,6 +10,8 @@ pub(crate) const SOURCE_ATTRIBUTE: &str = "data-primos-source";
 #[cfg(test)]
 mod flow_metadata_tests;
 mod numeric_references;
+#[cfg(feature = "kindle")]
+mod selection_html;
 
 const RUBY_TEXT_MODEL: u64 = 0xe026_92a4_3415_b12f;
 const MAX_RUBY_GROUPS: usize = 1_024;

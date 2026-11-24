@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.45
+
+- Show optional reading guides with configurable thickness, margin, intensity, and movement.
+- Inspect the original publisher markup for a verified selection within one EPUB chapter.
+
+## 0.1.44
+
+- Set per-book line spacing for PDF text and scan reflow.
+- Choose a local annotation export folder and separate single-book and multi-book filenames.
+- Reset one book’s recorded statistics for a selected day, week or month.
+- Save portrait orientation per book or by document type with a compatible Launcher.
+
 ## 0.1.43
 
 - Choose the margin around detected PDF crops for each document.

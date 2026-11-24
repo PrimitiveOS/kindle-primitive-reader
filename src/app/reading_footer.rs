@@ -461,7 +461,7 @@ fn battery_footer_text(level: u32, charging: bool, hide_above: u8) -> Option<Str
     Some(format!("{label} {level}%"))
 }
 
-fn battery_symbol(level: u32, charging: bool, fully_charged: bool) -> String {
+pub(super) fn battery_symbol(level: u32, charging: bool, fully_charged: bool) -> String {
     let codepoint = if fully_charged {
         0xEDA3 // KOReader's fully-charged battery glyph.
     } else if charging {
@@ -1163,6 +1163,31 @@ impl Reader {
                 ))
             }
             _ => None,
+        }
+    }
+
+    pub(super) fn export_progress_token(&self, token: char) -> Option<String> {
+        let progress = self.footer_progress()?;
+        match token {
+            'C' => Some(
+                self.bound_footer_chapter_title()
+                    .unwrap_or(progress.section_name)
+                    .to_owned(),
+            ),
+            'l' => Some(
+                pages_left_display(
+                    self.displayed_chapter_pages_left(&progress),
+                    self.controls.footer_pages_left_include_current,
+                )
+                .to_string(),
+            ),
+            'p' => Some((progress.book_fraction * 100.0).round().to_string()),
+            'P' => Some(
+                (progress.section_page as f64 * 100.0 / progress.section_len.max(1) as f64)
+                    .round()
+                    .to_string(),
+            ),
+            _ => self.alarm_progress(token),
         }
     }
 

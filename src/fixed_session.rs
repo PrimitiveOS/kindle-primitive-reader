@@ -21,9 +21,10 @@ use crate::fixed_epub::{FixedEpub, FixedSpread, SpreadPlan};
 use crate::fixed_text::{PdfPageText, PdfTextRect};
 use crate::library::hidden_flows::{HiddenFlows, PageFlows, ResolvedPoint};
 use crate::library::{
-    ContinuousCrop, DEFAULT_CROP_MARGIN, DocumentFormat, FixedPreferences as View, FixedTileAxis,
-    FixedTileZoom, HighlightPage, MAX_CONTINUOUS_GAP, MAX_CROP_MARGIN, MAX_HIGHLIGHT_TEXT_BYTES,
-    MAX_SCAN_WHITE_LEVEL, MIN_SCAN_WHITE_LEVEL, PdfHighlight, SCAN_GAMMA_DEFAULT, valid_scan_gamma,
+    ContinuousCrop, DEFAULT_CROP_MARGIN, DocumentFormat, FixedPreferences as View,
+    FixedReflowSpacing, FixedTileAxis, FixedTileZoom, HighlightPage, MAX_CONTINUOUS_GAP,
+    MAX_CROP_MARGIN, MAX_HIGHLIGHT_TEXT_BYTES, MAX_SCAN_WHITE_LEVEL, MIN_SCAN_WHITE_LEVEL,
+    PdfHighlight, SCAN_GAMMA_DEFAULT, valid_scan_gamma,
 };
 use crate::pdf_crop::{self, Seed, Seeds};
 use crate::session::{
@@ -960,6 +961,10 @@ impl FixedReading {
         Ok(())
     }
 
+    pub(crate) fn set_fixed_reflow_spacing(&mut self, spacing: FixedReflowSpacing) {
+        self.view.fixed_reflow_spacing = (spacing != FixedReflowSpacing::Medium).then_some(spacing);
+    }
+
     pub(crate) fn set_force_ocr(&mut self, enabled: bool) -> Result<()> {
         if !self.supports_text() {
             return Err("OCR selection is available for PDF and DjVu".into());
@@ -1286,6 +1291,7 @@ impl FixedReading {
                 turns: original.turns,
                 scan_contrast: original.scan_contrast,
                 scan_gamma_tenths: original.scan_gamma_tenths,
+                fixed_reflow_spacing: original.fixed_reflow_spacing,
                 dither: original.dither,
                 continuous_gap: original.continuous_gap,
                 scan_white_level: original.scan_white_level,

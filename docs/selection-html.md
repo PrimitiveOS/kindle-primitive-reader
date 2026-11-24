@@ -1,0 +1,17 @@
+# Inspect the HTML behind a selection
+
+Select text in a supported EPUB and tap **View HTML** in the selection popup. Reader shows the selected publisher markup with the enclosing elements. **Previous**, **Next**, the physical page buttons and vertical swipes move through longer fragments. **Back** restores the same reading position and selection.
+
+Reader resolves the range through its saved chapter and text anchors. It opens the current publication using the usual library and EPUB readers, verifies the edition and chapter fingerprint, and then resolves the canonical character boundaries back to publisher markup. Identical words in different locations retain their own element names, attributes, and entity spellings. The inspector displays the result as text. It follows no links, loads no linked resources, and writes no changes to the publication.
+
+The initial scope covers the active EPUB chapter when its canonical offsets can be mapped to publisher markup. Reader hides the action when a chapter requires synthetic block wrappers or legacy numeric-reference repair, or when the selection crosses chapters. Failed XML recovery, ambiguous text boundaries, projected text that omits canonical text, a changed document and excessive source size also produce no fragment. The parser limits this operation to a 1 MiB chapter, a 48 KiB fragment and 96 enclosing levels.
+
+## KOReader comparison
+
+The KOReader selection menu exposes **View HTML** for reflowable CREngine documents. Its initial standard view passes the selected XPointer endpoints to `getHTMLFromXPointers` with flags `0xE830` and root ancestry enabled. CREngine enriches the standard view with generated `DocFragment` wrappers and inline and linked stylesheet information. It also offers alternate CSS, Unicode and render debug views. Reader's standard inspector shows publisher markup and original attributes for the verified selection. The stylesheet and engine debug views remain open parity items. [Selection menu callback](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerhighlight.lua#L208) · [Standard and diagnostic views](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/viewhtml.lua#L17)
+
+## Verification
+
+The pinned macOS KOReader runtime executed the actual selection callback on the authored Harbor notebook EPUB. The reference produced two independently clipped ranges for the same phrase, preserving `<em class="cargo">` in one occurrence and `<strong class="signal">` in the other. Both emitted `jade &amp; blue` without surrounding words. Closing the actual popup preserved the reference XPointer. [Stock harness](../scripts/koreader-selection-html-check.py) · [Authored chapter](../tests/fixtures/selection-html.xhtml)
+
+Reader tests exercise exact duplicate occurrences, multi-paragraph selections and line breaks, UTF-8 and numeric entities, invalid byte offsets, unsafe or changed source, unsupported formats, exact Back behavior, long fragment navigation, and the popup button's scoped tap feedback in both themes. The native Mac simulator captures show the View HTML button and the resulting source surface at 1264 × 1680. [Selection popup](screenshots/selection-view-html-popup.png) · [Source view](screenshots/selection-view-html.png) · [Dark source view](screenshots/selection-view-html-dark.png)

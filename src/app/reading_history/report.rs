@@ -47,6 +47,15 @@ impl Reader {
         }
     }
 
+    pub(super) fn refresh_period_report(&mut self, period: Period, start: Date) {
+        let book = self.history_view.book;
+        let view = &mut self.history_view.report;
+        view.periods = self.reading_history.by_period(period, book, Zone::Local);
+        view.books = self
+            .reading_history
+            .books_in_period(period, start, book, Zone::Local);
+    }
+
     pub(in crate::app) fn history_report_window(
         &self,
         page: Page,
@@ -99,7 +108,8 @@ impl Reader {
                 return Some((view.periods.len(), rows.collect()));
             }
             Page::PeriodBooks(period, start) => {
-                let heading = Item::new(period.label(start), Action::Heading);
+                let heading = Item::new(period.label(start), Action::Heading)
+                    .detail("Hold a book to reset its time in this period");
                 let books = view.books.iter().map(|&(id, totals)| {
                     show(self.history_title(id), Page::PeriodBook(period, start, id))
                         .detail(counts(totals))

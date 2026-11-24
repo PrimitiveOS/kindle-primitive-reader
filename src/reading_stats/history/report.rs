@@ -26,6 +26,21 @@ impl Period {
         }
     }
 
+    pub(crate) fn bounds(self, start: Date, zone: Zone, cutoff: i64) -> Option<(i64, i64)> {
+        let end = match self {
+            Self::Day => start.add_days(1)?,
+            Self::Week => {
+                let monday = start.add_days(7 - i32::from((start.weekday() + 6) % 7))?;
+                monday.min(Date::new(start.year + 1, 1, 1).unwrap_or(monday))
+            }
+            Self::Month => start.add_months(1)?,
+        };
+        let calendar = zone.calendar();
+        let first = calendar.midnight_boundary(start)?.max(cutoff);
+        let last = calendar.midnight_boundary(end)?;
+        (first < last).then_some((first, last))
+    }
+
     pub(crate) fn label(self, start: Date) -> String {
         match self {
             Self::Day => start.label(),

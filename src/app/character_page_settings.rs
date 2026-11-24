@@ -21,6 +21,7 @@ pub(super) enum NumberField {
     AutoTurnOverlapVertical,
     FixedTileZoom(FixedTileAxis),
     CropMargin,
+    ReadingGuide(super::reading_guides::Field),
     FooterTrackMinimumWidth,
     FooterTrackMarginWidth,
     FooterBatteryHideThreshold,
@@ -60,6 +61,7 @@ impl NumberField {
             Self::AutoTurn => Screen::AutoTurn,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
             Self::FixedTileZoom(_) | Self::CropMargin => Screen::Fixed,
+            Self::ReadingGuide(_) => Screen::ReadingGuides,
             Self::FooterTrackMinimumWidth
             | Self::FooterTrackMarginWidth
             | Self::FooterBatteryHideThreshold
@@ -364,6 +366,7 @@ impl Reader {
             NumberField::LogicalFont(owner) => return self.apply_logical_font_input(owner),
             NumberField::LineSpacing(owner) => return self.apply_line_spacing_input(owner),
             NumberField::WordSpacing(draft) => return self.apply_word_spacing_input(draft),
+            NumberField::ReadingGuide(field) => return self.set_reading_guide(field, &value),
             NumberField::AutoTurn => unreachable!("handled above"),
             NumberField::FixedTileZoom(_) | NumberField::CropMargin => {
                 unreachable!("handled above")
