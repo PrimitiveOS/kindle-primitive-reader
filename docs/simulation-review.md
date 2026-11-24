@@ -2,6 +2,55 @@
 
 ## Current Mac simulator checkpoint
 
+**In-page notes** have seven EPUB block sizes and a legacy setting, with
+independent book choices and a live default. Reader and KOReader keep
+ordinary text at the reading size and retain relative inline sizing. The
+65% check composed 65 note bands in eight chapters across two original
+EPUBs and retained all 63 visible canonical note anchors. The
+FictionBook workflow toggles footnotes and endnotes independently, applies
+regular-size text on request, and retains canonical selection and backlinks.
+[EPUB sizing and captures](in-page-footnotes.md#footnote-size) ·
+[FictionBook controls and captures](fb2-footnotes.md#in-page-footnotes-and-endnotes)
+
+**Page turns** can use taps, swipes, or both, with independent physical
+buttons and a touch-lock swipe exception. The native replay checks the four
+tap-zone shapes and their clamp. Reader also checks landscape editing,
+edition defaults, and mirrored Contents, Book Map, Page Browser, Skim and
+progress controls through their normal touch targets.
+[Page-turn comparison and captures](page-turn-controls.md)
+
+**Annotation exchange** writes KOReader local transfers on request or
+when a book closes with export enabled. Reader can choose a folder and
+preview imports before merging them. Pinned CREngine and MuPDF read the
+export and selected the same EPUB and PDF text. Reader keeps the source
+file and previews the transfer before changes. A separate original EPUB
+export kept the document bytes and reopened at the saved passage.
+Automatic import on open and additional source-location variants remain open.
+[Local exchange comparison and captures](annotation-exchange.md)
+
+**Reading notifications** offer seven independently saved switches and
+a history of the last 20 displayed messages. The replay checks the stock
+defaults and timeout. Reader’s transient notice leaves underlying touch
+feedback and scheduled changes usable. More informational events and
+history search remain open. [Notification comparison and captures](reading-notifications.md)
+
+The integrated replay passed 33 focused Mac tests and reproduced all 22
+new or updated screenshots byte for byte. Separate original EPUB, PDF,
+AZW3 and MOBI files opened through the normal picker, turned a page, and
+resumed from the saved position. Their source bytes matched.
+
+The full Mac suite passed 1,545 library tests, one Kindle entry test, 14 EPUB
+package tests and four layout tests. The standard run skipped 72 opt-in tests.
+
+The local ARMHF stage verified a stripped, statically linked 38,369,420-byte
+executable with SHA-256
+`429a3316631e2351081f5a92def09fdecfd40ef5e07c6787d114e89065349ba5`.
+It assembled 30 files totaling 47,968,920 bytes. Both project licenses,
+SQLite notices, the Launcher icon and the OCR model passed inspection.
+Physical Kindle verification and Store publication remain open for this build.
+
+## Typography, footnote layout, and embedded font checkpoint
+
 **Hanging punctuation** shifts visual glyphs at the margins after line breaking.
 The pinned KOReader replay compares left, right, justified, centered, preformatted
 and Arabic text. The Mac checks preserve line breaks and the screen-page index,
