@@ -21,6 +21,8 @@ pub(super) struct SourcePreferences {
     pub(super) disabled: Vec<PathBuf>,
     #[serde(skip_serializing_if = "dictionary_presets::Settings::is_empty")]
     pub(super) presets: dictionary_presets::Settings,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) preset_cycle_after: Option<String>,
     disable_word_forms: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     enable_fuzzy_search: Option<bool>,
@@ -34,6 +36,7 @@ impl Default for SourcePreferences {
             order: Vec::new(),
             disabled: Vec::new(),
             presets: dictionary_presets::Settings::default(),
+            preset_cycle_after: None,
             disable_word_forms: false,
             enable_fuzzy_search: None,
             large_window: false,
@@ -74,6 +77,10 @@ impl SourcePreferences {
                 .chain(&settings.disabled)
                 .any(|path| !valid_dictionary_key(path))
             || !settings.presets.is_valid()
+            || settings
+                .preset_cycle_after
+                .as_deref()
+                .is_some_and(|name| !dictionary_presets::valid_name(name))
             || serde_json::to_vec(&settings)?.len() > MAX_PREFERENCES_BYTES
         {
             return Err(io::Error::other(
@@ -90,6 +97,13 @@ impl SourcePreferences {
         if let Ok(mut settings) = serde_json::from_slice::<Self>(&bytes) {
             if !settings.presets.is_valid() {
                 settings.presets = dictionary_presets::Settings::default();
+            }
+            if settings
+                .preset_cycle_after
+                .as_deref()
+                .is_some_and(|name| !dictionary_presets::valid_name(name))
+            {
+                settings.preset_cycle_after = None;
             }
             return settings;
         }

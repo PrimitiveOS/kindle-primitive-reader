@@ -1,10 +1,15 @@
 //! Named sets of enabled offline dictionary sources.
 use super::{Action, Editor, Item, Reader, Result, Screen, io};
+use crate::dictionary::InstalledDictionary;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 pub(super) const MAX_NAME: usize = 48;
 const MAX_PRESETS: usize = 16;
+const MAX_LABEL_BYTES: usize = 144;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Name {
@@ -27,6 +32,7 @@ pub(super) enum Page {
     Details(usize),
     Name(Name),
     Confirm(usize, Edit),
+    Unavailable(usize, Return),
 }
 
 impl Page {
@@ -37,6 +43,7 @@ impl Page {
             Self::Name(_) => "Name dictionary preset",
             Self::Confirm(_, Edit::Update) => "Update dictionary preset?",
             Self::Confirm(_, Edit::Delete) => "Delete dictionary preset?",
+            Self::Unavailable(..) => "Unavailable dictionaries",
         }
     }
 }
@@ -50,12 +57,123 @@ pub(super) enum Edit {
 pub(super) enum Command {
     Open,
     Apply(usize),
+    Cycle,
     Edit(usize, Edit),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Return {
+    Details,
+    List,
+    Book,
+    Fixed,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(transparent)]
-pub(super) struct Settings(BTreeMap<String, Vec<PathBuf>>);
+pub(super) struct Settings(BTreeMap<String, Membership>);
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Membership {
+    Legacy(Vec<PathBuf>),
+    Named {
+        paths: Vec<PathBuf>,
+        labels: Vec<Option<String>>,
+    },
+}
+
+impl Membership {
+    fn paths(&self) -> &[PathBuf] {
+        match self {
+            Self::Legacy(paths) | Self::Named { paths, .. } => paths,
+        }
+    }
+
+    fn label(&self, index: usize) -> Option<&str> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Named { labels, .. } => labels.get(index)?.as_deref(),
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        let paths = self.paths();
+        paths.len() <= crate::dictionary::MAX_DICTIONARIES
+            && paths.iter().enumerate().all(|(index, path)| {
+                super::dictionary_sources::valid_dictionary_key(path)
+                    && !paths[..index].contains(path)
+            })
+            && match self {
+                Self::Legacy(_) => true,
+                Self::Named { labels, .. } => {
+                    labels.len() == paths.len()
+                        && labels
+                            .iter()
+                            .flatten()
+                            .all(|label| display_label(label).as_deref() == Some(label.as_str()))
+                }
+            }
+    }
+
+    fn missing_labels(&self, installed: &[InstalledDictionary]) -> Vec<String> {
+        self.paths()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, path)| {
+                (!installed.iter().any(|source| &source.path == path)).then(|| {
+                    self.label(index)
+                        .map_or_else(|| fallback_label(path), str::to_owned)
+                })
+            })
+            .collect()
+    }
+
+    fn remember_installed_labels(&mut self, installed: &[InstalledDictionary]) {
+        let paths = self.paths();
+        let labels: Vec<_> = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                installed
+                    .iter()
+                    .find(|source| &source.path == path)
+                    .and_then(|source| display_label(&source.title))
+                    .or_else(|| self.label(index).map(str::to_owned))
+            })
+            .collect();
+        if labels.iter().any(Option::is_some) {
+            *self = Self::Named {
+                paths: paths.to_vec(),
+                labels,
+            };
+        }
+    }
+}
+
+fn display_label(input: &str) -> Option<String> {
+    let mut output = String::new();
+    for character in input.trim().chars() {
+        if character.is_control()
+            || matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        {
+            continue;
+        }
+        if output.len() + character.len_utf8() > MAX_LABEL_BYTES {
+            break;
+        }
+        output.push(character);
+    }
+    let output = output.trim();
+    (!output.is_empty()).then(|| output.to_owned())
+}
+
+fn fallback_label(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .and_then(display_label)
+        .unwrap_or_else(|| "Unknown dictionary".into())
+}
 
 impl Settings {
     pub(super) fn is_empty(&self) -> bool {
@@ -64,14 +182,10 @@ impl Settings {
 
     pub(super) fn is_valid(&self) -> bool {
         self.0.len() <= MAX_PRESETS
-            && self.0.iter().all(|(name, paths)| {
-                valid_name(name)
-                    && paths.len() <= crate::dictionary::MAX_DICTIONARIES
-                    && paths.iter().enumerate().all(|(index, path)| {
-                        super::dictionary_sources::valid_dictionary_key(path)
-                            && !paths[..index].contains(path)
-                    })
-            })
+            && self
+                .0
+                .iter()
+                .all(|(name, members)| valid_name(name) && members.is_valid())
     }
 
     pub(super) fn names(&self) -> impl ExactSizeIterator<Item = &str> {
@@ -82,12 +196,12 @@ impl Settings {
         self.0
             .iter()
             .nth(index)
-            .map(|(name, paths)| (name.as_str(), paths.as_slice()))
+            .map(|(name, members)| (name.as_str(), members.paths()))
             .ok_or_else(|| io::Error::other("Dictionary preset unavailable"))
     }
 }
 
-fn valid_name(name: &str) -> bool {
+pub(super) fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name == name.trim()
         && name.chars().count() <= MAX_NAME
@@ -105,6 +219,12 @@ impl Reader {
             .collect()
     }
 
+    fn snapshot_dictionary_members(&self) -> Membership {
+        let mut members = Membership::Legacy(self.enabled_dictionary_members());
+        members.remember_installed_labels(&self.installed_dictionaries);
+        members
+    }
+
     pub(super) fn dictionary_preset_items(&self, page: Page) -> Vec<Item> {
         let presets = &self.dictionary_settings.presets;
         match page {
@@ -120,13 +240,19 @@ impl Reader {
                         Action::Show(Screen::DictionaryPresets(Page::Name(Name::Create))),
                     )]
                 };
+                if !presets.is_empty() {
+                    rows.push(Item::new(
+                        "Cycle through dictionary presets",
+                        Action::DictionaryPreset(Command::Cycle),
+                    ));
+                }
                 rows.extend(
                     presets
                         .0
                         .iter()
                         .enumerate()
                         .map(|(index, (name, members))| {
-                            let detail = match members.len() {
+                            let detail = match members.paths().len() {
                                 0 => "No dictionaries".to_owned(),
                                 1 => "1 dictionary".to_owned(),
                                 count => format!("{count} dictionaries"),
@@ -143,7 +269,7 @@ impl Reader {
             Page::Details(index) => presets.get(index).map_or_else(
                 |_| Vec::new(),
                 |(name, _)| {
-                    vec![
+                    let mut rows = vec![
                         Item::new(name, Action::Heading),
                         Item::new(
                             "Apply preset",
@@ -169,7 +295,23 @@ impl Reader {
                                 Edit::Delete,
                             ))),
                         ),
-                    ]
+                    ];
+                    if !presets.0[name]
+                        .missing_labels(&self.installed_dictionaries)
+                        .is_empty()
+                    {
+                        rows.insert(
+                            2,
+                            Item::new(
+                                "Unavailable dictionaries",
+                                Action::Show(Screen::DictionaryPresets(Page::Unavailable(
+                                    index,
+                                    Return::Details,
+                                ))),
+                            ),
+                        );
+                    }
+                    rows
                 },
             ),
             Page::Confirm(index, edit) => presets.get(index).map_or_else(
@@ -187,6 +329,19 @@ impl Reader {
                             Action::Show(Screen::DictionaryPresets(Page::Details(index))),
                         ),
                     ]
+                },
+            ),
+            Page::Unavailable(index, _) => presets.get(index).map_or_else(
+                |_| Vec::new(),
+                |(name, _)| {
+                    let mut rows = vec![Item::new(name, Action::Heading)];
+                    rows.extend(
+                        presets.0[name]
+                            .missing_labels(&self.installed_dictionaries)
+                            .into_iter()
+                            .map(|source| Item::new(source, Action::Heading)),
+                    );
+                    rows
                 },
             ),
             Page::Name(_) => Vec::new(),
@@ -209,6 +364,12 @@ impl Reader {
             Page::Details(_) => Screen::DictionaryPresets(Page::List),
             Page::Confirm(index, _) => Screen::DictionaryPresets(Page::Details(index)),
             Page::Name(mode) => Screen::DictionaryPresets(mode.back()),
+            Page::Unavailable(index, origin) => match origin {
+                Return::Details => Screen::DictionaryPresets(Page::Details(index)),
+                Return::List => Screen::DictionaryPresets(Page::List),
+                Return::Book => Screen::Book,
+                Return::Fixed => Screen::Fixed,
+            },
         });
     }
 
@@ -224,20 +385,23 @@ impl Reader {
                     return Err("Reader reached its dictionary preset limit".into());
                 }
                 self.refresh_installed_dictionaries()?;
-                let members = self.enabled_dictionary_members();
-                if members.is_empty() {
+                let members = self.snapshot_dictionary_members();
+                if members.paths().is_empty() {
                     return Err("Enable a dictionary before saving a preset".into());
                 }
                 (members, "Dictionary preset saved")
             }
             Name::Rename(index) => {
-                let (original, members) = prefs.presets.get(index)?;
+                let (original, _) = prefs.presets.get(index)?;
                 if original == name {
                     self.back_from_dictionary_presets(Page::Name(mode));
                     return Ok(());
                 }
-                next.presets.0.remove(original);
-                (members.to_vec(), "Dictionary preset renamed")
+                if next.preset_cycle_after.as_deref() == Some(original) {
+                    next.preset_cycle_after = Some(name.to_owned());
+                }
+                let members = next.presets.0.remove(original).unwrap();
+                (members, "Dictionary preset renamed")
             }
         };
         if next.presets.0.contains_key(name) {
@@ -263,42 +427,67 @@ impl Reader {
         Ok(())
     }
 
+    fn apply_dictionary_preset(&mut self, index: usize, origin: Return) -> Result<()> {
+        self.refresh_installed_dictionaries()?;
+        let mut next = self.dictionary_settings.clone();
+        let (name, _) = next.presets.get(index)?;
+        let name = name.to_owned();
+        let members = &next.presets.0[&name];
+        let has_missing = !members
+            .missing_labels(&self.installed_dictionaries)
+            .is_empty();
+        next.disabled = self
+            .installed_dictionaries
+            .iter()
+            .filter(|source| !members.paths().contains(&source.path))
+            .map(|source| source.path.clone())
+            .collect();
+        if origin != Return::Details {
+            next.preset_cycle_after = Some(name.clone());
+        }
+        self.save_source_preferences(next)?;
+        if has_missing {
+            self.show(Screen::DictionaryPresets(Page::Unavailable(index, origin)));
+        } else if origin == Return::Details {
+            self.show(Screen::DictionaryPresets(Page::Details(index)));
+        }
+        self.notice = Some(format!("Loaded preset · {name}"));
+        Ok(())
+    }
+
     pub(super) fn dictionary_preset_command(&mut self, command: Command) -> Result<()> {
-        if matches!(command, Command::Open) {
-            self.refresh_installed_dictionaries()?;
-            self.show(Screen::DictionaryPresets(Page::List));
-            return Ok(());
+        match command {
+            Command::Open => {
+                self.refresh_installed_dictionaries()?;
+                self.show(Screen::DictionaryPresets(Page::List));
+                return Ok(());
+            }
+            Command::Apply(index) => return self.apply_dictionary_preset(index, Return::Details),
+            Command::Cycle => {
+                let prefs = &self.dictionary_settings;
+                if prefs.presets.is_empty() {
+                    self.notice = Some("No dictionary presets available".into());
+                    return Ok(());
+                }
+                let index = prefs
+                    .preset_cycle_after
+                    .as_ref()
+                    .and_then(|last| prefs.presets.names().position(|name| name > last.as_str()))
+                    .unwrap_or(0);
+                let origin = match self.screen {
+                    Screen::Book => Return::Book,
+                    Screen::Fixed => Return::Fixed,
+                    _ => Return::List,
+                };
+                return self.apply_dictionary_preset(index, origin);
+            }
+            Command::Edit(..) => {}
         }
         let mut next = self.dictionary_settings.clone();
         let (page, message) = match command {
-            Command::Apply(index) => {
-                self.refresh_installed_dictionaries()?;
-                let (_, members) = next.presets.get(index)?;
-                let missing = members
-                    .iter()
-                    .filter(|key| {
-                        !self
-                            .installed_dictionaries
-                            .iter()
-                            .any(|source| &source.path == *key)
-                    })
-                    .count();
-                next.disabled = self
-                    .installed_dictionaries
-                    .iter()
-                    .filter(|source| !members.contains(&source.path))
-                    .map(|source| source.path.clone())
-                    .collect();
-                let notice = if missing == 0 {
-                    "Dictionary preset applied".into()
-                } else {
-                    format!("Dictionary preset applied · {missing} unavailable")
-                };
-                (Page::Details(index), notice)
-            }
             Command::Edit(index, Edit::Update) => {
                 self.refresh_installed_dictionaries()?;
-                let members = self.enabled_dictionary_members();
+                let members = self.snapshot_dictionary_members();
                 let (name, _) = next.presets.get(index)?;
                 next.presets.0.insert(name.to_owned(), members);
                 (Page::Details(index), "Dictionary preset updated".into())
@@ -309,7 +498,7 @@ impl Reader {
                 next.presets.0.remove(&name);
                 (Page::List, "Dictionary preset deleted".into())
             }
-            Command::Open => unreachable!(),
+            Command::Open | Command::Apply(_) | Command::Cycle => unreachable!(),
         };
         self.save_source_preferences(next)?;
         self.show(Screen::DictionaryPresets(page));

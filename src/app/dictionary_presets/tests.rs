@@ -137,9 +137,11 @@ fn dictionary_presets_manage_membership_without_overwriting_edition_preferences(
     row(&mut app, "Local tides");
     row(&mut app, "Apply preset");
     assert_eq!(
-        app.notice.as_deref(),
-        Some("Dictionary preset applied · 1 unavailable")
+        app.screen,
+        Screen::DictionaryPresets(Page::Unavailable(0, Return::Details))
     );
+    assert_eq!(app.items()[1].title, "Coastal");
+    back(&mut app);
     assert_eq!(
         app.dictionary_settings.presets.get(0).unwrap().1,
         [PathBuf::from("Coastal.ifo")]
@@ -202,4 +204,218 @@ fn dictionary_presets_use_the_existing_bounded_preferences_backup() {
     }
     let empty = SourcePreferences::backup_value(br#"{"presets":{"Coastal":[]}}"#).unwrap();
     assert_eq!(empty["presets"]["Coastal"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn dictionary_presets_report_saved_titles_and_fall_back_for_legacy_paths() {
+    let fixture = Fixture::new();
+    let dictionaries = fixture.root.join("dictionaries");
+    fs::create_dir(&dictionaries).unwrap();
+    let install_reference = || {
+        write_dictionary(
+            &dictionaries,
+            "shore",
+            "sametypesequence=m\n",
+            &[("tide", b"The water rises at the quay.")],
+        );
+        let metadata = dictionaries.join("shore.ifo");
+        let text = fs::read_to_string(&metadata).unwrap();
+        fs::write(
+            metadata,
+            text.replace("bookname=shore", "bookname=Atlantic Coastal Dictionary"),
+        )
+        .unwrap();
+    };
+    install_reference();
+    let mut app = Reader::open(
+        &fixture.root,
+        &fixture.state,
+        vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+    )
+    .unwrap();
+    app.open_path(&fixture.book).unwrap();
+    app.save_dictionary_preset_name(Name::Create, "Atlantic reading")
+        .unwrap();
+    let backed_up =
+        SourcePreferences::backup_value(&fs::read(&app.dictionary_preference).unwrap()).unwrap();
+    assert_eq!(
+        backed_up["presets"]["Atlantic reading"]["labels"][0],
+        "Atlantic Coastal Dictionary"
+    );
+
+    let mut settings = app.dictionary_settings.clone();
+    settings.presets.0.insert(
+        "Shared reference".into(),
+        Membership::Legacy(vec![
+            "/koreader/data/dict/English Reference.ifo".into(),
+            "Old field glossary.ifo".into(),
+        ]),
+    );
+    app.save_source_preferences(settings).unwrap();
+    fs::remove_file(dictionaries.join("shore.ifo")).unwrap();
+    let mut landscape = adopt(&mut app, ReadingViewport::LANDSCAPE, 1);
+    row(&mut app, "Atlantic reading");
+    row(&mut app, "Apply preset");
+    assert_eq!(
+        app.screen,
+        Screen::DictionaryPresets(Page::Unavailable(0, Return::Details))
+    );
+    assert_eq!(app.items()[1].title, "Atlantic Coastal Dictionary");
+    capture(
+        &app,
+        &mut landscape,
+        "landscape-dictionary-preset-unavailable.png",
+        false,
+    );
+    back(&mut app);
+    row(&mut app, "Unavailable dictionaries");
+    assert_eq!(app.items()[1].title, "Atlantic Coastal Dictionary");
+    back(&mut app);
+    back(&mut app);
+    row(&mut app, "Shared reference");
+    row(&mut app, "Apply preset");
+    assert_eq!(
+        app.items()
+            .into_iter()
+            .map(|row| row.title)
+            .collect::<Vec<_>>(),
+        [
+            "Shared reference",
+            "English Reference",
+            "Old field glossary"
+        ],
+    );
+    back(&mut app);
+    back(&mut app);
+    install_reference();
+    write_dictionary(
+        &dictionaries,
+        "newly installed",
+        "sametypesequence=m\n",
+        &[("tide", b"New reference")],
+    );
+    row(&mut app, "Atlantic reading");
+    row(&mut app, "Apply preset");
+    assert_eq!(app.screen, Screen::DictionaryPresets(Page::Details(0)));
+    assert_eq!(
+        app.lookup_sources("tide").unwrap()[0].dictionary,
+        "Atlantic Coastal Dictionary"
+    );
+    assert_eq!(
+        app.dictionary_settings.disabled,
+        [PathBuf::from("newly installed.ifo")]
+    );
+    assert!(
+        app.items()
+            .iter()
+            .all(|row| row.title != "Unavailable dictionaries")
+    );
+    row(&mut app, "Apply preset");
+    assert_eq!(
+        app.dictionary_settings.presets.get(0).unwrap().1,
+        [PathBuf::from("shore.ifo")]
+    );
+}
+
+#[test]
+fn dictionary_presets_cycle_in_name_order_through_reading_gesture_and_reload() {
+    use crate::app::Gesture;
+    use primitive_ui::Input;
+
+    let fixture = Fixture::new();
+    let dictionaries = fixture.root.join("dictionaries");
+    fs::create_dir(&dictionaries).unwrap();
+    for source in ["Spoken", "Technical"] {
+        write_dictionary(
+            &dictionaries,
+            source,
+            "sametypesequence=m\n",
+            &[("harbour", b"A shelter.")],
+        );
+    }
+    let pdf = fixture.root.join("Coast.pdf");
+    fs::write(&pdf, crate::fixed::tests::document()).unwrap();
+    let mut app = fixture.app();
+    app.open_path(&fixture.book).unwrap();
+    let mut settings = app.dictionary_settings.clone();
+    settings.presets = serde_json::from_value(serde_json::json!({
+        "Zulu technical": ["Technical.ifo"],
+        "Everyday speech": ["Spoken.ifo"],
+    }))
+    .unwrap();
+    settings.large_window = true;
+    app.save_source_preferences(settings).unwrap();
+    app.show(Screen::GestureBinding(Gesture::TapTopRight));
+    row(&mut app, "Cycle through dictionary presets");
+    app.show(Screen::DictionaryPresets(Page::Details(1)));
+    row(&mut app, "Apply preset");
+    assert!(app.dictionary_settings.preset_cycle_after.is_none());
+    back(&mut app);
+    row(&mut app, "Cycle through dictionary presets");
+    assert_eq!(
+        app.dictionary_settings.preset_cycle_after.as_deref(),
+        Some("Everyday speech")
+    );
+    assert_eq!(
+        app.lookup_sources("harbour").unwrap()[0].dictionary,
+        "Spoken"
+    );
+    drop(app);
+
+    let mut app = fixture.app();
+    app.open_path(&pdf).unwrap();
+    let location = app.current_history_location();
+    let tap_cycle = |app: &mut Reader| app.input(Input::Tap(1244.0, 22.0));
+    assert_eq!(tap_cycle(&mut app), super::super::Change::Partial);
+    assert_eq!(app.screen, Screen::Fixed);
+    assert_eq!(
+        app.lookup_sources("harbour").unwrap()[0].dictionary,
+        "Technical"
+    );
+    assert_eq!(app.current_history_location(), location);
+    assert!(app.dictionary_settings.large_window);
+    fs::remove_file(dictionaries.join("Spoken.ifo")).unwrap();
+    assert_eq!(tap_cycle(&mut app), super::super::Change::Partial);
+    assert_eq!(
+        app.screen,
+        Screen::DictionaryPresets(Page::Unavailable(0, Return::Fixed))
+    );
+    assert_eq!(app.items()[1].title, "Spoken");
+    back(&mut app);
+    assert_eq!(app.screen, Screen::Fixed);
+    assert_eq!(app.current_history_location(), location);
+    assert!(app.lookup_sources("harbour").unwrap().is_empty());
+    assert_eq!(tap_cycle(&mut app), super::super::Change::Partial);
+    assert_eq!(
+        app.lookup_sources("harbour").unwrap()[0].dictionary,
+        "Technical"
+    );
+    assert_eq!(app.current_history_location(), location);
+}
+
+#[test]
+fn dictionary_presets_validate_labels_without_losing_path_only_formats() {
+    let bounded = display_label(&format!("  \u{202d}{}\n ", "海".repeat(80))).unwrap();
+    assert_eq!(bounded, "海".repeat(48));
+    assert!(display_label("\u{202e}\n ").is_none());
+    let legacy = br#"{"presets":{"Names":["old.ifo"]},"preset_cycle_after":"Names"}"#;
+    assert_eq!(
+        SourcePreferences::backup_value(legacy).unwrap()["presets"]["Names"][0],
+        "old.ifo"
+    );
+    for invalid in [
+        serde_json::json!({"paths":["safe.ifo"],"labels":[]}),
+        serde_json::json!({"paths":["safe.ifo"],"labels":["\u{202e}Title"]}),
+        serde_json::json!({"paths":["safe.ifo"],"labels":["x".repeat(MAX_LABEL_BYTES + 1)]}),
+    ] {
+        assert!(
+            SourcePreferences::backup_value(
+                serde_json::to_string(&serde_json::json!({"presets":{"Set":invalid}}))
+                    .unwrap()
+                    .as_bytes()
+            )
+            .is_err()
+        );
+    }
+    assert!(SourcePreferences::backup_value(br#"{"preset_cycle_after":" invalid"}"#).is_err());
 }

@@ -117,6 +117,7 @@ impl Screen {
                     super::dictionary_presets::Page::List
                         | super::dictionary_presets::Page::Details(_)
                         | super::dictionary_presets::Page::Confirm(_, _)
+                        | super::dictionary_presets::Page::Unavailable(..)
                 )
                 | Self::DictionaryHistory
                 | Self::OnlineHistory

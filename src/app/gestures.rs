@@ -158,6 +158,7 @@ pub(super) enum Binding {
     Skim,
     Find,
     Dictionary,
+    CycleDictionaryPresets,
     Highlights,
     GoTo,
     Back,
@@ -168,7 +169,7 @@ pub(super) enum Binding {
 }
 
 impl Binding {
-    const ALL: [(Self, &'static str); 17] = [
+    const ALL: [(Self, &'static str); 18] = [
         (Self::Default, "Default behavior"),
         (Self::Ignore, "Do nothing"),
         (Self::Next, "Next page"),
@@ -179,6 +180,10 @@ impl Binding {
         (Self::Skim, "Page browser"),
         (Self::Find, "Find in book"),
         (Self::Dictionary, "Dictionary"),
+        (
+            Self::CycleDictionaryPresets,
+            "Cycle through dictionary presets",
+        ),
         (Self::Highlights, "Highlights"),
         (Self::GoTo, "Go to page"),
         (Self::Back, "Previous location"),
@@ -329,6 +334,9 @@ impl Reader {
             Binding::Skim => Action::Skim,
             Binding::Find => Action::Show(Screen::Find),
             Binding::Dictionary => Action::Show(Screen::DictionaryEntry),
+            Binding::CycleDictionaryPresets => {
+                Action::DictionaryPreset(super::dictionary_presets::Command::Cycle)
+            }
             Binding::Highlights => Action::Show(Screen::Highlights),
             Binding::GoTo => Action::Show(Screen::GoToPage),
             Binding::Back => Action::ReturnToLocation,
