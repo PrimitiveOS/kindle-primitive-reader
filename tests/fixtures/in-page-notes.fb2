@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description><title-info><genre>nonf_education</genre>
+    <author><nickname>PrimitiveOS Fixtures</nickname></author>
+    <book-title>Survey of the eastern shore</book-title><lang>en</lang>
+  </title-info></description>
+  <body><section id="survey">
+    <title><p>Survey of the eastern shore</p></title>
+    <p id="notes-ref">The survey used a limewood ruler<a l:href="#survey-note" type="note"><sup>1</sup></a>.</p>
+    <p id="comments-ref">The ledgers listed a second witness<a l:href="#survey-comment" type="note"><sup>2</sup></a>.</p>
+    <p>They put the same ruler in a cabinet<a l:href="#survey-note" type="note"><sup>1</sup></a>.</p>
+    <p>The first crew set out before the ferry arrived.</p>
+    <p>The marker by the gate needed a fresh coat of paint.</p>
+    <p>The carpenter checked the wooden frame.</p>
+    <p>The harbor master returned near noon.</p>
+    <p>The second crew took the narrow path above the quay.</p>
+    <p>A small stone marked the start of the western boundary.</p>
+    <p>The surveyor wrote the coordinates in a second notebook.</p>
+    <p>The apprentices waited by the higher gate.</p>
+    <p>The crew sent a copy of the register inland.</p>
+    <p>The last boat left the harbor at dusk.</p>
+    <p>The ferryman asked the pilot to return in the morning.</p>
+    <p>The western route was closed until the next tide.</p>
+    <p>The foreman recorded the work before supper.</p>
+    <p>Two ropes remained beside the lock.</p>
+    <p>The key was returned to its hook by the door.</p>
+  </section></body>
+  <body name="notes">
+    <title><p>Survey notes</p></title>
+    <section id="survey-note"><p>Measured footnote text. The ruler was made on the north bank.</p>
+      <p><a l:href="#notes-ref">Return to the survey</a>.</p></section>
+    <section id="unused-note"><p>The unused calibration record belongs in the ordinary notes body.</p></section>
+  </body>
+  <body name="comments">
+    <title><p>Later comments</p></title>
+    <section id="survey-comment"><p>Measured endnote text. The witness kept a second copy of the ledger.</p></section>
+  </body>
+</FictionBook>

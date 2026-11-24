@@ -84,6 +84,24 @@ impl Format {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Fb2NoteKind {
+    Footnote,
+    Endnote,
+}
+
+impl Fb2NoteKind {
+    fn from_body_name(name: &str) -> Option<Self> {
+        if name.eq_ignore_ascii_case("notes") {
+            Some(Self::Footnote)
+        } else if name.eq_ignore_ascii_case("comments") {
+            Some(Self::Endnote)
+        } else {
+            None
+        }
+    }
+}
+
 pub(crate) struct Document {
     pub(crate) metadata: crate::publication_metadata::Metadata,
     pub(crate) title: String,
@@ -92,7 +110,7 @@ pub(crate) struct Document {
     pub(crate) xhtml: String,
     pub(crate) toc: Vec<TocEntry>,
     pub(crate) resources: BTreeMap<String, Vec<u8>>,
-    pub(crate) fb2_note_sections: BTreeSet<String>,
+    pub(crate) fb2_note_sections: BTreeMap<String, Fb2NoteKind>,
 }
 
 impl Document {
@@ -568,7 +586,7 @@ fn text_document(input: &str, title: &str) -> Result<Document> {
         xhtml: text_as_xhtml(&cleaned)?,
         toc: Vec::new(),
         resources: BTreeMap::new(),
-        fb2_note_sections: BTreeSet::new(),
+        fb2_note_sections: BTreeMap::new(),
     })
 }
 
@@ -698,7 +716,7 @@ fn html_document(input: &str, fallback_title: &str) -> Result<Document> {
         xhtml: xhtml.into_owned(),
         toc: Vec::new(),
         resources: BTreeMap::new(),
-        fb2_note_sections: BTreeSet::new(),
+        fb2_note_sections: BTreeMap::new(),
     })
 }
 
@@ -857,7 +875,7 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
         return Err("The FictionBook has no reading body".into());
     }
     let mut authored_ids = BTreeSet::new();
-    let mut note_sections = BTreeSet::new();
+    let mut note_sections = BTreeMap::new();
     for item in root
         .descendants()
         .filter(|item| item.is_element() && item.tag_name().namespace() == Some(FB2_NS))
@@ -870,16 +888,14 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
         if !authored_ids.insert(id) {
             note_sections.remove(id);
         } else if item.has_tag_name((FB2_NS, "section"))
-            && item
+            && let Some(kind) = item
                 .ancestors()
                 .skip(1)
                 .find(|parent| parent.has_tag_name((FB2_NS, "body")))
                 .and_then(|body| body.attribute("name"))
-                .is_some_and(|name| {
-                    name.eq_ignore_ascii_case("notes") || name.eq_ignore_ascii_case("comments")
-                })
+                .and_then(Fb2NoteKind::from_body_name)
         {
-            note_sections.insert(id);
+            note_sections.insert(id.to_owned(), kind);
         }
     }
     let mut output = Fb2Output {
@@ -910,7 +926,7 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
         chapter_path: CHAPTER_PATH.to_owned(),
         xhtml: output.xhtml,
         toc: output.toc,
-        fb2_note_sections: note_sections.into_iter().map(str::to_owned).collect(),
+        fb2_note_sections: note_sections,
         resources: output
             .images
             .into_values()
@@ -1599,7 +1615,11 @@ mod exported_text_tests {
         let book = fb2_document(input, "Workshop").unwrap();
         assert_eq!(
             book.fb2_note_sections,
-            BTreeSet::from(["afterword".into(), "nested".into(), "workshop".into()])
+            BTreeMap::from([
+                ("afterword".into(), Fb2NoteKind::Endnote),
+                ("nested".into(), Fb2NoteKind::Footnote),
+                ("workshop".into(), Fb2NoteKind::Footnote),
+            ])
         );
         assert!(book.xhtml.contains("id=\"primitiveos-fb2-section-1\""));
         assert!(!book.xhtml.contains("NoTeS"));

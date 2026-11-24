@@ -7,6 +7,9 @@ use std::{
 
 pub(crate) const FILE: &str = "style-tweaks.json";
 pub(crate) const EPUB_FOOTNOTES: &str = "footnote-inpage_epub";
+pub(crate) const FB2_FOOTNOTES: &str = "footnote-inpage_fb2";
+pub(crate) const FB2_ENDNOTES: &str = "footnote-inpage_fb2_comments";
+pub(crate) const FB2_REGULAR_NOTE_SIZE: &str = "fb2_footnotes_regular_font_size";
 pub(crate) const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 pub(crate) const MAX_BOOK_CSS: usize = 8 * 1024;
 pub(crate) const MAX_CSS: usize = 64 * 1024;
@@ -81,54 +84,83 @@ impl FootnoteSize {
 pub(crate) struct Snapshot {
     css: Arc<str>,
     pub digest: [u8; 16],
-    footnote_size: Option<FootnoteSize>,
+    notes: InPageNotes,
 }
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct InPageNotes {
+    epub_size: Option<FootnoteSize>,
+    fb2_footnotes: bool,
+    fb2_endnotes: bool,
+    fb2_regular_size: bool,
+}
+
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
             css: Arc::from(""),
             digest: md5::compute(b"").0,
-            footnote_size: None,
+            notes: InPageNotes::default(),
         }
     }
 }
 impl Snapshot {
     pub(crate) fn new(css: String) -> crate::Result<Self> {
-        Self::with_footnotes(css, None)
+        Self::with_footnotes(css, InPageNotes::default())
     }
-    fn with_footnotes(css: String, footnote_size: Option<FootnoteSize>) -> crate::Result<Self> {
+    fn with_footnotes(css: String, notes: InPageNotes) -> crate::Result<Self> {
         crate::book_style::validate_user_css(&css)?;
         let digest = md5::compute(css.as_bytes()).0;
         Ok(Self {
             css: css.into(),
             digest,
-            footnote_size,
+            notes,
         })
     }
     pub(crate) fn css(&self) -> &str {
         &self.css
     }
     pub(crate) fn is_empty(&self) -> bool {
-        self.css.is_empty() && self.footnote_size.is_none()
+        self.css.is_empty() && self.notes.epub_size.is_none() && !self.has_in_page_fb2_notes()
     }
     pub(crate) fn in_page_epub_footnotes(&self) -> bool {
-        self.footnote_size.is_some()
+        self.notes.epub_size.is_some()
     }
     pub(crate) fn footnote_size(&self) -> Option<FootnoteSize> {
-        self.footnote_size
+        self.notes.epub_size
+    }
+    pub(crate) fn has_in_page_fb2_notes(&self) -> bool {
+        self.notes.fb2_footnotes || self.notes.fb2_endnotes
+    }
+    pub(crate) fn fb2_note_scale(&self, kind: crate::loose::Fb2NoteKind) -> Option<f32> {
+        use crate::loose::Fb2NoteKind;
+        let scale = match kind {
+            Fb2NoteKind::Footnote if self.notes.fb2_footnotes => 0.75,
+            Fb2NoteKind::Endnote if self.notes.fb2_endnotes => 0.85,
+            _ => return None,
+        };
+        Some(if self.notes.fb2_regular_size {
+            1.0
+        } else {
+            scale
+        })
     }
     #[cfg(feature = "kindle")]
     pub(crate) fn for_note_layout(&self, allowed: bool) -> Self {
-        Self {
-            footnote_size: self.footnote_size.filter(|_| allowed),
-            ..self.clone()
+        let mut snapshot = self.clone();
+        if !allowed {
+            snapshot.notes = InPageNotes::default();
         }
+        snapshot
     }
 }
 #[derive(Clone, Copy)]
 pub(crate) enum Effect {
     Css(&'static str),
     InPageEpubFootnotes,
+    InPageFb2Footnotes,
+    InPageFb2Endnotes,
+    Fb2RegularNoteSize,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Preset {
@@ -146,6 +178,27 @@ pub(crate) const PRESETS: &[Preset] = &[
         group: "in-page-footnotes",
         priority: 0,
         effect: Effect::InPageEpubFootnotes,
+    },
+    Preset {
+        id: FB2_FOOTNOTES,
+        title: "In-page FB2 footnotes",
+        group: "fb2-footnotes",
+        priority: 0,
+        effect: Effect::InPageFb2Footnotes,
+    },
+    Preset {
+        id: FB2_ENDNOTES,
+        title: "In-page FB2 endnotes",
+        group: "fb2-endnotes",
+        priority: 0,
+        effect: Effect::InPageFb2Endnotes,
+    },
+    Preset {
+        id: FB2_REGULAR_NOTE_SIZE,
+        title: "Keep regular FB2 note size",
+        group: "fb2-note-font-size",
+        priority: 0,
+        effect: Effect::Fb2RegularNoteSize,
     },
     Preset {
         id: "paragraph-indent-none",
@@ -365,7 +418,7 @@ impl Data {
     }
     pub(crate) fn make_global(&mut self, book: u64, id: &str, enabled: bool) -> crate::Result<()> {
         let target = preset(id).ok_or("This style tweak is unavailable")?;
-        if matches!(target.effect, Effect::InPageEpubFootnotes) {
+        if !matches!(target.effect, Effect::Css(_)) {
             if enabled {
                 self.global.insert(id.into());
             } else {
@@ -404,7 +457,7 @@ impl Data {
             .collect();
         selected.sort_by_key(|p| (p.priority, p.id));
         let mut css = String::new();
-        let mut footnote_size = None;
+        let mut notes = InPageNotes::default();
         for preset in selected {
             match preset.effect {
                 Effect::Css(snippet) => {
@@ -412,8 +465,11 @@ impl Data {
                     css.push('\n');
                 }
                 Effect::InPageEpubFootnotes => {
-                    footnote_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
+                    notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
                 }
+                Effect::InPageFb2Footnotes => notes.fb2_footnotes = true,
+                Effect::InPageFb2Endnotes => notes.fb2_endnotes = true,
+                Effect::Fb2RegularNoteSize => notes.fb2_regular_size = true,
             }
         }
         if b.custom_enabled
@@ -421,7 +477,7 @@ impl Data {
         {
             css.push_str(custom);
         }
-        Snapshot::with_footnotes(css, footnote_size)
+        Snapshot::with_footnotes(css, notes)
     }
     pub(crate) fn validate(&self) -> crate::Result<()> {
         let valid_id = |id: &str| {

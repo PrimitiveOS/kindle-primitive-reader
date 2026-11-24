@@ -637,6 +637,58 @@ fn has_note_band(app: &Reader) -> bool {
 }
 
 #[test]
+fn fb2_in_page_footnotes_use_independent_book_styles_and_resume() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Survey.fb2");
+    fs::copy(crate::test_fixture("in-page-notes.fb2"), &path).unwrap();
+    let original = fs::read(&path).unwrap();
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    let position = app.current_history_location();
+    let id = app.open_book_id().unwrap();
+    assert!(!has_note_band(&app));
+
+    for label in [
+        "In-page FB2 footnotes",
+        "In-page FB2 endnotes",
+        "Keep regular FB2 note size",
+    ] {
+        app.show(Screen::StyleTweaks);
+        tap_contents_item(&mut app, label);
+        tap_contents_item(&mut app, "On for this book");
+        assert!(has_note_band(&app));
+        assert_eq!(app.current_history_location(), position);
+    }
+    assert!(app.style_store.data.enabled(id, FB2_FOOTNOTES));
+    assert!(app.style_store.data.enabled(id, FB2_ENDNOTES));
+    assert!(app.style_store.data.enabled(id, FB2_REGULAR_NOTE_SIZE));
+    let reading_frame = capture(&mut app);
+    app.show(Screen::Book);
+    app.activate(Action::ReadingMode(true)).unwrap();
+    assert!(!has_note_band(&app));
+    app.activate(Action::ReadingMode(false)).unwrap();
+    assert!(has_note_band(&app));
+    app.save().unwrap();
+    drop(app);
+
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    assert_eq!(app.current_history_location(), position);
+    assert_eq!(capture(&mut app), reading_frame);
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "In-page FB2 footnotes");
+    tap_contents_item(&mut app, "Off for this book");
+    assert!(!app.style_store.data.enabled(id, FB2_FOOTNOTES));
+    assert!(app.style_store.data.enabled(id, FB2_ENDNOTES));
+    assert!(has_note_band(&app));
+    let mut canvas = crate::app::selection_viewport_tests::canvas(&app, ReadingViewport::PORTRAIT);
+    app.show(Screen::StyleTweaks);
+    capture_viewport(&app, &mut canvas, "in-page-fb2-style.png", false);
+    assert_eq!(app.current_history_location(), position);
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
 fn in_page_footnote_size_uses_saved_book_and_default_choices() {
     let fixture = Fixture::new();
     let path = footnote_book(&fixture, "Size choices.epub");

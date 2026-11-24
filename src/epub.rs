@@ -109,7 +109,7 @@ enum Content {
         prior_mobi: BTreeMap<String, Vec<String>>,
         resources: BTreeMap<String, Vec<u8>>,
         fonts: Option<kf8::fonts::FontSource>,
-        fb2_note_sections: std::collections::BTreeSet<String>,
+        fb2_note_sections: BTreeMap<String, loose::Fb2NoteKind>,
     },
     Chm(Box<Chm>),
 }
@@ -538,12 +538,27 @@ impl Book {
 
     #[cfg(feature = "kindle")]
     pub(crate) fn is_fb2_note_section(&self, target: &Destination) -> bool {
-        matches!(
-            &self.content,
-            Content::Loose { format: loose::Format::Fb2, fb2_note_sections, .. }
-                if target.path == loose::CHAPTER_PATH
-                    && target.fragment.as_ref().is_some_and(|id| fb2_note_sections.contains(id))
-        )
+        self.fb2_note_sections(&target.path)
+            .is_some_and(|sections| {
+                target
+                    .fragment
+                    .as_ref()
+                    .is_some_and(|id| sections.contains_key(id))
+            })
+    }
+
+    pub(crate) fn fb2_note_sections(
+        &self,
+        chapter: &str,
+    ) -> Option<&BTreeMap<String, loose::Fb2NoteKind>> {
+        match &self.content {
+            Content::Loose {
+                format: loose::Format::Fb2,
+                fb2_note_sections,
+                ..
+            } if chapter == loose::CHAPTER_PATH => Some(fb2_note_sections),
+            _ => None,
+        }
     }
 
     pub(crate) fn publisher_metadata(&self) -> Option<&crate::publication_metadata::Metadata> {

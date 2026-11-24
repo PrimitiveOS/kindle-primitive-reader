@@ -1313,8 +1313,22 @@ impl Probe {
                 source.accept_previous_mobi(previous)?;
             }
         }
-        let footnote_targets = if compose_footnotes && engine == Engine::Parley && !spine_rtl {
-            footnotes::in_page::Targets::parse(&xhtml, &source)
+        let footnote_targets = if complete && engine == Engine::Parley && !spine_rtl {
+            if compose_footnotes {
+                footnotes::in_page::Targets::epub(
+                    &xhtml,
+                    &source,
+                    user_styles
+                        .footnote_size()
+                        .unwrap_or(user_styles::FootnoteSize::Publisher),
+                )
+            } else if user_styles.has_in_page_fb2_notes()
+                && let Some(sections) = book.fb2_note_sections(&href)
+            {
+                footnotes::in_page::Targets::fb2(&href, &source, sections, user_styles)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -1351,7 +1365,7 @@ impl Probe {
                 let styles = author.compute_with_footnotes(
                     &source.elements,
                     settings,
-                    footnote_targets.as_ref().zip(user_styles.footnote_size()),
+                    footnote_targets.as_ref(),
                 );
                 reading_flow = flow_view::ChapterFlow::from_styles(&source, &styles)?;
                 #[cfg(feature = "kindle")]

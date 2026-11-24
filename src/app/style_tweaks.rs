@@ -1,7 +1,10 @@
 //! Supported style controls, book-specific CSS review and multiline editing.
 use super::navigation_layout::NavigationLayout;
 use super::*;
-use crate::user_styles::{self, Data, EPUB_FOOTNOTES, FootnoteSize, PRESETS, Snapshot};
+use crate::user_styles::{
+    self, Data, EPUB_FOOTNOTES, FB2_ENDNOTES, FB2_FOOTNOTES, FB2_REGULAR_NOTE_SIZE, FootnoteSize,
+    PRESETS, Snapshot,
+};
 use primitive_ui::{TextStyle, editor::Multiline};
 #[derive(Clone)]
 pub(super) enum Command {
@@ -40,6 +43,14 @@ const TEXT: Rect = Rect::new(40, 260, 1184, 480);
 const LINE_HEIGHT: i32 = 48;
 // Use the same wrap in both orientations so that an open draft keeps its line.
 const COLUMNS: usize = 40;
+
+fn note_format(preset: &str) -> Option<DocumentFormat> {
+    match preset {
+        EPUB_FOOTNOTES => Some(DocumentFormat::Epub),
+        FB2_FOOTNOTES | FB2_ENDNOTES | FB2_REGULAR_NOTE_SIZE => Some(DocumentFormat::Fb2),
+        _ => None,
+    }
+}
 
 struct EditorLayout {
     title: Rect,
@@ -82,11 +93,11 @@ impl Reader {
             .ok_or_else(|| "Open a reflowable book first".into())
     }
     fn style_preset_available(&self, name: &str) -> bool {
-        name != EPUB_FOOTNOTES
-            || self.active.as_ref().is_some_and(|book| {
-                book.entry.format == DocumentFormat::Epub
-                    && self.style_store.data.book(book.id).enabled
+        note_format(name).is_none_or(|format| {
+            self.active.as_ref().is_some_and(|book| {
+                book.entry.format == format && self.style_store.data.book(book.id).enabled
             })
+        })
     }
 
     fn apply_style_data(&mut self, next: Data) -> Result<()> {
@@ -145,7 +156,7 @@ impl Reader {
             &command
             && !self.style_preset_available(name)
         {
-            return Err("Enable style tweaks in a reflowable EPUB first".into());
+            return Err("Enable style tweaks in a supported reflowable book first".into());
         }
         match command {
             Command::Preset(name) => {
@@ -356,21 +367,24 @@ impl Reader {
                         )),
                     );
                 }
+                let mut note_row = 1;
                 for p in PRESETS {
-                    if p.id == EPUB_FOOTNOTES
+                    let format = note_format(p.id);
+                    if let Some(format) = format
                         && self
                             .active
                             .as_ref()
-                            .is_none_or(|book| book.entry.format != DocumentFormat::Epub)
+                            .is_none_or(|book| book.entry.format != format)
                     {
                         continue;
                     }
                     if !self.style_preset_available(p.id) {
                         items.insert(
-                            1,
+                            note_row,
                             Item::new(p.title, Action::Heading)
                                 .detail("Enable style tweaks to change this setting"),
                         );
+                        note_row += 1;
                         continue;
                     }
                     let source = match b.choices.get(p.id) {
@@ -385,18 +399,22 @@ impl Reader {
                         }
                     };
                     let row = action(p.title, Command::Preset(p.id.into())).detail(source);
+                    if format.is_some() {
+                        items.insert(note_row, row);
+                        note_row += 1;
+                    } else {
+                        items.push(row);
+                    }
                     if p.id == EPUB_FOOTNOTES {
-                        items.insert(1, row);
                         items.insert(
-                            2,
+                            note_row,
                             Item::new(
                                 "In-page footnote size",
                                 Action::Show(Screen::InPageFootnoteSize(NoteSizeScope::Book)),
                             )
                             .detail(b.footnote_size.unwrap_or(data.footnote_size).label()),
                         );
-                    } else {
-                        items.push(row);
+                        note_row += 1;
                     }
                 }
                 items.push(Item::new("Supported reflow styles",Action::Heading).detail("Margins, hiding, floats, arbitrary selectors and vendor hints are not supported."));
@@ -444,17 +462,19 @@ impl Reader {
                 };
                 let current = b.choices.get(p.id).copied();
                 let global = data.global.contains(p.id);
-                let description = if p.id == EPUB_FOOTNOTES {
-                    "Show marked notes in supported single-page EPUB layouts"
-                } else {
-                    "Book choice overrides the live all-books default"
+                let description = match p.id {
+                    EPUB_FOOTNOTES => "Show marked notes in supported single-page EPUB layouts",
+                    FB2_FOOTNOTES => "Show linked sections from the FictionBook notes body",
+                    FB2_ENDNOTES => "Show linked sections from the FictionBook comments body",
+                    FB2_REGULAR_NOTE_SIZE => "Use the reading size for FictionBook note bands",
+                    _ => "Book choice overrides the live all-books default",
                 };
-                let detail = if p.id == EPUB_FOOTNOTES {
-                    "Apply to eligible EPUBs that use the default"
+                let detail = if note_format(p.id).is_some() {
+                    "Apply to eligible books that use the default"
                 } else {
                     "Existing books inherit unless they override it"
                 };
-                let status = if p.id == EPUB_FOOTNOTES {
+                let status = if note_format(p.id).is_some() {
                     Item::new("When notes appear in the page", Action::Heading)
                         .detail("Horizontal reading with marked notes in the same chapter")
                 } else {

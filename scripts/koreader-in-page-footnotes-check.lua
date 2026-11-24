@@ -12,7 +12,8 @@ local BB = require("ffi/blitbuffer")
 
 local source, cache, font, captures = assert(arg[1]), assert(arg[2]), assert(arg[3]), assert(arg[4])
 local width, height, margin = 720, 480, 32
-local tweak_id = "footnote-inpage_epub"
+local fb2 = arg[5] == "fb2"
+local tweak_id = fb2 and "footnote-inpage_fb2" or "footnote-inpage_epub"
 local function find_tweak(items, id)
     for _, item in ipairs(items) do
         if item.tweak_id == (id or tweak_id) then return item end
@@ -82,7 +83,7 @@ local function open(tweak)
         handleEvent = function(_, event) assert(event.handler == "onUpdatePos") end,
     }}, { __index = Typeset })
     typeset:setBlockRenderingMode(2)
-    view:setStyleSheet("./data/epub.css", tweak)
+    view:setStyleSheet(fb2 and "./data/fb2.css" or "./data/epub.css", tweak)
     view:setVisiblePageCount(1, false)
     view:setHeaderInfo(0)
     view:setPageMargins(margin, margin, margin, margin)
@@ -137,6 +138,51 @@ local function capture(view, page, name)
     return separator
 end
 
+local function width_in_canonical_note(view_, text)
+    local hits = assert(view_:findAllText(text, false, false, 8, true, 0, 255))
+    assert(#hits == 1, text)
+    local hit = hits[1]
+    view_:gotoPage(view_:getPageFromXPointer(hit.start))
+    local boxes = assert(view_:getWordBoxesFromPositions(hit.start, hit["end"], true))
+    assert(#boxes >= 1, text)
+    return boxes[#boxes].x1 - boxes[1].x0
+end
+
+if fb2 then
+    controller:onReadSettings(Settings:wrap({}))
+    assert(row.checked_func())
+    local comments = assert(find_tweak(menu.style_tweaks.sub_item_table, "footnote-inpage_fb2_comments"))
+    local regular = assert(find_tweak(menu.style_tweaks.sub_item_table, "fb2_footnotes_regular_font_size"))
+    local function render_fb2(name, expect_band)
+        local candidate = open(assert(controller:getCssText()))
+        local reference = position(candidate, "The survey used a limewood ruler")
+        assert(position(candidate, "Measured footnote text") > reference)
+        assert(position(candidate, "Measured endnote text") > reference)
+        assert((capture(candidate, reference, "stock-fb2-" .. name) ~= nil) == expect_band)
+        local foot = width_in_canonical_note(candidate, "Measured footnote text")
+        local ending = width_in_canonical_note(candidate, "Measured endnote text")
+        candidate:close()
+        print(string.format("fb2_notes=%s foot=%d end=%d", name, foot, ending))
+        return foot, ending
+    end
+    local notes_width, ordinary_end_width = render_fb2("footnote-only", true)
+    row.callback()
+    assert(not row.checked_func())
+    render_fb2("disabled", false)
+    comments.callback()
+    assert(comments.checked_func() and not row.checked_func())
+    local ordinary_notes_width, end_width = render_fb2("endnote-only", true)
+    row.callback()
+    assert(row.checked_func() and comments.checked_func())
+    render_fb2("both", true)
+    regular.callback()
+    assert(regular.checked_func() and row.checked_func() and comments.checked_func())
+    local regular_notes, regular_end = render_fb2("regular", true)
+    assert(notes_width < regular_notes and end_width < regular_end)
+    assert(ordinary_notes_width == regular_notes and ordinary_end_width == regular_end)
+    return
+end
+
 local view = open(css)
 local reference = position(view, "The east pier")
 local note = position(view, "The repair date")
@@ -176,16 +222,6 @@ local restart = position(view, "The harbor record restarts")
 assert(forced_ref < restart)
 assert(capture(view, forced_ref, "stock-note-before-hard-break"))
 view:close()
-
-local function width_in_canonical_note(view_, text)
-    local hits = assert(view_:findAllText(text, false, false, 8, true, 0, 255))
-    assert(#hits == 1, text)
-    local hit = hits[1]
-    view_:gotoPage(view_:getPageFromXPointer(hit.start))
-    local boxes = assert(view_:getWordBoxesFromPositions(hit.start, hit["end"], true))
-    assert(#boxes >= 1, text)
-    return boxes[#boxes].x1 - boxes[1].x0
-end
 
 local function measure_sizes(name, capture_name)
     local candidate = open(assert(controller:getCssText()))

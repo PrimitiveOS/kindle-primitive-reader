@@ -1,8 +1,10 @@
-//! Source-space pagination for supported explicit EPUB notes.
+//! Source-space pagination for supported EPUB and FictionBook notes.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::Range;
 
 use crate::epub::{Book, Destination};
+use crate::loose::Fb2NoteKind;
+use crate::user_styles::{FootnoteSize, Snapshot};
 use crate::{
     Line, Settings, Source,
     publisher_breaks::{self, BoxRules, Edge},
@@ -63,32 +65,41 @@ pub(crate) fn paginate(
         draft: Draft::default(),
     };
     let mut pending = VecDeque::new();
-    for (index, group) in groups.iter().enumerate() {
-        let first_group = index == 0;
-        if !first_group && edges.get(index) == Some(&Edge::Force) {
+    let mut first_index = 0;
+    while let Some(first) = groups.get(first_index) {
+        let mut end_index = first_index + 1;
+        // Keep body groups together without pulling a preceding heading into
+        // a note copy. Note slices still use their own exact source bounds.
+        while edges.get(end_index) == Some(&Edge::Avoid) {
+            end_index += 1;
+        }
+        let last = &groups[end_index - 1];
+        let extent = first.extent.start..last.extent.end;
+        if height_of(&extent) > height {
+            return None;
+        }
+        let first_group = first_index == 0;
+        if !first_group && edges.get(first_index) == Some(&Edge::Force) {
             packer.finish()?;
         }
         let body_start = packer.draft.body.as_ref().map_or_else(
-            || if first_group { 0.0 } else { group.extent.start },
+            || if first_group { 0.0 } else { extent.start },
             |body| body.start,
         );
-        if height_of(&(body_start..group.extent.end)) > height - packer.draft.reserve(gap) {
+        if height_of(&(body_start..extent.end)) > height - packer.draft.reserve(gap) {
             if first_group {
                 return None;
             }
             packer.finish()?;
         }
-        let body = packer
-            .draft
-            .body
-            .get_or_insert_with(|| group.extent.clone());
+        let body = packer.draft.body.get_or_insert_with(|| extent.clone());
         if first_group {
             body.start = 0.0;
         }
-        body.end = group.extent.end;
+        body.end = extent.end;
 
         for &id in references
-            .range(group.lines.clone())
+            .range(first.lines.start..last.lines.end)
             .flat_map(|(_, ids)| ids)
         {
             if !pending.contains(&id) && !packer.draft.seen.contains(&id) {
@@ -102,6 +113,7 @@ pub(crate) fn paginate(
             }
             pending.pop_front();
         }
+        first_index = end_index;
     }
     for id in pending {
         if !packer.add_note(id, &groups[notes[id].clone()])? {
@@ -175,10 +187,17 @@ pub(crate) struct Targets {
     roots: BTreeMap<usize, usize>,
     ids: BTreeMap<String, usize>,
     ancestry: Vec<Option<usize>>,
+    sizes: Vec<NoteSize>,
+}
+
+#[derive(Clone, Copy)]
+enum NoteSize {
+    Epub(FootnoteSize),
+    Fb2(f32),
 }
 
 impl Targets {
-    pub(crate) fn parse(xhtml: &str, source: &Source) -> Option<Self> {
+    pub(crate) fn epub(xhtml: &str, source: &Source, size: FootnoteSize) -> Option<Self> {
         let document = roxmltree::Document::parse_with_options(
             xhtml,
             roxmltree::ParsingOptions {
@@ -187,8 +206,7 @@ impl Targets {
             },
         )
         .ok()?;
-        let mut roots = BTreeMap::new();
-        let mut ids = BTreeMap::new();
+        let mut marked = Vec::new();
         for node in document.descendants().filter(roxmltree::Node::is_element) {
             if !super::note_container(node) {
                 continue;
@@ -196,14 +214,53 @@ impl Targets {
             let id = node
                 .attribute("id")
                 .or_else(|| node.attribute((super::XML, "id")))?;
-            let owner = source.fragment_owner(id)?;
-            let index = roots.len();
-            if index >= MAX_NOTES
-                || roots.insert(owner, index).is_some()
-                || ids.insert(id.to_owned(), index).is_some()
-            {
+            if marked.len() == MAX_NOTES {
                 return None;
             }
+            marked.push((id, NoteSize::Epub(size)));
+        }
+        Self::for_ids(source, marked)
+    }
+
+    pub(crate) fn fb2(
+        chapter: &str,
+        source: &Source,
+        sections: &BTreeMap<String, Fb2NoteKind>,
+        styles: &Snapshot,
+    ) -> Option<Self> {
+        let mut marked = BTreeMap::new();
+        for link in source.blocks.iter().flat_map(|block| &block.links) {
+            if let Ok(Destination {
+                path,
+                fragment: Some(id),
+            }) = Book::resolve_link(chapter, &link.href)
+                && path == chapter
+                && let Some((authored, &kind)) = sections.get_key_value(&id)
+                && let Some(scale) = styles.fb2_note_scale(kind)
+            {
+                marked.insert(authored.as_str(), NoteSize::Fb2(scale));
+                if marked.len() > MAX_NOTES {
+                    return None;
+                }
+            }
+        }
+        Self::for_ids(source, marked)
+    }
+
+    fn for_ids<'a>(
+        source: &Source,
+        marked: impl IntoIterator<Item = (&'a str, NoteSize)>,
+    ) -> Option<Self> {
+        let mut roots = BTreeMap::new();
+        let mut ids = BTreeMap::new();
+        let mut sizes = Vec::new();
+        for (id, size) in marked {
+            let owner = source.fragment_owner(id)?;
+            let index = roots.len();
+            if roots.insert(owner, index).is_some() || ids.insert(id.to_owned(), index).is_some() {
+                return None;
+            }
+            sizes.push(size);
         }
         if roots.is_empty() {
             return None;
@@ -222,17 +279,17 @@ impl Targets {
             roots,
             ids,
             ancestry,
+            sizes,
         })
     }
 
-    pub(crate) fn font_scale(
-        &self,
-        index: usize,
-        size: crate::user_styles::FootnoteSize,
-        block: bool,
-    ) -> Option<f32> {
-        self.ancestry[index]?;
-        size.scale(self.roots.contains_key(&index), block)
+    pub(crate) fn font_scale(&self, index: usize, block: bool) -> Option<f32> {
+        let id = self.ancestry[index]?;
+        let root = self.roots.contains_key(&index);
+        match self.sizes[id] {
+            NoteSize::Epub(size) => size.scale(root, block),
+            NoteSize::Fb2(size) => root.then_some(size),
+        }
     }
 }
 
@@ -528,6 +585,110 @@ mod tests {
             measure(&small, page, "Measured note text"),
             measure(&large, page, "Ordinary body text"),
         );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn fb2_in_page_footnotes_and_endnotes_keep_distinct_sizes_and_source_links() {
+        use crate::user_styles::{Data, FB2_ENDNOTES, FB2_FOOTNOTES, FB2_REGULAR_NOTE_SIZE};
+        let path = test_fixture("in-page-notes.fb2");
+        let font = test_fixture("fonts/NotoSans-Regular.ttf");
+        let before = std::fs::read(&path).unwrap();
+        let render = |presets: &[&str]| {
+            let mut data = Data::default();
+            for id in presets {
+                data.choose(1, id, Some(true)).unwrap();
+            }
+            Probe::layout_opened_book(
+                &mut Some(Book::open(&path).unwrap()),
+                Engine::Parley,
+                settings(false),
+                0,
+                None,
+                &Default::default(),
+                &data.snapshot(1).unwrap(),
+                || crate::font_context(std::slice::from_ref(&font)),
+            )
+            .unwrap()
+        };
+        let ordinary = render(&[]);
+        assert!(ordinary.in_page_notes.is_none());
+        let reference = ordinary.fragment("notes-ref").unwrap();
+        let note = ordinary.fragment("survey-note").unwrap();
+        let ending = ordinary.fragment("survey-comment").unwrap();
+        let unused = ordinary.fragment("unused-note").unwrap();
+        let selection = |probe: &Probe, text: &str| {
+            let start = probe.matches(text).remove(0);
+            let end = probe.anchor(start.block, start.offset + text.len());
+            probe.select_range(&start, &end).unwrap()
+        };
+
+        let mut widths = Vec::new();
+        for (label, presets, note_drawn, end_drawn) in [
+            ("footnote-only", &[FB2_FOOTNOTES][..], true, false),
+            ("endnote-only", &[FB2_ENDNOTES][..], false, true),
+            ("both", &[FB2_FOOTNOTES, FB2_ENDNOTES][..], true, true),
+            (
+                "regular",
+                &[FB2_FOOTNOTES, FB2_ENDNOTES, FB2_REGULAR_NOTE_SIZE][..],
+                true,
+                true,
+            ),
+        ] {
+            let mut probe = render(presets);
+            let page = probe.page_for(&reference).unwrap();
+            assert!(
+                probe.in_page_notes.as_ref().unwrap()[page]
+                    .separator
+                    .is_some()
+            );
+            assert_eq!(probe.fragment("survey-note"), Some(note.clone()));
+            assert_eq!(probe.fragment("survey-comment"), Some(ending.clone()));
+            assert_eq!(probe.fragment("unused-note"), Some(unused.clone()));
+            let note_selection = selection(&probe, "Measured footnote text");
+            let end_selection = selection(&probe, "Measured endnote text");
+            assert_eq!(
+                probe.selection_rects(page, &note_selection).len(),
+                usize::from(note_drawn)
+            );
+            assert_eq!(
+                probe.selection_rects(page, &end_selection).len(),
+                usize::from(end_drawn)
+            );
+            assert!(
+                probe
+                    .selection_rects(page, &selection(&probe, "The unused calibration record"))
+                    .is_empty()
+            );
+            let canonical_note = probe.page_for(&note).unwrap();
+            let canonical_end = probe.page_for(&ending).unwrap();
+            assert!(canonical_note > page && canonical_end > page);
+            let note_width = probe.selection_rects(canonical_note, &note_selection)[0].width;
+            let end_width = probe.selection_rects(canonical_end, &end_selection)[0].width;
+            if note_drawn {
+                let backlink = selection(&probe, "Return to the survey");
+                let location = probe.selection_rects(page, &backlink)[0];
+                assert_eq!(
+                    probe
+                        .link_at(
+                            page,
+                            (location.x + location.width / 2) as f32,
+                            (location.y + location.height / 2) as f32
+                        )
+                        .and_then(|target| target.fragment),
+                    Some("notes-ref".into()),
+                );
+            }
+            eprintln!("Reader FB2 {label}: footnote={note_width}px endnote={end_width}px");
+            widths.push((note_width, end_width));
+            capture(&mut probe, page, &format!("reader-fb2-{label}.png"));
+        }
+        assert_eq!(widths[0].0, widths[2].0);
+        assert_eq!(widths[1].1, widths[2].1);
+        assert_eq!(widths[0].1, widths[3].1);
+        assert_eq!(widths[1].0, widths[3].0);
+        assert!((0.70..0.80).contains(&(widths[0].0 as f32 / widths[3].0 as f32)));
+        assert!((0.80..0.90).contains(&(widths[1].1 as f32 / widths[3].1 as f32)));
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 

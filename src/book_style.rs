@@ -35,7 +35,6 @@ use parley::{
 use crate::epub::Book;
 use crate::footnotes::in_page::Targets as FootnoteTargets;
 use crate::source::{Element, Source, Stylesheet};
-use crate::user_styles::FootnoteSize;
 
 const MAX_SHEETS: usize = 8;
 const MAX_SHEET_BYTES: usize = 96 * 1024;
@@ -635,7 +634,7 @@ impl BookStyle {
         &self,
         elements: &[Element],
         settings: crate::Settings,
-        footnotes: Option<(&FootnoteTargets, FootnoteSize)>,
+        footnotes: Option<&FootnoteTargets>,
     ) -> Vec<Style> {
         self.scale_dpi(
             self.compute_with_font(elements, Some(settings), footnotes),
@@ -688,7 +687,7 @@ impl BookStyle {
         &self,
         elements: &[Element],
         settings: Option<crate::Settings>,
-        footnotes: Option<(&FootnoteTargets, FootnoteSize)>,
+        footnotes: Option<&FootnoteTargets>,
     ) -> Vec<Style> {
         let structural_borders = settings.is_some_and(|config| {
             config.empty_break_mode.expands()
@@ -832,7 +831,7 @@ impl BookStyle {
                 CascadeOrigin::Author,
                 accept_fit,
             );
-            let footnote_size = footnotes.and_then(|(targets, size)| {
+            let footnote_size = footnotes.and_then(|targets| {
                 let display = match winners[40].map(|(_, property)| property) {
                     Some(Property::Display(display)) => *display,
                     Some(Property::Reset(40, _)) => Display::Inline,
@@ -841,7 +840,7 @@ impl BookStyle {
                 // The chosen size replaces block font declarations. Inline
                 // elements such as superscripts still compute from the resized parent.
                 let block = display == Display::Block || display.is_list_item();
-                targets.font_scale(index, size, block)
+                targets.font_scale(index, block)
             });
             let note_size = footnote_size.map(|scale| Property::Size(Size::Root(scale)));
             if let Some(property) = &note_size {
