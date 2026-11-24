@@ -2,6 +2,29 @@
 
 ## Current Mac simulator checkpoint
 
+Embedded fonts are a separate saved book choice. The pinned KOReader
+replay and Mac tests verify that the toggle changes the bundled face while
+leaving the installed family, other publisher styling, and source
+selection intact. The control is disabled when Publisher CSS is off or
+the bounded inventory finds no supported face.
+[Embedded font comparison and captures](embedded-font-families.md#embedded-fonts-control)
+
+Alternative Contents now supplies the active chapter title and section
+page span to Reader. The Mac check covers several headings on one page,
+cross-spine titles, independent title depth filtering, and Skim. In the
+reading view the footer keeps its chapter and page caption, progress bar,
+section ticks, and Exit.
+[Alternative chapter titles and captures](contents-list-settings.md#chapter-titles-and-page-ranges-in-alternative-mode)
+
+The horizontal renderer can repair simple CSS tables with missing row
+or table elements. The pinned Legacy, Flat, Book and Web comparison
+checks explicit and generated table layouts. The Mac tests verify canonical
+selection and links through the grid and across page breaks. The repair
+is an internal policy. The four-mode selector remains open.
+[CSS table comparison and captures](render-modes.md#repairing-missing-css-table-rows-and-roots)
+
+## Corner holds, alternative progress markers, fitted heights, and font rendering checkpoint
+
 Corner holds now run their assigned action before text selection. The Mac
 simulator verifies the opt-out, a timed pause, and a release after the
 deadline. Taps, swipes, and the reading footer still respond while a mapped

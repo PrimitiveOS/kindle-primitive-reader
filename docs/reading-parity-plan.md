@@ -56,6 +56,9 @@ seven rows with an executable stock check and Mac verification. The
 a timed pause, and the fallback to text selection.
 [Footnote alignment](footnote-export-roots.md#preview-text-alignment) is
 independent of the book and keeps right-to-left paragraphs start-aligned.
+The Mac comparisons also verify the [embedded-font switch](embedded-font-families.md#embedded-fonts-control),
+[chapter titles from alternative Contents](contents-list-settings.md#chapter-titles-and-page-ranges-in-alternative-mode),
+and [repair of simple CSS tables](render-modes.md#repairing-missing-css-table-rows-and-roots).
 Reader 0.1.32 adds [search from selection](selection-search.md),
 [results density and context](search-result-presentation.md),
 [temporary PDF fit](fixed-search-fit.md),
