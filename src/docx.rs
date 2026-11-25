@@ -38,6 +38,7 @@ const STRICT_OFFICE_REL: &str = "http://purl.oclc.org/ooxml/officeDocument/relat
 const DRAWING_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const STRICT_DRAWING_NS: &str = "http://purl.oclc.org/ooxml/drawingml/main";
 const VML_NS: &str = "urn:schemas-microsoft-com:vml";
+const MC_NS: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const REL_ATTR_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const STRICT_REL_ATTR_NS: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships";
 const CORE_REL: &str =
@@ -171,7 +172,7 @@ fn open_word(
         false,
         false,
     )?;
-    let output = match convert_main_with_images(&main, &styles, images, false) {
+    let output = match convert_main_with_images(&main, &styles, images, false, false) {
         Ok(output) => output,
         Err(error) if error.downcast_ref::<NoReadableContent>().is_some() => {
             // Only previously rejected image-only documents take this path;
@@ -185,7 +186,7 @@ fn open_word(
                 true,
                 false,
             )?;
-            match convert_main_with_images(&main, &styles, images, false) {
+            match convert_main_with_images(&main, &styles, images, false, false) {
                 Ok(output) => {
                     resources = extended_resources;
                     output
@@ -202,7 +203,15 @@ fn open_word(
                         true,
                         true,
                     )?;
-                    let output = convert_main_with_images(&main, &styles, images, true)?;
+                    let output =
+                        match convert_main_with_images(&main, &styles, images.clone(), true, false)
+                        {
+                            Ok(output) => output,
+                            Err(error) if error.downcast_ref::<NoReadableContent>().is_some() => {
+                                convert_main_with_images(&main, &styles, images, true, true)?
+                            }
+                            Err(error) => return Err(error),
+                        };
                     resources = vml_resources;
                     output
                 }
@@ -415,6 +424,37 @@ fn drawing_blip(node: Node<'_, '_>) -> bool {
 
 fn vml_image(node: Node<'_, '_>) -> bool {
     node.has_tag_name((VML_NS, "imagedata"))
+}
+
+fn alternate_content(node: Node<'_, '_>) -> bool {
+    node.has_tag_name((MC_NS, "AlternateContent"))
+}
+
+fn alternate_branch<'a, 'input>(node: Node<'a, 'input>) -> Result<Node<'a, 'input>> {
+    let mut choices = 0usize;
+    let mut fallback = None;
+    for child in node.children() {
+        if child.is_text() && child.text().is_some_and(|text| !text.trim().is_empty()) {
+            return Err("The Word alternate content has unexpected text".into());
+        }
+        if !child.is_element() {
+            continue;
+        }
+        if child.has_tag_name((MC_NS, "Choice")) && fallback.is_none() {
+            if child
+                .attribute("Requires")
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                return Err("The Word alternate choice has no requirements".into());
+            }
+            choices += 1;
+        } else if child.has_tag_name((MC_NS, "Fallback")) && fallback.is_none() && choices > 0 {
+            fallback = Some(child);
+        } else {
+            return Err("The Word alternate content has ambiguous branches".into());
+        }
+    }
+    fallback.ok_or_else(|| "The Word alternate content has no fallback".into())
 }
 
 fn rel_attribute<'a>(node: Node<'a, '_>, name: &str) -> Option<&'a str> {
@@ -848,6 +888,7 @@ struct Output {
     images: BTreeMap<String, String>,
     bookmarks: BTreeSet<String>,
     vml: bool,
+    alternate_fallback: bool,
 }
 
 impl fmt::Write for Output {
@@ -865,6 +906,7 @@ fn convert_main_with_images(
     styles: &Styles,
     images: BTreeMap<String, String>,
     vml: bool,
+    alternate_fallback: bool,
 ) -> Result<Output> {
     let document = xml(text)?;
     let root = document.root_element();
@@ -879,6 +921,11 @@ fn convert_main_with_images(
     }) {
         return Err("The Word document contains scripts or unsupported embedded objects".into());
     }
+    if alternate_fallback {
+        for node in root.descendants().filter(|node| alternate_content(*node)) {
+            alternate_branch(node)?;
+        }
+    }
     let mut bodies = root.children().filter(|node| word(*node, "body"));
     let body = bodies.next().ok_or("The Word document has no main body")?;
     if bodies.next().is_some() {
@@ -887,6 +934,7 @@ fn convert_main_with_images(
     let mut output = Output {
         images,
         vml,
+        alternate_fallback,
         ..Output::default()
     };
     (|| -> fmt::Result {
@@ -914,6 +962,9 @@ impl Output {
                 }
             } else if word(node, "bookmarkStart") {
                 self.bookmark(node)?;
+            } else if self.alternate_fallback && alternate_content(node) {
+                let fallback = alternate_branch(node).map_err(|_| fmt::Error)?;
+                self.blocks(fallback, styles, in_table)?;
             } else if transparent(node) {
                 self.blocks(node, styles, in_table)?;
             }
@@ -981,6 +1032,9 @@ impl Output {
                 }
             } else if word(node, "bookmarkStart") {
                 self.bookmark(node)?;
+            } else if self.alternate_fallback && alternate_content(node) {
+                let fallback = alternate_branch(node).map_err(|_| fmt::Error)?;
+                self.inline(fallback, heading.as_deref_mut())?;
             } else if word(node, "hyperlink") {
                 let anchor = value(node, "anchor")
                     .filter(|_| rel_attribute(node, "id").is_none())
@@ -1021,7 +1075,22 @@ impl Output {
         if italic {
             self.write_str("<em>")?;
         }
-        for item in run.children().filter(Node::is_element) {
+        self.run_items(run, &mut heading)?;
+        if italic {
+            self.write_str("</em>")?;
+        }
+        if bold {
+            self.write_str("</strong>")?;
+        }
+        Ok(())
+    }
+
+    fn run_items(
+        &mut self,
+        parent: Node<'_, '_>,
+        heading: &mut Option<&mut String>,
+    ) -> fmt::Result {
+        for item in parent.children().filter(Node::is_element) {
             if word(item, "t") {
                 for text in item
                     .children()
@@ -1030,17 +1099,17 @@ impl Output {
                 {
                     self.has_text |= !text.trim().is_empty();
                     self.escape(text)?;
-                    append_label(&mut heading, text);
+                    append_label(heading, text);
                 }
             } else if word(item, "br") || word(item, "cr") {
                 self.write_str("<br/>")?;
-                append_label(&mut heading, " ");
+                append_label(heading, " ");
             } else if word(item, "tab") {
                 self.write_char(' ')?;
-                append_label(&mut heading, " ");
+                append_label(heading, " ");
             } else if word(item, "noBreakHyphen") {
                 self.write_char('\u{2011}')?;
-                append_label(&mut heading, "\u{2011}");
+                append_label(heading, "\u{2011}");
             } else if word(item, "softHyphen") {
                 self.write_char('\u{00ad}')?;
             } else if word(item, "drawing") {
@@ -1063,13 +1132,10 @@ impl Output {
                         self.has_text = true;
                     }
                 }
+            } else if self.alternate_fallback && alternate_content(item) {
+                let fallback = alternate_branch(item).map_err(|_| fmt::Error)?;
+                self.run_items(fallback, heading)?;
             }
-        }
-        if italic {
-            self.write_str("</em>")?;
-        }
-        if bold {
-            self.write_str("</strong>")?;
         }
         Ok(())
     }

@@ -3742,6 +3742,7 @@ impl InterfaceLanguage {
             "Hidden" => "Đã ẩn",
             "Includes hidden pages" => "Có trang bị ẩn",
             "Current position" => "Vị trí hiện tại",
+            "Checking saved marks" => "Đang kiểm tra dấu đã lưu",
             "Bookmarks" => "Dấu trang",
             "Highlights" => "Đoạn tô sáng",
             "Notes" => "Ghi chú",

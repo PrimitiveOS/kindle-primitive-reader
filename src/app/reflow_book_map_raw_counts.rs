@@ -283,7 +283,7 @@ impl Reader {
         }
         let Some(active) = &self.active else {
             self.book_map_raw_counts = None;
-            return None;
+            return Some(primitive_app::Change::Partial);
         };
         let recipe = active
             .reading
@@ -294,6 +294,11 @@ impl Reader {
             .as_mut()
             .is_some_and(|job| job.poll(now, &recipe));
         self.queue_book_map_raw_counts(now);
-        changed.then_some(primitive_app::Change::Partial)
+        let finished = self
+            .book_map_raw_counts
+            .as_ref()
+            .and_then(Verification::deadline)
+            .is_none();
+        (changed || finished).then_some(primitive_app::Change::Partial)
     }
 }

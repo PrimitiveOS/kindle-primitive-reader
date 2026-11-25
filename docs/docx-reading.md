@@ -33,6 +33,16 @@ Previously successful text and image-only conversions retain their XHTML and
 anchors. KOReader VML parity and this fallback's real-document, simulator and
 Kindle behavior are unverified.
 
+If all earlier conversions find no readable content, a final bounded recovery
+can read an OOXML `mc:AlternateContent` element's unique `mc:Fallback` branch
+in supported paragraphs, runs and tables. It validates branch order, requires
+at least one Choice and exactly one Fallback, and does not render both branches.
+The same document-wide script/object checks, local image relationships and
+resource limits apply. Alternate content in documents that already opened is
+unchanged, and unsupported fallback structures may still fail. This subset is
+not a claim of KOReader parity and has not yet been tested with real Word
+files, in the simulator or on Kindle.
+
 Numbered and bulleted Word paragraphs currently lose their list markers.
 KOReader reads the numbering part and renders nested list structures. Reader
 cannot simply add those structures to its generated XHTML: its existing saved
@@ -49,8 +59,9 @@ package relationships, skips known VBA, control and embedded-object paths,
 and rejects loaded content that aliases a known active relationship target.
 Content type declarations can be misleading, so this is not a guarantee about
 the provenance of all bytes in a malicious package. The importer never executes
-macros or Word fields. Inline scripts, alternate content and
-embedded objects are currently rejected rather than displayed. A DOCM file
+macros or Word fields. Inline scripts and embedded objects are currently
+rejected rather than displayed. Alternate content is ordinarily ignored,
+with the limited no-readable-content fallback above. A DOCM file
 may therefore lose unsupported content or fail to open; this is not complete
 Word fidelity. DOCX retains its existing rejection of active package content.
 Direct DOCM handoff from the separate Files application is implemented in its

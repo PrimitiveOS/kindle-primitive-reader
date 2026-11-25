@@ -27,7 +27,8 @@ verifies both highlight endpoints and their order, including cross-chapter
 selections, but does not reconstruct their full quote. It checks the captured
 book and font sources, cancels on map exit, sleep, save or storage return, and
 discards results if the source or layout snapshot changes. Pending and
-unresolvable marks are omitted. Exact continuation, per-page placement and
+unresolvable marks are omitted; a **Checking saved marks** caption indicates
+when background counts are still provisional. Exact continuation, per-page placement and
 revision-aware attribution of ordinary non-raw anchors remain open.
 
 This increment has not yet been validated in simulation or on the Kindle.

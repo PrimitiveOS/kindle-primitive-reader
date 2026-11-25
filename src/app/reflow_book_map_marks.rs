@@ -59,7 +59,14 @@ pub(super) fn collect(reading: &Reading, state: Option<&BookState>) -> Vec<Count
             && (chapter_of(&mark.selection.end) != Some(chapter)
                 || chapter != reading.chapter
                 || reading.probe.page_for(&mark.selection.start).is_none()
-                || reading.probe.page_for(&mark.selection.end).is_none())
+                || reading.probe.page_for(&mark.selection.end).is_none()
+                || !reading
+                    .probe
+                    .select_raw_anchors(&mark.selection.start, &mark.selection.end)
+                    .is_some_and(|selection| {
+                        selection.start == mark.selection.start
+                            && selection.end == mark.selection.end
+                    }))
         {
             continue;
         }
