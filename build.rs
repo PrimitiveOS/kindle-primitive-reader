@@ -353,9 +353,9 @@ fn main() {
         let mut rules = if matches!(tag, "la-x-classic" | "la-x-liturgic" | "grc" | "ml") {
             decomposed_rules(&tex, tag)
         } else {
-            // Pinned Russian and Catalan omit TeX exceptions. Irish keeps
-            // only two exceptions, which are added explicitly below.
-            stock_word_rules(&tex, false, !matches!(tag, "ru" | "ca" | "ga"))
+            // Pinned Russian and Catalan omit TeX exceptions. Irish and
+            // Norwegian retain only the exceptions selected below.
+            stock_word_rules(&tex, false, !matches!(tag, "ru" | "ca" | "ga" | "no"))
         };
         if tag == "ga" {
             let exceptions = group(&tex, "\\hyphenation{");
@@ -370,6 +370,26 @@ fn main() {
                 );
                 rules.push(word.replace('-', "5"));
             }
+        }
+        if tag == "no" {
+            // CRE's converter omits the final unspaced source pattern.
+            assert_eq!(
+                rules.iter().filter(|rule| rule.as_str() == "åøy4").count(),
+                1,
+                "Expected Norwegian source pattern missing or duplicated"
+            );
+            rules.retain(|rule| rule != "åøy4");
+            // Pinned exceptions without breaks are omitted; CRE lowercases
+            // each XML pattern, including uppercase exception entries.
+            let exceptions = group(&tex, "\\hyphenation{");
+            let mut included = 0usize;
+            for word in exceptions.split_whitespace() {
+                if word.contains('-') {
+                    rules.push(word.to_lowercase().replace('-', "5"));
+                    included += 1;
+                }
+            }
+            assert_eq!(included, 90, "Unexpected Norwegian exception selection");
         }
         if tag == "fi" {
             // CRE converted this two-entry TeX line into one pattern with an

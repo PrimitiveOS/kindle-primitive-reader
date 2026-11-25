@@ -551,6 +551,77 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed vocabulary-review controls; user words, book names and schedules stay untouched.
+const VOCABULARY_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Review options", "Tùy chọn ôn tập"),
+    ("Due for review", "Đến hạn ôn tập"),
+    ("All scheduled words", "Mọi từ đã lên lịch"),
+    ("Find a word", "Tìm một từ"),
+    ("Clear search", "Xóa tìm kiếm"),
+    ("Show due words only", "Chỉ hiện từ đến hạn"),
+    (
+        "Add dictionary lookups automatically",
+        "Tự thêm từ tra trong từ điển",
+    ),
+    ("Save reading context", "Lưu ngữ cảnh đọc"),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    ("Filter by book", "Lọc theo sách"),
+    (
+        "Reset all review progress",
+        "Đặt lại toàn bộ tiến độ ôn tập",
+    ),
+    ("Dictionary lookup", "Tra từ điển"),
+    ("Current source", "Nguồn hiện tại"),
+    ("Move this word here", "Chuyển từ này đến đây"),
+    (
+        "Excluded · Hold to rename",
+        "Đã loại trừ · nhấn giữ để đổi tên",
+    ),
+    (
+        "Included · Hold to rename",
+        "Được bao gồm · nhấn giữ để đổi tên",
+    ),
+    ("New book title", "Tên sách mới"),
+    ("Reading context", "Ngữ cảnh đọc"),
+    ("Show definition", "Hiện định nghĩa"),
+    ("Change source book", "Đổi sách nguồn"),
+    ("Got it", "Đã nhớ"),
+    ("Schedule the next review", "Lên lịch ôn tập tiếp theo"),
+    ("Forgot", "Đã quên"),
+    ("Review again in 5 minutes", "Ôn tập lại sau 5 phút"),
+    ("Undo last review", "Hoàn tác lần ôn tập gần nhất"),
+    ("Remove word", "Xóa từ"),
+    ("Reset this word's progress", "Đặt lại tiến độ của từ này"),
+    ("Change vocabulary book title", "Đổi tên sách từ vựng"),
+    ("Move word to book", "Chuyển từ sang sách"),
+    ("Book title", "Tên sách"),
+    ("Save", "Lưu"),
+    ("Word already saved", "Từ đã được lưu"),
+    (
+        "Keep reviewing, or replace its source and context with this lookup.",
+        "Tiếp tục ôn tập, hoặc thay nguồn và ngữ cảnh bằng lần tra cứu này.",
+    ),
+    ("Replace", "Thay thế"),
+    ("Cancel", "Hủy"),
+    ("Reset review progress?", "Đặt lại tiến độ ôn tập?"),
+    ("Remove this word?", "Xóa từ này?"),
+    (
+        "The word and reading context are kept. This word becomes due now.",
+        "Giữ từ và ngữ cảnh đọc. Từ này đến hạn ôn ngay.",
+    ),
+    (
+        "Words and reading context are kept. Every word becomes due now.",
+        "Giữ các từ và ngữ cảnh đọc. Mọi từ đến hạn ôn ngay.",
+    ),
+    (
+        "This removes the word, its context and its review history. You can save the word again.",
+        "Xóa từ, ngữ cảnh và lịch sử ôn tập của từ. Bạn có thể lưu lại từ này.",
+    ),
+    ("Reset", "Đặt lại"),
+    ("Remove", "Xóa"),
+];
+
 // Fixed library highlight-export controls; user names and saved paths stay untouched.
 const LIBRARY_EXPORT_LABELS: &[(&str, &str)] = &[
     ("History", "Lịch sử"),
@@ -2652,6 +2723,18 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn vocabulary_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = VOCABULARY_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn library_export_text<'a>(self, english: &'a str) -> &'a str {

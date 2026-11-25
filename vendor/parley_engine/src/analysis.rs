@@ -6,7 +6,7 @@
 //! Analysis is performed prior to shaping and is independent of fonts, turning a `&str` into
 //! [`Analysis`].
 
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use core::ops::Range;
 
 use icu_locale_core::{LanguageIdentifier, langid};
@@ -640,6 +640,51 @@ pub(crate) fn analyze_text(
     } else {
         &[]
     };
+    // CRE's private loose mode analyzes NBSP as a space and U+2011 as
+    // U+2010. A shadow copy lets ICU make contextual decisions without
+    // replacing source text or changing any saved byte positions. Until
+    // mixed segmenter configurations have a verified projection, keep the
+    // earlier conservative behavior for those paragraphs.
+    let shadow_allowed = if !relaxed.is_empty() && text.len() <= 512 * 1024 {
+        let mut dense = DenseLineBreaks::new(options.line_break, text.len());
+        let key = dense.next().map(|(_, key)| key);
+        if let Some(key) = key.filter(|key| dense.all(|(_, other)| other == *key)) {
+            let mut shadow = String::with_capacity(text.len());
+            let mut mapped = Vec::with_capacity(relaxed.len());
+            for (offset, ch) in text.char_indices() {
+                let end = offset + ch.len_utf8();
+                if relaxed.binary_search(&end).is_ok() {
+                    match ch {
+                        '\u{00a0}' => shadow.push(' '),
+                        '\u{2011}' => shadow.push('\u{2010}'),
+                        _ => {
+                            shadow.push(ch);
+                            continue;
+                        }
+                    }
+                    mapped.push((end, shadow.len()));
+                } else {
+                    shadow.push(ch);
+                }
+            }
+            let segmenter = data_sources.line_segmenter(key);
+            let mut breaks = segmenter.segment_str(&shadow).peekable();
+            let mut allowed = Vec::with_capacity(mapped.len());
+            for (source, projected) in mapped {
+                while breaks.peek().is_some_and(|&boundary| boundary < projected) {
+                    breaks.next();
+                }
+                if breaks.peek().is_some_and(|&boundary| boundary == projected) {
+                    allowed.push(source);
+                }
+            }
+            Some(allowed)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let mut break_spaces_iter = options.break_spaces.iter().peekable();
     let mut break_anywhere_iter = options
         .line_break
@@ -746,14 +791,16 @@ pub(crate) fn analyze_text(
             } else {
                 is_icu_line || after_break_space
             };
-            // Conservative CRE -cr-loose subset: only ordinary word-to-word
-            // boundaries after NBSP or a non-breaking hyphen. Never split a
-            // grapheme or override mandatory breaks or adjacent joiners.
+            // Never split a grapheme or override mandatory breaks. The ICU
+            // shadow applies full context when a common segmenter is known;
+            // otherwise retain the prior word-to-word conservative subset.
             if is_grapheme_start
                 && relaxed.binary_search(&byte_pos).is_ok()
                 && matches!(prev_char, Some('\u{00a0}' | '\u{2011}'))
-                && prev_prev_char.is_some_and(char::is_alphanumeric)
-                && ch.is_alphanumeric()
+                && shadow_allowed.as_ref().map_or_else(
+                    || prev_prev_char.is_some_and(char::is_alphanumeric) && ch.is_alphanumeric(),
+                    |allowed| allowed.binary_search(&byte_pos).is_ok(),
+                )
             {
                 opportunity = true;
             }

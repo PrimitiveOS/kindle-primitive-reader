@@ -175,14 +175,18 @@ visual result and precise KOReader parity have not yet been tested.
 
 **Ignore publisher line-break restrictions** applies KOReader's non-important
 `line-break: -cr-loose` rule. The horizontal reader implements a conservative
-subset: non-breaking spaces and non-breaking hyphens between alphanumeric
-characters may wrap after the character, at a grapheme boundary. Explicit
-publisher line-break declarations can override the rule, and nowrap runs retain
-their existing behavior. Other punctuation, complex contexts, generated text
-and vertical or Blitz rendering are not covered. If a paragraph exceeds 4096
-eligible boundaries, Reader keeps its ordinary line rules. The characters,
-copying, selections and saved positions remain unchanged. The visual result
-has not yet been built or tested. [KOReader setting](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L354-L363) · [CRE character treatment](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp#L799-L805)
+subset: for paragraphs using one effective ICU line-break configuration,
+Reader analyzes a temporary copy in which eligible non-breaking spaces become
+spaces and non-breaking hyphens become ordinary hyphens. ICU's resulting
+breaks after those characters are mapped back to source grapheme boundaries,
+including supported punctuation contexts. Mixed line-break configurations and
+paragraphs over 512 KiB retain the earlier word-to-word subset. Explicit
+publisher line-break declarations can override the rule, and nowrap runs and
+mandatory breaks retain their existing behavior. Generated text and vertical
+or Blitz rendering remain unsupported. If a paragraph exceeds 4096 eligible
+boundaries, Reader keeps its ordinary line rules. Characters, copying,
+selections and saved positions remain unchanged. The visual result has not yet
+been built or tested. [KOReader setting](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L354-L363) · [CRE character treatment](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp#L799-L805)
 
 **Sans-serif font for ruby** requests Noto Sans CJK SC, falling back to a
 sans-serif family when unavailable, and applies regular weight. **Larger ruby

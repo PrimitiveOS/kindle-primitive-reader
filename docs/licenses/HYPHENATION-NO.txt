@@ -9,5 +9,8 @@ is permitted in any medium without royalty provided the copyright
 notice and this notice are preserved.
 
 The unmodified upstream TeX file is included in hyph-no.tex. Reader compiles
-its supported single-word patterns and exceptions into native lookup tables;
-those tables are a derived form, not the original TeX file.
+its supported single-word patterns and selected exceptions into native lookup
+tables corresponding to pinned KOReader rules after case normalization. One
+source pattern and 18 unhyphenated exceptions are excluded; 21 uppercase
+hyphenated exceptions are retained lowercased as in KOReader. The tables
+are a derived form, not the original TeX file.

@@ -28,7 +28,7 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Catalan | 2 / 2 | 869 source rules match pinned KOReader; behavior pending |
 | Turkish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Croatian | 2 / 2 | Upstream single-word patterns; stock comparison pending |
-| Norwegian | 2 / 2 | Upstream single-word patterns and exceptions; stock comparison pending |
+| Norwegian | 2 / 2 | 27,532 case-normalized pinned rules; behavior pending |
 | Lithuanian | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Icelandic | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Occitan | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
@@ -218,15 +218,19 @@ with the pinned KOReader dictionary, built, or tested on the computer or Kindle.
 [Croatian terms](licenses/HYPHENATION-HR.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
 
 Norwegian (`no`) uses Rune Kleveland and Ole Michael Selberg's upstream TeX
-patterns and exceptions with KOReader's 2 / 2 minima. The original source and
-its copyright and permission notice are included in release packages. The
-separately tagged Bokmål (`nb`) and Nynorsk (`nn`) choices are not mapped to
-this dictionary yet. The pinned KOReader menu lists `nor` as an alias for `no`,
-but does not list `nb` or `nn`; its native dictionary lookup falls back to US
-English for unknown tags. Reader leaves those tags without a dictionary rather
-than applying Norwegian rules without supporting source evidence. Its compiled rules, word breaks and memory footprint have
-not been compared with the pinned KOReader dictionary, built, or tested on the
-computer or Kindle. [Norwegian terms](licenses/HYPHENATION-NO.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+patterns and selected exceptions with KOReader's 2 / 2 minima. Its 27,532
+selected source-derived rules match the pinned set after KOReader lowercases
+the XML patterns: Reader omits the final `åøy4` pattern absent from KOReader
+and the 18 unhyphenated source exceptions that KOReader omits. It retains all
+90 hyphenated exceptions, including 21 converted to lowercase. The unchanged
+source and permission notice are included in release packages.
+
+The separately tagged Bokmål (`nb`) and Nynorsk (`nn`) choices are not mapped
+to this dictionary yet. The pinned KOReader menu lists `nor` as an alias for
+`no`, but does not list `nb` or `nn`; its native dictionary lookup falls back
+to US English for unknown tags. Reader leaves those tags without a dictionary.
+Actual word-boundary/case behavior, memory use and computer/Kindle comparison
+remain unverified. [Norwegian terms](licenses/HYPHENATION-NO.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
 
 Lithuanian (`lt`) uses the upstream TeX patterns with KOReader's 2 / 2 minima.
 The original source and MIT terms are included in release packages. The

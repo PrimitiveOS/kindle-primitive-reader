@@ -169,12 +169,17 @@ pub(super) fn now() -> u64 {
 
 impl Reader {
     pub(super) fn vocabulary_items(&self) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let data = &self.lookup_history.review;
         match self.screen {
             Screen::Vocabulary => {
                 let entries = data.visible(&self.vocabulary_view.query, now());
                 let mut items = vec![
-                    Item::new("Review options", Action::Show(Screen::VocabularyOptions)).detail(
+                    Item::new(
+                        language.vocabulary_settings_text("Review options"),
+                        Action::Show(Screen::VocabularyOptions),
+                    )
+                    .detail(if language.is_english() {
                         format!(
                             "{} words · {}",
                             entries.len(),
@@ -183,14 +188,27 @@ impl Reader {
                             } else {
                                 "All scheduled words"
                             }
-                        ),
-                    ),
-                    Item::new("Find a word", Action::Vocabulary(Command::Search))
-                        .detail(&self.vocabulary_view.query),
+                        )
+                    } else {
+                        format!(
+                            "{} từ · {}",
+                            entries.len(),
+                            language.vocabulary_settings_text(if data.due_only {
+                                "Due for review"
+                            } else {
+                                "All scheduled words"
+                            })
+                        )
+                    }),
+                    Item::new(
+                        language.vocabulary_settings_text("Find a word"),
+                        Action::Vocabulary(Command::Search),
+                    )
+                    .detail(&self.vocabulary_view.query),
                 ];
                 if !self.vocabulary_view.query.is_empty() {
                     items.push(Item::new(
-                        "Clear search",
+                        language.vocabulary_settings_text("Clear search"),
                         Action::Vocabulary(Command::ClearFilter),
                     ));
                 }
@@ -202,24 +220,31 @@ impl Reader {
             }
             Screen::VocabularyOptions => vec![
                 Item::new(
-                    "Show due words only",
+                    language.vocabulary_settings_text("Show due words only"),
                     Action::Vocabulary(Command::ToggleDue),
                 )
-                .detail(on_off(data.due_only)),
+                .detail(language.vocabulary_settings_text(on_off(data.due_only))),
                 Item::new(
-                    "Add dictionary lookups automatically",
+                    language.vocabulary_settings_text("Add dictionary lookups automatically"),
                     Action::Vocabulary(Command::ToggleAutomatic),
                 )
-                .detail(on_off(data.automatic)),
+                .detail(language.vocabulary_settings_text(on_off(data.automatic))),
                 Item::new(
-                    "Save reading context",
+                    language.vocabulary_settings_text("Save reading context"),
                     Action::Vocabulary(Command::ToggleContext),
                 )
-                .detail(on_off(data.with_context)),
-                Item::new("Filter by book", Action::Show(Screen::VocabularyBooks))
-                    .detail(format!("{} books excluded", data.excluded_books.len())),
+                .detail(language.vocabulary_settings_text(on_off(data.with_context))),
                 Item::new(
-                    "Reset all review progress",
+                    language.vocabulary_settings_text("Filter by book"),
+                    Action::Show(Screen::VocabularyBooks),
+                )
+                .detail(if language.is_english() {
+                    format!("{} books excluded", data.excluded_books.len())
+                } else {
+                    format!("Đã loại trừ {} sách", data.excluded_books.len())
+                }),
+                Item::new(
+                    language.vocabulary_settings_text("Reset all review progress"),
                     Action::Vocabulary(Command::ConfirmReset),
                 ),
             ],
@@ -241,7 +266,7 @@ impl Reader {
                     .map(|book| {
                         Item::new(
                             if book.is_empty() {
-                                "Dictionary lookup"
+                                language.vocabulary_settings_text("Dictionary lookup")
                             } else {
                                 &book
                             },
@@ -253,13 +278,13 @@ impl Reader {
                         )
                         .detail(
                             if assigning && current == Some(book.as_str()) {
-                                "Current source"
+                                language.vocabulary_settings_text("Current source")
                             } else if assigning {
-                                "Move this word here"
+                                language.vocabulary_settings_text("Move this word here")
                             } else if data.excluded_books.contains(&book) {
-                                "Excluded · Hold to rename"
+                                language.vocabulary_settings_text("Excluded · Hold to rename")
                             } else {
-                                "Included · Hold to rename"
+                                language.vocabulary_settings_text("Included · Hold to rename")
                             },
                         )
                     })
@@ -267,7 +292,10 @@ impl Reader {
                 if assigning {
                     items.insert(
                         0,
-                        Item::new("New book title", Action::Vocabulary(Command::NewBook)),
+                        Item::new(
+                            language.vocabulary_settings_text("New book title"),
+                            Action::Vocabulary(Command::NewBook),
+                        ),
                     );
                 }
                 items
@@ -286,45 +314,75 @@ impl Reader {
                 ))];
                 if entry.before.is_some() || entry.after.is_some() || entry.highlight.is_some() {
                     items.push(
-                        Item::new("Reading context", Action::Vocabulary(Command::Context))
-                            .detail(entry.highlight.as_deref().unwrap_or(word)),
+                        Item::new(
+                            language.vocabulary_settings_text("Reading context"),
+                            Action::Vocabulary(Command::Context),
+                        )
+                        .detail(entry.highlight.as_deref().unwrap_or(word)),
                     );
                 }
                 items.extend([
-                    Item::new("Show definition", Action::LookUp(word.clone())),
                     Item::new(
-                        "Change source book",
+                        language.vocabulary_settings_text("Show definition"),
+                        Action::LookUp(word.clone()),
+                    ),
+                    Item::new(
+                        language.vocabulary_settings_text("Change source book"),
                         Action::Vocabulary(Command::AssignBook),
                     )
                     .detail(source(entry)),
-                    Item::new("Got it", Action::Vocabulary(Command::Review(true)))
-                        .detail("Schedule the next review"),
-                    Item::new("Forgot", Action::Vocabulary(Command::Review(false)))
-                        .detail("Review again in 5 minutes"),
                     Item::new(
-                        format!("{} reviews · {} consecutive", entry.reviews, entry.streak),
+                        language.vocabulary_settings_text("Got it"),
+                        Action::Vocabulary(Command::Review(true)),
+                    )
+                    .detail(language.vocabulary_settings_text("Schedule the next review")),
+                    Item::new(
+                        language.vocabulary_settings_text("Forgot"),
+                        Action::Vocabulary(Command::Review(false)),
+                    )
+                    .detail(language.vocabulary_settings_text("Review again in 5 minutes")),
+                    Item::new(
+                        if language.is_english() {
+                            format!("{} reviews · {} consecutive", entry.reviews, entry.streak)
+                        } else {
+                            format!("{} lần ôn · {} lần liên tiếp", entry.reviews, entry.streak)
+                        },
                         Action::Heading,
                     ),
-                    Item::new(format!("Added {}", date(entry.created_at)), Action::Heading).detail(
+                    Item::new(
+                        if language.is_english() {
+                            format!("Added {}", date(entry.created_at))
+                        } else {
+                            format!("Đã thêm {}", date(entry.created_at))
+                        },
+                        Action::Heading,
+                    )
+                    .detail(if language.is_english() {
                         format!(
                             "Reviewed {} · Scheduled {}",
                             date(entry.reviewed_at),
                             date(entry.due_at)
-                        ),
-                    ),
+                        )
+                    } else {
+                        format!(
+                            "Đã ôn {} · Đã lên lịch {}",
+                            date(entry.reviewed_at),
+                            date(entry.due_at)
+                        )
+                    }),
                 ]);
                 if self.vocabulary_view.undo.contains_key(word) {
                     items.push(Item::new(
-                        "Undo last review",
+                        language.vocabulary_settings_text("Undo last review"),
                         Action::Vocabulary(Command::Undo),
                     ));
                 }
                 items.push(Item::new(
-                    "Remove word",
+                    language.vocabulary_settings_text("Remove word"),
                     Action::Vocabulary(Command::ConfirmRemove),
                 ));
                 items.push(Item::new(
-                    "Reset this word's progress",
+                    language.vocabulary_settings_text("Reset this word's progress"),
                     Action::Vocabulary(Command::ConfirmResetWord),
                 ));
                 items
@@ -531,26 +589,33 @@ impl Reader {
     }
 
     pub(super) fn draw_vocabulary_dialog(&self, canvas: &mut Canvas) {
+        let language = self.controls.interface_language;
         if let Some(editor) = &self.vocabulary_view.rename_book {
             let layout = self.navigation_layout();
             canvas.fill(Rect::new(0, 0, layout.width, layout.height), PAPER);
             layout.header(
                 canvas,
                 match editor {
-                    BookEdit::Rename(_) => "Change vocabulary book title",
-                    BookEdit::Assign => "Move word to book",
+                    BookEdit::Rename(_) => {
+                        language.vocabulary_settings_text("Change vocabulary book title")
+                    }
+                    BookEdit::Assign => language.vocabulary_settings_text("Move word to book"),
                 },
             );
             canvas.single_line_field(
                 layout.body(super::LIST_Y, 130),
                 &self.editor,
-                "Book title",
+                language.vocabulary_settings_text("Book title"),
                 false,
             );
             if let Some(notice) = &self.notice {
                 canvas.text(layout.body(super::LIST_Y + 140, 70), notice, CAPTION);
             }
-            canvas.keyboard(self.editor.layer, "Save", None);
+            canvas.keyboard(
+                self.editor.layer,
+                language.vocabulary_settings_text("Save"),
+                None,
+            );
             return;
         }
         if let Some((word, _)) = &self.vocabulary_view.repeated {
@@ -560,31 +625,47 @@ impl Reader {
             canvas.popup(EXISTS);
             canvas.text(
                 Rect::new(140, 550, 984, 90),
-                "Word already saved",
+                language.vocabulary_settings_text("Word already saved"),
                 BODY.bold(),
             );
             canvas.text(
                 Rect::new(140, 650, 984, 250),
-                &format!(
-                    "{word}\n{}\n{} · {} consecutive reviews",
-                    source(entry),
-                    due(entry),
-                    entry.streak
-                ),
+                &if language.is_english() {
+                    format!(
+                        "{word}\n{}\n{} · {} consecutive reviews",
+                        source(entry),
+                        due(entry),
+                        entry.streak
+                    )
+                } else {
+                    format!(
+                        "{word}\n{}\n{} · {} lần ôn liên tiếp",
+                        source(entry),
+                        due(entry),
+                        entry.streak
+                    )
+                },
                 BODY.lines(4),
             );
             canvas.text(
                 Rect::new(140, 930, 984, 100),
-                "Keep reviewing, or replace its source and context with this lookup.",
+                language.vocabulary_settings_text(
+                    "Keep reviewing, or replace its source and context with this lookup.",
+                ),
                 CAPTION.lines(2),
             );
             for (rect, label) in EXIST_CHOICES
                 .into_iter()
                 .zip(["Got it", "Forgot", "Replace"])
             {
-                canvas.button(rect, label, false, false);
+                canvas.button(rect, language.vocabulary_settings_text(label), false, false);
             }
-            canvas.button(EXIST_CANCEL, "Cancel", false, false);
+            canvas.button(
+                EXIST_CANCEL,
+                language.vocabulary_settings_text("Cancel"),
+                false,
+                false,
+            );
             return;
         }
         let Some(reset) = self.vocabulary_view.confirm else {
@@ -594,18 +675,32 @@ impl Reader {
         canvas.text(
             Rect::new(210, 650, 840, 86),
             if reset {
-                "Reset review progress?"
+                language.vocabulary_settings_text("Reset review progress?")
             } else {
-                "Remove this word?"
+                language.vocabulary_settings_text("Remove this word?")
             },
             BODY.bold(),
         );
         canvas.text(Rect::new(210, 760, 840, 160), if reset {
-            if self.vocabulary_view.reset_word { "The word and reading context are kept. This word becomes due now." }
-            else { "Words and reading context are kept. Every word becomes due now." }
-        } else { "This removes the word, its context and its review history. You can save the word again." }, BODY.lines(3));
-        canvas.button(CANCEL, "Cancel", false, false);
-        canvas.button(CONFIRM, if reset { "Reset" } else { "Remove" }, true, false);
+            if self.vocabulary_view.reset_word { language.vocabulary_settings_text("The word and reading context are kept. This word becomes due now.") }
+            else { language.vocabulary_settings_text("Words and reading context are kept. Every word becomes due now.") }
+        } else { language.vocabulary_settings_text("This removes the word, its context and its review history. You can save the word again.") }, BODY.lines(3));
+        canvas.button(
+            CANCEL,
+            language.vocabulary_settings_text("Cancel"),
+            false,
+            false,
+        );
+        canvas.button(
+            CONFIRM,
+            if reset {
+                language.vocabulary_settings_text("Reset")
+            } else {
+                language.vocabulary_settings_text("Remove")
+            },
+            true,
+            false,
+        );
     }
 
     pub(super) fn vocabulary_dialog_input(&mut self, input: Input) -> Option<Change> {
@@ -624,7 +719,15 @@ impl Reader {
             let Input::Tap(x, y) = input else {
                 return Some(Change::None);
             };
-            let Some(key) = keyboard_key(&layout.keyboard(), &self.editor, "Save", x, y) else {
+            let Some(key) = keyboard_key(
+                &layout.keyboard(),
+                &self.editor,
+                self.controls
+                    .interface_language
+                    .vocabulary_settings_text("Save"),
+                x,
+                y,
+            ) else {
                 return Some(Change::None);
             };
             if self.editor.press(key) != Press::Go {
