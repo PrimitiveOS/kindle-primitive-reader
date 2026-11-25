@@ -114,36 +114,64 @@ impl<'a> TableFlow<'a> {
         if styles.len() != source.elements.len() {
             return Err("The table styles do not match the chapter".into());
         }
+        if source.table_cells.is_empty() {
+            return Ok(Self::identity(source));
+        }
+        // Project direction onto the visual grid only. The source cells and
+        // their offsets remain canonical for saved locations and annotations.
+        let mut table_owner: Vec<Option<usize>> = Vec::with_capacity(source.elements.len());
+        for (i, element) in source.elements.iter().enumerate() {
+            let owner = if element.tag == "table" {
+                Some(i)
+            } else {
+                element
+                    .parent
+                    .and_then(|parent| table_owner.get(parent).copied().flatten())
+            };
+            table_owner.push(owner);
+        }
+        let mut directions: HashMap<_, Option<usize>> = HashMap::new();
+        for &(element, cell) in &source.table_cells {
+            let owner = table_owner.get(element).copied().flatten();
+            directions
+                .entry(cell.table)
+                .and_modify(|existing| {
+                    if *existing != owner {
+                        *existing = None;
+                    }
+                })
+                .or_insert(owner);
+        }
         let use_css_columns = styles.first().is_some_and(|style| style.ignore_table_hints);
         let effective = |cell: Cell| {
-            if use_css_columns {
+            let mut cell = if use_css_columns {
                 cell.css_columns()
             } else {
                 cell
+            };
+            match directions
+                .get(&cell.table)
+                .copied()
+                .flatten()
+                .map(|owner| styles[owner].direction)
+            {
+                Some(parley::BaseDirection::Ltr) => cell.rtl = false,
+                Some(parley::BaseDirection::Rtl) => cell.rtl = true,
+                _ => {} // Auto and unverified ownership retain the original grid.
             }
+            cell
         };
-        if source.table_cells.is_empty()
-            || !styles.iter().zip(&source.elements).any(|(style, element)| {
-                style.flow.suppressed
-                    && matches!(
-                        element.tag.as_str(),
-                        "table"
-                            | "thead"
-                            | "tbody"
-                            | "tfoot"
-                            | "tr"
-                            | "td"
-                            | "th"
-                            | "col"
-                            | "colgroup"
-                    )
-            })
-        {
-            if !use_css_columns
-                || source
-                    .table_cells
-                    .iter()
-                    .all(|&(_, cell)| cell == effective(cell))
+        if !styles.iter().zip(&source.elements).any(|(style, element)| {
+            style.flow.suppressed
+                && matches!(
+                    element.tag.as_str(),
+                    "table" | "thead" | "tbody" | "tfoot" | "tr" | "td" | "th" | "col" | "colgroup"
+                )
+        }) {
+            if source
+                .table_cells
+                .iter()
+                .all(|&(_, cell)| cell == effective(cell))
             {
                 return Ok(Self::identity(source));
             }
@@ -168,16 +196,10 @@ impl<'a> TableFlow<'a> {
         for &(element, cell) in &source.table_cells {
             groups.entry(cell.table).or_default().push((element, cell));
         }
-        let mut table_owner = Vec::with_capacity(source.elements.len());
         let mut table_rows = HashMap::<usize, Vec<usize>>::new();
         let mut hidden_columns = HashSet::new();
         for (i, element) in source.elements.iter().enumerate() {
-            let table = if element.tag == "table" {
-                Some(i)
-            } else {
-                element.parent.and_then(|p| table_owner[p])
-            };
-            table_owner.push(table);
+            let table = table_owner[i];
             if let Some(table) = table {
                 if element.tag == "tr" && !element.selector_only {
                     table_rows.entry(table).or_default().push(i);

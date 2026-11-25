@@ -142,6 +142,11 @@ and additional Vietnamese dictionary and search controls. It passes a Mac
 build-only check. Inline boxes and other documented bidi fallbacks, the Basque
 distribution notice review, feature behavior and device comparisons remain open.
 
+Esperanto patterns matching the pinned upstream entries and computed direction
+for supported native tables are implemented in the latest candidate, alongside
+more Vietnamese reading controls. The Mac build-only check passes; functional,
+visual and device comparisons remain deferred.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or

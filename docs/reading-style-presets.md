@@ -38,11 +38,14 @@ change. This addition has not yet been built or behaviorally tested.
 exclusive overrides on the document body. They are intended for books with
 missing or incorrect base direction, while supported block descendants with
 explicit `dir` attributes and CSS can still establish their own direction. The horizontal
-Parley reader uses the computed direction for paragraph shaping and supported
-text-box geometry. Existing HTML table column ordering, advanced inline bidi,
-vertical text and Blitz rendering do not yet fully follow this CSS setting.
-Document text, revisions and saved source anchors remain unchanged; the
-visual result has not yet been tested. [Pinned KOReader controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L312-L340)
+Parley reader uses the computed direction for paragraph shaping, supported
+text-box geometry and native HTML table column ordering. Table direction is
+projected onto the visual grid; automatic direction or ambiguous table
+ownership retains the original grid. Nested native tables still use the
+existing source-order fallback. Advanced inline bidi, vertical text and Blitz
+rendering do not yet fully follow this CSS setting. Document text, revisions
+and saved source anchors remain unchanged; the visual result has not yet
+been tested. [Pinned KOReader controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L312-L340)
 
 For ordinary horizontal paragraphs, Reader supplies virtual directional
 isolates for inline HTML `dir` and `bdi`, and directional overrides for

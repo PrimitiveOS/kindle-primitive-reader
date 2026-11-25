@@ -37,6 +37,7 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Romansh | 2 / 2 | Upstream version 1.1 alphabetic patterns; stock comparison pending |
 | Basque | 2 / 2 | Upstream alphabetic subset; stock comparison pending |
 | Friulian | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
+| Esperanto | 2 / 2 | Upstream 2020 pattern set matches pinned stock entries; behavior comparison pending |
 | Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
 | Russian + English (US) | 2 / 2 | Combined existing Russian and US English tries; stock comparison pending |
 | Slovak | 2 / 3 | 2,467 upstream word patterns and four active exceptions; stock comparison pending |
@@ -293,3 +294,14 @@ release packages. Exact comparison with pinned KOReader patterns and
 real-document behavior remain open; this change has not been built or tested
 on the computer or Kindle.
 [Friulian terms](licenses/HYPHENATION-FUR.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+
+Esperanto (`eo`, including `epo`) uses Sergio B. Pokrovskij's upstream
+2020-10-02 pattern data with KOReader's 2 / 2 minima. The original XML pattern
+file and Latin-3 m4 source are preserved along with the LPPL terms. Upstream
+and pinned KOReader contain the same 2,009 pattern entries, in a different
+order; Reader excludes the one unweighted entry, `uzulinterfaco`, which cannot
+indicate a hyphenation point. Edge spaces become word-boundary markers during
+compilation, preserving source-text UTF-8 offsets. Build and real-document
+behavior comparison remain pending on the computer and Kindle.
+[Esperanto terms](licenses/HYPHENATION-EO.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)

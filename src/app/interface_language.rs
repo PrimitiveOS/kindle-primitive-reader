@@ -979,6 +979,20 @@ impl InterfaceLanguage {
             return english;
         }
         match english {
+            "Bookmark sources" => "Nguồn dấu trang",
+            "Bookmark browser" => "Duyệt dấu trang",
+            "Bookmark filters" => "Bộ lọc dấu trang",
+            "Highlight color filter" => "Lọc màu tô sáng",
+            "Find saved marks" => "Tìm dấu đã lưu",
+            "Saved mark" => "Dấu đã lưu",
+            "Choose books" => "Chọn sách",
+            "Choose collections" => "Chọn bộ sưu tập",
+            "Book information" => "Thông tin sách",
+            "Choose an author" => "Chọn tác giả",
+            "Choose a series" => "Chọn bộ sách",
+            "Choose a language" => "Chọn ngôn ngữ",
+            "Choose a keyword" => "Chọn từ khóa",
+            "Book description" => "Mô tả sách",
             "Sources" => "Nguồn",
             "Filters" => "Bộ lọc",
             "History" => "Lịch sử",
@@ -1209,6 +1223,51 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    /// Fixed labels in the shared reading-settings numeric picker.
+    pub(super) fn numeric_picker_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Rows per page" => "Số hàng mỗi trang",
+            "Entry font size" => "Cỡ chữ mục",
+            "Bookmark font size" => "Cỡ chữ dấu trang",
+            "Max lines per bookmark" => "Số dòng tối đa mỗi dấu trang",
+            "Words in context" => "Số từ ngữ cảnh",
+            "Results per page" => "Kết quả mỗi trang",
+            "Max lines per result" => "Số dòng tối đa mỗi kết quả",
+            "Book author width" => "Độ rộng tên tác giả",
+            "Book title width" => "Độ rộng tên sách",
+            "Chapter title width" => "Độ rộng tên chương",
+            "Disabled" => "Đã tắt",
+            "Default" => "Mặc định",
+            "Automatic" => "Tự động",
+            "Disable" => "Tắt",
+            "Close" => "Đóng",
+            "Cancel" => "Hủy",
+            "Apply" => "Áp dụng",
+            _ => english,
+        }
+    }
+
+    /// Render fixed numeric bounds while retaining the values and units.
+    pub(super) fn numeric_picker_range(self, min: &str, max: &str, width: bool) -> String {
+        let bounds = if self == Self::Vietnamese {
+            format!("{min} đến {max}")
+        } else {
+            format!("{min} to {max}")
+        };
+        if width {
+            if self == Self::Vietnamese {
+                format!("{bounds} của chiều rộng màn hình")
+            } else {
+                format!("{bounds} of screen width")
+            }
+        } else {
+            bounds
+        }
     }
 
     /// Return the canonical English search alias for a known Screen-panel row.

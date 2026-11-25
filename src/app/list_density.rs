@@ -341,6 +341,7 @@ impl Reader {
             return;
         };
         let target = picker.target;
+        let language = self.controls.interface_language;
         let footer_width = matches!(target, PickerTarget::FooterWidth(_));
         let layout = self.density_picker_layout(target);
         let place = |rect| layout.centered(rect);
@@ -348,15 +349,11 @@ impl Reader {
         canvas.popup(place(PANEL));
         canvas.text(
             place(Rect::new(244, 534, 776, 68)),
-            target.title(),
+            language.numeric_picker_text(target.title()),
             TextStyle::new(50).bold().center(),
         );
-        let bounds = format!("{} to {}", target.format(min), target.format(max));
-        let hint = if footer_width {
-            format!("{bounds} of screen width")
-        } else {
-            bounds
-        };
+        let hint =
+            language.numeric_picker_range(&target.format(min), &target.format(max), footer_width);
         canvas.text(
             place(Rect::new(244, 607, 776, 49)),
             &hint,
@@ -365,7 +362,7 @@ impl Reader {
         canvas.button(place(DECREASE), "-", false, false);
         canvas.button(place(INCREASE), "+", false, false);
         let value = if target.is_lines() && picker.value.is_none() {
-            "Disabled".to_owned()
+            language.numeric_picker_text("Disabled").to_owned()
         } else {
             target.format(picker.value(&self.controls))
         };
@@ -382,11 +379,19 @@ impl Reader {
         if target.is_lines() {
             canvas.button(
                 place(LINE_DEFAULT),
-                &format!("Default ({default_value})"),
+                &format!(
+                    "{} ({default_value})",
+                    language.numeric_picker_text("Default")
+                ),
                 false,
                 false,
             );
-            canvas.button(place(DISABLE_LINES), "Disable", false, false);
+            canvas.button(
+                place(DISABLE_LINES),
+                language.numeric_picker_text("Disable"),
+                false,
+                false,
+            );
         } else {
             let label = if target.is_font() {
                 "Automatic"
@@ -395,7 +400,11 @@ impl Reader {
             };
             canvas.button(
                 place(DEFAULT),
-                &format!("{label} ({})", target.format(default_value)),
+                &format!(
+                    "{} ({})",
+                    language.numeric_picker_text(label),
+                    target.format(default_value)
+                ),
                 false,
                 false,
             );
@@ -409,11 +418,16 @@ impl Reader {
         }
         canvas.button(
             place(CANCEL),
-            if footer_width { "Close" } else { "Cancel" },
+            language.numeric_picker_text(if footer_width { "Close" } else { "Cancel" }),
             false,
             false,
         );
-        canvas.button(place(APPLY), "Apply", true, false);
+        canvas.button(
+            place(APPLY),
+            language.numeric_picker_text("Apply"),
+            true,
+            false,
+        );
     }
 
     pub(super) fn list_density_input(&mut self, input: Input) -> Option<Change> {

@@ -72,6 +72,7 @@ pub(crate) enum Dictionary {
     Romansh,
     Basque,
     Friulian,
+    Esperanto,
     Slovak,
     Slovenian,
 }
@@ -126,6 +127,7 @@ impl Dictionary {
             ("rm", _) => Some(Self::Romansh),
             ("eu", _) => Some(Self::Basque),
             ("fur", _) => Some(Self::Friulian),
+            ("eo", _) => Some(Self::Esperanto),
             ("sk", _) => Some(Self::Slovak),
             ("sl", _) => Some(Self::Slovenian),
             _ => None,
@@ -168,6 +170,7 @@ impl Dictionary {
             Self::Romansh => "Romansh",
             Self::Basque => "Basque",
             Self::Friulian => "Friulian",
+            Self::Esperanto => "Esperanto",
             Self::Slovak => "Slovak",
             Self::Slovenian => "Slovenian",
         }
@@ -200,6 +203,7 @@ impl Dictionary {
             | Self::Romansh
             | Self::Basque
             | Self::Friulian
+            | Self::Esperanto
             | Self::Slovenian => HyphenationLimits { left: 2, right: 2 },
             Self::French => HyphenationLimits { left: 2, right: 1 },
             Self::American
@@ -245,6 +249,7 @@ impl Dictionary {
             Self::Piedmontese => &PIEDMONTESE,
             Self::Romansh => &ROMANSH,
             Self::Friulian => &FRIULIAN,
+            Self::Esperanto => &ESPERANTO,
             Self::Basque => {
                 // Retain the full upstream notice and modification statement
                 // alongside the compiled-in, modified Basque pattern data.

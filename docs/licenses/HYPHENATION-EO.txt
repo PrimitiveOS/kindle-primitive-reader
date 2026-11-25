@@ -1,0 +1,16 @@
+Esperanto hyphenation patterns, 2020-10-02
+Copyright (C) 1999, 2013 Sergio B. Pokrovskij
+
+Source commit: https://github.com/pok49/vortodivido/tree/082bf7347a501ac4339d88831b784d8c44411d05
+eo.pattern SHA-256: e751000a4044098d07bb5d524db4fbe0c14e4dc937bbf79a2f0ba769942153c7
+eohyph.m4 SHA-256: edc22ca3e9b0f2d3afcaba6c40e0d3f9f7d876af41610622555373ae200abad0
+
+The upstream pattern file and its m4 source offer GPL 2.0 or LaTeX Project
+Public License 1 or later. Reader selects LPPL 1.3c, included in
+LPPL-1.3c.txt. The original upstream eo.pattern and Latin-3 eohyph.m4 are
+included unchanged. Reader's compiled native pattern tables are a derived
+form: it translates word-edge spaces to markers, excludes an unweighted
+entry and compiles the weighted rules into its own lookup tables.
+
+The upstream Makefile describes generating eo.pattern from the m4 source and
+copying the copyright and license notice into the pattern file.

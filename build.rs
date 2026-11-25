@@ -85,6 +85,54 @@ fn stock_word_rules(tex: &str, apostrophes: bool) -> Vec<String> {
     rules
 }
 
+// The upstream Esperanto XML represents TeX word boundaries as edge spaces.
+// Retain the original file and reject unfamiliar markup rather than silently
+// compiling an incomplete or malformed dictionary.
+fn esperanto_rules() -> Vec<String> {
+    let path = "assets/hyphenation/eo.pattern";
+    println!("cargo:rerun-if-changed={path}");
+    let xml = fs::read_to_string(path).expect("Read Esperanto pattern source");
+    assert!(
+        xml.len() <= 256 * 1024,
+        "Esperanto pattern source is too large"
+    );
+    let mut rest = xml.as_str();
+    let mut rules = Vec::new();
+    let mut entries = 0usize;
+    while let Some((_, after_open)) = rest.split_once("<pattern>") {
+        let (entry, after_close) = after_open
+            .split_once("</pattern>")
+            .expect("Unclosed Esperanto pattern");
+        assert!(
+            entries < 4096 && entry.len() <= 256,
+            "Esperanto pattern limit exceeded"
+        );
+        entries += 1;
+        let core = entry.trim_matches(' ');
+        assert!(
+            !core.is_empty()
+                && core
+                    .chars()
+                    .all(|ch| ch.is_alphabetic() || ch.is_ascii_digit()),
+            "Unsupported Esperanto pattern"
+        );
+        if core.chars().any(|ch| ch.is_ascii_digit()) {
+            let mut rule = String::new();
+            if entry.starts_with(' ') {
+                rule.push('.');
+            }
+            rule.push_str(core);
+            if entry.ends_with(' ') {
+                rule.push('.');
+            }
+            rules.push(rule);
+        }
+        rest = after_close;
+    }
+    assert_eq!(entries, 2009, "Unexpected Esperanto pattern source");
+    rules
+}
+
 fn build_pattern_engine() {
     println!("cargo:rerun-if-changed=src/search/pattern.cpp");
     println!("cargo:rerun-if-changed=vendor/srell/srell.hpp");
@@ -197,6 +245,11 @@ fn main() {
             &out_dir.join(format!("{tag}_rules.txt")),
         ));
     }
+    output.push_str(&compile(
+        esperanto_rules(),
+        "ESPERANTO",
+        &out_dir.join("eo_rules.txt"),
+    ));
     fs::write(out_dir.join("hyphenation_patterns.rs"), output).unwrap();
 }
 

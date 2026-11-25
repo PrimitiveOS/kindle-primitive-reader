@@ -8662,6 +8662,9 @@ impl Reader {
                 .controls
                 .interface_language
                 .contents_text("Search contents"),
+            (Screen::BookmarkBrowser(page), _) => {
+                self.controls.interface_language.bookmark_text(page.title())
+            }
             (Screen::BookmarkFind, _) => self
                 .controls
                 .interface_language
@@ -8723,7 +8726,10 @@ impl Reader {
         }
         let back = if self.screen.is_contents() || self.screen == Screen::ContentsSearch {
             self.controls.interface_language.contents_text("Back")
-        } else if matches!(self.screen, Screen::BookmarkFind | Screen::BookmarkMatches) {
+        } else if matches!(
+            self.screen,
+            Screen::BookmarkFind | Screen::BookmarkMatches | Screen::BookmarkBrowser(_)
+        ) {
             self.controls.interface_language.bookmark_text("Back")
         } else if self.screen == Screen::DictionaryEntry {
             self.controls
