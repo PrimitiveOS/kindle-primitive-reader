@@ -44,8 +44,8 @@ display, applying WhiteIsZero inversion afterward. At the existing pixel cap,
 decoded strip plus grayscale output uses at most 24 MiB, separate from bounded
 compressed input and the Deflate overflow sentinel. LZW and Deflate strips can
 also use horizontal predictor 2; reconstruction adds unsigned 16-bit samples
-in TIFF byte order and resets at each row. Sixteen-bit alpha, palette and color
-modes remain unsupported. Pinned MuPDF has a 16-bit predictor path, but its
+in TIFF byte order and resets at each row. Sixteen-bit alpha, palette and
+non-RGB color modes remain unsupported. Pinned MuPDF has a 16-bit predictor path, but its
 sample handling differs and exact pixel parity is unverified. This conversion has not
 been compared with KOReader or behaviorally validated on the simulator or
 Kindle. [Pinned MuPDF byte-order handling](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L1639-L1641)
@@ -99,6 +99,15 @@ data and horizontal differencing; this limited subset is not full MuPDF
 parity. The authored compression, byte-order, predictor, orientation and
 invalid-metadata checks have not yet run on the computer or Kindle.
 [KOReader TIFF provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L414-L415) · [Pinned MuPDF loader](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c)
+
+Contiguous unsigned 16-bit RGB strips without alpha also use these bounded
+decoders. Reader takes the high byte of each endian-aware channel for its
+existing grayscale weighting. The horizontal predictor, when present, is
+reconstructed independently for each 16-bit channel and row. Decoded strip
+plus grayscale output is limited to 32 MiB, with compressed input and the
+Deflate overflow sentinel separately bounded. This conversion is not
+color-managed and has not been compared with KOReader or behaviorally checked
+on the simulator or Kindle. Sixteen-bit alpha and planar RGB remain unsupported.
 
 ## Process CMYK strips
 

@@ -19,14 +19,6 @@ impl Snapshot {
                     .bookmarks
                     .get(index)
                     .ok_or("A matching mark is unavailable")?;
-                if mark
-                    .position
-                    .anchor
-                    .as_ref()
-                    .is_some_and(|anchor| anchor.raw_caret.is_some())
-                {
-                    return Err("A matching mark uses an unsupported raw location".into());
-                }
                 Self::Bookmark(index, mark.clone())
             }
             Locator::Reflow(index) => {
@@ -34,11 +26,6 @@ impl Snapshot {
                     .highlights
                     .get(index)
                     .ok_or("A matching mark is unavailable")?;
-                if mark.selection.start.raw_caret.is_some()
-                    || mark.selection.end.raw_caret.is_some()
-                {
-                    return Err("A matching mark uses an unsupported raw location".into());
-                }
                 Self::Reflow(index, mark.clone())
             }
             Locator::Fixed(index) => Self::Fixed(
@@ -49,6 +36,20 @@ impl Snapshot {
                     .clone(),
             ),
         })
+    }
+
+    fn has_raw(&self) -> bool {
+        match self {
+            Self::Bookmark(_, mark) => mark
+                .position
+                .anchor
+                .as_ref()
+                .is_some_and(|a| a.raw_caret.is_some()),
+            Self::Reflow(_, mark) => {
+                mark.selection.start.raw_caret.is_some() || mark.selection.end.raw_caret.is_some()
+            }
+            Self::Fixed(_, _) => false,
+        }
     }
 
     pub(super) fn matches(&self, book: &BookState) -> bool {
@@ -113,19 +114,14 @@ impl Snapshot {
         match self {
             Self::Bookmark(_, mark) => {
                 let (chapter, anchor) = match &mark.position.anchor {
-                    Some(anchor)
-                        if anchor.raw_caret.is_none()
-                            && anchor.book == active.reading.probe.book =>
-                    {
-                        (
-                            active
-                                .reading
-                                .probe
-                                .chapter_index(&anchor.chapter)
-                                .ok_or("That chapter is unavailable")?,
-                            Some(anchor),
-                        )
-                    }
+                    Some(anchor) if anchor.book == active.reading.probe.book => (
+                        active
+                            .reading
+                            .probe
+                            .chapter_index(&anchor.chapter)
+                            .ok_or("That chapter is unavailable")?,
+                        Some(anchor),
+                    ),
                     Some(_) => return Err("This mark is unavailable in the open document".into()),
                     None => (mark.position.chapter, None),
                 };
@@ -144,12 +140,19 @@ impl Snapshot {
             Self::Reflow(_, mark) => {
                 let start = &mark.selection.start;
                 let end = &mark.selection.end;
-                if start.raw_caret.is_some()
-                    || end.raw_caret.is_some()
-                    || start.book != active.reading.probe.book
-                    || end.book != active.reading.probe.book
-                    || start.chapter != end.chapter
+                if start.book != active.reading.probe.book || end.book != active.reading.probe.book
                 {
+                    return Err("This mark is unavailable in the open document".into());
+                }
+                if start.raw_caret.is_some() || end.raw_caret.is_some() {
+                    let verified = active.reading.anchored_quote(start, end)?;
+                    return if verified == mark.selection {
+                        Ok(())
+                    } else {
+                        Err("This saved passage no longer matches the open document".into())
+                    };
+                }
+                if start.chapter != end.chapter {
                     return Err("This mark is unavailable in the open document".into());
                 }
                 let chapter = active
@@ -251,8 +254,12 @@ pub(super) fn preview(reader: &mut Reader) -> Result<()> {
         if targets.len() == 512 {
             return Err("Too many matching marks; narrow the filters first".into());
         }
+        let target = Snapshot::capture(book, key.locator)?;
+        if target.has_raw() {
+            target.verify_source(reader)?;
+        }
         targets.push(ReviewedMark {
-            target: Snapshot::capture(book, key.locator)?,
+            target,
             selected: false,
         });
     }
@@ -294,6 +301,13 @@ pub(super) fn confirm(reader: &mut Reader) -> Result<()> {
             .all(|item| item.target.matches(state))
     {
         return Err("A selected mark changed; review the marks again".into());
+    }
+    for item in pending
+        .targets
+        .iter()
+        .filter(|item| item.selected && item.target.has_raw())
+    {
+        item.target.verify_source(reader)?;
     }
     let mut bookmarks = Vec::new();
     let mut highlights = Vec::new();

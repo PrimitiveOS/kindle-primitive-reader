@@ -109,9 +109,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let predictor = image.scalar(317, SHORT_ONLY, 1)?;
     let orientation = image.scalar(274, SHORT_ONLY, 1)?;
     if !matches!(bits, 1 | 2 | 4 | 8 | 16)
-        || (bits == 16 && !matches!((photometric, samples), (0 | 1, 1)))
-        || (!matches!(photometric, 0 | 1 | 3) && !matches!(bits, 1 | 8))
-        || (samples >= 2 && bits != 8)
+        || (bits == 16 && !matches!((photometric, samples), (0 | 1, 1) | (2, 3)))
+        || (!matches!(photometric, 0 | 1 | 3) && !matches!(bits, 1 | 8) && !(photometric == 2 && bits == 16))
+        || (samples >= 2 && bits != 8 && !(photometric == 2 && samples == 3 && bits == 16))
         || bits_values.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != bits))
         || formats.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != 1))
         || !(fill_order == 1 || (bits < 8 && fill_order == 2))
@@ -127,6 +127,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     // SubfileType
     {
         return Err(TiffError::Unsupported);
+    }
+    if bits == 16 && samples == 3 && u64::from(pixel_count) * 7 > 32 * 1024 * 1024 {
+        return Err(TiffError::Limit);
     }
 
     // TIFF ColorMap stores all 16-bit red entries, then green, then blue.
@@ -233,22 +236,22 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         if predictor == 2 {
             let decoded = unpacked.as_mut().ok_or(TiffError::Unsupported)?;
             if bits == 16 {
-                // The 16-bit path is limited to one grayscale channel. The
-                // horizontal difference operates on samples, not bytes, and
-                // its state resets at each row.
+                // The 16-bit path has either one grayscale or three RGB
+                // channels. Differences are per sample, resetting each row.
                 for row in decoded.chunks_exact_mut(row_bytes) {
-                    let mut previous = 0u16;
-                    for sample in row.chunks_exact_mut(2) {
+                    let mut previous = [0u16; 3];
+                    for (index, sample) in row.chunks_exact_mut(2).enumerate() {
+                        let channel = index % samples as usize;
                         let value = image
                             .order
                             .short([sample[0], sample[1]])
-                            .wrapping_add(previous);
+                            .wrapping_add(previous[channel]);
                         let bytes = match image.order {
                             ByteOrder::Little => value.to_le_bytes(),
                             ByteOrder::Big => value.to_be_bytes(),
                         };
                         sample.copy_from_slice(&bytes);
-                        previous = value;
+                        previous[channel] = value;
                     }
                 }
             } else {
@@ -311,6 +314,12 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
                 let black = 255 - u32::from(cmyk[3]);
                 let rgb = |value: u8| ((255 - u32::from(value)) * black + 127) / 255;
                 ((rgb(cmyk[0]) * 2126 + rgb(cmyk[1]) * 7152 + rgb(cmyk[2]) * 722) / 10000) as u8
+            }));
+        } else if bits == 16 && samples == 3 {
+            pixels.extend(strip.chunks_exact(6).map(|rgb| {
+                let high =
+                    |offset| u32::from(image.order.short([rgb[offset], rgb[offset + 1]]) >> 8);
+                ((high(0) * 2126 + high(2) * 7152 + high(4) * 722) / 10000) as u8
             }));
         } else if samples == 3 {
             // Match image's sRGB-to-luma conversion used by other comic pages.

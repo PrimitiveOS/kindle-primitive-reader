@@ -1594,7 +1594,7 @@ impl Reader {
         let (chapter, anchor) = match location {
             ReviewLocation::Saved(position) => match &position.anchor {
                 Some(anchor) => {
-                    if anchor.raw_caret.is_some() || anchor.book != probe.book {
+                    if anchor.book != probe.book {
                         return None;
                     }
                     (probe.chapter_index(&anchor.chapter)?, Some(anchor))
@@ -1602,7 +1602,7 @@ impl Reader {
                 None => (position.chapter, None),
             },
             ReviewLocation::Reflow(anchor) => {
-                if anchor.raw_caret.is_some() || anchor.book != probe.book {
+                if anchor.book != probe.book {
                     return None;
                 }
                 (probe.chapter_index(&anchor.chapter)?, Some(anchor))
@@ -1611,6 +1611,16 @@ impl Reader {
         };
         if chapter >= probe.chapter_count() {
             return None;
+        }
+        if let Some(anchor) = anchor.filter(|anchor| anchor.raw_caret.is_some()) {
+            let loaded;
+            let chapter_probe = if chapter == reading.chapter {
+                probe
+            } else {
+                loaded = reading.config.chapter(chapter).ok()?;
+                &loaded
+            };
+            chapter_probe.page_for(anchor)?;
         }
         let mut result = format!("{} {}", language.bookmark_text("Chapter"), chapter + 1);
         if chapter == reading.chapter

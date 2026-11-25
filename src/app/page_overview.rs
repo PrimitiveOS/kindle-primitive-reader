@@ -531,9 +531,7 @@ impl Reader {
                 let mut checks = 0usize;
                 'marks: for mark in &state.highlights {
                     let selection = &mark.selection;
-                    if selection.start.raw_caret.is_some()
-                        || selection.end.raw_caret.is_some()
-                        || probe.chapter_index(&selection.start.chapter) != Some(chapter)
+                    if probe.chapter_index(&selection.start.chapter) != Some(chapter)
                         || probe.chapter_index(&selection.end.chapter) != Some(chapter)
                     {
                         continue;
@@ -890,10 +888,21 @@ impl Reader {
         {
             let probe = &active.reading.probe;
             let chapter_for = |anchor: &Anchor| {
-                if anchor.raw_caret.is_some() || anchor.book != probe.book {
+                if anchor.book != probe.book {
                     return None;
                 }
-                probe.chapter_index(&anchor.chapter)
+                let chapter = probe.chapter_index(&anchor.chapter)?;
+                if anchor.raw_caret.is_some() {
+                    let loaded;
+                    let chapter_probe = if active.reading.chapter == chapter {
+                        probe
+                    } else {
+                        loaded = active.reading.config.chapter(chapter).ok()?;
+                        &loaded
+                    };
+                    chapter_probe.page_for(anchor)?;
+                }
+                Some(chapter)
             };
             for bookmark in &state.bookmarks {
                 let chapter = match &bookmark.position.anchor {
@@ -964,10 +973,24 @@ impl Reader {
                             .reading
                             .probe;
                         match &position.anchor {
-                            Some(anchor)
-                                if anchor.raw_caret.is_none() && anchor.book == probe.book =>
-                            {
-                                probe.chapter_index(&anchor.chapter)
+                            Some(anchor) if anchor.book == probe.book => {
+                                probe.chapter_index(&anchor.chapter).filter(|&chapter| {
+                                    if anchor.raw_caret.is_none() {
+                                        return true;
+                                    }
+                                    let reading =
+                                        &self.active.as_ref().expect("Open reflow book").reading;
+                                    if reading.chapter == chapter {
+                                        probe.page_for(anchor).is_some()
+                                    } else {
+                                        reading
+                                            .config
+                                            .chapter(chapter)
+                                            .ok()
+                                            .and_then(|candidate| candidate.page_for(anchor))
+                                            .is_some()
+                                    }
+                                })
                             }
                             Some(_) => None,
                             None => Some(position.chapter),
