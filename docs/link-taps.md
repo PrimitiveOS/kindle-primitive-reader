@@ -6,10 +6,16 @@ take over. **Ignore external links on tap** starts off and leaves local
 document links available. Both choices apply to EPUB and PDF.
 
 In reflowable documents, **Allow larger tap area around links** starts off.
-When enabled, a tap just outside a local link can follow its text or image
-region. A direct link takes priority. Reader compares distance to visible
-regions using the 54-pixel Oasis 3 reference radius. The enlarged target does
-not apply to fixed-page documents.
+When enabled, a tap just outside a visible link can follow its text or image
+region. Reader looks for the closest eligible region within 57 logical
+pixels on the 300 DPI Oasis 3 canvas. This is the result of KOReader's
+actual DPI scaler. A direct link takes priority when web links are allowed.
+With **Ignore external links on tap** on, only internal links are eligible.
+If enlargement is off too, the touch must fall on an internal link region.
+Fixed-page documents use their native annotation bounds.
+[Pinned tap policy and radius](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua#L706-L745) ·
+[Stock geometry replay](../scripts/koreader-larger-link-tap-check.lua) ·
+[Reader screenshot](screenshots/larger-link-tap-web-address.png)
 
 To access a link explicitly, open **Navigation → Links on this page** or
 **Pages → Links**. The list includes visible local destinations and web

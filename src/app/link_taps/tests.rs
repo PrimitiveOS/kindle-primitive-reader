@@ -70,6 +70,53 @@ fn open_preferences(app: &mut Reader) {
 }
 
 #[test]
+fn enlarged_link_taps_follow_external_preference_and_keep_zero_radius_internal_hits() {
+    let fixture = Fixture::new();
+    write_book(&fixture.book);
+    let fonts = test_fonts();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    let origin = app.current_history_location();
+    let reading = &app.active.as_ref().unwrap().reading;
+    let outside = reading.frame_height() as f32 + 1.0;
+    let external = hit(reading, ADDRESS);
+    let internal = hit(reading, "routes.xhtml#route");
+    let nearby = [10.0, 18.0, 26.0, 34.0, 42.0]
+        .into_iter()
+        .map(|dx| (external.0 - dx, external.1))
+        .find(|&(x, y)| {
+            reading.link_href_at(x, y).is_none()
+                && matches!(
+                    nearest_reflow_link(reading, x, y, LINK_TAP_RADIUS, false),
+                    Some((ReflowLink::Address(ref address), _, _)) if address == ADDRESS
+                )
+        })
+        .expect("blank touch near the web address");
+    assert!(app.reflow_tap_link(nearby.0, nearby.1).is_none());
+    open_preferences(&mut app);
+    tap_contents_item(&mut app, "Allow larger tap area around links");
+    app.show(Screen::Book);
+    assert_eq!(app.input(Input::Tap(nearby.0, nearby.1)), Change::Partial);
+    assert!(app.link_popup.is_some());
+    assert_eq!(app.current_history_location(), origin);
+    capture_test_screen(&app, &fonts, "READER_LARGER_LINK_CAPTURE", false);
+    app.input(Input::PageBack);
+    open_preferences(&mut app);
+    tap_contents_item(&mut app, "Ignore external links on tap");
+    app.show(Screen::Book);
+    assert!(app.reflow_tap_link(nearby.0, nearby.1).is_none());
+    assert!(app.reflow_tap_link(internal.0, outside).is_none());
+    open_preferences(&mut app);
+    tap_contents_item(&mut app, "Allow larger tap area around links");
+    app.show(Screen::Book);
+    assert!(app.reflow_tap_link(external.0, external.1).is_none());
+    assert!(matches!(
+        app.reflow_tap_link(internal.0, internal.1),
+        Some((ReflowLink::Internal(_), _, _))
+    ));
+}
+
+#[test]
 fn reflow_link_tap_settings_match_defaults_preserve_explicit_links_and_enlarge_internal_hits() {
     let fixture = Fixture::new();
     write_book(&fixture.book);

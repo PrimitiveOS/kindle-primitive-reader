@@ -5,8 +5,8 @@ use crate::fixed::PdfLink;
 use crate::selection::HighlightRect;
 use std::collections::BTreeMap;
 
-// KOReader's 30 px radius at 167 DPI on Reader's 300 DPI logical canvas.
-const LINK_TAP_RADIUS: f32 = 30.0 * 300.0 / 167.0;
+// KOReader's scaleByDPI(30) rounds up at 300 DPI using its 160 DPI base.
+const LINK_TAP_RADIUS: f32 = 57.0;
 
 #[derive(Clone, Copy)]
 pub(super) enum LinkPreference {
@@ -315,19 +315,26 @@ impl Reader {
             return None;
         }
         let reading = &self.active.as_ref()?.reading;
-        if let Some(link) = reading
-            .link_href_at(x, y)
-            .and_then(|href| ReflowLink::resolve(&reading.probe.chapter, href))
-            .filter(|link| {
-                !self.controls.ignore_external_link_taps || matches!(link, ReflowLink::Internal(_))
-            })
+        let (width, _) = self.reading_viewport().dimensions();
+        if !(0.0..width as f32).contains(&x) || !(0.0..reading.frame_height() as f32).contains(&y) {
+            return None;
+        }
+        let internal_only = self.controls.ignore_external_link_taps;
+        if !internal_only
+            && let Some(link) = reading
+                .link_href_at(x, y)
+                .and_then(|href| ReflowLink::resolve(&reading.probe.chapter, href))
         {
             return Some((link, x, y));
         }
-        if !self.controls.larger_tap_area_for_links || !(0.0..PAGE_HEIGHT as f32).contains(&y) {
+        let radius = if self.controls.larger_tap_area_for_links {
+            LINK_TAP_RADIUS
+        } else if internal_only {
+            0.0
+        } else {
             return None;
-        }
-        nearest_reflow_link(reading, x, y, LINK_TAP_RADIUS, true)
+        };
+        nearest_reflow_link(reading, x, y, radius, internal_only)
     }
 
     pub(super) fn fixed_tap_link(&self, x: f32, y: f32) -> Option<PdfLink> {
@@ -421,7 +428,7 @@ fn nearest_reflow_link(
         let content_y = local_y - probe.settings.top_margin() as f32 + part.range.start;
         let top = part.range.start.max(content_y - radius);
         let end = part.range.end.min(content_y + radius);
-        if top >= end {
+        if top > end {
             continue;
         }
         let mut consider = |rect: HighlightRect, href: &str| {
@@ -448,11 +455,11 @@ fn nearest_reflow_link(
         let first = probe
             .lines
             .partition_point(|line| line.top < top - probe.settings.text_height() as f32);
-        let last = probe.lines.partition_point(|line| line.top < end);
+        let last = probe.lines.partition_point(|line| line.top <= end);
         let mut visible_spans = BTreeMap::new();
         for line in probe.lines[first..last]
             .iter()
-            .filter(|line| line.bottom > top)
+            .filter(|line| line.bottom >= top)
         {
             visible_spans
                 .entry(line.block)
