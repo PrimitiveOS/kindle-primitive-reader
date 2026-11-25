@@ -551,6 +551,26 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed footnote font editor text; font values and ranges stay untouched.
+const FOOTNOTE_FONT_LABELS: &[(&str, &str)] = &[
+    ("Relative", "Tương đối"),
+    ("Fixed", "Cố định"),
+    (
+        "Offset from -10 to +5 pixels",
+        "Độ lệch từ -10 đến +5 pixel",
+    ),
+    ("Fixed size from 12 to 255", "Cỡ cố định từ 12 đến 255"),
+    (
+        "Enter a whole-number offset from -10 to +5",
+        "Nhập độ lệch nguyên từ -10 đến +5",
+    ),
+    (
+        "Enter a whole number from 12 to 255",
+        "Nhập số nguyên từ 12 đến 255",
+    ),
+    ("Set", "Đặt"),
+];
+
 // Fixed metadata-save/archive settings; archive paths and saved content stay untouched.
 const METADATA_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("On close or sleep", "Khi đóng sách hoặc ngủ"),
@@ -593,6 +613,31 @@ const METADATA_SETTINGS_LABELS: &[(&str, &str)] = &[
         "Giữ sách và dữ liệu đọc hiện tại",
     ),
     ("Bookmark", "Dấu trang"),
+    (
+        "The archive keeps settings, reading position, notes and highlights. Open a matching edition to recover its saved data. The original book stays where it is.",
+        "Kho lưu cài đặt, vị trí đọc, ghi chú và phần tô sáng. Mở đúng phiên bản sách để khôi phục dữ liệu đã lưu. Sách gốc vẫn ở vị trí cũ.",
+    ),
+    ("Done", "Xong"),
+    ("Restore book metadata?", "Khôi phục siêu dữ liệu sách?"),
+    (
+        "Restore progress, settings and marks.\nStart fresh removes the saved copy.",
+        "Khôi phục tiến độ, cài đặt và đánh dấu.\nBắt đầu mới sẽ xóa bản đã lưu.",
+    ),
+    ("Restore", "Khôi phục"),
+    ("Remove this saved copy?", "Xóa bản đã lưu này?"),
+    (
+        "The book and its current reading data stay in your Library.",
+        "Sách và dữ liệu đọc hiện tại vẫn ở trong Thư viện.",
+    ),
+    ("Remove", "Xóa"),
+    ("Move metadata archive?", "Di chuyển kho siêu dữ liệu?"),
+    (
+        "Merge saved reading data into this folder.\nKeep the newest dated copy of each edition.",
+        "Hợp nhất dữ liệu đọc đã lưu vào thư mục này.\nGiữ bản có ngày mới nhất của từng phiên bản.",
+    ),
+    ("Move", "Di chuyển"),
+    ("Start fresh", "Bắt đầu mới"),
+    ("Cancel", "Hủy"),
 ];
 
 // Fixed vocabulary-review controls; user words, book names and schedules stay untouched.
@@ -2770,6 +2815,17 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn footnote_font_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                FOOTNOTE_FONT_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn metadata_settings_text<'a>(self, english: &'a str) -> &'a str {

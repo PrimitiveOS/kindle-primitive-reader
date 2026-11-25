@@ -6448,10 +6448,9 @@ impl Reader {
             Screen::NumberingValue(NumberField::ReadingGuide(_))
         ) {
             self.controls.interface_language.reading_guide_fixed("Set")
-        } else if matches!(
-            self.screen,
-            Screen::NumberingValue(_) | Screen::FootnoteFontSize(_)
-        ) {
+        } else if matches!(self.screen, Screen::FootnoteFontSize(_)) {
+            self.controls.interface_language.footnote_font_text("Set")
+        } else if matches!(self.screen, Screen::NumberingValue(_)) {
             "Set"
         } else if self.screen == Screen::FooterCustomText {
             "Save"
@@ -9009,7 +9008,12 @@ impl Reader {
                     "Save",
                 ),
                 Screen::PdfPassword => ("PDF password", "Open"),
-                Screen::FootnoteFontSize(mode) => (mode.hint(), "Set"),
+                Screen::FootnoteFontSize(mode) => (
+                    self.controls
+                        .interface_language
+                        .footnote_font_text(mode.hint()),
+                    self.controls.interface_language.footnote_font_text("Set"),
+                ),
                 Screen::NumberingValue(NumberField::ContentDpi(_)) => {
                     ("Content zoom: 0 to 300 dpi", "Set")
                 }

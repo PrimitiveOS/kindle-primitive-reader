@@ -19,8 +19,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::book_style::{
-    CssLength, ImageLength, LigatureExtras, Style, TextDecoration, TextTransform, VariantCaps,
-    VariantEastAsian, VariantNumeric, VariantPosition,
+    CssLength, ImageLength, LigatureExtras, RubyPosition, Style, TextDecoration, TextTransform,
+    VariantCaps, VariantEastAsian, VariantNumeric, VariantPosition,
 };
 use crate::comic::ImagePage;
 use crate::epub::Book;
@@ -470,6 +470,7 @@ struct RubyCandidate {
     layout: Layout<PaintBrush>,
     line_height: f32,
     painted: bool,
+    under: bool,
 }
 
 /// Find the nearest non-overlapping placement that remains in the column.
@@ -480,6 +481,8 @@ fn ruby_position(
     column_width: f32,
     line: usize,
     painted: bool,
+    top: f32,
+    bottom: f32,
     overlays: &[RubyOverlay],
 ) -> Option<f32> {
     let (left, right) = (base.x0 as f32, base.x1 as f32);
@@ -499,7 +502,12 @@ fn ruby_position(
     }
     let mut occupied: Vec<_> = overlays
         .iter()
-        .filter(|other| other.painted && other.line == line)
+        .filter(|other| {
+            other.painted
+                && other.line == line
+                && other.top < bottom + 1.0
+                && other.bottom + 1.0 > top
+        })
         .map(|other| (other.x, other.x + other.layout.width()))
         .collect();
     if occupied
@@ -1731,8 +1739,10 @@ impl ParleyChapter {
                 for (index, line) in layout.lines().enumerate() {
                     let metrics = line.metrics();
                     let mut top = metrics.content_block_min_coord;
+                    let mut line_bottom = metrics.content_block_max_coord;
                     while let Some(overlay) = overlays.next_if(|overlay| overlay.line == index) {
                         top = top.min(overlay.top);
+                        line_bottom = line_bottom.max(overlay.bottom);
                     }
                     if index == 0
                         && let Some(bounds) = &initial_bounds
@@ -1740,7 +1750,7 @@ impl ParleyChapter {
                         top = top.min(bounds.start);
                     }
                     let top = origin + top;
-                    let line_bottom = origin + metrics.content_block_max_coord;
+                    let line_bottom = origin + line_bottom;
                     bottom = bottom.max(line_bottom);
                     if index == 0
                         && let Some(space) = margin_space.forced_top.filter(|&space| space > 0.0)
@@ -2874,7 +2884,7 @@ fn layout_with_images(
         if ruby.bytes.len() > MAX_RUBY_BASE_BYTES {
             continue;
         }
-        let Some((_, line, _)) = base_geometry(&layout, &ruby.bytes) else {
+        let Some((_, line, _, _)) = base_geometry(&layout, &ruby.bytes) else {
             continue;
         };
         // The rt element owns its own font declarations; its ID was retained
@@ -2917,6 +2927,9 @@ fn layout_with_images(
             layout: annotation,
             line_height,
             painted: ruby.painted,
+            // Our simple ruby extraction has one annotation row per base;
+            // CRE's first alternating row is over the base.
+            under: style.ruby_position == RubyPosition::Under,
         });
     }
     if candidates.is_empty() {
@@ -2939,7 +2952,8 @@ fn layout_with_images(
     );
     let mut overlays: Vec<RubyOverlay> = Vec::new();
     for candidate in candidates {
-        let Some((base, index, base_top)) = base_geometry(&layout, &candidate.bytes) else {
+        let Some((base, index, base_top, base_bottom)) = base_geometry(&layout, &candidate.bytes)
+        else {
             continue;
         };
         let ink = *candidate.layout.get(0).unwrap().metrics();
@@ -2947,9 +2961,17 @@ fn layout_with_images(
         let line = layout.get(index).unwrap();
         let metrics = line.metrics();
         let height = ink.content_block_max_coord - ink.content_block_min_coord;
-        let bottom = base_top - 2.0;
-        let top = bottom - height;
-        if top < metrics.block_min_coord || annotation_width > width as f32 {
+        let (top, bottom) = if candidate.under {
+            let top = base_bottom + 2.0;
+            (top, top + height)
+        } else {
+            let bottom = base_top - 2.0;
+            (bottom - height, bottom)
+        };
+        if top < metrics.block_min_coord
+            || bottom > metrics.block_max_coord
+            || annotation_width > width as f32
+        {
             continue;
         }
         let Some(x) = ruby_position(
@@ -2958,6 +2980,8 @@ fn layout_with_images(
             width as f32,
             index,
             candidate.painted,
+            top,
+            bottom,
             &overlays,
         ) else {
             continue;
@@ -2979,7 +3003,7 @@ fn layout_with_images(
 fn base_geometry(
     layout: &Layout<PaintBrush>,
     bytes: &Range<usize>,
-) -> Option<(BoundingBox, usize, f32)> {
+) -> Option<(BoundingBox, usize, f32, f32)> {
     let start = Cursor::from_byte_index(layout, bytes.start, Affinity::Downstream);
     let end = Cursor::from_byte_index(layout, bytes.end, Affinity::Upstream);
     if start.index() != bytes.start || end.index() != bytes.end {
@@ -2997,12 +3021,14 @@ fn base_geometry(
         return None;
     }
     let mut top = line.metrics().content_block_min_coord;
+    let mut bottom = line.metrics().content_block_max_coord;
     if layout.inline_boxes().len() > 0 {
         let mut has_artwork = false;
         let mut glyph_top = f32::INFINITY;
+        let mut glyph_bottom = f32::NEG_INFINITY;
         // Selection gives a preceding inline box to the first selected cluster.
-        // Ruby sits above its base text, so the box cannot set either its center
-        // or its vertical clearance.
+        // Ruby must clear its base text, so the box cannot set either its
+        // center or its vertical clearance.
         for item in line.items() {
             match item {
                 PositionedLayoutItem::InlineBox(art) => {
@@ -3024,6 +3050,8 @@ fn base_geometry(
                     let text = run.text_range();
                     if text.start < bytes.end && bytes.start < text.end {
                         glyph_top = glyph_top.min(glyphs.baseline() - run.font_metrics().ascent);
+                        glyph_bottom =
+                            glyph_bottom.max(glyphs.baseline() + run.font_metrics().descent);
                     }
                 }
             }
@@ -3031,8 +3059,11 @@ fn base_geometry(
         if has_artwork && glyph_top.is_finite() {
             top = glyph_top;
         }
+        if has_artwork && glyph_bottom.is_finite() {
+            bottom = glyph_bottom;
+        }
     }
-    (bounds.width() > 0.0).then_some((bounds, row, top))
+    (bounds.width() > 0.0).then_some((bounds, row, top, bottom))
 }
 
 /// Rasterize typographic bullets geometrically so a book font lacking U+25E6 cannot show tofu.

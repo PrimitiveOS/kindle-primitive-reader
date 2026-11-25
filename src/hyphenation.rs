@@ -144,12 +144,12 @@ impl Dictionary {
             return None;
         }
         match (primary, lang.region()) {
-            ("en", None | Some("US")) => Some(Self::American),
             ("en", Some("GB")) => Some(Self::British),
+            ("en", _) => Some(Self::American),
             ("es", _) => Some(Self::Spanish),
             ("it", _) => Some(Self::Italian),
-            ("pt", None | Some("PT")) => Some(Self::Portuguese),
             ("pt", Some("BR")) => Some(Self::PortugueseBrazil),
+            ("pt", _) => Some(Self::Portuguese),
             ("et", _) => Some(Self::Estonian),
             ("fi", _) => Some(Self::Finnish),
             ("da", _) => Some(Self::Danish),
@@ -1681,7 +1681,7 @@ mod tests {
         assert_eq!(starts.len(), 6);
         let expected: Vec<_> = starts
             .into_iter()
-            .zip([&[3, 4, 6][..], &[5, 7], &[5, 7], &[], &[], &[]])
+            .zip([&[3, 4, 6][..], &[5, 7], &[5, 7], &[], &[3, 4, 6], &[]])
             .flat_map(|(start, offsets)| offsets.iter().map(move |end| start + end))
             .collect();
         let actual = opportunities(

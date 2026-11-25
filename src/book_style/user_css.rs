@@ -46,6 +46,7 @@ impl Reset {
                         | LAST_LINE_ALIGNMENT
                         | TEXT_TRANSFORM
                         | OPTICAL_SIZING
+                        | RUBY_POSITION
                         | DIRECTION
                         | LETTER_SPACING
                         | VARIANT_CAPS
@@ -124,6 +125,7 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "border-collapse" => vec![24],
         "border-spacing" => vec![37],
         "caption-side" => vec![CAPTION_SIDE],
+        "ruby-position" => vec![RUBY_POSITION],
         _ => return None,
     };
     Some(Property::ResetMany(keys, kind))
@@ -157,6 +159,7 @@ pub(super) fn apply_reset(
         LAST_LINE_ALIGNMENT => style.last_line_alignment = value.last_line_alignment,
         TEXT_TRANSFORM => style.text_transform = value.text_transform,
         OPTICAL_SIZING => style.optical_sizing = value.optical_sizing,
+        RUBY_POSITION => style.ruby_position = value.ruby_position,
         5 => style.font_weight = value.font_weight,
         6 => style.font_style = value.font_style,
         COMMON_LIGATURES => style.common_ligatures = value.common_ligatures,

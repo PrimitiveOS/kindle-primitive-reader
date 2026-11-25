@@ -481,6 +481,14 @@ pub(crate) enum TextTransform {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RubyPosition {
+    #[default]
+    Alternate,
+    Over,
+    Under,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LigatureExtras {
     pub(crate) contextual: Option<bool>,
     pub(crate) discretionary: Option<bool>,
@@ -605,6 +613,7 @@ pub(crate) struct Style {
     pub(crate) last_line_alignment: Option<Alignment>,
     pub(crate) text_transform: TextTransform,
     pub(crate) optical_sizing: bool,
+    pub(crate) ruby_position: RubyPosition,
     pub line_break: Option<LineBreak>,
     /// CRE's private line-break mode, retained separately from standard CSS.
     pub(crate) loose_nonbreaking: bool,
@@ -683,6 +692,7 @@ impl Default for Style {
             last_line_alignment: None,
             text_transform: TextTransform::None,
             optical_sizing: true,
+            ruby_position: RubyPosition::Alternate,
             line_break: None,
             loose_nonbreaking: false,
             word_break: WordBreak::Normal,
@@ -1349,6 +1359,7 @@ impl BookStyle {
                     }
                     Property::TextTransform(value) => style.text_transform = *value,
                     Property::OpticalSizing(value) => style.optical_sizing = *value,
+                    Property::RubyPosition(value) => style.ruby_position = *value,
                     Property::Weight(weight) => {
                         style.font_weight = weight.resolve(parent.font_weight)
                     }
@@ -2217,7 +2228,8 @@ const LIGATURE_EXTRAS: usize = 63;
 const LAST_LINE_ALIGNMENT: usize = 64;
 const TEXT_TRANSFORM: usize = 65;
 const OPTICAL_SIZING: usize = 66;
-const CASCADE_PROPERTY_COUNT: usize = 67;
+const RUBY_POSITION: usize = 67;
+const CASCADE_PROPERTY_COUNT: usize = 68;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2280,6 +2292,7 @@ fn choose<'a>(
             Property::LastLineAlignment(_) => LAST_LINE_ALIGNMENT,
             Property::TextTransform(_) => TEXT_TRANSFORM,
             Property::OpticalSizing(_) => OPTICAL_SIZING,
+            Property::RubyPosition(_) => RUBY_POSITION,
             Property::Weight(_) => 5,
             Property::Slant(_) => 6,
             Property::CommonLigatures(_) => COMMON_LIGATURES,
@@ -2404,6 +2417,7 @@ enum Property {
     LastLineAlignment(Option<Alignment>),
     TextTransform(TextTransform),
     OpticalSizing(bool),
+    RubyPosition(RubyPosition),
     Weight(Weight),
     Slant(FontStyle),
     CommonLigatures(bool),
@@ -2967,6 +2981,14 @@ impl<'i> DeclarationParser<'i> for Properties {
                     match input.expect_ident()?.to_ascii_lowercase().as_str() {
                         "top" => false,
                         "bottom" => true,
+                        _ => return Err(ParseError::unexpected_token()),
+                    },
+                ),
+                "ruby-position" => Property::RubyPosition(
+                    match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "alternate" => RubyPosition::Alternate,
+                        "over" => RubyPosition::Over,
+                        "under" => RubyPosition::Under,
                         _ => return Err(ParseError::unexpected_token()),
                     },
                 ),

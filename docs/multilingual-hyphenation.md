@@ -5,6 +5,10 @@ dictionary row names the main language's dictionary. **Hyphenation limits**
 shows its default character counts, and a saved global override applies to
 all supported dictionaries. Embedded language tags select their own rules
 inside a mixed-language book when **Respect embedded language tags** is on.
+English regions other than Great Britain use the US dictionary, and Portuguese
+regions other than Brazil use the Portugal dictionary, following the pinned
+KOReader primary-language fallback. Explicit non-Latin scripts do not select
+these dictionaries. Regional and real-book behavior remains unverified.
 
 | Dictionary | Before / after | Pinned rules |
 | --- | ---: | ---: |

@@ -218,6 +218,15 @@ one without sufficient vertical clearance is omitted. This bounded layout does
 not widen or reflow the base to fit the
 annotation. Complex ruby arrangements remain outside the supported subset.
 These changes have not yet been built or behaviorally tested.
+
+Publisher and user CSS can set `ruby-position: over`, `under` or `alternate`
+on the supported single-row horizontal ruby annotations. `alternate` starts
+over the base, as in CRE. Reader reserves line space on both sides, checks
+base clearance and annotation collisions, and skips an annotation when it
+cannot be placed safely. Multiple annotation rows, more complex ruby markup,
+vertical layout and Blitz remain outside this subset. Source text and saved
+anchors are unchanged; this behavior has not yet been built or tested.
+[Pinned CRE ruby ordering](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L2319-L2333)
 [CREngine ruby boxing](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvtinydom.cpp#L8236-L8268)
 
 **Allow hyphenation on all text** overrides publisher hyphenation restrictions

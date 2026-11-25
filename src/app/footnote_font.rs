@@ -76,11 +76,13 @@ impl Reader {
             .ok()
             .filter(|value| mode.range().contains(value))
             .ok_or_else(|| {
-                match mode {
-                    Mode::Relative => "Enter a whole-number offset from -10 to +5",
-                    Mode::Fixed => "Enter a whole number from 12 to 255",
-                }
-                .into()
+                self.controls
+                    .interface_language
+                    .footnote_font_text(match mode {
+                        Mode::Relative => "Enter a whole-number offset from -10 to +5",
+                        Mode::Fixed => "Enter a whole number from 12 to 255",
+                    })
+                    .into()
             })
     }
 
@@ -134,11 +136,26 @@ impl Reader {
         let layout = self.numeric_layout();
         let [relative, fixed] = layout.choices([RELATIVE, FIXED]);
         let [decrease, caption, increase] = layout.steps(FOOTNOTE_STEPS, true);
-        canvas.button(relative, "Relative", mode == Mode::Relative, false);
-        canvas.button(fixed, "Fixed", mode == Mode::Fixed, false);
+        let language = self.controls.interface_language;
+        canvas.button(
+            relative,
+            language.footnote_font_text("Relative"),
+            mode == Mode::Relative,
+            false,
+        );
+        canvas.button(
+            fixed,
+            language.footnote_font_text("Fixed"),
+            mode == Mode::Fixed,
+            false,
+        );
         StepButtons::new(decrease, increase).draw(canvas);
         if !layout.is_landscape() {
-            canvas.text(caption, mode.hint(), CAPTION.center());
+            canvas.text(
+                caption,
+                language.footnote_font_text(mode.hint()),
+                CAPTION.center(),
+            );
         }
     }
 }

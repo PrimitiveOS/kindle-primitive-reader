@@ -281,8 +281,8 @@ impl Reader {
                 self.show(Screen::MetadataArchive(Page::Settings));
             }
             Command::About => self.metadata_archive.confirmation = Some(Confirmation::Info {
-                title: "About the archive".into(),
-                text: "The archive keeps settings, reading position, notes and highlights. Open a matching edition to recover its saved data. The original book stays where it is.".into(),
+                title: self.controls.interface_language.metadata_settings_text("About the archive").into(),
+                text: self.controls.interface_language.metadata_settings_text("The archive keeps settings, reading position, notes and highlights. Open a matching edition to recover its saved data. The original book stays where it is.").into(),
             }),
             Command::ReadMark(title, text) => {
                 self.metadata_archive.confirmation = Some(Confirmation::Info { title, text });
@@ -453,32 +453,34 @@ impl Reader {
     }
 
     fn metadata_archive_sheet(&self) -> Option<Sheet<'_>> {
+        let language = self.controls.interface_language;
         let layout = self.navigation_layout();
         let screen = Rect::new(0, 0, layout.width, layout.height);
         Some(match self.metadata_archive.confirmation.as_ref()? {
             Confirmation::Restore { .. } => Sheet::centered(
                 screen,
-                "Restore book metadata?",
-                "Restore progress, settings and marks.\nStart fresh removes the saved copy.",
-                "Restore",
+                language.metadata_settings_text("Restore book metadata?"),
+                language.metadata_settings_text("Restore progress, settings and marks.\nStart fresh removes the saved copy."),
+                language.metadata_settings_text("Restore"),
             ),
             Confirmation::Info { .. } => return None,
             Confirmation::Remove(_) => Sheet::centered(
                 screen,
-                "Remove this saved copy?",
-                "The book and its current reading data stay in your Library.",
-                "Remove",
+                language.metadata_settings_text("Remove this saved copy?"),
+                language.metadata_settings_text("The book and its current reading data stay in your Library."),
+                language.metadata_settings_text("Remove"),
             ),
             Confirmation::Move(_) => Sheet::centered(
                 screen,
-                "Move metadata archive?",
-                "Merge saved reading data into this folder.\nKeep the newest dated copy of each edition.",
-                "Move",
+                language.metadata_settings_text("Move metadata archive?"),
+                language.metadata_settings_text("Merge saved reading data into this folder.\nKeep the newest dated copy of each edition."),
+                language.metadata_settings_text("Move"),
             ),
         })
     }
 
     pub(super) fn draw_metadata_archive_confirmation(&self, canvas: &mut Canvas) {
+        let language = self.controls.interface_language;
         if let Some((panel, done, title, text)) = self.metadata_archive_info() {
             canvas.popup(panel);
             let body = panel.inset(canvas.px(48));
@@ -493,7 +495,7 @@ impl Reader {
                 text,
                 BODY.lines(7),
             );
-            canvas.button(done, "Done", true, false);
+            canvas.button(done, language.metadata_settings_text("Done"), true, false);
         } else if let Some(sheet) = self.metadata_archive_sheet() {
             let pressed = [SheetAction::Cancel, SheetAction::Confirm]
                 .into_iter()
@@ -503,7 +505,14 @@ impl Reader {
                 let cancel = sheet.button(SheetAction::Cancel);
                 canvas.button(
                     cancel,
-                    "Start fresh",
+                    language.metadata_settings_text("Start fresh"),
+                    false,
+                    pressed == Some(SheetAction::Cancel),
+                );
+            } else if !language.is_english() {
+                canvas.button(
+                    sheet.button(SheetAction::Cancel),
+                    language.metadata_settings_text("Cancel"),
                     false,
                     pressed == Some(SheetAction::Cancel),
                 );
