@@ -31,6 +31,24 @@ struct Archive {
     books: Vec<Snapshot>,
 }
 
+// Encoded library JSON is stored as a string so the strict v2 decoder sees
+// the original bytes, including any duplicate keys in untrusted input.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawArchive {
+    version: u32,
+    books: Vec<RawSnapshot>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawSnapshot {
+    revision: String,
+    saved_at: Option<i64>,
+    saved_on: SavedOn,
+    library: String,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum MoveOutcome {
     Moved,
@@ -68,10 +86,46 @@ impl Archive {
                 "The book metadata archive exceeds its size limit",
             ));
         }
-        let mut archive: Self = serde_json::from_slice(&data)
+        let header: serde_json::Value = serde_json::from_slice(&data)
             .map_err(|_| invalid_state("The book metadata archive cannot be read"))?;
+        let mut archive: Self = if header.get("version").and_then(serde_json::Value::as_u64)
+            == Some(2)
+        {
+            let _: super::raw_v2::UniqueValue = serde_json::from_slice(&data).map_err(|_| {
+                invalid_state("The book metadata archive contains duplicate fields")
+            })?;
+            let raw: RawArchive = serde_json::from_slice(&data)
+                .map_err(|_| invalid_state("The book metadata archive cannot be read"))?;
+            if raw.version != 2 || raw.books.len() > MAX_BACKUP_BOOKS {
+                return Err(invalid_state(
+                    "The book metadata archive has an unsupported version or size",
+                ));
+            }
+            let mut books = Vec::with_capacity(raw.books.len());
+            for record in raw.books {
+                let mut library = super::raw_v2::decode(record.library.as_bytes())?;
+                if library.books.len() != 1
+                    || !library.collections.is_empty()
+                    || library.page_browser_grid.is_some()
+                {
+                    return Err(invalid_state(
+                        "The archived edition contains unrelated library data",
+                    ));
+                }
+                books.push(Snapshot {
+                    revision: record.revision,
+                    saved_at: record.saved_at,
+                    saved_on: record.saved_on,
+                    book: library.books.pop().expect("one validated book"),
+                });
+            }
+            Self { version: 2, books }
+        } else {
+            serde_json::from_slice(&data)
+                .map_err(|_| invalid_state("The book metadata archive cannot be read"))?
+        };
         let mut ids = HashSet::new();
-        if archive.version != VERSION
+        if !matches!(archive.version, VERSION | 2)
             || archive.books.len() > MAX_BACKUP_BOOKS
             || !archive.books.iter().all(|record| {
                 safe_path(&record.book.path)
@@ -87,15 +141,51 @@ impl Archive {
                 "The book metadata archive contains invalid records",
             ));
         }
-        for record in &mut archive.books {
-            record.book.custom_contents.sanitize();
-            record.book.hidden_flows.sanitize();
+        if archive.version == VERSION {
+            for record in &mut archive.books {
+                record.book.custom_contents.sanitize();
+                record.book.hidden_flows.sanitize();
+            }
         }
         Ok(archive)
     }
 
     fn save(&self, path: &Path) -> io::Result<FileStamp> {
-        let bytes = state_json(self, MAX_BYTES)?;
+        let write_v2 = self.version == 2
+            || self
+                .books
+                .iter()
+                .any(|record| super::raw_v2::book_has_raw(&record.book));
+        let bytes = if write_v2 {
+            let mut records = Vec::with_capacity(self.books.len());
+            for record in &self.books {
+                let encoded = super::raw_v2::encode(&SavedLibrary {
+                    version: 2,
+                    books: vec![record.book.clone()],
+                    collections: Vec::new(),
+                    page_browser_grid: None,
+                })?;
+                records.push(RawSnapshot {
+                    revision: record.revision.clone(),
+                    saved_at: record.saved_at,
+                    saved_on: record.saved_on,
+                    library: String::from_utf8(encoded).map_err(io::Error::other)?,
+                });
+            }
+            state_json(
+                &RawArchive {
+                    version: 2,
+                    books: records,
+                },
+                MAX_BYTES,
+            )?
+        } else {
+            state_json(self, MAX_BYTES)?
+        };
+        let previous_stamp = if write_v2 { archive_stamp(path)? } else { None };
+        if write_v2 {
+            retain_v1_archive(path)?;
+        }
         let temporary =
             path.with_file_name(format!(".reader-metadata-{}.tmp", archive_revision()?));
         let mut file = OpenOptions::new()
@@ -116,7 +206,15 @@ impl Archive {
             if !owns_path() {
                 return Err(io::Error::other("The temporary metadata archive changed"));
             }
+            if write_v2 && archive_stamp(path)? != previous_stamp {
+                return Err(io::Error::other(
+                    "The metadata archive changed before saving",
+                ));
+            }
             fs::rename(&temporary, path)?;
+            if write_v2 {
+                sync_directory(path.parent().ok_or_else(denied)?)?;
+            }
             FileStamp::from(&file.metadata()?)
         })();
         if result.is_err() && owns_path() {
@@ -126,6 +224,7 @@ impl Archive {
     }
 
     fn merge(&mut self, source: Self) -> io::Result<bool> {
+        self.version = self.version.max(source.version);
         let mut date_conflict = false;
         let mut indices: HashMap<_, _> = self
             .books
@@ -156,6 +255,84 @@ impl Archive {
         }
         Ok(date_conflict)
     }
+}
+
+/// Preserve the exact v1 archive before replacing it with a v2 envelope.
+/// Caller holds the archive lock. Never overwrite an incomplete prior backup.
+fn retain_v1_archive(path: &Path) -> io::Result<()> {
+    let file = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if !file.metadata()?.is_file() || file.metadata()?.len() > MAX_BYTES {
+        return Err(invalid_state(
+            "The book metadata archive is unavailable or too large",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(invalid_state(
+            "The book metadata archive exceeds its size limit",
+        ));
+    }
+    let super::raw_v2::UniqueValue(value) = serde_json::from_slice(&bytes).map_err(|_| {
+        invalid_state("The book metadata archive contains duplicate or invalid fields")
+    })?;
+    if value.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+        return Ok(());
+    }
+    let normalized = Archive::open(path)?;
+    if serde_json::to_value(&normalized).map_err(io::Error::other)? != value {
+        return Err(invalid_state(
+            "The v1 metadata archive cannot be upgraded without losing data",
+        ));
+    }
+    let hash = ring::digest::digest(&ring::digest::SHA256, &bytes);
+    let suffix = hash
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let folder = path.parent().ok_or_else(denied)?;
+    let backup = folder.join(format!(".primitive-reader-book-metadata.v1-{suffix}.bak"));
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&backup)
+    {
+        Ok(mut file) => {
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            sync_directory(folder)?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    let stored = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&backup)?;
+    if !stored.metadata()?.is_file() || stored.metadata()?.len() > MAX_BYTES {
+        return Err(invalid_state(
+            "The retained v1 metadata archive is unavailable",
+        ));
+    }
+    let mut retained = Vec::new();
+    stored.take(MAX_BYTES + 1).read_to_end(&mut retained)?;
+    if retained != bytes {
+        return Err(invalid_state(
+            "The retained v1 metadata archive is incomplete or changed",
+        ));
+    }
+    Ok(())
 }
 
 fn archive_stamp(path: &Path) -> io::Result<Option<FileStamp>> {

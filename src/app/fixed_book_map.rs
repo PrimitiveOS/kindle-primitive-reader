@@ -12,6 +12,12 @@ const ROWS: usize = 8;
 const CAPACITY: usize = ROWS * COLUMNS;
 const TOP: i32 = 214;
 const GAP: i32 = 10;
+const HELP_PANEL: Rect = Rect::new(160, 420, 944, 900);
+const HELP_DONE: Rect = Rect::new(868, 443, 197, 100);
+
+fn help_button(layout: NavigationLayout) -> Rect {
+    Rect::new((layout.width - 260) / 2, layout.height - 118, 260, 100)
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct MapWindow {
@@ -355,21 +361,43 @@ impl Reader {
                         ink,
                     );
                 }
-                if state
+                let highlighted = state
                     .pdf_highlights
                     .iter()
-                    .any(|mark| mark.parts().any(|(page, _, _)| slot.contains(&page)))
-                {
+                    .any(|mark| mark.parts().any(|(page, _, _)| slot.contains(&page)));
+                let noted = state.bookmarks.iter().any(|mark| {
+                    mark.position.chapter == 0
+                        && mark.position.anchor.is_none()
+                        && slot.contains(&mark.position.page)
+                        && mark
+                            .note
+                            .as_ref()
+                            .is_some_and(|note| !note.trim().is_empty())
+                }) || state.pdf_highlights.iter().any(|mark| {
+                    mark.note
+                        .as_ref()
+                        .is_some_and(|note| !note.trim().is_empty())
+                        && mark.parts().any(|(page, _, _)| slot.contains(&page))
+                });
+                let separate_note = highlighted && noted && !hidden && rect.w >= 150;
+                if highlighted && (!noted || separate_note) {
                     canvas.icon(
                         Rect::new(rect.x + 50, icon_y, 30, 30),
                         bar_icons::HIGHLIGHT,
                         ink,
                     );
                 }
+                if noted {
+                    canvas.icon(
+                        Rect::new(rect.x + if separate_note { 88 } else { 50 }, icon_y, 30, 30),
+                        bar_icons::EDIT,
+                        ink,
+                    );
+                }
             }
             if hidden {
                 canvas.text(
-                    Rect::new(rect.right() - 116, rect.bottom() - 50, 104, 34),
+                    Rect::new(rect.right() - 105, rect.bottom() - 50, 93, 34),
                     language.book_map_text("Hidden"),
                     TextStyle::new(22).ink(ink),
                 );
@@ -404,6 +432,72 @@ impl Reader {
         if window.adjacent(true, count).is_some() {
             canvas.button(layout.next(), language.book_map_text("Next"), false, false);
         }
+        canvas.button(
+            help_button(layout),
+            language.book_map_text("Help"),
+            false,
+            false,
+        );
+        if self.fixed_map_help {
+            self.draw_fixed_map_help(canvas, layout);
+        }
+    }
+
+    fn draw_fixed_map_help(&self, canvas: &mut Canvas, layout: NavigationLayout) {
+        let language = self.controls.interface_language;
+        let place = |rect| layout.centered(rect);
+        canvas.popup(place(HELP_PANEL));
+        canvas.text(
+            place(Rect::new(196, 449, 624, 84)),
+            language.book_map_text("Book map help"),
+            TextStyle::new(42).bold(),
+        );
+        canvas.button(
+            place(HELP_DONE),
+            language.book_map_text("Done"),
+            true,
+            false,
+        );
+        for (index, line) in [
+            "Tap a group to zoom. Tap one page to preview or read it.",
+            "Page buttons move groups. Back returns to the prior view.",
+            "Bookmark, marker and pencil icons indicate bookmarks, highlights and notes.",
+            "Reading-time bars show visits; gray includes this session when known.",
+            "Filled numbered badges are previous locations; outlines are next locations.",
+            "Shading indicates hidden pages; the small outline marks the browser focus.",
+            "In a crowded slot, a note icon can replace a highlight icon.",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            canvas.text(
+                place(Rect::new(196, 555 + index as i32 * 82, 864, 76)),
+                language.book_map_text(line),
+                TextStyle::new(25).lines(2),
+            );
+        }
+    }
+
+    pub(super) fn fixed_map_help_input(&mut self, input: Input) -> Option<Change> {
+        if matches!(input, Input::Sleep | Input::Wake) {
+            return None;
+        }
+        let layout = self.navigation_layout();
+        if self.fixed_map_help {
+            if matches!(input, Input::PageBack)
+                || matches!(input, Input::Tap(x, y) if layout.centered(HELP_DONE).contains(x, y)
+                    || layout.back().contains(x, y) || !layout.centered(HELP_PANEL).contains(x, y))
+            {
+                self.fixed_map_help = false;
+                return Some(Change::Partial);
+            }
+            return Some(Change::None);
+        }
+        if matches!(input, Input::Tap(x, y) if help_button(layout).contains(x, y)) {
+            self.fixed_map_help = true;
+            return Some(Change::Partial);
+        }
+        None
     }
 
     pub(super) fn fixed_map_input(&mut self, input: Input) -> Change {

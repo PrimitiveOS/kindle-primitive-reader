@@ -22,10 +22,10 @@ The latter also supports other compression and color modes, so this is a subset
 of KOReader's TIFF support, not complete TIFF parity. [KOReader TIFF provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L410-L415) · [Pinned MuPDF TIFF decoder](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L360-L369) · [PackBits filter](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L408-L418) · [TIFF 6.0 specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
 These additions have not yet been compared against KOReader or exercised on
-the simulator or Kindle. Associated-alpha white-is-zero grayscale and palette images, packed palette alpha, profiled or nonstandard CMYK, multi-page and tiled TIFFs and CCITT Group 3 remain outside this decoder's support. [TIFF 6.0 LZW
+the simulator or Kindle. Associated-alpha white-is-zero grayscale and palette images, packed palette alpha, profiled or nonstandard CMYK, multi-page and tiled TIFFs and advanced fax options remain outside this decoder's support. [TIFF 6.0 LZW
 and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
-## CCITT Group 4 scans
+## CCITT Group 3 and 4 scans
 
 Single-sample, one-bit grayscale strips with TIFF CCITT Group 4 compression can
 use Reader's already packaged `hayro-ccitt` 0.5.0 decoder. Each strip has a
@@ -33,8 +33,12 @@ fresh strict decoder context, a 4 MiB compressed-input cap and the existing
 image and strip dimension limits. Reader requires exactly the declared rows,
 rejects malformed data and nonzero trailing bytes, and maps the resulting
 white/black runs to the TIFF photometric polarity. Reverse fill order uses the
-existing bounded compressed-byte reversal. Group 3, nonzero T6 options, alpha,
-other bit depths and predictors are not supported by this path. The decoder's
+existing bounded compressed-byte reversal. The same bounded path accepts
+Group 3 one-dimensional strips with default T4 options and an initial unpadded
+end-of-line marker. Group 3 two-dimensional or nondefault options, nonzero T6
+options, TIFF CCITT compression 2, alpha, other bit depths and predictors are
+not supported by this path. Exact end-of-line and return-to-control behavior
+has not yet been compared with KOReader. The decoder's
 Apache-2.0/MIT notices are included in the existing third-party package notices;
 the TIFF integration has not been compared with KOReader or behaviorally
 verified in simulation or on Kindle. [Pinned MuPDF fax handling](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L368-L399) · [Third-party notices](licenses/THIRD-PARTY.txt)

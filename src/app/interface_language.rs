@@ -3704,6 +3704,30 @@ impl InterfaceLanguage {
         }
         match english {
             "Book map" => "Sơ đồ sách",
+            "Book map help" => "Trợ giúp sơ đồ sách",
+            "Help" => "Trợ giúp",
+            "Done" => "Xong",
+            "Tap a group to zoom. Tap one page to preview or read it." => {
+                "Chạm nhóm để phóng to. Chạm một trang để xem trước hoặc đọc."
+            }
+            "Page buttons move groups. Back returns to the prior view." => {
+                "Dùng nút trang để chuyển nhóm. Quay lại mở màn hình trước."
+            }
+            "Bookmark, marker and pencil icons indicate bookmarks, highlights and notes." => {
+                "Biểu tượng dấu trang, bút tô và bút chì biểu thị dấu trang, tô sáng và ghi chú."
+            }
+            "Reading-time bars show visits; gray includes this session when known." => {
+                "Thanh thời gian cho biết lượt đọc; màu xám có lượt trong phiên này khi xác định được."
+            }
+            "Filled numbered badges are previous locations; outlines are next locations." => {
+                "Ô số đặc là vị trí trước; ô có viền là vị trí sau."
+            }
+            "Shading indicates hidden pages; the small outline marks the browser focus." => {
+                "Vùng tô xám biểu thị trang ẩn; ô viền nhỏ đánh dấu trang đang duyệt."
+            }
+            "In a crowded slot, a note icon can replace a highlight icon." => {
+                "Khi ô chật, biểu tượng ghi chú có thể thay biểu tượng tô sáng."
+            }
             "Back" => "Quay lại",
             "Pages" => "Trang",
             "Reading page" => "Trang đang đọc",

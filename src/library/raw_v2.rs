@@ -431,7 +431,7 @@ fn contains_raw_field(value: &Value) -> bool {
 
 /// `serde_json::Value` normally accepts duplicate keys by keeping the last.
 /// Reject them here so two competing caret fields can never be collapsed.
-struct UniqueValue(Value);
+pub(super) struct UniqueValue(pub(super) Value);
 
 impl<'de> Deserialize<'de> for UniqueValue {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {

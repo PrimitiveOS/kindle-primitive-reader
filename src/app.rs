@@ -1135,6 +1135,7 @@ pub struct Reader {
     flexible_marks: Option<saved_marks_view::FlexibleMarks>,
     publisher_label_canvas: std::cell::RefCell<Option<Canvas>>,
     map_window: fixed_book_map::MapWindow,
+    fixed_map_help: bool,
     book_map_focus: Option<usize>,
     ribbon_maps: Vec<page_overview::RibbonMap>,
     back: Vec<HistoryLocation>,
@@ -1405,6 +1406,7 @@ impl Reader {
             flexible_marks: None,
             publisher_label_canvas: Default::default(),
             map_window: fixed_book_map::MapWindow::default(),
+            fixed_map_help: false,
             book_map_focus: None,
             ribbon_maps: Vec::new(),
             back: Vec::new(),
@@ -2252,6 +2254,9 @@ impl Reader {
         }
         if screen != Screen::PageOverview {
             self.overview = None;
+        }
+        if screen != Screen::BookMap {
+            self.fixed_map_help = false;
         }
         if !matches!(screen, Screen::PageOverview | Screen::BookMap) {
             self.ribbon_maps.clear();
@@ -10562,6 +10567,12 @@ impl App for Reader {
         } else {
             input
         };
+        if self.screen == Screen::BookMap
+            && self.fixed.is_some()
+            && let Some(change) = self.fixed_map_help_input(input)
+        {
+            return change;
+        }
         if self.range_edit.is_some() {
             return self.range_input(input);
         }

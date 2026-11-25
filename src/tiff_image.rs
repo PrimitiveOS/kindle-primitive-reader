@@ -116,8 +116,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         || bits_values.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != bits))
         || formats.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != 1))
         || !(fill_order == 1 || (bits < 8 && fill_order == 2))
-        || !matches!(compression, 1 | 4 | 5 | 8 | 32946 | 32773)
-        || (compression == 4 && (!matches!(photometric, 0 | 1) || samples != 1 || bits != 1 || predictor != 1 || image.scalar(293, LONG_ONLY, 0)? != 0))
+        || !matches!(compression, 1 | 3 | 4 | 5 | 8 | 32946 | 32773)
+        || (matches!(compression, 3 | 4) && (!matches!(photometric, 0 | 1) || samples != 1 || bits != 1 || predictor != 1 || image.scalar(if compression == 3 { 292 } else { 293 }, LONG_ONLY, 0)? != 0))
         || !matches!(orientation, 1..=8)
         || image.scalar(284, SHORT_ONLY, 1)? != 1 // PlanarConfiguration
         || !(predictor == 1 || (predictor == 2 && (matches!(bits, 8 | 16) || (samples == 1 && matches!(bits, 1 | 2 | 4))) && matches!(compression, 5 | 8 | 32946)))
@@ -226,7 +226,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         let strip = &bytes[range];
         let rows = remaining_rows.min(rows_per_strip) as usize;
         remaining_rows -= rows as u32;
-        let reverse_compressed = fill_order == 2 && matches!(compression, 4 | 5 | 8 | 32946);
+        let reverse_compressed = fill_order == 2 && matches!(compression, 3 | 4 | 5 | 8 | 32946);
         let reversed = if reverse_compressed {
             if strip.len() > MAX_REVERSED_COMPRESSED_STRIP {
                 return Err(TiffError::Limit);
@@ -243,7 +243,13 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         let compressed = reversed.as_deref().unwrap_or(strip);
         let mut unpacked = match compression {
             32773 => Some(unpack_packbits(compressed, row_bytes, rows)?),
-            4 => Some(unpack_group4(compressed, width, rows, photometric)?),
+            3 | 4 => Some(unpack_fax(
+                compressed,
+                width,
+                rows,
+                photometric,
+                compression,
+            )?),
             5 => Some(unpack_lzw(compressed, row_bytes, rows)?),
             8 | 32946 => Some(unpack_deflate(compressed, row_bytes, rows)?),
             _ => None,
@@ -297,7 +303,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         let strip = unpacked.as_deref().unwrap_or(strip);
         // Reversing the compressed stream already normalized its packed
         // samples. Existing stored and PackBits fill-order handling is kept.
-        let sample_fill_order = if reverse_compressed || compression == 4 {
+        let sample_fill_order = if reverse_compressed || matches!(compression, 3 | 4) {
             1
         } else {
             fill_order
@@ -436,13 +442,14 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     GrayImage::from_raw(out_width, out_height, visual).ok_or(TiffError::Strips)
 }
 
-/// Decode one TIFF Group 4 strip to MSB-first samples. The decoder reports
+/// Decode one TIFF Group 3 1D or Group 4 strip to MSB-first samples. The decoder reports
 /// physical white/black runs, so choose sample values for the TIFF polarity.
-fn unpack_group4(
+fn unpack_fax(
     input: &[u8],
     width: u32,
     rows: usize,
     photometric: u32,
+    compression: u32,
 ) -> Result<Vec<u8>, TiffError> {
     use hayro_ccitt::{DecodeSettings, Decoder, DecoderContext, EncodingMode};
 
@@ -479,6 +486,13 @@ fn unpack_group4(
     if input.len() > MAX_REVERSED_COMPRESSED_STRIP {
         return Err(TiffError::Limit);
     }
+    // The supported Group 3 subset has an initial, unpadded EOL. Do not
+    // interpret unframed or option-dependent streams as this format.
+    if compression == 3
+        && !(input.first() == Some(&0) && input.get(1).is_some_and(|&byte| byte & 0xf0 == 0x10))
+    {
+        return Err(TiffError::Strips);
+    }
     let stride = (width as usize).div_ceil(8);
     let length = stride.checked_mul(rows).ok_or(TiffError::Limit)?;
     let white = if photometric == 0 { 0 } else { 255 };
@@ -494,9 +508,13 @@ fn unpack_group4(
         columns: width,
         rows: u32::try_from(rows).map_err(|_| TiffError::Limit)?,
         end_of_block: true,
-        end_of_line: false,
+        end_of_line: compression == 3,
         rows_are_byte_aligned: false,
-        encoding: EncodingMode::Group4,
+        encoding: if compression == 3 {
+            EncodingMode::Group3_1D
+        } else {
+            EncodingMode::Group4
+        },
         strict: true,
     };
     let mut context = DecoderContext::new(settings);

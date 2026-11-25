@@ -186,3 +186,16 @@ For split ODT and large text documents, a raw anchor already in a current
 section survives the legacy migration check unchanged; opening the page still
 validates its source fingerprint. Raw anchors that would require translation
 from an older unsplit section remain rejected. This path remains untested.
+
+Canonical links and saved positions into a raw-rendered block resolve through
+the verified raw line model only when both boundary affinities identify the same
+raw offset. Ambiguous collapsed boundaries are rejected instead of silently
+choosing a different line. This path remains untested.
+
+Dated metadata archives can encode raw-bearing books as individually validated
+v2 library records. Existing v1 archives retain their format until a v2 record
+is needed. Before upgrading, Reader rejects v1 fields or normalization that
+would lose data and retains an exact digest-named v1 backup; replacement uses the
+existing archive lock and an atomic, directory-synced rename. Older Reader
+versions cannot open v2 archives. These paths remain untested, and the archive
+lock coordinates cooperating writers rather than arbitrary external processes.

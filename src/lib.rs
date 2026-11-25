@@ -2556,6 +2556,28 @@ impl Probe {
         }
         let (index, offset) = self.project_anchor(anchor)?;
         let block = &self.source.blocks[index];
+        // Canonical offsets may cover several visible raw-whitespace lines.
+        // Resolve only a unique source-verified mapping; never pick the first
+        // collapsed line when the canonical boundary is ambiguous.
+        if anchor.illustration.is_none()
+            && self
+                .lines
+                .iter()
+                .any(|line| line.block == block.key && line.raw_whitespace.is_some())
+        {
+            let before =
+                self.raw_whitespace_from_anchor(anchor, flow_projection::Affinity::Before)?;
+            let after =
+                self.raw_whitespace_from_anchor(anchor, flow_projection::Affinity::After)?;
+            if before.caret.raw_offset != after.caret.raw_offset
+                || before.caret.raw_sha256 != after.caret.raw_sha256
+            {
+                return None;
+            }
+            let mut projected = after.canonical;
+            projected.raw_caret = Some(after.caret);
+            return self.raw_anchor_top(&projected);
+        }
         if self.source_presentation(anchor) == Some(SourcePresentation::CssOmitted) {
             return None;
         }
