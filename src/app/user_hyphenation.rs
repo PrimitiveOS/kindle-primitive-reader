@@ -61,12 +61,17 @@ pub(super) fn load_serbian_cyrillic(data: &Path) -> crate::user_hyphenation::Opt
     load_optional(data, PatternKind::SerbianCyrillic)
 }
 
+pub(super) fn load_czech(data: &Path) -> crate::user_hyphenation::OptionalPatterns {
+    load_optional(data, PatternKind::Czech)
+}
+
 #[derive(Clone, Copy)]
 enum PatternKind {
     Armenian,
     Zulu,
     SerbianLatin,
     SerbianCyrillic,
+    Czech,
 }
 
 fn load_optional(data: &Path, kind: PatternKind) -> crate::user_hyphenation::OptionalPatterns {
@@ -79,6 +84,7 @@ fn load_optional(data: &Path, kind: PatternKind) -> crate::user_hyphenation::Opt
         PatternKind::Zulu => b"hyph-zu.dic\0",
         PatternKind::SerbianLatin => b"hyph-sr-latn.dic\0",
         PatternKind::SerbianCyrillic => b"hyph-sr-cyrl.dic\0",
+        PatternKind::Czech => b"hyph-cs.tex\0",
     };
     let bytes = with_storage(|| {
         // Anchor both lookups in opened descriptors: replacing the directory
@@ -142,6 +148,9 @@ fn load_optional(data: &Path, kind: PatternKind) -> crate::user_hyphenation::Opt
                 }
                 PatternKind::SerbianCyrillic => {
                     crate::hyphenation::user_patterns::OwnedPatterns::parse_serbian(&bytes, false)
+                }
+                PatternKind::Czech => {
+                    crate::hyphenation::user_patterns::OwnedPatterns::parse_czech(&bytes)
                 }
             };
             patterns
@@ -231,6 +240,7 @@ impl Reader {
         rules.zulu = self.user_hyphenation.zulu.clone();
         rules.serbian_latin = self.user_hyphenation.serbian_latin.clone();
         rules.serbian_cyrillic = self.user_hyphenation.serbian_cyrillic.clone();
+        rules.czech = self.user_hyphenation.czech.clone();
         let encoded = serde_json::to_vec(&rules)?;
         if encoded.len() as u64 > MAX_FILE_BYTES {
             return Err("Custom hyphenation rules are full".into());
@@ -266,6 +276,7 @@ impl Reader {
         rules.zulu = self.user_hyphenation.zulu.clone();
         rules.serbian_latin = self.user_hyphenation.serbian_latin.clone();
         rules.serbian_cyrillic = self.user_hyphenation.serbian_cyrillic.clone();
+        rules.czech = self.user_hyphenation.czech.clone();
         if rules.enabled == enabled && rules == *self.user_hyphenation {
             return Ok(());
         }
@@ -283,6 +294,7 @@ impl Reader {
         rules.zulu = self.user_hyphenation.zulu.clone();
         rules.serbian_latin = self.user_hyphenation.serbian_latin.clone();
         rules.serbian_cyrillic = self.user_hyphenation.serbian_cyrillic.clone();
+        rules.czech = self.user_hyphenation.czech.clone();
         if remove {
             rules.remove(&draft.language, &draft.word);
         } else {

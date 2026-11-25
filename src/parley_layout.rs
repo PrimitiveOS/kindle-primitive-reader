@@ -18,7 +18,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::book_style::{CssLength, ImageLength, Style, TextDecoration, VariantCaps};
+use crate::book_style::{
+    CssLength, ImageLength, Style, TextDecoration, VariantCaps, VariantNumeric,
+};
 use crate::comic::ImagePage;
 use crate::epub::Book;
 use crate::flow_projection::OwnedProjection;
@@ -172,10 +174,11 @@ fn shaping_features(
     }
 }
 
-fn shaping_with_caps(
+fn shaping_with_variants(
     mode: crate::FontKerningMode,
     common_ligatures: bool,
     caps: VariantCaps,
+    numeric: VariantNumeric,
 ) -> Vec<FontFeature> {
     let mut features = shaping_features(mode, common_ligatures).to_vec();
     let tags: &[&[u8; 4]] = match caps {
@@ -188,6 +191,28 @@ fn shaping_with_caps(
         VariantCaps::Titling => &[b"titl"],
     };
     features.extend(tags.iter().map(|tag| FontFeature::new(Tag::new(*tag), 1)));
+    for (flag, tag) in [
+        (1, b"lnum"),
+        (2, b"onum"),
+        (4, b"pnum"),
+        (8, b"tnum"),
+        (16, b"zero"),
+        (32, b"ordn"),
+        (64, b"frac"),
+        (128, b"afrc"),
+    ] {
+        // Fast and Good explicitly disable `frac` as part of their existing
+        // shaping policy; do not undo that choice with a duplicate feature.
+        if numeric.0 & flag != 0
+            && !(flag == 64
+                && matches!(
+                    mode,
+                    crate::FontKerningMode::Fast | crate::FontKerningMode::Good
+                ))
+        {
+            features.push(FontFeature::new(Tag::new(tag), 1));
+        }
+    }
     features
 }
 
@@ -3120,11 +3145,15 @@ fn make_annotation(
         builder.set_cluster_spacing(Some(policy));
     }
     apply_kerning(&mut builder, settings.effective_font_kerning_mode());
-    if !style.common_ligatures || style.variant_caps != VariantCaps::Normal {
-        let features = shaping_with_caps(
+    if !style.common_ligatures
+        || style.variant_caps != VariantCaps::Normal
+        || style.variant_numeric != VariantNumeric::default()
+    {
+        let features = shaping_with_variants(
             settings.effective_font_kerning_mode(),
             style.common_ligatures,
             style.variant_caps,
+            style.variant_numeric,
         );
         builder.push_default(StyleProperty::FontFeatures(features.as_slice().into()));
     }
@@ -3294,11 +3323,15 @@ fn shape_paragraph(
         builder.set_cluster_spacing(Some(policy));
     }
     apply_kerning(&mut builder, settings.effective_font_kerning_mode());
-    if !style.common_ligatures || style.variant_caps != VariantCaps::Normal {
-        let features = shaping_with_caps(
+    if !style.common_ligatures
+        || style.variant_caps != VariantCaps::Normal
+        || style.variant_numeric != VariantNumeric::default()
+    {
+        let features = shaping_with_variants(
             settings.effective_font_kerning_mode(),
             style.common_ligatures,
             style.variant_caps,
+            style.variant_numeric,
         );
         builder.push_default(StyleProperty::FontFeatures(features.as_slice().into()));
     }
@@ -3535,11 +3568,15 @@ fn shape_paragraph(
         if run.font_style != base.font_style {
             builder.push(StyleProperty::FontStyle(run.font_style), bytes.clone());
         }
-        if run.common_ligatures != base.common_ligatures || run.variant_caps != base.variant_caps {
-            let features = shaping_with_caps(
+        if run.common_ligatures != base.common_ligatures
+            || run.variant_caps != base.variant_caps
+            || run.variant_numeric != base.variant_numeric
+        {
+            let features = shaping_with_variants(
                 settings.effective_font_kerning_mode(),
                 run.common_ligatures,
                 run.variant_caps,
+                run.variant_numeric,
             );
             builder.push(
                 StyleProperty::FontFeatures(features.as_slice().into()),

@@ -455,3 +455,29 @@ The upstream archive identifies LGPL 2.1-or-later terms. Obtaining or
 redistributing either optional file has separate licensing obligations;
 keeping files separate from Reader does not establish legal compliance.
 Distribution review remains open.
+
+
+### Optional Czech patterns
+
+Reader does not include Czech hyphenation pattern data. If you have a permitted
+`hyph-cs.tex` file, create `reader/data/hyphenation/`, copy it there, and close
+and reopen Reader. In a Czech book, Text › Hyphenation reports whether the file
+was loaded, missing or invalid. Missing or invalid patterns leave Czech automatic
+hyphenation unavailable; the book remains readable. Reader reads the file
+locally as inert data and does not download or execute it.
+
+The loader accepts one `\patterns{...}` group followed by one
+`\hyphenation{...}` exception group, `%` comments, lowercase Latin-script
+letters, ASCII digits and optional word-edge dots. It converts hyphenated
+exceptions to KOReader's weight-5 patterns. Files over 256 KiB, more than
+4,096 combined rules, tries above 8,192 nodes, symlinks, malformed syntax
+and unsupported characters are rejected. The documented upstream file has
+3,636 patterns and five exceptions matching KOReader's pinned set. Reader
+uses 2 / 3 minima and emits only original UTF-8 grapheme boundaries. Czech
+line-breaking tweaks, pattern behavior and real-book comparisons remain
+unverified. Reopen Reader after replacing the file.
+
+The [upstream Czech file](https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-cs.tex)
+identifies GPL 2-or-later terms. Obtaining or redistributing the optional file
+has separate licensing obligations; keeping it separate from Reader does not
+establish legal compliance. Distribution review remains open.

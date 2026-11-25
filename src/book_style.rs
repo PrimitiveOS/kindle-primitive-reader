@@ -357,6 +357,49 @@ impl VariantCaps {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VariantNumeric(pub(crate) u8);
+
+impl VariantNumeric {
+    fn bit(value: &str) -> Option<u8> {
+        Some(match value {
+            "lining-nums" => 1 << 0,
+            "oldstyle-nums" => 1 << 1,
+            "proportional-nums" => 1 << 2,
+            "tabular-nums" => 1 << 3,
+            "slashed-zero" => 1 << 4,
+            "ordinal" => 1 << 5,
+            "diagonal-fractions" => 1 << 6,
+            "stacked-fractions" => 1 << 7,
+            _ => return None,
+        })
+    }
+}
+
+fn parse_numeric_variant(input: &mut Parser<'_>) -> CssResult<VariantNumeric> {
+    let first = input.expect_ident()?.to_ascii_lowercase();
+    if first == "normal" {
+        input.expect_exhausted()?;
+        return Ok(VariantNumeric::default());
+    }
+    let mut bits = VariantNumeric::bit(&first).ok_or_else(ParseError::unexpected_token)?;
+    while !input.is_exhausted() {
+        let value = input.expect_ident()?.to_ascii_lowercase();
+        let bit = VariantNumeric::bit(&value).ok_or_else(ParseError::unexpected_token)?;
+        let group = match bit {
+            1 | 2 => 0b0000_0011,
+            4 | 8 => 0b0000_1100,
+            64 | 128 => 0b1100_0000,
+            _ => bit,
+        };
+        if bits & group != 0 {
+            return Err(ParseError::unexpected_token());
+        }
+        bits |= bit;
+    }
+    Ok(VariantNumeric(bits))
+}
+
 #[derive(Clone)]
 pub(crate) struct Style {
     pub display: Display,
@@ -384,6 +427,7 @@ pub(crate) struct Style {
     pub font_style: FontStyle,
     pub(crate) common_ligatures: bool,
     pub(crate) variant_caps: VariantCaps,
+    pub(crate) variant_numeric: VariantNumeric,
     /// Whether a ruby annotation has its own computed font-size declaration.
     pub(crate) ruby_size_explicit: bool,
     pub(crate) direction: parley::BaseDirection,
@@ -455,6 +499,7 @@ impl Default for Style {
             font_style: FontStyle::Normal,
             common_ligatures: true,
             variant_caps: VariantCaps::Normal,
+            variant_numeric: VariantNumeric::default(),
             ruby_size_explicit: false,
             direction: parley::BaseDirection::Auto,
             line_height: None,
@@ -1155,6 +1200,7 @@ impl BookStyle {
                     Property::Slant(slant) => style.font_style = *slant,
                     Property::CommonLigatures(enabled) => style.common_ligatures = *enabled,
                     Property::VariantCaps(caps) => style.variant_caps = *caps,
+                    Property::VariantNumeric(numeric) => style.variant_numeric = *numeric,
                     Property::Direction(direction) => style.direction = *direction,
                     Property::LineBreak(breaking, loose) => {
                         style.line_break = *breaking;
@@ -1915,13 +1961,17 @@ struct Declaration {
 fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
     let mut result = Vec::new();
     for decl in RuleBodyParser::new(input, &mut Properties).flatten() {
-        if let Property::VariantShorthand(ligatures, caps) = decl.property {
+        if let Property::VariantShorthand(ligatures, caps, numeric) = decl.property {
             result.push(Declaration {
                 property: Property::CommonLigatures(ligatures),
                 important: decl.important,
             });
             result.push(Declaration {
                 property: Property::VariantCaps(caps),
+                important: decl.important,
+            });
+            result.push(Declaration {
+                property: Property::VariantNumeric(numeric),
                 important: decl.important,
             });
         } else if let Property::ResetMany(keys, reset) = decl.property {
@@ -1966,7 +2016,8 @@ const COMMON_LIGATURES: usize = 55;
 const DIRECTION: usize = 56;
 const LETTER_SPACING: usize = 57;
 const VARIANT_CAPS: usize = 58;
-const CASCADE_PROPERTY_COUNT: usize = 59;
+const VARIANT_NUMERIC: usize = 59;
+const CASCADE_PROPERTY_COUNT: usize = 60;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2029,6 +2080,7 @@ fn choose<'a>(
             Property::Slant(_) => 6,
             Property::CommonLigatures(_) => COMMON_LIGATURES,
             Property::VariantCaps(_) => VARIANT_CAPS,
+            Property::VariantNumeric(_) => VARIANT_NUMERIC,
             Property::Direction(_) => DIRECTION,
             Property::LetterSpacing(_) => LETTER_SPACING,
             Property::LineBreak(_, _) => 7,
@@ -2145,7 +2197,8 @@ enum Property {
     Slant(FontStyle),
     CommonLigatures(bool),
     VariantCaps(VariantCaps),
-    VariantShorthand(bool, VariantCaps),
+    VariantNumeric(VariantNumeric),
+    VariantShorthand(bool, VariantCaps, VariantNumeric),
     Direction(parley::BaseDirection),
     LetterSpacing(CssLength),
     LineBreak(Option<LineBreak>, bool),
@@ -2483,15 +2536,25 @@ impl<'i> DeclarationParser<'i> for Properties {
                 "font-variant" => {
                     let value = input.expect_ident()?.to_ascii_lowercase();
                     if let Some(caps) = VariantCaps::parse(value.as_str()) {
-                        Property::VariantShorthand(true, caps)
+                        Property::VariantShorthand(true, caps, VariantNumeric::default())
+                    } else if let Some(numeric) = VariantNumeric::bit(value.as_str()) {
+                        Property::VariantShorthand(
+                            true,
+                            VariantCaps::Normal,
+                            VariantNumeric(numeric),
+                        )
                     } else {
                         match value.as_str() {
-                            "common-ligatures" => {
-                                Property::VariantShorthand(true, VariantCaps::Normal)
-                            }
-                            "no-common-ligatures" => {
-                                Property::VariantShorthand(false, VariantCaps::Normal)
-                            }
+                            "common-ligatures" => Property::VariantShorthand(
+                                true,
+                                VariantCaps::Normal,
+                                VariantNumeric::default(),
+                            ),
+                            "no-common-ligatures" => Property::VariantShorthand(
+                                false,
+                                VariantCaps::Normal,
+                                VariantNumeric::default(),
+                            ),
                             _ => return Err(ParseError::unexpected_token()),
                         }
                     }
@@ -2503,6 +2566,7 @@ impl<'i> DeclarationParser<'i> for Properties {
                             .ok_or_else(ParseError::unexpected_token)?,
                     )
                 }
+                "font-variant-numeric" => Property::VariantNumeric(parse_numeric_variant(input)?),
                 "font-variant-ligatures" | "-webkit-font-variant-ligatures" => {
                     let value = input.expect_ident()?.to_ascii_lowercase();
                     let enabled = match value.as_str() {

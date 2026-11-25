@@ -551,6 +551,55 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed page-turn settings labels; stored choices and percentages stay unchanged.
+const PAGE_TURN_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Default", "Mặc định"),
+    ("Left / right", "Trái / phải"),
+    ("Top / bottom", "Trên / dưới"),
+    ("Bottom / top", "Dưới / trên"),
+    ("Follow the publication", "Theo sách"),
+    ("Left to right", "Trái sang phải"),
+    ("Right to left", "Phải sang trái"),
+    (
+        "Backward and forward zone sizes",
+        "Kích thước vùng lùi và tiến",
+    ),
+    (
+        "Invert document-related dialogs",
+        "Đảo hướng hộp thoại tài liệu",
+    ),
+    ("Mirror taps only", "Chỉ đảo hướng chạm"),
+    (
+        "Retained from an earlier version",
+        "Được giữ lại từ phiên bản trước",
+    ),
+    ("With taps", "Bằng cách chạm"),
+    ("With swipes", "Bằng cách vuốt"),
+    ("Swipes always active", "Luôn bật vuốt"),
+    (
+        "Enable page swipes to change this setting",
+        "Bật vuốt lật trang để thay đổi cài đặt này",
+    ),
+    (
+        "Turn pages with horizontal swipes while touch is locked",
+        "Vuốt ngang để lật trang khi cảm ứng bị khóa",
+    ),
+    ("Tap zones", "Vùng chạm"),
+    (
+        "Enable page taps to choose a layout",
+        "Bật chạm lật trang để chọn bố cục",
+    ),
+    (
+        "Invert page turn taps and swipes",
+        "Đảo hướng chạm và vuốt lật trang",
+    ),
+    (
+        "Contents, Book Map and Page Browser",
+        "Mục lục, Sơ đồ sách và Duyệt trang",
+    ),
+    ("Defaults for new books", "Mặc định cho sách mới"),
+];
+
 // Fixed link-settings controls only; link addresses and book text stay untouched.
 const LINK_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Tap to follow links", "Chạm để mở liên kết"),
@@ -1998,6 +2047,30 @@ impl InterfaceLanguage {
     pub(super) fn reading_guide_english<'a>(self, label: &'a str) -> &'a str {
         if self == Self::Vietnamese {
             if let Some((english, _)) = READING_GUIDE_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    pub(super) fn page_turn_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = PAGE_TURN_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn page_turn_settings_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = PAGE_TURN_SETTINGS_LABELS
                 .iter()
                 .find(|(_, value)| *value == label)
             {

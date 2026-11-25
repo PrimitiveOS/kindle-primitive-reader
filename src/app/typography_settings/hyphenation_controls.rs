@@ -72,6 +72,9 @@ impl Reader {
         let serbian = self.active.as_ref().is_some_and(|book| {
             crate::hyphenation::is_serbian_language(book.reading.probe.main_language)
         });
+        let czech = self.active.as_ref().is_some_and(|book| {
+            crate::hyphenation::is_czech_language(book.reading.probe.main_language)
+        });
         let defaults = if settings.algorithmic_hyphenation {
             ALGORITHMIC_LIMITS
         } else if armenian {
@@ -152,6 +155,18 @@ impl Reader {
                     }
                 } else if serbian {
                     "Serbian: see pattern file status"
+                } else if czech {
+                    match &self.user_hyphenation.czech {
+                        crate::user_hyphenation::OptionalPatterns::Loaded(_) => {
+                            "Czech patterns loaded"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Missing => {
+                            "Czech pattern file missing"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Invalid => {
+                            "Czech pattern file invalid"
+                        }
+                    }
                 } else {
                     dictionary.map_or("No dictionary for the main language", Dictionary::label)
                 };
@@ -195,6 +210,12 @@ impl Reader {
                     "{} · reader/data/hyphenation/hyph-sr-cyrl.dic",
                     status(&self.user_hyphenation.serbian_cyrillic)
                 )),
+            );
+        }
+        if czech {
+            items.push(
+                Item::new("Czech pattern file", Action::Heading)
+                    .detail("Copy hyph-cs.tex to reader/data/hyphenation, then reopen Reader"),
             );
         }
         let defaults = self

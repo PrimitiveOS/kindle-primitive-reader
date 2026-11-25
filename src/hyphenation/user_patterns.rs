@@ -22,6 +22,7 @@ enum Alphabet {
     Zulu,
     SerbianLatin,
     SerbianCyrillic,
+    Czech,
 }
 
 #[derive(Default)]
@@ -72,6 +73,51 @@ impl OwnedPatterns {
             return None;
         }
         Self::parse_rules(lines.filter(|line| *line != "'1"), Alphabet::Zulu)
+    }
+
+    /// Czech TeX contains weighted patterns and explicit word exceptions.
+    /// KOReader compiles the exceptions as weight-5 patterns.
+    pub(crate) fn parse_czech(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() as u64 > MAX_FILE_BYTES {
+            return None;
+        }
+        let input = std::str::from_utf8(bytes).ok()?;
+        let cleaned = input
+            .lines()
+            .map(|line| line.split('%').next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (prefix, tail) = cleaned.split_once("\\patterns{")?;
+        let (patterns, tail) = tail.split_once('}')?;
+        let (between, tail) = tail.split_once("\\hyphenation{")?;
+        let (exceptions, suffix) = tail.split_once('}')?;
+        if !prefix.trim().is_empty() || !between.trim().is_empty() || !suffix.trim().is_empty() {
+            return None;
+        }
+        let mut rules = Vec::new();
+        for pattern in patterns.split_whitespace() {
+            if rules.len() >= MAX_RULES || pattern.len() > MAX_PATTERN_BYTES {
+                return None;
+            }
+            rules.push(pattern.to_owned());
+        }
+        let scripts = CodePointMapData::<Script>::new();
+        for exception in exceptions.split_whitespace() {
+            if rules.len() >= MAX_RULES
+                || exception.len() > MAX_PATTERN_BYTES
+                || exception.starts_with('-')
+                || exception.ends_with('-')
+                || exception.contains("--")
+                || !exception.contains('-')
+                || !exception
+                    .chars()
+                    .all(|ch| ch == '-' || (ch.is_lowercase() && scripts.get(ch) == Script::Latin))
+            {
+                return None;
+            }
+            rules.push(exception.replace('-', "5"));
+        }
+        Self::parse_rules(rules.iter().map(String::as_str), Alphabet::Czech)
     }
 
     /// Serbian sources are strict ISO-8859-2 (Latin) or ISO-8859-5 (Cyrillic).
@@ -146,7 +192,9 @@ impl OwnedPatterns {
                     Alphabet::Armenian => {
                         ('\u{0561}'..='\u{0587}').contains(&ch) && ch.is_lowercase()
                     }
-                    Alphabet::SerbianLatin => ch.is_lowercase() && scripts.get(ch) == Script::Latin,
+                    Alphabet::SerbianLatin | Alphabet::Czech => {
+                        ch.is_lowercase() && scripts.get(ch) == Script::Latin
+                    }
                     Alphabet::SerbianCyrillic => {
                         ch.is_lowercase() && scripts.get(ch) == Script::Cyrillic
                     }

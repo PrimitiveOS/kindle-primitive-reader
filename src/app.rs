@@ -1256,6 +1256,7 @@ impl Reader {
         user_hyphenation.zulu = user_hyphenation::load_zulu(data);
         user_hyphenation.serbian_latin = user_hyphenation::load_serbian_latin(data);
         user_hyphenation.serbian_cyrillic = user_hyphenation::load_serbian_cyrillic(data);
+        user_hyphenation.czech = user_hyphenation::load_czech(data);
         let user_hyphenation = user_hyphenation.into();
         Ok(Self {
             user_hyphenation,

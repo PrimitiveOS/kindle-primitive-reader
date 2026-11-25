@@ -274,7 +274,13 @@ impl Reader {
     }
 
     pub(super) fn page_turn_items(&self, screen: Screen) -> Vec<Item> {
-        let item = |text: &str, command| Item::new(text, Action::PageTurnSetting(command));
+        let language = self.controls.interface_language;
+        let item = |text: &str, command| {
+            Item::new(
+                language.page_turn_settings_text(text),
+                Action::PageTurnSetting(command),
+            )
+        };
         match screen {
             Screen::PageTurnZones => {
                 let mut items = Zones::ALL
@@ -285,7 +291,7 @@ impl Reader {
                     let sizes = self.controls.page_turn_sizes;
                     items.push(
                         Item::new(
-                            "Backward and forward zone sizes",
+                            language.page_turn_settings_text("Backward and forward zone sizes"),
                             Action::Show(Screen::PageTurnSizes(sizes)),
                         )
                         .detail(format!("{}% / {}%", sizes.backward, sizes.forward)),
@@ -303,10 +309,9 @@ impl Reader {
                     Command::DefaultMirrorDialogs,
                 ));
                 if self.controls.left_touch {
-                    items.push(
-                        item("Mirror taps only", Command::ResetLegacyTaps)
-                            .detail("Retained from an earlier version"),
-                    );
+                    items.push(item("Mirror taps only", Command::ResetLegacyTaps).detail(
+                        language.page_turn_settings_text("Retained from an earlier version"),
+                    ));
                 }
                 items
             }
@@ -316,18 +321,33 @@ impl Reader {
                     item("With swipes", Command::Swipes),
                 ];
                 items.push(if self.controls.disable_page_swipes {
-                    Item::new("Swipes always active", Action::Heading)
-                        .detail("Enable page swipes to change this setting")
+                    Item::new(
+                        language.page_turn_settings_text("Swipes always active"),
+                        Action::Heading,
+                    )
+                    .detail(
+                        language
+                            .page_turn_settings_text("Enable page swipes to change this setting"),
+                    )
                 } else {
-                    item("Swipes always active", Command::SwipesWhileLocked)
-                        .detail("Turn pages with horizontal swipes while touch is locked")
+                    item("Swipes always active", Command::SwipesWhileLocked).detail(
+                        language.page_turn_settings_text(
+                            "Turn pages with horizontal swipes while touch is locked",
+                        ),
+                    )
                 });
                 items.push(if self.controls.disable_page_taps {
-                    Item::new("Tap zones", Action::Heading)
-                        .detail("Enable page taps to choose a layout")
+                    Item::new(
+                        language.page_turn_settings_text("Tap zones"),
+                        Action::Heading,
+                    )
+                    .detail(language.page_turn_settings_text("Enable page taps to choose a layout"))
                 } else {
-                    Item::new("Tap zones", Action::Show(Screen::PageTurnZones))
-                        .detail(self.controls.page_turn_zones.label())
+                    Item::new(
+                        language.page_turn_settings_text("Tap zones"),
+                        Action::Show(Screen::PageTurnZones),
+                    )
+                    .detail(language.page_turn_settings_text(self.controls.page_turn_zones.label()))
                 });
                 if self.open_book_id().is_some() {
                     let direction = if self.touch_turn_inverted(false) {
@@ -342,13 +362,14 @@ impl Reader {
                     };
                     items.extend([
                         item("Invert page turn taps and swipes", Command::Order(next))
-                            .detail(direction),
-                        item("Invert document-related dialogs", Command::MirrorDialogs)
-                            .detail("Contents, Book Map and Page Browser"),
+                            .detail(language.page_turn_settings_text(direction)),
+                        item("Invert document-related dialogs", Command::MirrorDialogs).detail(
+                            language.page_turn_settings_text("Contents, Book Map and Page Browser"),
+                        ),
                     ]);
                 }
                 items.push(Item::new(
-                    "Defaults for new books",
+                    language.page_turn_settings_text("Defaults for new books"),
                     Action::Show(Screen::PageTurnDefaults),
                 ));
                 items

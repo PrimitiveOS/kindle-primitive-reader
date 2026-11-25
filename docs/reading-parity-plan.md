@@ -168,6 +168,11 @@ implemented and pass a Mac build-only check. Serbian data is not bundled;
 font-feature availability, malformed inputs, licensing and device behavior
 remain open.
 
+Optional Czech pattern loading and horizontal CSS numeric font variants are
+implemented and pass a Mac build-only check. Czech pattern data is not bundled;
+parser behavior, font-feature availability, licensing and device checks remain
+open.
+
 Georgian patterns, a bounded loose-line-break option and Vietnamese library
 Find/Sort controls have been implemented and pass a Mac build-only check.
 Full line-break parity, script behavior and visual/device checks remain open.
