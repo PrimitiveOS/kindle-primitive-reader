@@ -347,6 +347,117 @@ fn fragment_ids<'a>(
 }
 
 impl Source {
+    /// Project verified MOBI shadow links without changing canonical XHTML,
+    /// revisions, keys, styles or the saved anchor model.
+    pub(crate) fn apply_mobi_shadow(
+        &mut self,
+        shadow: &Source,
+        ids: &BTreeSet<String>,
+    ) -> BTreeSet<String> {
+        if self.blocks.len() != shadow.blocks.len()
+            || self.blocks.iter().zip(&shadow.blocks).any(|(a, b)| {
+                a.text != b.text
+                    || !a
+                        .images
+                        .iter()
+                        .map(|im| (&im.href, im.offset))
+                        .eq(b.images.iter().map(|im| (&im.href, im.offset)))
+            })
+        {
+            return BTreeSet::new();
+        }
+        let mut mapped = vec![None; shadow.elements.len()];
+        let mut next = 0usize;
+        for (index, element) in shadow.elements.iter().enumerate() {
+            if element.tag == "span" && element.id.as_ref().is_some_and(|id| ids.contains(id)) {
+                continue;
+            }
+            let Some(original) = self.elements.get(next) else {
+                return BTreeSet::new();
+            };
+            let parent = element
+                .parent
+                .and_then(|parent| mapped.get(parent).copied().flatten());
+            if element.tag != original.tag
+                || element.classes != original.classes
+                || element.id != original.id
+                || element.inline_style != original.inline_style
+                || element.anonymous != original.anonymous
+                || element.selector_only != original.selector_only
+                || parent != original.parent
+            {
+                return BTreeSet::new();
+            }
+            mapped[index] = Some(next);
+            next += 1;
+        }
+        if next != self.elements.len() {
+            return BTreeSet::new();
+        }
+        let block_indices: BTreeMap<_, _> = shadow
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(index, block)| (block.key, index))
+            .collect();
+        let mut resolved = BTreeSet::new();
+        for id in ids {
+            let Some(&(shadow_key, offset)) = shadow.fragments.get(id) else {
+                continue;
+            };
+            let Some(&index) = block_indices.get(&shadow_key) else {
+                continue;
+            };
+            let Some(&owner) = shadow.fragment_owners.get(id) else {
+                continue;
+            };
+            let Some(element) = shadow.elements.get(owner) else {
+                continue;
+            };
+            let Some(parent) = element
+                .parent
+                .and_then(|parent| mapped.get(parent).copied().flatten())
+            else {
+                continue;
+            };
+            let block = &self.blocks[index];
+            if offset > block.text.len()
+                || !block.text.is_char_boundary(offset)
+                || self.fragments.contains_key(id)
+            {
+                continue;
+            }
+            self.fragments.insert(id.clone(), (block.key, offset));
+            self.fragment_owners.insert(id.clone(), parent);
+            resolved.insert(id.clone());
+        }
+        for (actual, other) in self.blocks.iter_mut().zip(&shadow.blocks) {
+            for link in &other.links {
+                let Some(id) = link.href.strip_prefix('#') else {
+                    continue;
+                };
+                if !resolved.contains(id)
+                    || link.bytes.start >= link.bytes.end
+                    || link.bytes.end > actual.text.len()
+                    || !actual.text.is_char_boundary(link.bytes.start)
+                    || !actual.text.is_char_boundary(link.bytes.end)
+                    || actual.links.iter().any(|previous| {
+                        previous.bytes.start < link.bytes.end
+                            && previous.bytes.end > link.bytes.start
+                    })
+                {
+                    continue;
+                }
+                actual.links.push(InlineLink {
+                    #[cfg(feature = "kindle")]
+                    note_reference: link.note_reference,
+                    bytes: link.bytes.clone(),
+                    href: link.href.clone(),
+                });
+            }
+        }
+        resolved
+    }
     pub fn parse(xhtml: &str) -> Result<Self> {
         Self::parse_with_language(xhtml, None)
     }

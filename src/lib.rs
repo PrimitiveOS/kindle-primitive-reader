@@ -120,6 +120,7 @@ mod user_styles;
 mod vertical_layout;
 mod vertical_padding;
 mod woff;
+mod woff2;
 
 use std::error::Error;
 use std::fs;
@@ -1136,7 +1137,7 @@ chapter_probe! {
     pages: Pagination,
     in_page_notes: Option<Vec<footnotes::in_page::Page>>,
     #[cfg(feature = "kindle")]
-    foreign_note_band: Option<footnotes::cross_part::Band>,
+    foreign_note_bands: Vec<footnotes::cross_part::Band>,
 }
 
 impl Probe {
@@ -1701,7 +1702,7 @@ impl Probe {
             pages,
             in_page_notes,
             #[cfg(feature = "kindle")]
-            foreign_note_band: None,
+            foreign_note_bands: Vec::new(),
             renderer,
         };
         #[cfg(feature = "kindle")]
@@ -1729,34 +1730,89 @@ impl Probe {
         if self.in_page_notes.is_some() || self.is_vertical() || self.spine_rtl {
             return None;
         }
-        let mut plan = footnotes::cross_part::prepare_for_settings(
+        let plan = footnotes::cross_part::prepare_for_settings(
             book,
             &self.chapter,
             &self.source,
             self.settings,
         )?;
-        // The first stage has exactly one note and one reference. Repeated or
-        // competing references retain their existing navigation until a
-        // source-aware multi-band composer is available.
-        if plan.notes.len() != 1 || plan.links.len() != 1 {
-            return None;
+        // Preserve source-reference order and deduplicate a note referenced
+        // more than once on a page. Distinct notes share a single separator.
+        let mut page_notes = std::collections::BTreeMap::<usize, Vec<usize>>::new();
+        for link in &plan.links {
+            let start = self.anchor(link.host_block, link.bytes.start);
+            let end = self.anchor(link.host_block, link.bytes.end);
+            let Some(selection) = self.select_range(&start, &end) else {
+                continue;
+            };
+            if self.source_presentation(&selection.start) != Some(SourcePresentation::Normal) {
+                continue;
+            }
+            let Some(page) = self.page_for(&selection.start) else {
+                continue;
+            };
+            if self.selection_rects(page, &selection).is_empty() {
+                continue;
+            }
+            let notes = page_notes.entry(page).or_default();
+            if !notes.contains(&link.note) {
+                notes.push(link.note);
+            }
         }
-        let link = plan.links.pop()?;
-        let note = plan.notes.pop()?;
-        let start = self.anchor(link.host_block, link.bytes.start);
-        let end = self.anchor(link.host_block, link.bytes.end);
-        let selection = self.select_range(&start, &end)?;
-        if self.source_presentation(&selection.start) != Some(SourcePresentation::Normal) {
-            return None;
+        let mut bands = plan
+            .notes
+            .into_iter()
+            .map(|note| {
+                load_fonts()
+                    .ok()
+                    .and_then(|fonts| note.layout(book, fonts, self.settings, styles, hyphenation))
+                    .map(footnotes::cross_part::Band::unplaced)
+            })
+            .collect::<Vec<_>>();
+        // Bound synchronous raster captures during chapter opening.
+        const MAX_FOREIGN_PAGES: usize = 32;
+        for (page, notes) in page_notes.into_iter().take(MAX_FOREIGN_PAGES) {
+            if notes
+                .iter()
+                .any(|&index| bands.get(index).is_none_or(Option::is_none))
+            {
+                continue;
+            }
+            let Some(height) = notes.iter().try_fold(0u32, |total, &index| {
+                total.checked_add(bands[index].as_ref()?.rows())
+            }) else {
+                continue;
+            };
+            let Some(mut y) = self.settings.text_height().checked_sub(height) else {
+                continue;
+            };
+            let gap = ((self.settings.font_size.ceil() as u32) / 3).max(1);
+            let Some(separator) = y.checked_sub(gap) else {
+                continue;
+            };
+            let Some(range) = self.pages.range(page) else {
+                continue;
+            };
+            let Ok(host) = self.capture_range(range) else {
+                continue;
+            };
+            if !footnotes::cross_part::Band::page_blank(self.settings, separator, &host) {
+                continue;
+            }
+            let (rtl, lines) = notes.iter().fold((0usize, 0usize), |(rtl, lines), &index| {
+                let band = bands[index].as_ref().expect("checked above");
+                (rtl + band.rtl_lines(), lines + band.line_count())
+            });
+            let right = rtl > lines / 2;
+            for (position, index) in notes.into_iter().enumerate() {
+                let band = bands[index].as_mut().expect("checked above");
+                band.place(page, y, separator, (position == 0).then_some(right));
+                y += band.rows();
+            }
         }
-        let page = self.page_for(&selection.start)?;
-        if self.selection_rects(page, &selection).is_empty() {
-            return None;
-        }
-        let foreign = note.layout(book, load_fonts().ok()?, self.settings, styles, hyphenation)?;
-        let host = self.capture_range(self.pages.range(page)?).ok()?;
-        self.foreign_note_band = footnotes::cross_part::Band::new(page, foreign, &host);
-        self.foreign_note_band.as_ref().map(|_| ())
+        self.foreign_note_bands
+            .extend(bands.into_iter().flatten().filter(|band| !band.is_empty()));
+        (!self.foreign_note_bands.is_empty()).then_some(())
     }
 
     pub fn page_count(&self) -> usize {
@@ -1820,9 +1876,29 @@ impl Probe {
 
     #[cfg(feature = "kindle")]
     pub(crate) fn foreign_band(&self, page: usize) -> Option<&footnotes::cross_part::Band> {
-        self.foreign_note_band
-            .as_ref()
-            .filter(|band| band.page == page)
+        self.foreign_bands(page).into_iter().next()
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn foreign_bands(&self, page: usize) -> Vec<&footnotes::cross_part::Band> {
+        let mut bands = self
+            .foreign_note_bands
+            .iter()
+            .filter(|band| band.displays(page))
+            .collect::<Vec<_>>();
+        bands.sort_by_key(|band| band.y_offset(page));
+        bands
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn foreign_band_for_anchors(
+        &self,
+        start: &Anchor,
+        end: &Anchor,
+    ) -> Option<&footnotes::cross_part::Band> {
+        self.foreign_note_bands.iter().find(|band| {
+            band.layout.note_contains_anchor(start) && band.layout.note_contains_anchor(end)
+        })
     }
 
     #[cfg(feature = "kindle")]
@@ -1832,8 +1908,9 @@ impl Probe {
         x: f32,
         y: f32,
     ) -> Option<&footnotes::cross_part::Band> {
-        self.foreign_band(page)
-            .filter(|band| band.contains(page, x, y))
+        self.foreign_bands(page)
+            .into_iter()
+            .find(|band| band.contains(page, x, y))
     }
 
     #[cfg(feature = "kindle")]
@@ -2053,7 +2130,7 @@ impl Probe {
             links
         };
         #[cfg(feature = "kindle")]
-        if let Some(band) = self.foreign_band(page) {
+        for band in self.foreign_bands(page) {
             for (label, href, _) in band.layout.note_links() {
                 if let Ok(target) = Book::resolve_link(&band.layout.note.chapter, href)
                     && !links.iter().any(|(_, previous)| previous == &target)
@@ -2606,13 +2683,33 @@ impl Probe {
         let range = self.pages.range(page).ok_or("That page is unavailable")?;
         let mut pixels = self.capture_range(range)?;
         #[cfg(feature = "kindle")]
-        if let Some(band) = self
-            .foreign_note_band
-            .as_mut()
-            .filter(|band| band.page == page)
-            && !band.paint(&mut pixels).unwrap_or(false)
         {
-            self.foreign_note_band = None;
+            let indexes = self
+                .foreign_note_bands
+                .iter()
+                .enumerate()
+                .filter_map(|(i, band)| band.displays(page).then_some(i))
+                .collect::<Vec<_>>();
+            if !indexes.is_empty() {
+                let blank = indexes
+                    .iter()
+                    .all(|&i| self.foreign_note_bands[i].host_is_blank(page, &pixels));
+                let mut composite = pixels.clone();
+                let painted = blank
+                    && indexes.iter().all(|&i| {
+                        self.foreign_note_bands[i]
+                            .paint_on(page, &mut composite)
+                            .unwrap_or(false)
+                    });
+                if painted {
+                    pixels = composite;
+                } else {
+                    for &i in &indexes {
+                        self.foreign_note_bands[i].remove_page(page);
+                    }
+                    self.foreign_note_bands.retain(|band| !band.is_empty());
+                }
+            }
         }
         Ok(pixels)
     }

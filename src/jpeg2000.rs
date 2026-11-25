@@ -87,8 +87,8 @@ fn codestream_size(bytes: &[u8]) -> Result<Size> {
         .ok_or("Missing JPEG 2000 size marker")?;
     let channels = u16::from_be_bytes(header[40..42].try_into()?);
     let marker_size = usize::from(u16::from_be_bytes(header[4..6].try_into()?));
-    if !matches!(channels, 1 | 3) || marker_size != 38 + 3 * usize::from(channels) {
-        return Err("Reader supports one grayscale or three color JPEG 2000 components".into());
+    if !matches!(channels, 1..=4) || marker_size != 38 + 3 * usize::from(channels) {
+        return Err("Reader supports grayscale or RGB JPEG 2000 with optional opacity".into());
     }
     let right = number(&header[8..12]);
     let bottom = number(&header[12..16]);
@@ -155,6 +155,7 @@ fn image_header(mut boxes: &[u8]) -> Result<Size> {
     let mut size = None;
     let mut color = None;
     let mut channel_depths = None;
+    let mut has_channel_definitions = false;
     let mut count = 0;
     while !boxes.is_empty() {
         count += 1;
@@ -172,7 +173,7 @@ fn image_header(mut boxes: &[u8]) -> Result<Size> {
                 });
             }
             b"ihdr" => return Err("Invalid JPEG 2000 image header".into()),
-            b"bpcc" if body.len() <= 3 && channel_depths.is_none() => channel_depths = Some(body),
+            b"bpcc" if body.len() <= 4 && channel_depths.is_none() => channel_depths = Some(body),
             b"bpcc" => return Err("Invalid JPEG 2000 component depth metadata".into()),
             b"colr" if body.len() == 7 && body[0] == 1 && color.is_none() => {
                 color = Some(match number(&body[3..7]) {
@@ -189,22 +190,33 @@ fn image_header(mut boxes: &[u8]) -> Result<Size> {
                     .get(..2)
                     .ok_or("Invalid JPEG 2000 channel definitions")?;
                 let n = usize::from(u16::from_be_bytes(n.try_into()?));
-                if !matches!(n, 1 | 3)
+                if has_channel_definitions
+                    || !matches!(n, 1..=4)
                     || body.len() != 2 + 6 * n
                     || Some(n) != size.map(|s| usize::from(s.channels))
-                    || body[2..]
-                        .chunks_exact(6)
-                        .enumerate()
-                        .any(|(i, c)| c != [0, i as u8, 0, 0, 0, i as u8 + 1])
+                    || body[2..].chunks_exact(6).enumerate().any(|(i, c)| {
+                        let opacity = matches!(n, 2 | 4) && i + 1 == n;
+                        let expected = if opacity {
+                            [0, i as u8, 0, 1, 0, 0]
+                        } else {
+                            [0, i as u8, 0, 0, 0, i as u8 + 1]
+                        };
+                        c != expected
+                    })
                 {
-                    return Err("Reader supports opaque JPEG 2000 color channels in order".into());
+                    return Err("Reader supports JPEG 2000 color channels in order with optional final opacity".into());
                 }
+                has_channel_definitions = true;
             }
             _ => {}
         }
     }
     let mut size = size
-        .filter(|s| Some(s.channels) == color)
+        .filter(|s| {
+            color.is_some_and(|channels| {
+                s.channels == channels || (s.channels == channels + 1 && has_channel_definitions)
+            })
+        })
         .ok_or("Missing or inconsistent JPEG 2000 color and image headers")?;
     if size.depth_minus_one == 255 {
         let channels = channel_depths
@@ -225,7 +237,11 @@ fn checked_size(bytes: &[u8]) -> Result<Size> {
         return Err("This JPEG 2000 file exceeds Reader's input limit".into());
     }
     if bytes.starts_with(J2K) {
-        return codestream_size(bytes);
+        let size = codestream_size(bytes)?;
+        if matches!(size.channels, 2 | 4) {
+            return Err("JPEG 2000 opacity requires explicit JP2 channel definitions".into());
+        }
+        return Ok(size);
     }
     let mut boxes = bytes
         .strip_prefix(JP2)
@@ -273,10 +289,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage> {
     if image.width() != size.width
         || image.height() != size.height
         || image.original_bit_depth() != size.depth_minus_one + 1
-        || image.has_alpha()
+        || image.has_alpha() != matches!(size.channels, 2 | 4)
         || !matches!(
             (image.color_space(), size.channels),
-            (ColorSpace::Gray, 1) | (ColorSpace::RGB, 3)
+            (ColorSpace::Gray, 1 | 2) | (ColorSpace::RGB, 3 | 4)
         )
     {
         return Err("Unsupported JPEG 2000 output geometry or color space".into());
@@ -293,17 +309,40 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage> {
         return Err("The JPEG 2000 components do not fill the page".into());
     }
     let bytes = decoded.data_u8();
-    let gray = if size.channels == 1 {
-        bytes
-    } else {
-        bytes
+    if bytes.len() != pixels * usize::from(size.channels) {
+        return Err("The JPEG 2000 output has an inconsistent component count".into());
+    }
+    let gray = match size.channels {
+        1 => bytes,
+        2 => bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&[gray, alpha]| composite_on_white(gray, alpha))
+            .collect(),
+        3 => bytes
             .as_chunks::<3>()
             .0
             .iter()
             .map(|&c| Rgb(c).to_luma().0[0])
-            .collect()
+            .collect(),
+        4 => bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&[red, green, blue, alpha]| {
+                composite_on_white(Rgb([red, green, blue]).to_luma().0[0], alpha)
+            })
+            .collect(),
+        _ => unreachable!(),
     };
     GrayImage::from_raw(size.width, size.height, gray).ok_or("Invalid JPEG 2000 pixel count".into())
+}
+
+fn composite_on_white(gray: u8, alpha: u8) -> u8 {
+    let gray = u16::from(gray);
+    let alpha = u16::from(alpha);
+    ((gray * alpha + 255 * (255 - alpha) + 127) / 255) as u8
 }
 
 #[cfg(test)]

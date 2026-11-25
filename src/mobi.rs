@@ -20,7 +20,7 @@ mod presentation;
 pub(crate) use markup::{Addition, apply as apply_additions};
 pub(crate) use presentation::Presentation;
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 /// Read only the Palm database header and the encryption field. A large protected
@@ -69,7 +69,15 @@ pub struct MobiDocument {
     pub(crate) additions: Vec<Addition>,
     pub(crate) presentation: Presentation,
     pub(crate) contents: crate::kf8::legacy_contents::Contents,
+    pub(crate) shadow: Option<Shadow>,
     pub resources: BTreeMap<String, Vec<u8>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct Shadow {
+    pub additions: Vec<Addition>,
+    pub contents: crate::kf8::legacy_contents::Contents,
+    pub ids: BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -193,6 +201,7 @@ pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     // A damaged optional navigation index must not hide the publication's text.
     let mut contents =
         crate::kf8::legacy_contents::Contents::read(bytes, &records, header).unwrap_or_default();
+    let mut shadow = None;
     let (xhtml, additions, resources, presentation) =
         if mobi.as_ref().is_none_or(|mobi| mobi.is_plain_text) {
             (
@@ -205,10 +214,29 @@ pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
             let first = u32_at(header, 108).ok().map(|n| n as usize).filter(|n| {
                 *n > usize::from(u16_at(header, 8).unwrap_or(u16::MAX)) && *n < records.len() - 1
             });
+            let mut shadow_contents = contents.clone();
             let (xhtml, mut features, has_text) =
-                normalize_contents_html(&text, Some(encoding), &contents)?;
+                normalize_contents_html(&text, Some(encoding), &contents, false)?;
             let presentation = std::mem::take(&mut features.presentation);
-            let (additions, resources) = features.finish(bytes, &records, first, &mut contents)?;
+            let (additions, resources, _) =
+                features.finish(bytes, &records, first, &mut contents)?;
+            // Shadow markup never becomes the publication. It is used only to
+            // project new links onto an identical canonical Source.
+            if xhtml.len() <= 512 * 1024
+                && !markup::target_text(&text, encoding, &shadow_contents).is_empty()
+                && let Ok((shadow_xhtml, shadow_features, _)) =
+                    normalize_contents_html(&text, Some(encoding), &shadow_contents, true)
+                && shadow_xhtml == xhtml
+                && let Ok((shadow_additions, _, ids)) =
+                    shadow_features.finish(bytes, &records, first, &mut shadow_contents)
+                && !ids.is_empty()
+            {
+                shadow = Some(Shadow {
+                    additions: shadow_additions,
+                    contents: shadow_contents,
+                    ids,
+                });
+            }
             if !has_text && resources.is_empty() {
                 return Err(MobiError::InvalidText);
             }
@@ -225,6 +253,7 @@ pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
         additions,
         presentation,
         contents,
+        shadow,
         resources,
     })
 }
@@ -594,12 +623,14 @@ fn normalize_html(
         text,
         encoding,
         &crate::kf8::legacy_contents::Contents::default(),
+        false,
     )
 }
 fn normalize_contents_html(
     text: &str,
     encoding: Option<Encoding>,
     contents: &crate::kf8::legacy_contents::Contents,
+    text_targets: bool,
 ) -> Result<(String, markup::Features, bool), MobiError> {
     let input = BufferQueue::default();
     let tokenizer = Tokenizer::new(
@@ -608,15 +639,36 @@ fn normalize_contents_html(
     );
     let mut cursor = text.len() - text.trim_start_matches('\u{feff}').len();
     tokenizer.sink.0.borrow_mut().features = encoding.map(|_| markup::Features::default());
-    for (raw, at, end, tag) in
-        encoding.map_or_else(Vec::new, |e| markup::target_tags(text, e, contents))
-    {
+    let mut targets = Vec::new();
+    if let Some(encoding) = encoding {
+        targets.extend(
+            markup::target_tags(text, encoding, contents)
+                .into_iter()
+                .map(|(raw, at, end, tag)| (raw, at, end, Some(tag))),
+        );
+        if text_targets {
+            targets.extend(
+                markup::target_text(text, encoding, contents)
+                    .into_iter()
+                    .map(|(raw, at)| (raw, at, at, None)),
+            );
+        }
+        targets.sort_by_key(|(_, at, _, _)| *at);
+    }
+    for (raw, at, end, tag) in targets {
+        if at < cursor {
+            continue;
+        }
         input.push_back(text[cursor..at].into());
         let _ = tokenizer.feed(&input);
-        tokenizer.sink.destination(Some((raw, tag.to_owned())));
-        input.push_back(text[at..end].into());
-        let _ = tokenizer.feed(&input);
-        tokenizer.sink.destination(None);
+        if let Some(tag) = tag {
+            tokenizer.sink.destination(Some((raw, tag.to_owned())));
+            input.push_back(text[at..end].into());
+            let _ = tokenizer.feed(&input);
+            tokenizer.sink.destination(None);
+        } else if input.is_empty() {
+            tokenizer.sink.text_destination(raw);
+        }
         cursor = end;
     }
     input.push_back(text[cursor..].into());
@@ -703,6 +755,16 @@ impl Normalizer {
     fn destination(&self, label: Option<(usize, String)>) {
         if let Some(features) = &mut self.0.borrow_mut().features {
             features.next = label;
+        }
+    }
+
+    fn text_destination(&self, source: usize) {
+        let mut markup = self.0.borrow_mut();
+        if markup.ignore.is_none() && markup.error.is_none() {
+            let at = markup.output.len();
+            if let Some(features) = &mut markup.features {
+                features.text_destination(source, at);
+            }
         }
     }
 }

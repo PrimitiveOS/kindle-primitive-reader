@@ -400,7 +400,7 @@ impl Reader {
                 }
             }
         }
-        if let Some(band) = reading.probe.foreign_band(reading.page) {
+        for band in reading.probe.foreign_bands(reading.page) {
             for (label, href, _) in band.layout.note_links() {
                 if let Some(target) = ReflowLink::resolve(&band.layout.note.chapter, href)
                     && !links
@@ -518,13 +518,13 @@ fn nearest_reflow_link(
             }
         }
     }
-    if let Some(band) = probe.foreign_band(reading.page) {
+    for band in probe.foreign_bands(reading.page) {
         for (_, href, rects) in band.layout.note_links() {
             for rect in rects {
                 let x0 = rect.x as f32;
-                let y0 = rect.y as f32 + band.y_offset() as f32;
+                let y0 = rect.y as f32 + band.y_offset(reading.page) as f32;
                 let x1 = (rect.x + rect.width) as f32;
-                let y1 = (rect.y + rect.height) as f32 + band.y_offset() as f32;
+                let y1 = (rect.y + rect.height) as f32 + band.y_offset(reading.page) as f32;
                 let dx = x - x.clamp(x0, x1);
                 let dy = y - y.clamp(y0, y1);
                 let candidate = dx * dx + dy * dy;

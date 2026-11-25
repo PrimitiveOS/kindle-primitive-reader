@@ -27,6 +27,23 @@ pub(crate) fn valid_language_name(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
+/// Tesseract accepts ordered language combinations separated by `+`. Keep the
+/// set small so recognition and private model staging stay bounded on Kindle.
+pub(crate) fn valid_language_spec(spec: &str) -> bool {
+    let mut languages = spec.split('+');
+    let Some(first) = languages.next() else {
+        return false;
+    };
+    if !valid_language_name(first) {
+        return false;
+    }
+    match (languages.next(), languages.next()) {
+        (None, None) => true,
+        (Some(second), None) => second != first && valid_language_name(second),
+        _ => false,
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct OcrPage {
     pub text: PdfPageText,
@@ -124,7 +141,7 @@ pub fn parse_tsv(bytes: &[u8], width: u32, height: u32) -> Result<OcrPage, OcrEr
             }
             Level::Word => match Word::parse(fields, raster) {
                 Ok(Some(word)) => {
-                    if !result.push(word) {
+                    if !result.push(word, raster) {
                         break;
                     }
                 }
@@ -258,7 +275,7 @@ struct Collector {
 }
 
 impl Collector {
-    fn push(&mut self, word: Word<'_>) -> bool {
+    fn push(&mut self, word: Word<'_>, raster: Raster) -> bool {
         let Word {
             key,
             bounds,
@@ -267,7 +284,22 @@ impl Collector {
         } = word;
         let separator = match &self.line {
             None => "",
-            Some((previous, _)) if *previous == key => " ",
+            Some((previous, _)) if *previous == key => {
+                let join = self.page.words.last().is_some_and(|previous| {
+                    let Some(left) = self.page.text.chars().next_back() else {
+                        return false;
+                    };
+                    let Some(right) = text.chars().next() else {
+                        return false;
+                    };
+                    let gap = (bounds.x0 - previous.bounds.x1) * raster.width as f32;
+                    let height = ((bounds.y1 - bounds.y0)
+                        .min(previous.bounds.y1 - previous.bounds.y0))
+                        * raster.height as f32;
+                    unspaced_cjk(left) && unspaced_cjk(right) && gap >= -1.0 && gap <= height * 0.5
+                });
+                if join { "" } else { " " }
+            }
             Some((previous, _))
                 if previous.block == key.block && previous.paragraph == key.paragraph =>
             {
@@ -315,6 +347,16 @@ impl Collector {
             skipped_rows: self.skipped_rows,
         }
     }
+}
+
+/// Han and Japanese syllabaries normally form unspaced phrases. Korean is
+/// intentionally excluded because spaces carry word boundaries in Hangul.
+fn unspaced_cjk(ch: char) -> bool {
+    matches!(ch,
+        '\u{3001}'..='\u{303f}' | '\u{3040}'..='\u{30ff}' |
+        '\u{31f0}'..='\u{31ff}' | '\u{3400}'..='\u{4dbf}' |
+        '\u{4e00}'..='\u{9fff}' | '\u{f900}'..='\u{faff}' |
+        '\u{ff66}'..='\u{ff9f}' | '\u{20000}'..='\u{323af}')
 }
 
 fn union(a: PdfTextRect, b: PdfTextRect) -> PdfTextRect {

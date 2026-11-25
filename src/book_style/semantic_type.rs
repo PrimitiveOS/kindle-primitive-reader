@@ -11,6 +11,10 @@ enum Operation {
     Present,
     Equal,
     Word,
+    Dash,
+    Prefix,
+    Suffix,
+    Substring,
 }
 pub(super) struct Selector {
     operation: Operation,
@@ -26,7 +30,10 @@ impl Selector {
             return true;
         }
         let folded;
-        let value = if self.insensitive {
+        // The pinned CREngine's dash-word branch checks the prefix operator's
+        // enum before folding, so its `i` flag folds the pattern but not the
+        // attribute. Preserve that behavior until upstream changes it.
+        let value = if self.insensitive && !matches!(self.operation, Operation::Dash) {
             folded = value.to_lowercase();
             folded.as_str()
         } else {
@@ -38,6 +45,15 @@ impl Selector {
             // Pinned CRE uses literal U+0020 boundaries. XML normalizes literal
             // attribute whitespace; character-reference tabs remain distinct.
             Operation::Word => value.split(' ').any(|word| word == self.value),
+            Operation::Dash => {
+                value == self.value
+                    || value
+                        .strip_prefix(self.value.as_str())
+                        .is_some_and(|rest| rest.starts_with('-'))
+            }
+            Operation::Prefix => value.starts_with(self.value.as_str()),
+            Operation::Suffix => value.ends_with(self.value.as_str()),
+            Operation::Substring => value.contains(self.value.as_str()),
         }
     }
 }
@@ -69,6 +85,10 @@ pub(super) fn parse(input: &mut Parser<'_>) -> CssResult<Attribute> {
         match input.next()? {
             Token::Delim('=') => Operation::Equal,
             Token::IncludeMatch => Operation::Word,
+            Token::DashMatch => Operation::Dash,
+            Token::PrefixMatch => Operation::Prefix,
+            Token::SuffixMatch => Operation::Suffix,
+            Token::SubstringMatch => Operation::Substring,
             _ => return Err(ParseError::unexpected_token()),
         }
     };

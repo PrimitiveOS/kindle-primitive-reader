@@ -67,6 +67,58 @@ impl NearbySearch {
         anchor: &Anchor,
         cancel: &AtomicBool,
         chapters: usize,
+        read: impl FnMut(usize) -> Result<ChapterText>,
+    ) -> Result<Option<SearchHit>> {
+        self.scan_from(
+            origin,
+            anchor.book,
+            Some(anchor),
+            None,
+            cancel,
+            chapters,
+            read,
+        )
+    }
+
+    /// Search from a publication edge up to the current visible page.
+    /// The boundary is the current page end (forward) or start (backward).
+    pub(crate) fn scan_edge(
+        &self,
+        publication: u64,
+        stop_chapter: usize,
+        stop_anchor: Option<&Anchor>,
+        cancel: &AtomicBool,
+        chapters: usize,
+        read: impl FnMut(usize) -> Result<ChapterText>,
+    ) -> Result<Option<SearchHit>> {
+        if stop_chapter >= chapters {
+            return Err("The current chapter is unavailable".into());
+        }
+        let origin = match self.direction {
+            SearchDirection::Next => 0,
+            SearchDirection::Previous => {
+                chapters.checked_sub(1).ok_or("The book has no chapters")?
+            }
+        };
+        self.scan_from(
+            origin,
+            publication,
+            None,
+            Some((stop_chapter, stop_anchor)),
+            cancel,
+            chapters,
+            read,
+        )
+    }
+
+    fn scan_from(
+        &self,
+        origin: usize,
+        publication: u64,
+        anchor: Option<&Anchor>,
+        stop: Option<(usize, Option<&Anchor>)>,
+        cancel: &AtomicBool,
+        chapters: usize,
         mut read: impl FnMut(usize) -> Result<ChapterText>,
     ) -> Result<Option<SearchHit>> {
         if origin >= chapters {
@@ -82,14 +134,30 @@ impl NearbySearch {
             if text.flow_config != self.flow_config {
                 return Err("The reading styles changed during the search".into());
             }
-            if text.book != anchor.book || ci == origin && text.href != anchor.chapter {
+            if text.book != publication
+                || ci == origin && anchor.is_some_and(|anchor| text.href != anchor.chapter)
+                || stop.is_some_and(|(chapter, boundary)| {
+                    ci == chapter
+                        && boundary.is_some_and(|boundary| {
+                            text.href != boundary.chapter || boundary.book != publication
+                        })
+                })
+            {
                 return Err("The publication changed during the search".into());
             }
             if cancel.load(Ordering::Relaxed) {
                 return Ok(None);
             }
+            let stop_here = stop.is_some_and(|(chapter, _)| ci == chapter);
+            if stop_here && stop.and_then(|(_, boundary)| boundary).is_none() {
+                return if skipped {
+                    Err("Some chapters could not be searched".into())
+                } else {
+                    Ok(None)
+                };
+            }
             if let Some(source) = text.source {
-                let boundary = if ci == origin {
+                let boundary = if let Some(anchor) = anchor.filter(|_| ci == origin) {
                     let i = source
                         .blocks
                         .binary_search_by_key(&anchor.block, |block| block.key)
@@ -97,6 +165,19 @@ impl NearbySearch {
                     let offset = source
                         .project_offset(&source.blocks[i], anchor.revision, anchor.offset)
                         .ok_or("The starting position is unavailable")?;
+                    Some((i, offset))
+                } else {
+                    None
+                };
+                let stop_boundary = if stop_here {
+                    let anchor = stop.and_then(|(_, boundary)| boundary).unwrap();
+                    let i = source
+                        .blocks
+                        .binary_search_by_key(&anchor.block, |block| block.key)
+                        .map_err(|_| "The current page text is unavailable")?;
+                    let offset = source
+                        .project_offset(&source.blocks[i], anchor.revision, anchor.offset)
+                        .ok_or("The current page position is unavailable")?;
                     Some((i, offset))
                 } else {
                     None
@@ -110,6 +191,11 @@ impl NearbySearch {
                 } {
                     if cancel.load(Ordering::Relaxed) {
                         return Ok(None);
+                    }
+                    if let Some((at, _)) = stop_boundary {
+                        if previous && index < at || !previous && index > at {
+                            break;
+                        }
                     }
                     let view = text
                         .flow
@@ -150,6 +236,19 @@ impl NearbySearch {
                             .pop(),
                     };
                     if let Some(span) = hit {
+                        if let Some((_, offset)) = stop_boundary.filter(|(at, _)| *at == index) {
+                            let affinity = if previous {
+                                crate::flow_projection::Affinity::Before
+                            } else {
+                                crate::flow_projection::Affinity::After
+                            };
+                            let offset = view
+                                .project_nearest(offset, affinity)
+                                .ok_or("The current rendered page position is unavailable")?;
+                            if previous && span.end <= offset || !previous && span.start >= offset {
+                                break;
+                            }
+                        }
                         let source_spans = view
                             .source_spans(span.clone())
                             .ok_or("The result has invalid rendered text boundaries")?;
@@ -180,10 +279,17 @@ impl NearbySearch {
                         }));
                     }
                 }
-            } else if ci == origin {
+            } else if anchor.is_some() && ci == origin {
                 return Err("The starting chapter could not be read".into());
             } else {
                 skipped = true;
+            }
+            if stop_here {
+                return if skipped {
+                    Err("Some chapters could not be searched".into())
+                } else {
+                    Ok(None)
+                };
             }
             match self.direction {
                 SearchDirection::Previous if ci > 0 => ci -= 1,
@@ -369,6 +475,120 @@ mod tests {
                 .scan(1, &at, &cancel, 3, |_| panic!(
                     "cancelled search read storage"
                 ))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn nearby_edge_search_preserves_source_anchors_and_publication_identity() {
+        let path = crate::test_fixture("field-notes-epub3.epub");
+        let mut book = Book::open(&path).unwrap();
+        let publication = book.revision();
+        let chapters = book.chapters.len();
+        let cancelled = AtomicBool::new(false);
+        let search = |direction| NearbySearch::new("Linh", false, false, direction).unwrap();
+        let mut read = |index| ChapterText::read(&mut book, index);
+        let first = search(SearchDirection::Next)
+            .scan_from(0, publication, None, None, &cancelled, chapters, &mut read)
+            .unwrap()
+            .unwrap();
+        let last = search(SearchDirection::Previous)
+            .scan_from(
+                chapters - 1,
+                publication,
+                None,
+                None,
+                &cancelled,
+                chapters,
+                &mut read,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(first.chapter < last.chapter);
+        assert_eq!(first.anchor.book, publication);
+        assert_eq!(last.anchor.book, publication);
+        assert_eq!(&first.snippet[first.matched.clone()], "Linh");
+        assert_eq!(&last.snippet[last.matched.clone()], "Linh");
+        assert_eq!(
+            search(SearchDirection::Next)
+                .scan_edge(
+                    publication,
+                    first.chapter,
+                    Some(&first.end),
+                    &cancelled,
+                    chapters,
+                    &mut read
+                )
+                .unwrap()
+                .unwrap()
+                .anchor,
+            first.anchor
+        );
+        assert!(
+            search(SearchDirection::Next)
+                .scan_edge(
+                    publication,
+                    first.chapter,
+                    Some(&first.anchor),
+                    &cancelled,
+                    chapters,
+                    &mut read
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            search(SearchDirection::Previous)
+                .scan_edge(
+                    publication,
+                    last.chapter,
+                    Some(&last.anchor),
+                    &cancelled,
+                    chapters,
+                    &mut read
+                )
+                .unwrap()
+                .unwrap()
+                .anchor,
+            last.anchor
+        );
+        assert!(
+            search(SearchDirection::Previous)
+                .scan_edge(
+                    publication,
+                    last.chapter,
+                    Some(&last.end),
+                    &cancelled,
+                    chapters,
+                    &mut read
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            search(SearchDirection::Next)
+                .scan_edge(
+                    publication.wrapping_add(1),
+                    last.chapter,
+                    Some(&last.end),
+                    &cancelled,
+                    chapters,
+                    &mut read
+                )
+                .is_err()
+        );
+        cancelled.store(true, Ordering::Relaxed);
+        assert!(
+            search(SearchDirection::Previous)
+                .scan_edge(
+                    publication,
+                    last.chapter,
+                    Some(&last.end),
+                    &cancelled,
+                    chapters,
+                    |_| panic!("cancelled search read storage")
+                )
                 .unwrap()
                 .is_none()
         );

@@ -81,6 +81,13 @@ impl Format {
             {
                 Some(Self::Fb2)
             }
+            "zip"
+                if path
+                    .file_stem()
+                    .is_some_and(|name| has_extension(Path::new(name), "rtf")) =>
+            {
+                Some(Self::Rtf)
+            }
             _ => None,
         }
     }
@@ -144,6 +151,8 @@ impl Document {
         }
         let bytes = if has_extension(path, "gz") {
             read_bounded(MultiGzDecoder::new(file), limit)?
+        } else if has_extension(path, "zip") && format == Format::Rtf {
+            read_rtf_zip(file, metadata.len())?
         } else if has_extension(path, "zip") || has_extension(path, "fbz") {
             read_fb2_zip(file, metadata.len())?
         } else {
@@ -182,7 +191,7 @@ pub(crate) fn fallback_title(path: &Path) -> &str {
         .map(|name| {
             let stem = Path::new(name);
             if (has_extension(path, "zip") || has_extension(path, "gz"))
-                && has_extension(stem, "fb2")
+                && (has_extension(stem, "fb2") || has_extension(stem, "rtf"))
             {
                 stem.file_stem().unwrap_or(name)
             } else {
@@ -306,6 +315,48 @@ fn read_fb2_zip(file: File, length: u64) -> Result<Vec<u8>> {
     read_bounded(entry, MAX_FB2_INPUT)
 }
 
+fn read_rtf_zip(file: File, length: u64) -> Result<Vec<u8>> {
+    let mut input = BufReader::new(file);
+    let count = check_zip_directory(&mut input, length)
+        .map_err(|_| "The RTF ZIP directory is invalid or exceeds Reader's limits")?;
+    if count > MAX_FB2_ZIP_ENTRIES {
+        return Err("The RTF ZIP has too many entries".into());
+    }
+    let mut archive = ZipArchive::new(input)?;
+    if archive.len() != count {
+        return Err("The RTF ZIP has ambiguous or duplicate entries".into());
+    }
+    let mut document = None;
+    for index in 0..archive.len() {
+        let entry = archive.by_index_raw(index)?;
+        let is_document = entry.is_file()
+            && entry
+                .enclosed_name()
+                .is_some_and(|name| has_extension(&name, "rtf"));
+        if is_document {
+            if entry.encrypted()
+                || entry.is_symlink()
+                || !matches!(
+                    entry.compression(),
+                    CompressionMethod::Stored | CompressionMethod::Deflated
+                )
+            {
+                return Err(
+                    "The RTF ZIP contains an encrypted, linked or unsupported document".into(),
+                );
+            }
+            if document.replace(index).is_some() {
+                return Err("The RTF ZIP contains more than one .rtf file".into());
+            }
+        }
+    }
+    let entry = archive.by_index(document.ok_or("The RTF ZIP contains no readable .rtf file")?)?;
+    if entry.size() > crate::rtf::MAX_INPUT as u64 {
+        return Err("The RTF ZIP's document exceeds Reader's input limit".into());
+    }
+    read_bounded(entry, crate::rtf::MAX_INPUT)
+}
+
 fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
     let mut input = BufReader::new(file);
     let count = check_zip_directory(&mut input, length)
@@ -358,7 +409,7 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
                     return Err("The HTMLZ ZIP has more than one metadata entry".into());
                 }
             }
-            Some(extension @ ("css" | "jpeg" | "jpg" | "png")) => {
+            Some(extension @ ("css" | "jpeg" | "jpg" | "png" | "gif" | "svg")) => {
                 let limit = if extension == "css" {
                     MAX_HTMLZ_CSS
                 } else {

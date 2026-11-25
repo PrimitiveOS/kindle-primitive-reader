@@ -2,9 +2,9 @@
 
 Open **Reading data › Export highlights**. Choose History, select individual books, or choose one or more collections. Select highlight styles and colors, then choose KOReader JSON, plain text, Markdown, HTML or Kindle clippings text. The filters remain selected when Reader reopens. Color and style restrictions are combined; an empty selection matches no highlights. With the default destination, the saved file appears under `reader/data/exports/library-highlights` with the chosen extension.
 
-Each book keeps its own title, author and source file. Different editions with the same title remain separate. Reader’s saved highlights export with their attached notes. History also includes eligible entries from Kindle’s clippings file when available. Books with matching entries appear in the export. A source that has disappeared or changed is skipped and included in the completion count.
+Each book keeps its own title, author and source file. Different editions with the same title remain separate. Reader’s saved highlights export with their attached notes. With All styles and All colors selected, the export also includes saved page bookmarks and their notes, including books with bookmarks but no highlights. Bookmarks have no highlight style or color, so selecting either filter excludes them, just like unstyled Kindle clippings. History also includes eligible entries from Kindle’s clippings file when available. Books with matching entries appear in the export. A source that has disappeared or changed is skipped and included in the completion count.
 
-For fixed documents, the page reference is the one-based physical source page. For reflowable documents, Reader resolves the saved text anchor with that book's reading preferences and records a chapter-local page label. A reflow label such as “Chapter 3, page 2” identifies the current layout. Exact start and end anchors also appear in the JSON `primitiveos` field. Unknown creation times remain absent. The saved creation time is retained when it exists. Named highlight colors also appear in JSON. [Color controls and interchange](highlight-colors-and-note-markers.md)
+For fixed documents, the page reference is the one-based physical source page. For reflowable documents, Reader resolves the saved text anchor with that book's reading preferences and records a chapter-local page label. A reflow label such as “Chapter 3, page 2” identifies the current layout. Exact start and end anchors also appear in the JSON `primitiveos` field. Unknown creation times remain absent. The saved creation time is retained when it exists. Named highlight colors also appear in JSON. Bookmark JSON records identify their type, saved label, note and original position; human-readable output identifies a bookmark as a location rather than a quotation. Kindle clippings use separate bookmark and note records. If a reflow bookmark’s anchor cannot be resolved its label remains available without an invented page. Fixed-layout EPUB bookmarks use their physical page. [Color controls and interchange](highlight-colors-and-note-markers.md)
 
 Reader prepares one book or saved mark per event-loop step. Cancel, Back or sleep cancels an unfinished export. The open book, its reading position, jump history and saved annotations stay available throughout the export.
 
@@ -67,7 +67,13 @@ and byte equality for the original clipping source and saved library state.
 
 ## Verification
 
-The functional test uses the normal Reading data controls with two same-title EPUB editions and a PDF. It checks History, collections, selected books, combined style filters, single-book and multi-book JSON, all human-readable formats, sleep cancellation, reading-order sorting, a source replaced during export, and the original reading position and saved state. The JSON is also parsed by the existing KOReader import parser.
+The addition of page bookmarks and bookmark notes to library-wide exports is an
+unverified implementation candidate. Builds, simulator and Kindle tests have
+not been run for it. Missing or changed source books keep the existing export
+behavior: they are skipped and counted, while stored marks remain untouched.
+Archived and deleted records remain subject to the existing History selection.
+
+The earlier functional test uses the normal Reading data controls with two same-title EPUB editions and a PDF. It checks History, collections, selected books, combined style filters, single-book and multi-book JSON, all human-readable formats, sleep cancellation, reading-order sorting, a source replaced during export, and the original reading position and saved state. The JSON is also parsed by the existing KOReader import parser.
 
 The Mac passed 559 library tests, 14 package integration tests and four layout system tests. Thirty opt-in tests were skipped in the ordinary run. A pressed-frame check covers every actionable row in the export screens in both themes and verifies that feedback changes only its row.
 

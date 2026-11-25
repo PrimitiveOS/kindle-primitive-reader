@@ -42,6 +42,30 @@ workflows on the Oasis. Keep the feature-by-feature reading checklist in
 [requirements](requirements.md) and use the [control matrix](koreader-sdl-reference-controls.json)
 only to find and compare relevant controls.
 
+The current implementation pass prioritizes remaining reading features across
+the backlog. Unit, functional, system, simulator and Kindle acceptance are
+deferred until the implementation pass is complete. Entries added during this
+pass remain unverified and are not counted as completed acceptance.
+
+Work in progress includes bounded WOFF 2 reconstruction, additional licensed
+hyphenation languages, cross-part note stacking, reflow search from book edges,
+DOCX bookmarks and images, TIFF compression, CHM text and media handling,
+archive and image-format extensions, multi-page annotation exchange, reading
+gestures and Contents metadata. The current source also includes a conservative
+out-of-band MOBI text-destination mapping to protect existing saved anchors.
+Build, integration, source-comparison and device acceptance for this combined
+work remain outstanding; individual feature documents describe their limits.
+
+Additional implementation in this pass covers bookmark notes, local dictionary
+cross-references and word forms, fixed-page CJK phrase search, bilingual OCR,
+RTL and dark-page scan handling, DjVu page links, inline SVG in fixed EPUB,
+reading-profile choices, configurable reading gestures, and open-book and
+library bookmark-note exports. Publisher stylesheet defaults and additional
+margin, padding and alignment tweaks are also implemented in this candidate.
+The Mac library and both Reader executables have passed a build-only check;
+this is not behavioral validation. The implementation pass continues before
+the planned full tests.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or

@@ -58,6 +58,8 @@ fn bookmark_density_resizes_the_saved_marks_list_and_preserves_date_order() {
     let state = app.library.state_mut(id).unwrap();
     state.highlights[0].created_at = Some(1_750_001_000);
     state.bookmarks.extend((1..=12).map(|index| Bookmark {
+        note: None,
+        updated_at: None,
         chapter_title: None,
         created_at: Some(1_750_000_000 + i64::from(index)),
         label: format!("Reading mark {index:02}"),

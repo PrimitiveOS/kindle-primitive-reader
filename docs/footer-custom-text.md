@@ -36,8 +36,8 @@ editor and token guide keep editing visible and reachable on the Kindle.
 | `%r` | Selected status-item separator |
 | `%D` | Local date as `yyyy-mm-dd` |
 | `%d` | Local date as `mm-dd` |
-| `%m` | Local time as `hh:mm` |
-| `%M` | Local time as `hh-mm-ss` |
+| `%m` | Local time in the selected 12- or 24-hour format |
+| `%M` | Local time as `hh-mm-ss` on a 24-hour clock |
 
 Tokens with unavailable values show `N/A`. Non-token percent sequences remain
 literal. A custom item made only of ASCII spaces merges its neighboring status
@@ -45,8 +45,10 @@ items without adding an outer separator, matching KOReader's spacer behavior.
 Repeated text is appended without an inserted separator. The Reader uses
 KOReader's battery glyphs for ten percent bands, charging, and fully charged
 state; the symbol font is bundled with the Kindle package.
-Clock tokens use 24-hour formatting and the Kindle's configured time zone.
-KOReader's 12-hour preference for `%m` remains separate. [Device clock and comparisons](device-local-time.md)
+Clock tokens use the Kindle's configured time zone. The `%m` token follows
+Reader's **12-hour clock** setting and leaves the hour unpadded, matching the
+Kindle/Linux path in KOReader. The `%M` token remains 24-hour with seconds.
+[Device clock and comparisons](device-local-time.md)
 
 ## Persistence and safeguards
 

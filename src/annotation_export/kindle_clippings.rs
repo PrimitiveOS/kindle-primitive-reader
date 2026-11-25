@@ -294,6 +294,32 @@ pub(crate) fn write_highlight(
     }
 }
 
+/// Kindle clippings represent a bookmark and its user note as separate
+/// records at the same location. A bookmark label is Reader's location text,
+/// not a quotation from the book, so the bookmark record has an empty body.
+pub(crate) fn write_bookmark(
+    output: &mut String,
+    title: &str,
+    author: Option<&str>,
+    location: Option<&str>,
+    created: Option<i64>,
+    updated: Option<i64>,
+    note: Option<&str>,
+) {
+    write(output, title, author, Kind::Bookmark, location, created, "");
+    if let Some(note) = note.filter(|note| !note.is_empty()) {
+        write(
+            output,
+            title,
+            author,
+            Kind::Note,
+            location,
+            updated.or(created),
+            note,
+        );
+    }
+}
+
 fn clipping_date(time: i64) -> Option<String> {
     let clock = mark_time::local_parts(time)?;
     let month = u8::try_from(clock.month).ok()?;

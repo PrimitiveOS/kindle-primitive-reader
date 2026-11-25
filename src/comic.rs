@@ -1,5 +1,5 @@
-//! Native CBZ, USTAR CBT, bounded CBR, and standalone raster pages. File handles
-//! are short-lived so Reader can give up its USB storage lease between reads.
+//! Native CBZ, USTAR/GNU-long-name CBT, bounded CBR, and standalone raster
+//! pages. File handles are short-lived so Reader can release its USB lease.
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -58,6 +58,7 @@ enum MemberLocation {
         header: u64,
         length: u64,
         modified: Option<SystemTime>,
+        long_name_header: Option<u64>,
     },
 }
 
@@ -121,7 +122,8 @@ impl Comic {
                 header,
                 length,
                 modified,
-            } => tar_image(path, member, header, length, modified)?,
+                long_name_header,
+            } => tar_image(path, member, header, length, modified, long_name_header)?,
         };
         ImagePage::decode(&bytes)
     }
@@ -192,6 +194,7 @@ struct TarHeader {
     name: String,
     size: u64,
     directory: bool,
+    long_name: bool,
 }
 
 fn tar_pages(path: &Path) -> Result<Vec<Member>> {
@@ -205,32 +208,51 @@ fn tar_pages(path: &Path) -> Result<Vec<Member>> {
     let mut offset = 0;
     let mut names = HashSet::new();
     let mut pages = Vec::new();
+    let mut pending_name: Option<(String, u64)> = None;
     let mut block = [0; TAR_BLOCK_BYTES];
     for count in 0..=MAX_COMIC_MEMBERS {
         input.read_exact(&mut block)?;
         if block.iter().all(|&byte| byte == 0) {
+            if pending_name.is_some() {
+                return Err("The CBT ends after a GNU long-name header".into());
+            }
             check_tar_trailer(&mut input, length - offset - block_bytes)?;
             return Ok(pages);
         }
         if count == MAX_COMIC_MEMBERS {
             return Err("The CBT has too many entries".into());
         }
-        let header = parse_tar_header(&block)?;
-        if !names.insert(header.name.clone()) {
+        let header = parse_tar_header(&block, pending_name.is_some())?;
+        let next = tar_next_header(offset, header.size, length)?;
+        if header.long_name {
+            if pending_name.is_some() {
+                return Err("The CBT has consecutive GNU long-name headers".into());
+            }
+            let name = tar_long_name(&mut input, header.size)?;
+            pending_name = Some((name, offset));
+            input.seek_relative(i64::try_from(next - offset - block_bytes - header.size)?)?;
+            offset = next;
+            continue;
+        }
+        let (name, long_name_header) = match pending_name.take() {
+            Some((name, at)) => (tar_checked_name(&name, header.directory)?, Some(at)),
+            None => (header.name, None),
+        };
+        if !names.insert(name.clone()) {
             return Err("The CBT has duplicate entry names".into());
         }
-        let next = tar_next_header(offset, header.size, length)?;
-        if !header.directory && page_name(&header.name) {
-            if !(1..=raster_input_limit(Path::new(&header.name))).contains(&header.size) {
+        if !header.directory && page_name(&name) {
+            if !(1..=raster_input_limit(Path::new(&name))).contains(&header.size) {
                 return Err("A CBT page is empty or exceeds the image size limit".into());
             }
             pages.push(Member {
-                name: header.name,
+                name,
                 size: header.size,
                 location: MemberLocation::Tar {
                     header: offset,
                     length,
                     modified,
+                    long_name_header,
                 },
             });
         }
@@ -246,6 +268,7 @@ fn tar_image(
     offset: u64,
     archive_length: u64,
     modified: Option<SystemTime>,
+    long_name_header: Option<u64>,
 ) -> Result<Vec<u8>> {
     let (mut file, length) = open_regular(path, MAX_COMIC_BYTES)?;
     if length != archive_length
@@ -254,11 +277,29 @@ fn tar_image(
         return Err("This CBT changed after it was opened".into());
     }
     tar_next_header(offset, member.size, length)?;
-    file.seek(SeekFrom::Start(offset))?;
     let mut block = [0; TAR_BLOCK_BYTES];
+    if let Some(long_offset) = long_name_header {
+        file.seek(SeekFrom::Start(long_offset))?;
+        file.read_exact(&mut block)?;
+        let long_header = parse_tar_header(&block, false)?;
+        if !long_header.long_name
+            || tar_next_header(long_offset, long_header.size, length)? != offset
+        {
+            return Err("This CBT changed after it was opened".into());
+        }
+        let name = tar_long_name(&mut file, long_header.size)?;
+        if tar_checked_name(&name, false)? != member.name {
+            return Err("This CBT changed after it was opened".into());
+        }
+    }
+    file.seek(SeekFrom::Start(offset))?;
     file.read_exact(&mut block)?;
-    let header = parse_tar_header(&block)?;
-    if header.directory || header.name != member.name || header.size != member.size {
+    let header = parse_tar_header(&block, long_name_header.is_some())?;
+    if header.directory
+        || header.long_name
+        || long_name_header.is_none() && header.name != member.name
+        || header.size != member.size
+    {
         return Err("This CBT changed after it was opened".into());
     }
     read_image(file.take(member.size), member.size)
@@ -288,9 +329,10 @@ fn check_tar_trailer(input: &mut impl Read, mut remaining: u64) -> Result<()> {
     Ok(())
 }
 
-fn parse_tar_header(block: &[u8; TAR_BLOCK_BYTES]) -> Result<TarHeader> {
-    if &block[257..265] != b"ustar\0\x30\x30" {
-        return Err("The CBT uses a TAR format outside Reader's USTAR support".into());
+fn parse_tar_header(block: &[u8; TAR_BLOCK_BYTES], overridden: bool) -> Result<TarHeader> {
+    let gnu = &block[257..265] == b"ustar  \0";
+    if !gnu && &block[257..265] != b"ustar\0\x30\x30" {
+        return Err("The CBT uses an unsupported TAR format".into());
     }
     let checksum = block[..148]
         .iter()
@@ -305,12 +347,36 @@ fn parse_tar_header(block: &[u8; TAR_BLOCK_BYTES]) -> Result<TarHeader> {
     let directory = match block[156] {
         b'0' | 0 => false,
         b'5' if size == 0 => true,
+        b'L' if !overridden => {
+            if !(2..=(MAX_MEMBER_NAME as u64 + 1)).contains(&size) {
+                return Err("The CBT has an invalid GNU long-name size".into());
+            }
+            return Ok(TarHeader {
+                name: String::new(),
+                size,
+                directory: false,
+                long_name: true,
+            });
+        }
         _ => return Err("The CBT has a link, special file, or unsupported TAR extension".into()),
     };
     if block[157..257].iter().any(|&byte| byte != 0) {
         return Err("A CBT entry has a link name".into());
     }
-    let prefix = tar_string(&block[345..500])?;
+    if overridden {
+        // GNU's truncated 100-byte fallback may end inside a UTF-8 code point.
+        return Ok(TarHeader {
+            name: String::new(),
+            size,
+            directory,
+            long_name: false,
+        });
+    }
+    let prefix = if gnu {
+        ""
+    } else {
+        tar_string(&block[345..500])?
+    };
     let name = tar_string(&block[..100])?;
     if name.is_empty() {
         return Err("A CBT entry has an empty USTAR name".into());
@@ -320,27 +386,40 @@ fn parse_tar_header(block: &[u8; TAR_BLOCK_BYTES]) -> Result<TarHeader> {
     } else {
         format!("{prefix}/{name}")
     };
-    let name = joined.strip_prefix("./").unwrap_or(&joined);
+    Ok(TarHeader {
+        name: tar_checked_name(&joined, directory)?,
+        size,
+        directory,
+        long_name: false,
+    })
+}
+
+fn tar_checked_name(joined: &str, directory: bool) -> Result<String> {
+    let name = joined.strip_prefix("./").unwrap_or(joined);
     let name = if directory {
         name.strip_suffix('/').unwrap_or(name)
     } else {
         name
     };
     if directory && (joined == "./" || joined == ".") {
-        return Ok(TarHeader {
-            name: String::from("."),
-            size,
-            directory,
-        });
+        return Ok(String::from("."));
     }
-    if !is_archive_path(name) {
-        return Err("The CBT has an unsafe entry path".into());
+    if name.len() > MAX_MEMBER_NAME || !is_archive_path(name) {
+        return Err("The CBT has an unsafe or overlong entry path".into());
     }
-    Ok(TarHeader {
-        name: name.to_owned(),
-        size,
-        directory,
-    })
+    Ok(name.to_owned())
+}
+
+fn tar_long_name(input: &mut impl Read, size: u64) -> Result<String> {
+    if !(2..=(MAX_MEMBER_NAME as u64 + 1)).contains(&size) {
+        return Err("The CBT has an invalid GNU long-name size".into());
+    }
+    let mut bytes = vec![0; size as usize];
+    input.read_exact(&mut bytes)?;
+    if bytes.pop() != Some(0) || bytes.contains(&0) {
+        return Err("The CBT has an invalid GNU long-name record".into());
+    }
+    Ok(String::from_utf8(bytes)?)
 }
 
 fn tar_string(field: &[u8]) -> Result<&str> {
@@ -872,6 +951,79 @@ mod tests {
             .unwrap();
         changed.write_all(&[0; TAR_BLOCK_BYTES]).unwrap();
         assert!(document.decode_page(0).is_err());
+    }
+
+    // GNU TAR stores a long UTF-8 pathname in an L record immediately
+    // preceding the regular page header. The truncated fallback can even end
+    // inside a multibyte character, so only the L record is the real name.
+    fn gnu_long_entry(archive: &mut Vec<u8>, name: &[u8], kind: u8, data: &[u8]) {
+        let mut long = name.to_vec();
+        long.push(0);
+        tar_entry(archive, "././@LongLink", "", b'L', &long);
+        let mut header = ustar_header("fallback.png", "", kind, data.len() as u64);
+        header[..100].fill(0);
+        let fallback_len = name.len().min(100);
+        header[..fallback_len].copy_from_slice(&name[..fallback_len]);
+        header[257..265].copy_from_slice(b"ustar  \0");
+        header[148..156].fill(b' ');
+        let checksum: u32 = header.iter().map(|&byte| u32::from(byte)).sum();
+        header[148..156].copy_from_slice(format!("{checksum:06o}\0 ").as_bytes());
+        archive.extend(header);
+        archive.extend(data);
+        archive.resize(archive.len().next_multiple_of(TAR_BLOCK_BYTES), 0);
+    }
+
+    #[test]
+    fn gnu_long_name_cbt_keeps_natural_order_and_reopens_page_offsets() {
+        let prefix = format!("{}/{}/", "manga".repeat(12), "越".repeat(17));
+        let name2 = format!("{prefix}2.png");
+        let name10 = format!("{prefix}10.png");
+        let black = png(GrayImage::from_pixel(2, 2, Luma([0])).into());
+        let white = png(GrayImage::from_pixel(2, 2, Luma([255])).into());
+        let mut bytes = Vec::new();
+        gnu_long_entry(&mut bytes, name10.as_bytes(), b'0', &white);
+        gnu_long_entry(&mut bytes, name2.as_bytes(), b'0', &black);
+        let fixture = tar_fixture(bytes);
+        let document = Comic::open(&fixture.0).unwrap();
+        assert_eq!(document.page_count(), 2);
+        assert_eq!(document.page_name(0), Some(name2.as_str()));
+        assert_eq!(document.page_name(1), Some(name10.as_str()));
+        assert_eq!(
+            document.decode_page(0).unwrap().fit(2, 2, 0).unwrap(),
+            [0; 4]
+        );
+        assert_eq!(
+            document.decode_page(1).unwrap().fit(2, 2, 0).unwrap(),
+            [255; 4]
+        );
+    }
+
+    #[test]
+    fn gnu_long_name_cbt_rejects_unsafe_missing_and_duplicate_paths() {
+        for name in [
+            "../outside.png",
+            "/absolute.png",
+            "pages/../outside.png",
+            "pages/\n.png",
+        ] {
+            let mut bytes = Vec::new();
+            gnu_long_entry(&mut bytes, name.as_bytes(), b'0', b"P5\n1 1\n255\n\0");
+            assert!(Comic::open(&tar_fixture(bytes).0).is_err(), "{name:?}");
+        }
+        let mut bytes = Vec::new();
+        gnu_long_entry(&mut bytes, b"pages/1.png", b'0', b"P5\n1 1\n255\n\0");
+        tar_entry(&mut bytes, "pages/1.png", "", b'0', b"P5\n1 1\n255\n\0");
+        assert!(Comic::open(&tar_fixture(bytes).0).is_err());
+        let mut dangling = Vec::new();
+        tar_entry(&mut dangling, "././@LongLink", "", b'L', b"page.png\0");
+        assert!(Comic::open(&tar_fixture(dangling).0).is_err());
+        let mut unterminated = Vec::new();
+        tar_entry(&mut unterminated, "././@LongLink", "", b'L', b"page.png");
+        tar_entry(&mut unterminated, "page.png", "", b'0', b"P5\n1 1\n255\n\0");
+        assert!(Comic::open(&tar_fixture(unterminated).0).is_err());
+        let mut links = Vec::new();
+        gnu_long_entry(&mut links, b"pages/symlink.png", b'2', b"");
+        assert!(Comic::open(&tar_fixture(links).0).is_err());
     }
 
     #[test]

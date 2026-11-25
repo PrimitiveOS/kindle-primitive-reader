@@ -33,8 +33,8 @@ fn group<'a>(tex: &'a str, command: &str) -> &'a str {
 
 fn add_exceptions(rules: &mut Vec<String>, source: &str, whole_word: bool, priority: &str) {
     for entry in group(source, "\\hyphenation{").split_whitespace() {
-        let word = entry.to_ascii_lowercase();
-        assert!(word.bytes().all(|ch| ch.is_ascii_lowercase() || ch == b'-'));
+        let word = entry.to_lowercase();
+        assert!(word.chars().all(|ch| ch.is_alphabetic() || ch == '-'));
         if word.contains('-') {
             let weighted = word.replace('-', priority);
             rules.push(if whole_word {
@@ -65,14 +65,17 @@ fn base_rules(tex: &str) -> Vec<String> {
     rules
 }
 
-fn stock_word_rules(tex: &str) -> Vec<String> {
+fn stock_word_rules(tex: &str, apostrophes: bool) -> Vec<String> {
     let mut rules = group(tex, "\\patterns{")
         .split_whitespace()
         .filter(|entry| {
             entry.chars().any(|ch| ch.is_ascii_digit())
-                && entry
-                    .chars()
-                    .all(|ch| ch.is_alphabetic() || ch.is_ascii_digit() || ch == '.')
+                && entry.chars().all(|ch| {
+                    ch.is_alphabetic()
+                        || ch.is_ascii_digit()
+                        || ch == '.'
+                        || (apostrophes && ch == '\'')
+                })
         })
         .map(str::to_owned)
         .collect();
@@ -152,9 +155,16 @@ fn main() {
         ("fi", "FINNISH"),
         ("da", "DANISH"),
         ("nl", "DUTCH"),
+        ("fr", "FRENCH"),
+        ("de-1996", "GERMAN"),
+        ("bg", "BULGARIAN"),
+        ("gl", "GALICIAN"),
+        ("ga", "IRISH"),
+        ("uk", "UKRAINIAN"),
+        ("pl", "POLISH"),
     ] {
         let tex = tex_source(&format!("assets/hyphenation/hyph-{tag}.tex"));
-        let mut rules = stock_word_rules(&tex);
+        let mut rules = stock_word_rules(&tex, tag == "uk");
         if tag == "fi" {
             // CRE converted this two-entry TeX line into one pattern with an
             // internal word-edge marker, unreachable when matching one word.
@@ -183,7 +193,7 @@ fn compile(mut rules: Vec<String>, name: &str, normalized: &Path) -> String {
             if ch.is_ascii_digit() {
                 *weights.last_mut().unwrap() = ch as u8 - b'0';
             } else {
-                assert!(ch.is_lowercase() || ch == '.');
+                assert!(ch.is_lowercase() || ch == '.' || ch == '\'');
                 let next = nodes.len();
                 let index = *nodes[at].edges.entry(ch).or_insert(next);
                 if index == next {

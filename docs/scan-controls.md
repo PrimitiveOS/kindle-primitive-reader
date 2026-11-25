@@ -28,6 +28,12 @@ containing a sixteen-band grayscale ramp as optional arguments.
 
 ## Auto straighten
 
+When the normal dark-ink detector finds too few edges, Reader estimates the
+paper tone in the bounded preview and retries against a relative threshold for
+faint gray text. The existing confidence check still decides whether to
+rotate. This fallback awaits desktop and device comparison; its behavior is
+not claimed to be identical to KOReader's estimator.
+
 **Auto straighten** sets the maximum tilt Reader will correct. The five presets are Off, 5°, 10°, 15° and 25°. **Decrease 1°** and **Increase 1°** adjust the limit between presets. Each visible page gets its own estimate. A 5° limit leaves an 8° tilt alone. A 10° limit straightens that page. Blank pages and pages with weak evidence of tilted text retain their original appearance.
 
 | Original 8° tilt | Live Scan controls | Corrected page |

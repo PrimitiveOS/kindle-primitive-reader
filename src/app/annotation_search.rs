@@ -134,13 +134,15 @@ impl Reader {
         };
         let query = &self.annotation_search;
         let mut rows = Vec::new();
-        if query.bookmarks {
-            for (index, mark) in state
-                .bookmarks
-                .iter()
-                .enumerate()
-                .filter(|(_, m)| query.contains(&m.label))
-            {
+        if query.bookmarks || query.notes {
+            for (index, mark) in state.bookmarks.iter().enumerate().filter(|(_, m)| {
+                let note = m.note.as_deref().filter(|n| !n.trim().is_empty());
+                (if note.is_some() {
+                    query.notes
+                } else {
+                    query.bookmarks
+                }) && (query.contains(&m.label) || note.is_some_and(|n| query.contains(n)))
+            }) {
                 let pos = &mark.position;
                 let key = if self.fixed.is_some() {
                     (pos.page, 0.0, 0.0)
@@ -161,7 +163,15 @@ impl Reader {
                 };
                 rows.push((
                     key,
-                    Item::new(&mark.label, Action::Bookmark(index)).detail("Bookmark"),
+                    Item::new(
+                        mark.note.as_deref().unwrap_or(&mark.label),
+                        Action::Bookmark(index),
+                    )
+                    .detail(if mark.note.is_some() {
+                        "Bookmark note"
+                    } else {
+                        "Bookmark"
+                    }),
                 ));
             }
         }

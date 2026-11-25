@@ -64,7 +64,9 @@ impl Chm {
         if topics.is_empty() || topics.len() > MAX_TOPICS {
             return Err("The CHM file has no readable topics or exceeds the topic limit".into());
         }
-        let encoding = system_encoding(system.locale);
+        let encoding = system_encoding(system.locale)
+            .or_else(|| system.font_charset.and_then(font_encoding))
+            .unwrap_or(WINDOWS_1252);
         let title = system
             .title
             .as_deref()
@@ -86,7 +88,7 @@ impl Chm {
             .as_ref()
             .and_then(|path| members.get_key_value(path))
         {
-            let input = decode(
+            let input = decode_html(
                 &read_limited(&mut archive, entry, MAX_TOPIC_BYTES)?,
                 encoding,
             )?;
@@ -162,7 +164,7 @@ impl Chm {
             .filter(|_| is_topic(path))
             .ok_or("The CHM topic is unavailable")?;
         let raw = read_limited(&mut self.archive, entry, MAX_TOPIC_BYTES)?;
-        let input = decode(&raw, self.encoding)?;
+        let input = decode_html(&raw, self.encoding)?;
         read_topic(&input, path, &self.members)
     }
 
@@ -184,6 +186,8 @@ impl Chm {
         let bytes = read_limited(&mut self.archive, entry, cap.min(MAX_ASSET_BYTES))?;
         let expected = if path.ends_with(".png") {
             bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+        } else if path.ends_with(".gif") {
+            crate::gif_image::has_signature(&bytes)
         } else {
             bytes.starts_with(b"\xff\xd8\xff")
         };
@@ -214,7 +218,7 @@ fn is_topic(path: &str) -> bool {
 }
 
 fn is_image(path: &str) -> bool {
-    matches!(extension(path), "png" | "jpg" | "jpeg")
+    matches!(extension(path), "png" | "jpg" | "jpeg" | "gif")
 }
 
 fn topic_name(path: &str) -> String {
@@ -234,6 +238,7 @@ struct System {
     home: Option<Vec<u8>>,
     title: Option<Vec<u8>>,
     locale: Option<u32>,
+    font_charset: Option<u8>,
 }
 
 // #SYSTEM records have a 32-bit version followed by 16-bit type/length pairs.
@@ -265,6 +270,13 @@ fn system_records(bytes: &[u8]) -> Result<System> {
             4 if value.len() >= 4 => {
                 output.locale = value.first_chunk().copied().map(u32::from_le_bytes)
             }
+            16 if data().len() <= MAX_REFERENCE => {
+                output.font_charset = data()
+                    .iter()
+                    .rposition(|&byte| byte == b',')
+                    .and_then(|comma| std::str::from_utf8(&data()[comma + 1..]).ok())
+                    .and_then(|number| number.trim().parse().ok());
+            }
             _ => {}
         }
         remaining = next;
@@ -272,8 +284,8 @@ fn system_records(bytes: &[u8]) -> Result<System> {
     Ok(output)
 }
 
-fn system_encoding(locale: Option<u32>) -> &'static Encoding {
-    match locale.unwrap_or_default() & 0x3ff {
+fn system_encoding(locale: Option<u32>) -> Option<&'static Encoding> {
+    Some(match locale? & 0x3ff {
         0x04 if matches!(locale, Some(0x0404 | 0x0c04 | 0x1404)) => encoding_rs::BIG5,
         0x04 => encoding_rs::GBK,
         0x11 => encoding_rs::SHIFT_JIS,
@@ -287,8 +299,24 @@ fn system_encoding(locale: Option<u32>) -> &'static Encoding {
         0x25..=0x27 => encoding_rs::WINDOWS_1257,
         0x2a => encoding_rs::WINDOWS_1258,
         0x1e => encoding_rs::WINDOWS_874,
-        _ => WINDOWS_1252,
-    }
+        0x03 | 0x06 | 0x07 | 0x09 | 0x0a | 0x0b | 0x0c | 0x0f | 0x10 | 0x13 | 0x14 | 0x16
+        | 0x1d | 0x21 | 0x2d | 0x36 => WINDOWS_1252,
+        _ => return None,
+    })
+}
+
+fn font_encoding(charset: u8) -> Option<&'static Encoding> {
+    Some(match charset {
+        0 => WINDOWS_1252,
+        204 => encoding_rs::WINDOWS_1251,
+        238 => encoding_rs::WINDOWS_1250,
+        161 => encoding_rs::WINDOWS_1253,
+        162 => encoding_rs::WINDOWS_1254,
+        186 => encoding_rs::WINDOWS_1257,
+        177 => encoding_rs::WINDOWS_1255,
+        178 => encoding_rs::WINDOWS_1256,
+        _ => return None,
+    })
 }
 
 fn decode(input: &[u8], fallback: &'static Encoding) -> Result<String> {
@@ -304,6 +332,79 @@ fn decode(input: &[u8], fallback: &'static Encoding) -> Result<String> {
         return Err("The CHM text encoding or decoded size is unsupported".into());
     }
     Ok(text.into_owned())
+}
+
+fn decode_html(input: &[u8], fallback: &'static Encoding) -> Result<String> {
+    if Encoding::for_bom(input).is_some() {
+        return decode(input, fallback);
+    }
+    if let Some(encoding) = html_encoding(input) {
+        let (text, errors) = encoding.decode_without_bom_handling(input);
+        if errors || text.len() > MAX_OUTPUT {
+            return Err("The CHM HTML encoding or decoded size is unsupported".into());
+        }
+        return Ok(text.into_owned());
+    }
+    decode(input, fallback)
+}
+
+// Only scan the bounded HTML prefix and only inspect actual meta tags, not
+// text inside comments or script. The archive locale remains the fallback.
+fn html_encoding(input: &[u8]) -> Option<&'static Encoding> {
+    let prefix = String::from_utf8_lossy(&input[..input.len().min(1024)]);
+    let sink = tokenize(&prefix, CharsetSink(RefCell::new((None, false))));
+    sink.0.into_inner().0
+}
+
+struct CharsetSink(RefCell<(Option<&'static Encoding>, bool)>);
+
+impl TokenSink for CharsetSink {
+    type Handle = ();
+
+    fn process_token(&self, token: Token, _: u64) -> TokenSinkResult<()> {
+        let Token::TagToken(tag) = token else {
+            return TokenSinkResult::Continue;
+        };
+        if tag.kind != TagKind::StartTag {
+            return TokenSinkResult::Continue;
+        }
+        let mut state = self.0.borrow_mut();
+        let name: &str = tag.name.as_ref();
+        if name == "body" {
+            state.1 = true;
+        }
+        if !state.1 && state.0.is_none() && name == "meta" {
+            let label = attr(&tag, "charset").or_else(|| {
+                attr(&tag, "http-equiv")
+                    .filter(|value| value.eq_ignore_ascii_case("content-type"))
+                    .and_then(|_| attr(&tag, "content"))
+                    .and_then(content_type_charset)
+            });
+            state.0 = label
+                .and_then(|label| Encoding::for_label(label.as_bytes()))
+                .map(|encoding| {
+                    if encoding == encoding_rs::UTF_16LE || encoding == encoding_rs::UTF_16BE {
+                        UTF_8
+                    } else {
+                        encoding
+                    }
+                });
+        }
+        match name {
+            "script" => TokenSinkResult::RawData(RawKind::ScriptData),
+            "style" => TokenSinkResult::RawData(RawKind::Rawtext),
+            _ => TokenSinkResult::Continue,
+        }
+    }
+}
+
+fn content_type_charset(content: &str) -> Option<&str> {
+    content.split(';').find_map(|parameter| {
+        let (name, value) = parameter.split_once('=')?;
+        name.trim()
+            .eq_ignore_ascii_case("charset")
+            .then(|| value.trim().trim_matches(['\'', '"']))
+    })
 }
 
 fn clean_label(text: &str) -> Option<String> {

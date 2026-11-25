@@ -9,11 +9,13 @@ screen page. A publisher label with the exact destination can still appear.
 **Navigation → Contents settings** offers **Show chapter length** (off by
 default) and **Dot leaders** (on by default). Lengths use the complete outline,
 including folded sections. Each section ends at the next entry of equal or
-shallower depth, or at the end of the book. Screen page lengths appear only
-when Reader already knows the layout needed to calculate them. Opening
-Contents never paginates the rest of the book. Stable page maps calculate
+shallower depth, or at the end of the book. For supported reflow layouts,
+opening Contents with chapter lengths enabled requests a bounded background
+layout of the book; lengths appear when that layout has resolved the outline.
+The Contents screen remains usable while this work runs. Stable page maps calculate
 lengths from their reference labels, using source anchors for mapped endpoints.
-Reader leaves unavailable labels and lengths blank.
+Reader leaves unavailable labels and lengths blank, including for unsupported
+layouts, suppressed headings, or custom contents without indexed anchors.
 
 KOReader appends the length beside the title, aligns the page label to the right,
 and only draws leaders if at least three dots fit. Its reflow lengths can use

@@ -577,6 +577,10 @@ impl Reader {
             self.alternative_book_marker_fractions(super::progress_markers::MarkerTrack::Skim)
         {
             markers.into_iter().for_each(draw_marker);
+        } else if let Some(markers) =
+            self.publisher_book_marker_fractions(super::progress_markers::MarkerTrack::Skim)
+        {
+            markers.into_iter().for_each(draw_marker);
         } else if let Some(markers) = self.whole_book_marker_pages(false) {
             let last_page = markers.count.saturating_sub(1).max(1);
             for page in markers.starts {

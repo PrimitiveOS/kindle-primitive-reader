@@ -264,6 +264,48 @@ impl ScreenPages {
         Some((marks, count))
     }
 
+    /// Resolve publisher headings to both their measured page and spine item.
+    /// Footer and Skim use source-size weighted tracks, so absolute screen
+    /// page numbers alone cannot be used as tick fractions on those tracks.
+    pub(super) fn publisher_locations(
+        &self,
+        config: &BookConfig,
+        probe: &Probe,
+        chapter: usize,
+        page: usize,
+        allow_depth: impl Fn(usize) -> bool,
+    ) -> Option<AlternativeLocations> {
+        let (current, count) = self.position(config, probe, chapter, page)?;
+        let slot = self.0.borrow();
+        let generation = slot.as_ref()?;
+        let prefix = generation.prefix.as_ref()?;
+        let mut starts = Vec::new();
+        for (chapter, local) in generation.heading_pages.iter().enumerate() {
+            let start = *prefix.get(chapter)?;
+            let pages = prefix.get(chapter + 1)?.checked_sub(start)?;
+            for &(index, page) in local.as_ref()?.publisher.as_ref()? {
+                if page >= pages {
+                    return None;
+                }
+                if allow_depth(probe.toc.get(index)?.depth) {
+                    starts.push(AlternativeLocation {
+                        index,
+                        chapter,
+                        page,
+                        pages,
+                        absolute: start + page,
+                    });
+                }
+            }
+        }
+        starts.sort_by_key(|heading| heading.absolute);
+        Some(AlternativeLocations {
+            starts,
+            current: current - 1,
+            count,
+        })
+    }
+
     pub(super) fn alternative_locations(
         &self,
         config: &BookConfig,

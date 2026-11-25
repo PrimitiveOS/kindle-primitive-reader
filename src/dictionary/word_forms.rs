@@ -91,6 +91,26 @@ impl WordForms {
                 add(stem, "", uppercase);
             }
         }
+        // Adverbs and comparatives can change final y to i, double the
+        // preceding consonant, or drop a silent e. These remain fallback
+        // candidates: the selected spelling and earlier candidates keep their
+        // established priority, and only installed dictionary entries match.
+        if let Some((stem, uppercase)) = suffix(word, "ily") {
+            add(stem, "y", uppercase);
+        }
+        for ending in ["ier", "iest"] {
+            if let Some((stem, uppercase)) = suffix(word, ending) {
+                add(stem, "y", uppercase);
+            }
+        }
+        for ending in ["er", "est"] {
+            if let Some((stem, uppercase)) = suffix(word, ending) {
+                if let Some(single) = undouble(stem) {
+                    add(single, "", uppercase);
+                }
+                add(stem, "e", uppercase);
+            }
+        }
         forms
     }
 
@@ -160,16 +180,16 @@ fn inflection_order_prefers_a_dictionary_entry_for_the_closest_word_form() {
         ("stopped", vec!["stoppe", "stop", "stopp"]),
         ("running", vec!["run", "runn", "runne"]),
         ("making", vec!["mak", "make"]),
-        ("happily", vec!["happi"]),
+        ("happily", vec!["happi", "happy"]),
         ("boxes", vec!["boxe", "box"]),
         ("carried", vec!["carrie", "carri", "carry"]),
-        ("earliest", vec!["earli"]),
+        ("earliest", vec!["earli", "early", "earlie"]),
         ("Dogs", vec!["Dog", "dog"]),
         ("iPods", vec!["iPod"]),
         ("iPODS", vec!["iPOD", "ipod"]),
         ("WALKED", vec!["WALKE", "walke", "WALK", "walk"]),
         ("triEd", vec![]),
-        ("older", vec!["old"]),
+        ("older", vec!["old", "olde"]),
     ] {
         let forms = WordForms::for_word(word);
         let mut actual: Vec<_> = forms.order.iter().collect();

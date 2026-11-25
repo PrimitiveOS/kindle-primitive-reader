@@ -5,7 +5,7 @@ use super::contents_view::{ContentsEntry, Target};
 use super::{ActiveBook, Reader};
 use crate::Anchor;
 use crate::epub::Destination;
-use crate::generated_contents::OutlineTarget;
+use crate::generated_contents::{OutlineEntry, OutlineTarget};
 
 type Position = (usize, usize);
 
@@ -84,6 +84,24 @@ impl ContentsPositions {
 }
 
 impl Reader {
+    /// The same bounded background layout used by document page navigation can
+    /// resolve section lengths without blocking the Contents screen.
+    pub(super) fn contents_chapter_lengths_demand(&self) -> bool {
+        self.screen.is_contents()
+            && self.controls.contents_chapter_lengths
+            && self.active.as_ref().is_some_and(|book| {
+                book.reading.has_exact_local_screen_pages()
+                    && !book.reading.hides_nonlinear()
+                    && book.numbering.is_none()
+                    && !(book.page_labels() > 0
+                        && (self.publisher_footer_enabled() || self.publisher_margins_enabled()))
+                    && self
+                        .library
+                        .state(book.id)
+                        .is_some_and(|state| !state.custom_contents.enabled)
+            })
+    }
+
     pub(super) fn contents_positions(
         &self,
         entries: &[ContentsEntry],
@@ -106,6 +124,38 @@ impl Reader {
             .then(|| References::Print(PrintedMap::new(book, &chapters)))
         });
         let fixed = self.fixed.as_ref().map(|book| &book.reading);
+        // A complete index contains page coordinates for publisher and generated
+        // headings throughout the spine. Missing or suppressed headings remain
+        // unknown; never mix their local coordinates with whole-book pages.
+        let indexed = active.and_then(|book| {
+            if references.is_some() || state.is_some_and(|state| state.custom_contents.enabled) {
+                return None;
+            }
+            let reading = &book.reading;
+            if let Some(outline) = self.alternative_entries(book.id) {
+                return reading.whole_book_alternative_locations(outline, |_| true);
+            }
+            if !reading.probe.toc.is_empty() {
+                return reading.whole_book_publisher_locations(|_| true);
+            }
+            let outline: Vec<_> = (0..reading.probe.chapter_count())
+                .map(|chapter| OutlineEntry {
+                    title: String::new(),
+                    depth: 0,
+                    target: OutlineTarget::Chapter(chapter),
+                })
+                .collect();
+            reading.whole_book_alternative_locations(&outline, |_| true)
+        });
+        let indexed_pages = indexed.as_ref().map(|locations| {
+            let mut pages = vec![None; entries.len()];
+            for heading in &locations.starts {
+                if let Some(page) = pages.get_mut(heading.index) {
+                    *page = Some(Page::Fixed(heading.absolute));
+                }
+            }
+            pages
+        });
         let resolved: Vec<_> = entries
             .iter()
             .map(|entry| {
@@ -212,6 +262,8 @@ impl Reader {
         let open_layout = reading.map(|reader| (reader.chapter, reader.probe.page_count()));
         let end = if let Some(fixed) = fixed {
             Some(Page::Fixed(fixed.count()))
+        } else if let Some(locations) = &indexed {
+            Some(Page::Fixed(locations.count))
         } else if let Some(references) = &references {
             references.total(active?).map(|label| Page::Reference {
                 label,
@@ -229,7 +281,11 @@ impl Reader {
                 entries.iter().map(|entry| entry.depth),
                 resolved
                     .iter()
-                    .map(|row| row.as_ref().and_then(|(_, page, _)| *page)),
+                    .enumerate()
+                    .map(|(index, row)| match &indexed_pages {
+                        Some(pages) => pages[index],
+                        None => row.as_ref().and_then(|(_, page, _)| *page),
+                    }),
                 end,
                 open_layout,
             )

@@ -998,6 +998,10 @@ impl Reader {
                 match bars.button_at(x, y) {
                     Some(Target::Invoke(Action::ReadAlarm)) => self.read_alarm.stop(),
                     Some(
+                        Target::Apply(Action::SetBaseStylesheet(style), _)
+                        | Target::Current(Action::SetBaseStylesheet(style)),
+                    ) => self.apply_overlay_action(Action::ConfirmBaseStylesheetDefault(style)),
+                    Some(
                         Target::Apply(Action::TopStatusHeader(enabled), _)
                         | Target::Current(Action::TopStatusHeader(enabled)),
                     ) => self.apply_overlay_action(Action::ConfirmTopStatusHeaderDefault(enabled)),

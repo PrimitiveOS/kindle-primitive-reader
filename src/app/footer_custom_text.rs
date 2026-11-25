@@ -42,6 +42,15 @@ impl ClockTokens {
         format!("{hour}:{minute:02} {period}")
     }
 
+    /// KOReader's custom `%m` token uses the unpadded device-local hour.
+    pub(crate) fn custom_time(&self, twelve_hour_clock: bool) -> String {
+        if twelve_hour_clock {
+            self.reading_time(true)
+        } else {
+            format!("{}:{:02}", self.local_time.hour, self.local_time.minute)
+        }
+    }
+
     pub(super) fn header_time(&self, twelve_hour_clock: bool) -> String {
         let time = self.reading_time(twelve_hour_clock);
         if twelve_hour_clock && time.as_bytes().get(1) == Some(&b':') {
@@ -244,6 +253,8 @@ mod tests {
         assert_eq!(clock.time_with_seconds, "01-09-04");
         assert_eq!(clock.reading_time(false), "01:09");
         assert_eq!(clock.reading_time(true), "1:09 AM");
+        assert_eq!(clock.custom_time(false), "1:09");
+        assert_eq!(clock.custom_time(true), "1:09 AM");
         assert_eq!(clock.header_time(false), "01:09");
         assert_eq!(clock.header_time(true), "01:09 AM");
         for (hour, display) in [(0, "12:09 AM"), (12, "12:09 PM"), (23, "11:09 PM")] {
@@ -252,6 +263,19 @@ mod tests {
                 ..clock.local_time
             };
             assert_eq!(ClockTokens::from_time(time).reading_time(true), display);
+        }
+        for (hour, display24, display12) in [
+            (0, "0:09", "12:09 AM"),
+            (12, "12:09", "12:09 PM"),
+            (23, "23:09", "11:09 PM"),
+        ] {
+            let time = ClockTokens::from_time(primitive_device::LocalTime {
+                hour,
+                ..clock.local_time
+            });
+            assert_eq!(time.custom_time(false), display24);
+            assert_eq!(time.custom_time(true), display12);
+            assert_eq!(time.time_with_seconds, format!("{hour:02}-09-04"));
         }
     }
 

@@ -36,37 +36,56 @@ impl ScanGrid {
         let sample_height = height.min(SAMPLE_HEIGHT);
         let xs = sample_axis(width, sample_width);
         let ys = sample_axis(height, sample_height);
-        let mut grays = Vec::with_capacity(sample_width * sample_height);
-        let mut histogram = [0; 256];
+        let mut dark_samples = Vec::with_capacity(sample_width * sample_height);
+        let mut light_samples = Vec::with_capacity(sample_width * sample_height);
+        let mut dark_histogram = [0; 256];
+        let mut light_histogram = [0; 256];
         let page_x = interior(sample_width);
         let page_y = interior(sample_height);
         for (y, &(y0, y1)) in ys.iter().enumerate() {
             let top = &pixels[y0 * width..][..width];
             let bottom = &pixels[y1 * width..][..width];
             for (x, &(x0, x1)) in xs.iter().enumerate() {
-                // Sample opposite parts of the cell so thin strokes survive downsampling.
-                let gray = top[x0].min(top[x1]).min(bottom[x0]).min(bottom[x1]);
-                grays.push(gray);
+                // Retain both extrema so a thin dark or light stroke survives
+                // downsampling without assuming the source paper is white.
+                let values = [top[x0], top[x1], bottom[x0], bottom[x1]];
+                let dark = *values.iter().min()?;
+                let light = *values.iter().max()?;
+                dark_samples.push(dark);
+                light_samples.push(light);
                 if page_x.contains(&x) && page_y.contains(&y) {
-                    histogram[usize::from(gray)] += 1;
+                    dark_histogram[usize::from(dark)] += 1;
+                    light_histogram[usize::from(light)] += 1;
                 }
             }
         }
         let count = page_x.len() * page_y.len();
-        let dark = percentile(&histogram, (count * 2).div_ceil(100));
-        let paper = percentile(&histogram, (count * 65).div_ceil(100));
-        let contrast = paper - dark;
-        if contrast < 16 || paper < 100 {
-            return None;
-        }
-        let threshold = paper - (contrast / 3).clamp(12, 48);
-        for gray in &mut grays {
-            *gray = u8::from(*gray <= threshold);
-        }
+        let dark = percentile(&dark_histogram, (count * 2).div_ceil(100));
+        let paper = percentile(&dark_histogram, (count * 65).div_ceil(100));
+        let dark_contrast = paper.saturating_sub(dark);
+        let ink = if paper >= 100 && dark_contrast >= 16 {
+            let threshold = paper - (dark_contrast / 3).clamp(12, 48);
+            for gray in &mut dark_samples {
+                *gray = u8::from(*gray <= threshold);
+            }
+            dark_samples
+        } else {
+            let paper = percentile(&light_histogram, (count * 65).div_ceil(100));
+            let light = percentile(&light_histogram, (count * 98).div_ceil(100));
+            let contrast = light.saturating_sub(paper);
+            if contrast < 16 || paper >= 160 {
+                return None;
+            }
+            let threshold = paper.saturating_add((contrast / 3).clamp(12, 48));
+            for gray in &mut light_samples {
+                *gray = u8::from(*gray >= threshold);
+            }
+            light_samples
+        };
         Some(Self {
             width: sample_width,
             height: sample_height,
-            ink: grays,
+            ink,
         })
     }
 
@@ -288,6 +307,40 @@ mod tests {
         assert!(left.y0 < 0.2 && right.y1 > 0.8);
         assert!(left.x1 < right.x0);
 
+        let scale = 4;
+        let larger: Vec<_> = (0..H * scale)
+            .flat_map(|y| (0..W * scale).map(move |x| (y / scale) * W + x / scale))
+            .map(|index| original[index])
+            .collect();
+        let [scaled_left, scaled_right] =
+            detect_columns(&larger, (W * scale) as u32, (H * scale) as u32).unwrap();
+        assert!((left.x0 - scaled_left.x0).abs() < 0.02);
+        assert!((right.x1 - scaled_right.x1).abs() < 0.02);
+    }
+
+    #[test]
+    fn detects_light_text_on_dark_scans_without_reversing_page_geometry() {
+        let ordinary = detect(&paired(240, 35)).unwrap();
+        for (paper, ink) in [(0, 255), (32, 220), (75, 145)] {
+            let inverted = detect(&paired(paper, ink)).unwrap();
+            assert_eq!(inverted, ordinary, "paper {paper}, ink {ink}");
+        }
+        // Blank and single-column dark pages do not acquire false gutters.
+        assert!(detect(&vec![0; W * H]).is_none());
+        let mut single = vec![24; W * H];
+        text(&mut single, 25..212, 54..283, 16, 225);
+        assert!(detect(&single).is_none());
+        let mut three = vec![20; W * H];
+        for column in [14..70, 84..151, 166..225] {
+            text(&mut three, column, 56..284, 13, 225);
+        }
+        assert!(detect(&three).is_none());
+    }
+
+    #[test]
+    fn dark_scan_sampling_preserves_fine_light_strokes_when_scaled() {
+        let original = paired(22, 230);
+        let [left, right] = detect(&original).unwrap();
         let scale = 4;
         let larger: Vec<_> = (0..H * scale)
             .flat_map(|y| (0..W * scale).map(move |x| (y / scale) * W + x / scale))

@@ -652,7 +652,7 @@ impl Reader {
                             [Choice::link("Open", Action::Show(Screen::StyleTweaks))],
                         ),
                         ConfigRow::new(
-                            "Base stylesheet",
+                            "Base stylesheet (hold for default)",
                             BaseStylesheet::ALL
                                 .into_iter()
                                 .filter(|style| {
@@ -660,16 +660,21 @@ impl Reader {
                                         || matches!(
                                             active.entry.format,
                                             crate::library::DocumentFormat::Fb2
+                                                | crate::library::DocumentFormat::Fb3
                                                 | crate::library::DocumentFormat::Text
                                         )
                                 })
                                 .map(|base_stylesheet| {
                                     Choice::option(
-                                        base_stylesheet.label(),
-                                        Action::Text(Settings {
-                                            base_stylesheet,
-                                            ..settings
-                                        }),
+                                        if base_stylesheet == BaseStylesheet::FictionBook
+                                            && active.entry.format
+                                                == crate::library::DocumentFormat::Fb3
+                                        {
+                                            "FB3"
+                                        } else {
+                                            base_stylesheet.label()
+                                        },
+                                        Action::SetBaseStylesheet(base_stylesheet),
                                         settings.base_stylesheet == base_stylesheet,
                                     )
                                 }),

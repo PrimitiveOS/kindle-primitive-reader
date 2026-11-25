@@ -140,6 +140,8 @@ impl Reader {
                 "The reading header, footer and Skim use the included levels"
             } else if self.has_whole_book_marker_coordinates() {
                 "The footer and Skim use the included levels"
+            } else if self.publisher_filtered_marker_demand() {
+                "The footer and Skim use included levels when ready"
             } else {
                 "The reading header uses the included levels for this book"
             },
@@ -216,6 +218,7 @@ impl Reader {
             LevelSetting::ToggleLevel(depth) => levels.toggle(depth),
         }
         self.mark_book_changed();
+        self.sync_alternative_contents();
         Ok(())
     }
 }

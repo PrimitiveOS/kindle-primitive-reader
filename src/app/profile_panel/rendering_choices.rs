@@ -1,10 +1,15 @@
 //! Discrete rendering settings saved to a reflowable profile.
 use super::{Action, BookPreferences, Field, Item, Profile, Reader, Result, Screen};
-use crate::{FontHinting, FontKerningMode};
+use crate::{BaseStylesheet, FontHinting, FontKerningMode, PublisherRenderMode, TextAlignment};
 
 pub(super) const FONT: [Field; 2] = [Field::Hinting, Field::Kerning];
-pub(super) const BOOK: [Field; 4] = [
+pub(super) const BOOK: [Field; 9] = [
+    Field::ReadingMode,
+    Field::FacingPages,
+    Field::Alignment,
     Field::PublisherStyles,
+    Field::PublisherRenderMode,
+    Field::BaseStyle,
     Field::PublisherFonts,
     Field::ImageScaling,
     Field::NightImages,
@@ -18,6 +23,11 @@ pub(in crate::app) enum Value {
     Fonts(bool),
     SmoothImages(bool),
     InvertImages(bool),
+    Scroll(bool),
+    FacingPages(bool),
+    Alignment(TextAlignment),
+    RenderMode(PublisherRenderMode),
+    BaseStyle(BaseStylesheet),
 }
 
 impl Value {
@@ -29,6 +39,11 @@ impl Value {
             Self::Fonts(_) => Field::PublisherFonts,
             Self::SmoothImages(_) => Field::ImageScaling,
             Self::InvertImages(_) => Field::NightImages,
+            Self::Scroll(_) => Field::ReadingMode,
+            Self::FacingPages(_) => Field::FacingPages,
+            Self::Alignment(_) => Field::Alignment,
+            Self::RenderMode(_) => Field::PublisherRenderMode,
+            Self::BaseStyle(_) => Field::BaseStyle,
         }
     }
 
@@ -43,6 +58,11 @@ impl Value {
             Self::Fonts(enabled) => preferences.override_fonts = !enabled,
             Self::SmoothImages(smooth) => preferences.smooth_images = Some(smooth),
             Self::InvertImages(invert) => preferences.invert_night_images = invert,
+            Self::Scroll(scroll) => preferences.scroll = scroll,
+            Self::FacingPages(facing) => preferences.facing_pages = facing,
+            Self::Alignment(alignment) => preferences.alignment = alignment,
+            Self::RenderMode(mode) => preferences.publisher_render_mode = Some(mode),
+            Self::BaseStyle(style) => preferences.base_stylesheet = Some(style),
         }
     }
 }
@@ -70,6 +90,34 @@ fn choices(field: Field) -> &'static [(&'static str, Value)] {
             ("Original", Value::InvertImages(false)),
             ("Inverted", Value::InvertImages(true)),
         ],
+        Field::ReadingMode => &[
+            ("Page turns", Value::Scroll(false)),
+            ("Scrolling", Value::Scroll(true)),
+        ],
+        Field::FacingPages => &[
+            ("One page", Value::FacingPages(false)),
+            ("Facing pages", Value::FacingPages(true)),
+        ],
+        Field::Alignment => &[
+            ("Publisher", Value::Alignment(TextAlignment::Publisher)),
+            ("Start", Value::Alignment(TextAlignment::Start)),
+            ("Center", Value::Alignment(TextAlignment::Center)),
+            ("Justify", Value::Alignment(TextAlignment::Justify)),
+        ],
+        Field::PublisherRenderMode => &[
+            ("Reader", Value::RenderMode(PublisherRenderMode::Reader)),
+            ("Legacy", Value::RenderMode(PublisherRenderMode::Legacy)),
+            ("Flat", Value::RenderMode(PublisherRenderMode::Flat)),
+            ("Book", Value::RenderMode(PublisherRenderMode::Book)),
+            ("Web", Value::RenderMode(PublisherRenderMode::Web)),
+        ],
+        Field::BaseStyle => &[
+            ("Auto", Value::BaseStyle(BaseStylesheet::Auto)),
+            ("None", Value::BaseStyle(BaseStylesheet::None)),
+            ("Traditional", Value::BaseStyle(BaseStylesheet::Traditional)),
+            ("HTML", Value::BaseStyle(BaseStylesheet::HtmlStandard)),
+            ("FB2", Value::BaseStyle(BaseStylesheet::FictionBook)),
+        ],
         _ => &[],
     }
 }
@@ -82,6 +130,11 @@ fn saved(field: Field, preferences: &BookPreferences) -> Option<Value> {
         Field::PublisherFonts => Some(Value::Fonts(!preferences.override_fonts)),
         Field::ImageScaling => preferences.smooth_images.map(Value::SmoothImages),
         Field::NightImages => Some(Value::InvertImages(preferences.invert_night_images)),
+        Field::ReadingMode => Some(Value::Scroll(preferences.scroll)),
+        Field::FacingPages => Some(Value::FacingPages(preferences.facing_pages)),
+        Field::Alignment => Some(Value::Alignment(preferences.alignment)),
+        Field::PublisherRenderMode => preferences.publisher_render_mode.map(Value::RenderMode),
+        Field::BaseStyle => preferences.base_stylesheet.map(Value::BaseStyle),
         _ => None,
     }
 }
@@ -128,6 +181,18 @@ impl Reader {
         let current = saved(field, preferences);
         choices(field)
             .iter()
+            .filter(|&&(_, value)| {
+                value != Value::BaseStyle(BaseStylesheet::FictionBook)
+                    || current == Some(value)
+                    || self.active.as_ref().is_some_and(|book| {
+                        matches!(
+                            book.entry.format,
+                            crate::library::DocumentFormat::Fb2
+                                | crate::library::DocumentFormat::Fb3
+                                | crate::library::DocumentFormat::Text
+                        )
+                    })
+            })
             .map(|&(label, value)| {
                 let item = Item::new(label, Action::SetProfileRendering(index, value));
                 if current == Some(value) {

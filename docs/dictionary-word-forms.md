@@ -2,6 +2,12 @@
 
 Long-press a word on the page and tap Dictionary. If an enabled dictionary has an entry for the selected spelling or an alias, Reader shows that entry. When Word forms is on, Reader also tries common English or supported Japanese inflections in that dictionary. For example, selecting *carried* can open the headword *carry*. When those steps find nothing and Fuzzy search is on, Reader searches the enabled dictionaries for up to ten similar spellings. The popup stays over the book while results arrive. Closing it returns to the selected word. Save word remains a separate action.
 
+The English fallback also proposes dictionary forms for adverbs and
+comparatives, such as *happily* → *happy*, *happiest* → *happy*,
+*bigger* → *big*, and *wider* → *wide*. Literal and previously available
+candidate matches retain their order. These newly added forms await integrated
+and device testing; they do not imply a complete English morphological model.
+
 ![Looking up carried in the Harbour Dictionary](screenshots/dictionary-word-form.png)
 
 In Dictionaries, **Word forms by default** sets how Reader handles inflections. **Fuzzy search by default** controls the extra spelling scan after a miss. Both are on for a fresh installation. Each book or PDF can use its own choice for either setting. **Use the default fuzzy search setting** returns that edition to the library preference. On upgrade, any existing Word forms choice supplies the initial fuzzy choice at the same scope. Each setting can then be changed separately.

@@ -32,6 +32,15 @@ The shared UI renderer now retains Noto Sans first and uses additional supplied 
 
 Candidate generation is bounded to 128 Japanese forms and four transformation steps per prefix. Dictionary processing retains the existing source-count, result, byte and decompression limits. Cancellation is checked during headword and synonym scans and around bounded definition decoding. This is a productive-form subset, not KOReader's complete configurable Japanese plugin: honorific, archaic and colloquial forms, lexical-class verification, kana-reading conversions and configurable scan lengths remain open. An index entry alone cannot prove a verb's conjugation class; ambiguous real entries may be shown together. Automatic expansion is for reflowable source selections. Fixed-page selections can use lookup forms but retain their original geometric selection.
 
+The current implementation pass adds productive colloquial completion and
+preparation contractions, progressive contractions, conditional/list endings,
+polite imperatives and excess/appearance constructions. For example, it can
+propose the same dictionary base for `読んじゃう` and `読む`. Candidate
+generation remains bounded, and only installed dictionary entries can supply
+definitions. These new forms have not yet been checked against the pinned
+KOReader replay, simulator or Kindle. Other colloquial, honorific and archaic
+forms and lexical-class matching remain open.
+
 Desktop tests exercise conjugation families, ambiguous entries, normalization precedence, synonyms and dictionary order, complete voiced/variation clusters, cancellation, manual ranges and returning from the popup. The retained W3C Japanese EPUB supplies real publication passages; an unchanged owner EPUB supplies a non-CJK regression. The owner corpus audited earlier has no CJK text, so it cannot supply a Japanese positive case. [Corpus and public-edition provenance](cjk-width.md)
 
 Kindle acceptance remains pending the combined build. These desktop results do not establish complete Japanese lexical coverage or full KOReader reading parity.

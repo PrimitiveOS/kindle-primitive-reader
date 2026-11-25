@@ -127,6 +127,30 @@ pub(crate) fn render_inline(
     budget: usize,
     css_size: Option<&dyn Fn(u32, u32) -> (u32, u32)>,
 ) -> Result<(GrayImage, usize)> {
+    let (viewport, cost) = inline_pixmap(book, chapter, xml, width, height, budget, css_size)?;
+    Ok((grayscale_pixmap(viewport)?, cost))
+}
+
+pub(crate) fn inline_png_resource(
+    book: &mut crate::epub::Book,
+    chapter: &str,
+    xml: &str,
+    budget: usize,
+) -> Result<(Vec<u8>, usize)> {
+    let (viewport, cost) =
+        inline_pixmap(book, chapter, xml, MAX_SVG_SIDE, MAX_SVG_SIDE, budget, None)?;
+    Ok((viewport.encode_png()?, cost))
+}
+
+fn inline_pixmap(
+    book: &mut crate::epub::Book,
+    chapter: &str,
+    xml: &str,
+    width: u32,
+    height: u32,
+    budget: usize,
+    css_size: Option<&dyn Fn(u32, u32) -> (u32, u32)>,
+) -> Result<(tiny_skia::Pixmap, usize)> {
     if xml.len() > MAX_SVG_BYTES || xml.contains("<!DOCTYPE") {
         return Err("The SVG must be static UTF-8 within 256 KiB".into());
     }
@@ -194,7 +218,7 @@ pub(crate) fn render_inline(
         Some(&images),
     )?;
     let cost = source_pixels.max(viewport.width() as usize * viewport.height() as usize);
-    Ok((grayscale_pixmap(viewport)?, cost))
+    Ok((viewport, cost))
 }
 
 pub(crate) fn png_resource(bytes: &[u8], available_pixels: usize) -> Result<(Vec<u8>, usize)> {

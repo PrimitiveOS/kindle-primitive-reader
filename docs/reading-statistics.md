@@ -173,8 +173,13 @@ limits in place, and a failed write keeps the draft available for retry.
 The pinned KOReader widget and page accounting confirm the independent bounds.
 With minimum 120 and maximum 10, a ten-second visit is below the minimum.
 An eleven-second visit exceeds the maximum and contributes ten seconds.
-Reader's keypad accepts whole seconds. KOReader's general number field also
-evaluates arithmetic expressions and accepts fractional inputs.
+Reader's keypad accepts arithmetic with addition, subtraction, multiplication,
+division, parentheses and decimals, for example `2*60` or `(15+5)/2`. A
+result must be a whole number of seconds because the saved limits and page
+accounting currently use integer seconds. Division by zero, incomplete
+expressions, and results outside the allowed range are rejected without
+changing the draft. KOReader's general number field also accepts fractional
+results; fractional-second limits remain unsupported in Reader.
 Reader keeps already recorded visits when the limits change.
 [Reader editor](screenshots/reading-statistics-duration.png) ·
 [Reader number pad](screenshots/reading-statistics-duration-keypad.png) ·

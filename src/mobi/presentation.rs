@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, ops::Range};
 const MAX_HINTS: usize = 32_768;
 const SIZES: [&str; 7] = ["0.75", "0.88671875", "1", "1.19921875", "1.5", "2", "3"];
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct Presentation {
     pub(crate) aligned: BTreeMap<usize, &'static str>,
     sizes: Vec<(Range<usize>, usize)>,

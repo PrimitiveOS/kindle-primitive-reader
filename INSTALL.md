@@ -32,7 +32,7 @@ repository root.
 
 ```sh
 cargo zigbuild --locked --release --target armv7-unknown-linux-musleabihf \
-  --features kindle --bin reader-kindle
+  --features kindle --bin reader-kindle --bin reader-woff2-worker
 sh scripts/stage.sh armhf
 python3 ../doannt-kindle-build/scripts/package.py \
   --id primitive-reader --dir reader --version 0.1.2 --arch armhf \

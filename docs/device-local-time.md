@@ -25,8 +25,9 @@ KOReader reads custom footer date and time tokens from its local clock and
 imports its annotation timestamps as local calendar values. Its read timer
 chooses a local clock time, rolls to tomorrow if that time has passed, then
 runs a monotonic timer. The Kindle-wide date and time controls belong to
-PrimitiveOS Launcher. Reader keeps 24-hour time with a leading zero. KOReader
-can use an unpadded hour and its global 12-hour option. Reader's optional
+PrimitiveOS Launcher. Reader's `%m` custom-footer token follows its 12-hour
+preference and uses the unpadded hour of KOReader's Kindle/Linux path. Its `%M`
+token remains a 24-hour time including seconds. Reader's optional
 automatic refresh can schedule a minute update for custom clock tokens. In
 both readers the seconds token shows the seconds at render time.
 [Footer tokens](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/filemanager/filemanagerbookinfo.lua#L1183-L1187) ·

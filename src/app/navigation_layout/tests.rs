@@ -227,6 +227,8 @@ fn navigation_viewport_pdf_keys_outline_marks_and_back_follow_landscape() {
     let state = app.library.state_mut(id).unwrap();
     for page in 0..14 {
         state.bookmarks.push(Bookmark {
+            note: None,
+            updated_at: None,
             chapter_title: None,
             label: format!(
                 "Field note {:02} · Observe tide marks along the outer harbor",

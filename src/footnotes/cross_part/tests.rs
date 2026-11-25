@@ -53,7 +53,7 @@ fn cross_part_candidates_are_bounded_and_only_explicit_body_links_count() {
     let link = "<a epub:type=\"noteref\" href=\"fb3-section-2.xhtml#later-note\">note</a>";
     let xhtml = format!(
         "<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\"><body><p>{}</p><aside epub:type=\"footnote\"><p>{link}</p></aside></body></html>",
-        link.repeat(MAX_REFERENCES + 3)
+        link.repeat(MAX_REFERENCES)
     );
     let host = Source::parse(&xhtml).unwrap();
     let plan = prepare(&mut book, &chapter, &host).unwrap();
@@ -66,6 +66,9 @@ fn cross_part_candidates_are_bounded_and_only_explicit_body_links_count() {
         .find(|block| block.key == plan.links[0].host_block)
         .unwrap();
     assert_eq!(&host_block.text[plan.links[0].bytes.clone()], "note");
+
+    let overflow = xhtml.replace("</p>", &format!("{link}</p>"));
+    assert!(prepare(&mut book, &chapter, &Source::parse(&overflow).unwrap()).is_none());
 
     let ordinary = xhtml.replace("epub:type=\"noteref\"", "epub:type=\"link\"");
     assert!(prepare(&mut book, &chapter, &Source::parse(&ordinary).unwrap()).is_none());
@@ -315,7 +318,7 @@ fn cross_part_separator_follows_rtl_majority_and_keeps_left_for_a_tie() {
         let mut band = Band::new(0, layout, &pixels).unwrap();
         assert!(band.paint(&mut pixels).unwrap());
         let width = settings.width as usize;
-        let y = (settings.top_margin() + band.separator) as usize;
+        let y = (settings.top_margin() + band.placements[0].separator.unwrap().0) as usize;
         let row = &pixels[y * width..(y + 1) * width];
         let rule = |left: usize| row[left..left + width / 7].iter().all(|&ink| ink == 85);
         assert_eq!(rule(settings.left_margin() as usize), !right);
@@ -464,9 +467,19 @@ fn cross_part_band_never_covers_host_pixels_and_uses_foreign_link_base() {
     };
     let mut host_pixels = vec![255; settings.width as usize * settings.height as usize];
     let mut band = Band::new(3, make(&mut book), &host_pixels).unwrap();
+    assert!(band.add_page(5, &host_pixels));
+    assert!(band.displays(3) && band.displays(5));
+    let mut occupied = host_pixels.clone();
+    let occupied_at =
+        (settings.top_margin() + band.placements[0].clear_from) as usize * settings.width as usize;
+    occupied[occupied_at] = 0;
+    assert!(!band.add_page(7, &occupied));
+    band.remove_page(3);
+    assert!(!band.displays(3) && band.displays(5));
+    assert!(band.add_page(3, &host_pixels));
     assert!(band.paint(&mut host_pixels).unwrap());
     assert!(host_pixels.iter().any(|&pixel| pixel < 128));
-    let top = settings.top_margin() + band.y;
+    let top = settings.top_margin() + band.y_offset(3);
     assert!(band.contains(3, 0.0, top as f32));
     assert!(!band.contains(2, 0.0, top as f32));
     assert!(band.coordinates(3, 0.0, top as f32).is_none());
@@ -492,13 +505,131 @@ fn cross_part_band_never_covers_host_pixels_and_uses_foreign_link_base() {
 
     let mut changed = vec![255; host_pixels.len()];
     let mut unpainted = Band::new(0, make(&mut book), &changed).unwrap();
-    let collision =
-        (settings.top_margin() + unpainted.separator) as usize * settings.width as usize;
+    let collision = (settings.top_margin() + unpainted.placements[0].clear_from) as usize
+        * settings.width as usize;
     changed[collision] = 0;
     let before = changed.clone();
     assert!(!unpainted.paint(&mut changed).unwrap());
     assert_eq!(changed, before);
     assert!(Band::new(0, make(&mut book), &changed).is_none());
+}
+
+#[test]
+fn cross_part_multiple_reference_pages_keep_original_note_sources() {
+    use crate::user_styles::{Data, FB2_FOOTNOTES};
+    let path = test_fixture("cross-note-multiple.fb3");
+    let before = std::fs::read(&path).unwrap();
+    let settings = Settings {
+        width: 720,
+        height: 480,
+        margin: 32,
+        font_size: 28.0,
+        line_height: 1.2,
+        ..Settings::default()
+    };
+    let open = |separate| {
+        let mut data = Data::default();
+        data.choose(1, FB2_FOOTNOTES, Some(true)).unwrap();
+        if separate {
+            let book = data.books.entry(1).or_default();
+            book.custom = Some("#later, #again { break-before: page !important; }".into());
+            book.custom_enabled = true;
+        }
+        let mut book = Some(Book::open(&path).unwrap());
+        Probe::layout_opened_book(
+            &mut book,
+            Engine::Parley,
+            settings,
+            0,
+            None,
+            &Default::default(),
+            &data.snapshot(1).unwrap(),
+            || crate::font_context(&[test_fixture("fonts/NotoSans-Regular.ttf")]),
+        )
+        .unwrap()
+    };
+    let mut same = open(false);
+    let first = same.matches("rain one").pop().unwrap();
+    let other = same.matches("snow note").pop().unwrap();
+    let shared_page = same.page_for(&first).unwrap();
+    assert_eq!(same.page_for(&other), Some(shared_page));
+    let bands = same.foreign_bands(shared_page);
+    assert_eq!(bands.len(), 2, "both distinct notes must be stacked once");
+    assert_eq!(bands[0].layout.note.id, "rain-note");
+    assert_eq!(bands[1].layout.note.id, "snow-note");
+    assert!(bands[0].y_offset(shared_page) < bands[1].y_offset(shared_page));
+    assert!(
+        bands
+            .iter()
+            .all(|band| !band.layout.note_links().is_empty())
+    );
+    for band in &bands {
+        let (_, href, rects) = band.layout.note_links().into_iter().next().unwrap();
+        let rect = rects.first().unwrap();
+        let x = (rect.x + rect.width / 2) as f32;
+        let y = (rect.y + band.y_offset(shared_page) as i32 + rect.height / 2) as f32;
+        let destination = same.link_at(shared_page, x, y).unwrap();
+        assert_eq!(
+            destination,
+            Book::resolve_link(&band.layout.note.chapter, href).unwrap()
+        );
+        let selection = same.word_at(shared_page, x, y).unwrap();
+        assert_eq!(selection.start.chapter, band.layout.note.chapter);
+        assert!(!same.selection_rects(shared_page, &selection).is_empty());
+    }
+    assert_eq!(same.foreign_bands(shared_page).len(), 2);
+    assert!(same.capture(shared_page).is_ok());
+    assert_eq!(same.foreign_bands(shared_page).len(), 2);
+
+    let mut separate = open(true);
+    let first = separate.matches("rain one").pop().unwrap();
+    let repeat = separate.matches("rain two").pop().unwrap();
+    let other = separate.matches("snow note").pop().unwrap();
+    let again = separate.matches("rain three").pop().unwrap();
+    let rain_page = separate.page_for(&first).unwrap();
+    let snow_page = separate.page_for(&other).unwrap();
+    let again_page = separate.page_for(&again).unwrap();
+    assert_eq!(separate.page_for(&repeat), Some(rain_page));
+    assert_ne!(rain_page, snow_page);
+    assert_ne!(again_page, snow_page);
+    assert_ne!(again_page, rain_page);
+    let rain = separate
+        .foreign_band(rain_page)
+        .expect("repeated note must appear once");
+    let snow = separate
+        .foreign_band(snow_page)
+        .expect("different page must show its note");
+    assert_eq!(rain.layout.note.id, "rain-note");
+    assert_eq!(snow.layout.note.id, "snow-note");
+    assert_eq!(
+        separate.foreign_band(again_page).unwrap().layout.note.id,
+        "rain-note"
+    );
+    assert_eq!(rain.layout.note.chapter, snow.layout.note.chapter);
+    let block = rain
+        .layout
+        .note
+        .source
+        .blocks
+        .iter()
+        .find(|block| block.text.contains("Rainfall"))
+        .unwrap();
+    let start = Anchor {
+        book: rain.layout.note.book,
+        chapter: rain.layout.note.chapter.clone(),
+        revision: rain.layout.note.source.revision,
+        block: block.key,
+        offset: block.text.find("Rainfall").unwrap(),
+        illustration: None,
+    };
+    let mut end = start.clone();
+    end.offset += "Rainfall".len();
+    assert!(separate.select_range(&start, &end).is_some());
+    assert_ne!(
+        separate.capture(rain_page).unwrap(),
+        separate.capture(snow_page).unwrap()
+    );
+    assert_eq!(std::fs::read(path).unwrap(), before);
 }
 
 #[test]
@@ -574,7 +705,7 @@ fn cross_part_probe_displays_a_quiet_page_without_changing_progress_or_anchors()
         .foreign_band(page)
         .expect("quiet host should show a complete foreign note");
     assert_eq!(band.layout.note.chapter, "fb3-section-3.xhtml");
-    let note_y = band.y_offset() as i32;
+    let note_y = band.y_offset(page) as i32;
     let (_, href, rects) = band
         .layout
         .note_links()

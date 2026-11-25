@@ -298,9 +298,15 @@ impl Reader {
                 closing: None,
             });
         }
+        let mut preferences = self.current_text_preferences()?;
+        // Distinguish a newly captured Reader default from legacy profiles that
+        // never stored a render mode and must leave the target book unchanged.
+        if preferences.publisher_render_mode.is_none() {
+            preferences.publisher_render_mode = Some(crate::PublisherRenderMode::Reader);
+        }
         Ok(Profile::Text {
             name: name.into(),
-            preferences: self.current_text_preferences()?,
+            preferences,
             fields: None,
             apply_on_open: false,
             opening: None,

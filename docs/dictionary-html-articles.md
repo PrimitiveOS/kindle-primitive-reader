@@ -25,11 +25,14 @@ inert script, style, and resource references. [Kindle-sized desktop capture](scr
 
 ## Cross-references
 
-Tap an underlined `bword://` reference to look up its target in the dictionary
-that supplied the current definition. Reader accepts case variants and indexed
+Tap an underlined `bword://` reference or a plain, unqualified headword link to
+look up its target in the dictionary that supplied the current definition.
+Reader accepts case variants and indexed
 synonyms through its exact lookup. Back restores the previous definition, its
 scroll position and Find highlight. A missing target leaves the current
-definition open. External links and unqualified link targets remain plain text.
+definition open. External links containing `://` remain plain text. Unqualified
+headwords are treated literally, including percent characters. The added
+unqualified-link behavior awaits integrated testing.
 [KOReader reference handler](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerdictionary.lua#L863-L898)
 
 An authored desktop workflow taps a reference that wraps across two lines,

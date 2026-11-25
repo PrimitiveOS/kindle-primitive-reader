@@ -192,11 +192,14 @@ pub(super) enum Binding {
     FavoriteBooks,
     FitPageWidth,
     FitPageHeight,
+    IncreaseFont,
+    DecreaseFont,
+    TogglePageScroll,
     BookShortcut(u64),
 }
 
 impl Binding {
-    const ALL: [(Self, &'static str); 31] = [
+    const ALL: [(Self, &'static str); 34] = [
         (Self::Default, "Default behavior"),
         (Self::Ignore, "Do nothing"),
         (Self::PassThrough, "Pass through"),
@@ -231,6 +234,9 @@ impl Binding {
         (Self::FavoriteBooks, "Favorite books"),
         (Self::FitPageWidth, "Fit page width"),
         (Self::FitPageHeight, "Fit page height"),
+        (Self::IncreaseFont, "Increase font size"),
+        (Self::DecreaseFont, "Decrease font size"),
+        (Self::TogglePageScroll, "Toggle pages and scrolling"),
     ];
     fn label(self, shortcuts: &book_shortcuts::State) -> String {
         if let Self::BookShortcut(id) = self {
@@ -583,6 +589,31 @@ impl Reader {
             Binding::FitPageWidth if fixed => Action::FitPage(true),
             Binding::FitPageHeight if fixed => Action::FitHeight,
             Binding::FitPageWidth | Binding::FitPageHeight => return None,
+            Binding::IncreaseFont | Binding::DecreaseFont => {
+                let Some(active) = self.active.as_ref() else {
+                    return Some(Change::None);
+                };
+                let owner = active.id;
+                let [larger, smaller, _] = super::text_size_items(
+                    active.reading.config.settings,
+                    owner,
+                    self.pending_logical_size(owner),
+                );
+                if binding == Binding::IncreaseFont {
+                    larger.action
+                } else {
+                    smaller.action
+                }
+            }
+            Binding::TogglePageScroll => {
+                let Some(active) = self.active.as_ref() else {
+                    return Some(Change::None);
+                };
+                if active.reading.probe.is_vertical() {
+                    return Some(Change::None);
+                }
+                Action::ReadingMode(!active.reading.config.scroll)
+            }
             Binding::BookShortcut(id) => Action::BookShortcut(book_shortcuts::Command::Launch(id)),
         };
         Some(match self.activate(action) {

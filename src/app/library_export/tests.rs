@@ -179,7 +179,7 @@ fn export_multi_color_and_style_filters_intersect_and_preserve_dates_text_and_or
         app.notice
             .as_deref()
             .unwrap_or("")
-            .contains("No highlights")
+            .contains("No annotations")
     );
     assert_eq!(app.library.bytes().unwrap(), before);
 }
@@ -414,7 +414,7 @@ fn export_uses_reading_order_and_rejects_a_source_replaced_during_export() {
     settle(&mut app);
     assert_eq!(fs::read(file).unwrap(), prior);
     assert_eq!(app.screen, Screen::LibraryExport(Page::Options));
-    assert!(app.notice.as_deref().unwrap().contains("No highlights"));
+    assert!(app.notice.as_deref().unwrap().contains("No annotations"));
 }
 
 #[test]

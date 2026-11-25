@@ -168,6 +168,57 @@ fn resolve(key: &str, found: Matches, count: usize) -> Target {
         .map_or(Target::Unavailable, Target::Page)
 }
 
+/// Resolve a page's local map-area targets together, so its DIRM dictionary is
+/// decoded at most once. Invalid or external destinations remain unavailable.
+#[cfg(feature = "kindle")]
+pub(super) fn maparea_targets(
+    document: &Document,
+    urls: &[String],
+    current: usize,
+) -> Vec<Option<usize>> {
+    let mut matches = HashMap::<String, Matches>::new();
+    let keys: Vec<_> = urls
+        .iter()
+        .map(|url| {
+            let value = url.strip_prefix('#')?;
+            if value.is_empty() || value.len() > MAX_TITLE_BYTES {
+                return None;
+            }
+            let decoded = percent_encoding::percent_decode_str(value)
+                .decode_utf8()
+                .ok()?;
+            if decoded.chars().any(char::is_control) {
+                return None;
+            }
+            matches.entry(decoded.to_string()).or_default();
+            Some(decoded.into_owned())
+        })
+        .collect();
+    if !matches.is_empty()
+        && let Some(dirm) = document.inner().raw_chunk(b"DIRM")
+        && !directory_matches(dirm, document.page_count(), &mut matches)
+    {
+        matches
+            .values_mut()
+            .for_each(|value| *value = Matches::default());
+    }
+    let count = document.page_count();
+    let targets: HashMap<_, _> = matches
+        .into_iter()
+        .map(|(key, found)| {
+            let page = match resolve(&key, found, count) {
+                Target::Page(page) => Some(page),
+                Target::Changing(change) => change.page(current, count),
+                Target::Unavailable => None,
+            };
+            (key, page)
+        })
+        .collect();
+    keys.into_iter()
+        .map(|key| key.and_then(|key| targets.get(&key).copied().flatten()))
+        .collect()
+}
+
 // The pinned decoder's component_directory() returns only an ID and kind.
 // DIRM's alternate page title and optional name are needed for outline links.
 fn directory_matches(dirm: &[u8], count: usize, keys: &mut HashMap<String, Matches>) -> bool {

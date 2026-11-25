@@ -407,7 +407,7 @@ impl Targets {
                 }
             }
         }
-        Self::build(chapter, source, &roots, &required, styles)
+        Self::build(chapter, source, &roots, &required, styles, false)
     }
 
     pub(crate) fn fb2(
@@ -423,7 +423,7 @@ impl Targets {
                 Some((source.fragment_owner(id)?, NoteSize::Fb2(scale)))
             })
             .collect();
-        Self::build(chapter, source, &roots, &BTreeSet::new(), styles)
+        Self::build(chapter, source, &roots, &BTreeSet::new(), styles, false)
     }
 
     pub(crate) fn fb3(
@@ -446,7 +446,10 @@ impl Targets {
                 roots.insert(index, NoteSize::Fb2(scale));
             }
         }
-        Self::build(chapter, source, &roots, &BTreeSet::new(), styles)
+        // Every imported notebody is an entry boundary, including split,
+        // ambiguous and unmarked bodies that cannot themselves be copied.
+        // Extension must never adopt such a body into the preceding note.
+        Self::build(chapter, source, &roots, &BTreeSet::new(), styles, true)
     }
 
     /// Build typography metadata for a previously validated foreign FB3 note.
@@ -492,6 +495,7 @@ impl Targets {
         marks: &BTreeMap<usize, NoteSize>,
         required: &BTreeSet<usize>,
         styles: &Snapshot,
+        fb3_note_boundaries: bool,
     ) -> Option<Self> {
         if marks.is_empty() {
             return None;
@@ -511,6 +515,9 @@ impl Targets {
                 && !element.selector_only
                 && !element.anonymous
                 && note_block(&element.tag)
+                && !(fb3_note_boundaries
+                    && element.tag == "aside"
+                    && element.type_attribute.as_deref() == Some("footnote"))
                 && !(extension == NoteExtension::UntilHeading && heading(&element.tag))
             {
                 element
@@ -2257,6 +2264,71 @@ mod tests {
         assert!((0.70..0.80).contains(&(widths[0].0 as f32 / widths[3].0 as f32)));
         assert!((0.80..0.90).contains(&(widths[1].1 as f32 / widths[3].1 as f32)));
         assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn fb3_note_extension_stops_at_excluded_note_bodies() {
+        use crate::user_styles::{Data, EXTEND_NOTES, EXTEND_NOTES_UNTIL_HEADING, FB2_FOOTNOTES};
+
+        // The importer omits ambiguous IDs, while split roots retain their
+        // original ID and are identified by the separate incomplete set.
+        // Both are typed asides, as are unmarked note bodies.
+        let xhtml = r##"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
+        <p><a href="#first">First reference</a> <a href="#split">Split reference</a> <a href="#last">Last reference</a></p>
+        <div><aside id="first" epub:type="footnote"><p>First note</p></aside>
+        <p>Ordinary continuation</p>
+        <aside id="split" epub:type="footnote"><p>Incomplete note</p></aside>
+        <aside epub:type="footnote"><p>Ambiguous or unmarked note</p></aside>
+        <aside id="last" epub:type="footnote"><p>Last note</p></aside></div>
+        </body></html>"##;
+        let source = Source::parse(xhtml).unwrap();
+        let incomplete = BTreeSet::from(["split".to_owned()]);
+        for extension in [EXTEND_NOTES, EXTEND_NOTES_UNTIL_HEADING] {
+            let mut data = Data::default();
+            data.choose(1, FB2_FOOTNOTES, Some(true)).unwrap();
+            data.choose(1, extension, Some(true)).unwrap();
+            let styles = data.snapshot(1).unwrap();
+            let targets = Targets::fb3("document.xhtml", &source, &styles, &incomplete).unwrap();
+            let note_for = |text: &str| {
+                let block = source
+                    .blocks
+                    .iter()
+                    .find(|block| block.text.contains(text))
+                    .unwrap();
+                targets.ancestry[block.element]
+            };
+            assert_eq!(note_for("First note"), note_for("Ordinary continuation"));
+            assert!(note_for("First note").is_some());
+            assert!(note_for("Incomplete note").is_none());
+            assert!(note_for("Ambiguous or unmarked note").is_none());
+            assert!(note_for("Last note").is_some());
+            assert_ne!(note_for("First note"), note_for("Last note"));
+            assert!(!targets.ids.contains_key("split"));
+        }
+    }
+
+    #[test]
+    fn fb3_note_extension_does_not_promote_a_split_reference() {
+        use crate::user_styles::{Data, EXTEND_NOTES, FB2_FOOTNOTES};
+
+        let xhtml = r##"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
+        <p><a href="#split">Only reference</a></p>
+        <div><aside id="first" epub:type="footnote"><p>Unreferenced note</p></aside>
+        <aside id="split" epub:type="footnote"><p>Incomplete note</p></aside></div>
+        </body></html>"##;
+        let source = Source::parse(xhtml).unwrap();
+        let mut data = Data::default();
+        data.choose(1, FB2_FOOTNOTES, Some(true)).unwrap();
+        data.choose(1, EXTEND_NOTES, Some(true)).unwrap();
+        assert!(
+            Targets::fb3(
+                "document.xhtml",
+                &source,
+                &data.snapshot(1).unwrap(),
+                &BTreeSet::from(["split".to_owned()]),
+            )
+            .is_none()
+        );
     }
 
     #[test]

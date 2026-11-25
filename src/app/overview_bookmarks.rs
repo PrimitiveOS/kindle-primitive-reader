@@ -161,6 +161,8 @@ pub(super) fn push_page_bookmark(
         return Err("This book has reached its bookmark limit".into());
     }
     book.bookmarks.push(Bookmark {
+        note: None,
+        updated_at: None,
         chapter_title,
         created_at: crate::mark_time::now(),
         label,

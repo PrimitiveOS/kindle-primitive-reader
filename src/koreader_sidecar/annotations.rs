@@ -11,6 +11,7 @@ pub enum SidecarMark {
         created_at: Option<i64>,
         pointer: String,
         label: Option<String>,
+        note: Option<String>,
     },
     Highlight {
         created_at: Option<i64>,
@@ -169,13 +170,12 @@ fn mark(record: &[u8]) -> Result<Option<SidecarMark>, SidecarError> {
                 text,
                 note,
             }),
-        (None, None, None) if note.is_none() => {
-            page.filter(pointer).map(|pointer| SidecarMark::Bookmark {
-                created_at,
-                pointer,
-                label: text.filter(|s| !s.trim().is_empty()),
-            })
-        }
+        (None, None, None) => page.filter(pointer).map(|pointer| SidecarMark::Bookmark {
+            created_at,
+            pointer,
+            label: text.filter(|s| !s.trim().is_empty()),
+            note,
+        }),
         _ => None,
     })
 }
@@ -214,7 +214,7 @@ mod tests {
         let result = parse_annotations(data).unwrap();
         assert_eq!(result.unavailable, 3);
         assert!(
-            matches!(&result.marks[..], [SidecarMark::Bookmark {pointer,label:Some(label),created_at:None}, SidecarMark::Highlight{color:crate::highlight_style::HighlightColor::Gray,style:crate::highlight_style::HighlightStyle::Underline,start,end,text,note:Some(note),created_at:None}] if pointer=="/node" && label=="Chapter one" && start=="/a" && end=="/b" && text=="Some text" && note=="Remember")
+            matches!(&result.marks[..], [SidecarMark::Bookmark {pointer,label:Some(label),created_at:None,..}, SidecarMark::Highlight{color:crate::highlight_style::HighlightColor::Gray,style:crate::highlight_style::HighlightStyle::Underline,start,end,text,note:Some(note),created_at:None}] if pointer=="/node" && label=="Chapter one" && start=="/a" && end=="/b" && text=="Some text" && note=="Remember")
         );
         assert!(parse_annotations(b"return {annotations={{page=foo()}}}").is_err());
         assert!(parse_annotations(b"return {annotations={},annotations={}}").is_err());

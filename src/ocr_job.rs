@@ -16,8 +16,8 @@ use primitive_app::with_storage;
 
 use crate::Result;
 use crate::fixed_text::PdfPageText;
-use crate::ocr::valid_language_name;
 use crate::ocr::{MAX_OCR_PIXELS, MAX_OCR_SIDE, MAX_TSV_BYTES, OcrError, parse_tsv};
+use crate::ocr::{valid_language_name, valid_language_spec};
 
 const ENGINE: &str = "tesseract";
 const TESSDATA: &str = "tessdata";
@@ -86,6 +86,13 @@ impl OcrAssets {
         &self.languages[0]
     }
 
+    pub(crate) fn supports_language(&self, language: &str) -> bool {
+        valid_language_spec(language)
+            && language
+                .split('+')
+                .all(|part| self.languages.iter().any(|model| model == part))
+    }
+
     fn validate_engine(&self) -> io::Result<()> {
         regular_directory(&self.directory)?;
         regular_directory(&self.directory.join(TESSDATA))?;
@@ -99,7 +106,7 @@ impl OcrAssets {
     }
 
     fn stage(&self, runtime: &Path, language: &str) -> io::Result<WorkDirectory> {
-        if !valid_language_name(language) || !self.languages.iter().any(|model| model == language) {
+        if !self.supports_language(language) {
             return Err(io::Error::other("That OCR language model is unavailable."));
         }
         let work = WorkDirectory::create(runtime)?;
@@ -113,12 +120,15 @@ impl OcrAssets {
                 MAX_ENGINE_BYTES,
                 0o700,
             )?;
-            copy_asset(
-                &model_path(&self.directory.join(TESSDATA), language),
-                &model_path(&tessdata, language),
-                MAX_MODEL_BYTES,
-                0o600,
-            )
+            for model in language.split('+') {
+                copy_asset(
+                    &model_path(&self.directory.join(TESSDATA), model),
+                    &model_path(&tessdata, model),
+                    MAX_MODEL_BYTES,
+                    0o600,
+                )?;
+            }
+            Ok(())
         })?;
         Ok(work)
     }
@@ -550,7 +560,7 @@ exec /bin/sleep 120
         let assets = OcrAssets::discover(home).unwrap();
         assert_eq!(assets.languages(), ["eng", "chi_sim", "vie"]);
         assert_eq!(assets.default_language(), "eng");
-        for invalid in ["../vie", "vie+eng", "--oem", "linked", "jpn"] {
+        for invalid in ["../vie", "vie++eng", "--oem", "linked", "jpn"] {
             assert!(OcrJob::start_in_language(&assets, invalid, b"abcd", 2, 2).is_err());
         }
         let staged = assets.stage(&root.0, "vie").unwrap();

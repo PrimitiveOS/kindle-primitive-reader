@@ -44,15 +44,33 @@ pub(crate) enum Dictionary {
     Spanish,
     Italian,
     Portuguese,
+    PortugueseBrazil,
     Estonian,
     Finnish,
     Danish,
     Dutch,
+    French,
+    German,
+    Bulgarian,
+    Galician,
+    Irish,
+    Ukrainian,
+    Polish,
 }
 
 impl Dictionary {
     pub(crate) fn for_language(lang: Option<Language>) -> Option<Self> {
         let lang = lang?;
+        if matches!(lang.language(), "bg" | "uk") {
+            if !matches!(lang.script(), None | Some("Cyrl")) {
+                return None;
+            }
+            return Some(if lang.language() == "bg" {
+                Self::Bulgarian
+            } else {
+                Self::Ukrainian
+            });
+        }
         if !matches!(lang.script(), None | Some("Latn")) {
             return None;
         }
@@ -62,10 +80,16 @@ impl Dictionary {
             ("es", _) => Some(Self::Spanish),
             ("it", _) => Some(Self::Italian),
             ("pt", None | Some("PT")) => Some(Self::Portuguese),
+            ("pt", Some("BR")) => Some(Self::PortugueseBrazil),
             ("et", _) => Some(Self::Estonian),
             ("fi", _) => Some(Self::Finnish),
             ("da", _) => Some(Self::Danish),
             ("nl", _) => Some(Self::Dutch),
+            ("fr", _) => Some(Self::French),
+            ("de", _) => Some(Self::German),
+            ("gl", _) => Some(Self::Galician),
+            ("ga", _) => Some(Self::Irish),
+            ("pl", _) => Some(Self::Polish),
             _ => None,
         }
     }
@@ -78,19 +102,40 @@ impl Dictionary {
             Self::Spanish => "Spanish",
             Self::Italian => "Italian",
             Self::Portuguese => "Portuguese (Portugal)",
+            Self::PortugueseBrazil => "Portuguese (Brazil, shared rules)",
             Self::Estonian => "Estonian",
             Self::Finnish => "Finnish",
             Self::Danish => "Danish",
             Self::Dutch => "Dutch",
+            Self::French => "French",
+            Self::German => "German",
+            Self::Bulgarian => "Bulgarian",
+            Self::Galician => "Galician",
+            Self::Irish => "Irish",
+            Self::Ukrainian => "Ukrainian",
+            Self::Polish => "Polish",
         }
     }
 
     pub(crate) fn limits(self) -> HyphenationLimits {
         match self {
-            Self::Spanish | Self::Italian | Self::Finnish | Self::Danish | Self::Dutch => {
-                HyphenationLimits { left: 2, right: 2 }
-            }
-            Self::American | Self::British | Self::Portuguese | Self::Estonian => ENGLISH_LIMITS,
+            Self::Spanish
+            | Self::Italian
+            | Self::Finnish
+            | Self::Danish
+            | Self::Dutch
+            | Self::German
+            | Self::Bulgarian
+            | Self::Galician
+            | Self::Ukrainian
+            | Self::Polish => HyphenationLimits { left: 2, right: 2 },
+            Self::French => HyphenationLimits { left: 2, right: 1 },
+            Self::American
+            | Self::British
+            | Self::Portuguese
+            | Self::PortugueseBrazil
+            | Self::Estonian
+            | Self::Irish => ENGLISH_LIMITS,
         }
     }
 
@@ -101,10 +146,18 @@ impl Dictionary {
             Self::Spanish => &SPANISH,
             Self::Italian => &ITALIAN,
             Self::Portuguese => &PORTUGUESE,
+            Self::PortugueseBrazil => &PORTUGUESE,
             Self::Estonian => &ESTONIAN,
             Self::Finnish => &FINNISH,
             Self::Danish => &DANISH,
             Self::Dutch => &DUTCH,
+            Self::French => &FRENCH,
+            Self::German => &GERMAN,
+            Self::Bulgarian => &BULGARIAN,
+            Self::Galician => &GALICIAN,
+            Self::Irish => &IRISH,
+            Self::Ukrainian => &UKRAINIAN,
+            Self::Polish => &POLISH,
         }
     }
 }
@@ -307,16 +360,22 @@ fn word_breaks_with_limits(
             .chars()
             .all(|ch| ch.is_ascii_alphabetic() || ch == '\u{ad}')
         {
-            pattern_breaks(patterns, word, limits, emit);
+            pattern_breaks(patterns, word, limits, false, emit);
         }
         return;
     }
-    // CRE treats apostrophes as word boundaries for these pattern files.
+    // Ukrainian patterns include the apostrophe as an internal letter-like
+    // character; normalize the typographic spelling without changing offsets.
+    if locale == Dictionary::Ukrainian {
+        pattern_breaks(patterns, word, limits, true, emit);
+        return;
+    }
+    // CRE treats apostrophes as word boundaries for the remaining pattern files.
     // ICU can keep the two sides together for selection and search.
     let mut offset = 0;
     for part in word.split_inclusive(['\'', '\u{2019}']) {
         let text = part.trim_end_matches(['\'', '\u{2019}']);
-        pattern_breaks(patterns, text, limits, |at| emit(offset + at));
+        pattern_breaks(patterns, text, limits, false, |at| emit(offset + at));
         offset += part.len();
     }
 }
@@ -325,13 +384,18 @@ fn pattern_breaks(
     patterns: &Patterns,
     word: &str,
     limits: HyphenationLimits,
+    apostrophes: bool,
     mut emit: impl FnMut(usize),
 ) {
     let mut letters = ['.'; MAX_WORD + 2];
     let mut offsets = [0; MAX_WORD + 1];
     let mut n = 0;
     if word.is_ascii() {
-        if word.len() > MAX_WORD || !word.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+        if word.len() > MAX_WORD
+            || !word
+                .bytes()
+                .all(|byte| byte.is_ascii_alphabetic() || (apostrophes && byte == b'\''))
+        {
             return;
         }
         for (at, byte) in word.bytes().enumerate() {
@@ -350,10 +414,17 @@ fn pattern_breaks(
             }
             let composed = nfc.normalize(cluster);
             let mut chars = composed.chars();
-            let Some(character) = chars.next().filter(|ch| ch.is_alphabetic()) else {
+            let Some(character) = chars.next().filter(|ch| {
+                ch.is_alphabetic() || (apostrophes && matches!(*ch, '\'' | '\u{2019}'))
+            }) else {
                 return;
             };
-            let mut lower = character.to_lowercase();
+            let mut lower = if character == '\u{2019}' {
+                '\''
+            } else {
+                character
+            }
+            .to_lowercase();
             let letter = lower.next().expect("a lowercase mapping");
             if n == MAX_WORD || chars.next().is_some() || lower.next().is_some() {
                 return;
@@ -400,6 +471,44 @@ fn pattern_breaks(
 mod tests {
     use super::*;
     use crate::{book_style::BookStyle, source::Source};
+
+    #[test]
+    fn additional_dictionaries_respect_script_and_default_limits() {
+        for (tag, dictionary, left, right) in [
+            ("bg-Cyrl-BG", Dictionary::Bulgarian, 2, 2),
+            ("gl-ES", Dictionary::Galician, 2, 2),
+            ("ga-IE", Dictionary::Irish, 2, 3),
+            ("uk-Cyrl-UA", Dictionary::Ukrainian, 2, 2),
+        ] {
+            let actual = Dictionary::for_language(Language::parse(tag).ok());
+            assert_eq!(actual, Some(dictionary), "{tag}");
+            assert_eq!(
+                dictionary.limits(),
+                HyphenationLimits { left, right },
+                "{tag}"
+            );
+        }
+        for tag in ["bg-Latn", "uk-Latn", "gl-Cyrl", "ga-Cyrl"] {
+            assert_eq!(
+                Dictionary::for_language(Language::parse(tag).ok()),
+                None,
+                "{tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn ukrainian_apostrophes_preserve_offsets_and_share_matching_rules() {
+        let breaks = |word: &str| {
+            let mut positions = Vec::new();
+            word_breaks(Dictionary::Ukrainian, word, |offset| {
+                assert!(word.is_char_boundary(offset));
+                positions.push(word[..offset].chars().count());
+            });
+            positions
+        };
+        assert_eq!(breaks("підв'язувати"), breaks("підв’язувати"));
+    }
 
     #[test]
     fn multilingual_hyphenation_rules_match_the_pinned_dictionaries() {
@@ -562,6 +671,7 @@ mod tests {
                 &["mur", "murcie\u{301}", "murcie\u{301}la"][..],
             ),
             ("l’italiano", &["l’ita", "l’italia"]),
+            ("informação", &["in", "infor", "informa"]),
             ("informação", &["in", "infor", "informa"]),
             (
                 "lu\u{308}hiülevaade",

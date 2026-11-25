@@ -130,7 +130,10 @@ impl Reader {
         let added = match (entry, mapped) {
             (
                 SidecarMark::Bookmark {
-                    label, created_at, ..
+                    label,
+                    note,
+                    created_at,
+                    ..
                 },
                 Ok(Resolved::Point(p)),
             ) => {
@@ -140,6 +143,8 @@ impl Reader {
                         .clone()
                 });
                 import.bookmarks.push(Bookmark {
+                    note: note.clone(),
+                    updated_at: None,
                     chapter_title: None,
                     created_at: *created_at,
                     label,

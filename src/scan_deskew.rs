@@ -84,6 +84,43 @@ fn estimate(pixels: &[u8], width: usize, height: usize) -> f32 {
         }
     }
     if points.len() < 100 {
+        // Some scans use pale gray ink on gray paper, so the absolute ink
+        // threshold above misses their text. Estimate paper brightness from
+        // the same bounded preview and retry with a conservative relative
+        // threshold. The normal high-contrast path remains unchanged.
+        let mut tones = [0_u32; 256];
+        let mut count = 0_u32;
+        for y in pad_y..height - pad_y {
+            for x in pad_x..width - pad_x {
+                tones[usize::from(pixels[y * width + x])] += 1;
+                count += 1;
+            }
+        }
+        let target = count.saturating_mul(3) / 4;
+        let mut accumulated = 0_u32;
+        let paper = tones
+            .iter()
+            .position(|amount| {
+                accumulated += *amount;
+                accumulated >= target
+            })
+            .unwrap_or(255) as u8;
+        points.clear();
+        if paper >= 20 {
+            let cutoff = paper - 12;
+            for y in pad_y..height - pad_y {
+                for x in pad_x..width - pad_x {
+                    let i = y * width + x;
+                    if pixels[i] <= cutoff
+                        && i16::from(pixels[i - width]) - i16::from(pixels[i]) >= 8
+                    {
+                        points.push((x as i32 - (width / 2) as i32, y as i32));
+                    }
+                }
+            }
+        }
+    }
+    if points.len() < 100 {
         return 0.0;
     }
     let stride = points.len().div_ceil(MAX_POINTS);

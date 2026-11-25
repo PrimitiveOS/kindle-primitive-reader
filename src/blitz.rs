@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -13,6 +14,7 @@ use crate::source::{SOURCE_ATTRIBUTE, Source};
 use crate::{Line, Result, Settings, grayscale, svg_image};
 
 const RESOURCE_HOST: &str = "epub.invalid";
+pub(crate) const INLINE_SVG_HOST: &str = "reader-inline-svg.invalid";
 const MAX_RESOURCES: usize = 64;
 const MAX_RESOURCE_BYTES: usize = 20 * 1024 * 1024;
 const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
@@ -22,6 +24,7 @@ struct ArchiveResources {
     requests: usize,
     bytes: usize,
     pixels: usize,
+    inline_svg: BTreeMap<String, Vec<u8>>,
 }
 
 impl ArchiveResources {
@@ -31,7 +34,6 @@ impl ArchiveResources {
             || self.bytes >= MAX_RESOURCE_BYTES
             || request.method != Method::GET
             || request.url.scheme() != "https"
-            || request.url.host_str() != Some(RESOURCE_HOST)
             || !request.url.username().is_empty()
             || request.url.port().is_some()
             || request.url.password().is_some()
@@ -39,6 +41,23 @@ impl ArchiveResources {
             return None;
         }
         let path = request.url.path().strip_prefix('/')?;
+        if request.url.host_str() == Some(INLINE_SVG_HOST) {
+            let bytes = self.inline_svg.get(path)?;
+            if bytes.len() > MAX_RESOURCE_BYTES - self.bytes {
+                return None;
+            }
+            let (width, height) = crate::epub_raster_dimensions(bytes).ok()?;
+            let pixels = (width as usize).checked_mul(height as usize)?;
+            self.pixels = self
+                .pixels
+                .checked_add(pixels)
+                .filter(|&n| n <= MAX_IMAGE_PIXELS)?;
+            self.bytes += bytes.len();
+            return Some(bytes.clone());
+        }
+        if request.url.host_str() != Some(RESOURCE_HOST) {
+            return None;
+        }
         let extension = path.rsplit_once('.')?.1.to_ascii_lowercase();
         if !matches!(
             extension.as_str(),
@@ -109,6 +128,7 @@ fn layout_document(
     fonts: FontContext,
     size: (u32, u32),
     fixed: bool,
+    inline_svg: BTreeMap<String, Vec<u8>>,
 ) -> Result<HtmlDocument> {
     let mut url = Url::parse("https://epub.invalid/")?;
     url.path_segments_mut()
@@ -120,6 +140,7 @@ fn layout_document(
         requests: 0,
         bytes: 0,
         pixels: 0,
+        inline_svg,
     })));
     let mut config = DocumentConfig {
         viewport: Some(Viewport::new(size.0, size.1, 1.0, ColorScheme::Light)),
@@ -160,8 +181,9 @@ pub(crate) fn fixed_page(
     xhtml: &str,
     fonts: FontContext,
     (width, height): (u32, u32),
+    inline_svg: BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>> {
-    let mut doc = layout_document(book, href, xhtml, fonts, (width, height), true)?;
+    let mut doc = layout_document(book, href, xhtml, fonts, (width, height), true, inline_svg)?;
     let mut painter = VelloCpuScenePainter::new(width as u16, height as u16);
     blitz_paint::paint_scene(&mut painter, &mut doc, 1.0, width, height, 0, 0);
     let image = painter.finish();
@@ -199,6 +221,7 @@ impl BlitzChapter {
             fonts,
             (settings.width, settings.text_height()),
             false,
+            BTreeMap::new(),
         )?;
 
         let mut lines = Vec::new();

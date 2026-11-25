@@ -7,6 +7,8 @@ use crate::reading_stats::history::{MAX_DURATION_RANGE, MIN_DURATION_RANGE};
 use primitive_ui::{Editor, Key, Press};
 use std::ops::RangeInclusive;
 
+mod expression;
+
 const SHEET: Rect = Rect::new(86, 490, 1092, 700);
 const TITLE: Rect = Rect::new(130, 524, 1004, 75);
 const DESCRIPTION: Rect = Rect::new(130, 613, 1004, 100);
@@ -23,18 +25,33 @@ const ENTRY_CANCEL: Rect = Rect::new(130, 1160, 472, 86);
 const ENTRY_USE: Rect = Rect::new(662, 1160, 472, 86);
 
 fn digit_buttons() -> impl Iterator<Item = (Rect, &'static str, Key)> {
-    ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
-        .into_iter()
-        .enumerate()
-        .map(|(index, label)| {
-            let index = index as i32;
-            let rect = Rect::new(130 + index % 3 * 342, 686 + index / 3 * 112, 320, 94);
-            (rect, label, Key::Char(char::from(label.as_bytes()[0])))
-        })
-        .chain([
-            (Rect::new(130, 1022, 662, 94), "0", Key::Char('0')),
-            (Rect::new(814, 1022, 320, 94), "Delete", Key::Delete),
-        ])
+    [
+        ("1", '1'),
+        ("2", '2'),
+        ("3", '3'),
+        ("+", '+'),
+        ("4", '4'),
+        ("5", '5'),
+        ("6", '6'),
+        ("−", '-'),
+        ("7", '7'),
+        ("8", '8'),
+        ("9", '9'),
+        ("×", '*'),
+        ("(", '('),
+        ("0", '0'),
+        (")", ')'),
+        ("÷", '/'),
+        (".", '.'),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (label, character))| {
+        let index = index as i32;
+        let rect = Rect::new(130 + index % 4 * 254, 686 + index / 4 * 90, 242, 78);
+        (rect, label, Key::Char(character))
+    })
+    .chain([(Rect::new(384, 1046, 750, 78), "Delete", Key::Delete)])
 }
 
 #[derive(Clone, Copy)]
@@ -156,12 +173,16 @@ impl Reader {
             let range = entry.limit.range();
             let hint = if entry.invalid {
                 format!(
-                    "Enter a whole number from {} to {}",
+                    "Enter a whole-second result from {} to {}",
                     range.start(),
                     range.end()
                 )
             } else {
-                format!("{} to {} seconds", range.start(), range.end())
+                format!(
+                    "{} to {} seconds; arithmetic allowed",
+                    range.start(),
+                    range.end()
+                )
             };
             canvas.text(ENTRY_HINT, &hint, CAPTION);
             for (rect, label, _) in digit_buttons() {
@@ -241,11 +262,7 @@ impl Reader {
                 if entry.invalid {
                     return Some(Change::None);
                 }
-                if let Some(value) = entry
-                    .editor
-                    .string()
-                    .parse::<u32>()
-                    .ok()
+                if let Some(value) = expression::whole_seconds(&entry.editor.string())
                     .filter(|value| entry.limit.range().contains(value))
                 {
                     entry.limit.set(&mut draft.options, value);
@@ -295,7 +312,7 @@ impl Reader {
             };
             draft.entry = Some(Entry {
                 limit,
-                editor: Editor::new(10),
+                editor: Editor::new(40),
                 invalid: false,
             });
         }

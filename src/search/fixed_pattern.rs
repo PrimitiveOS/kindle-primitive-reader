@@ -150,9 +150,11 @@ impl FixedPattern {
                 window.clear();
             }
             previous = range.end;
-            // Preserve a provider's actual boxes. Only a transcript without
-            // geometry needs to synthesize CJK tokens for phrase matching.
-            let split = page.words.is_empty() && self.split_cjk && original.chars().any(cjk);
+            // PDF and OCR providers may group several CJK characters into a
+            // single word box. Compare the characters separately while keeping
+            // their original UTF-8 ranges; callers still paint the provider's
+            // whole box. A one-token search keeps its one-result-per-box rule.
+            let split = self.split_cjk && self.tokens.len() > 1 && original.chars().any(cjk);
             for (offset, part) in segments(original, split) {
                 let start = range.start + offset;
                 window.push_back((start, normalize(part, self.match_case, self.ignore_accents)));
@@ -198,6 +200,105 @@ impl FixedPattern {
 mod tests {
     use super::*;
     use crate::fixed_text::{PdfTextRect, PdfTextSpan};
+
+    #[test]
+    fn cjk_phrases_match_inside_grouped_boxes_and_preserve_source_geometry() {
+        let words = ["東京都日本語", "の本", "A日B"];
+        let mut page = PdfPageText::default();
+        for (index, word) in words.into_iter().enumerate() {
+            if index > 0 {
+                page.text.push(' ');
+            }
+            let start = page.text.len();
+            page.text.push_str(word);
+            page.words.push(PdfTextSpan {
+                bytes: start..page.text.len(),
+                bounds: PdfTextRect {
+                    x0: index as f32 * 0.25,
+                    y0: 0.1,
+                    x1: index as f32 * 0.25 + 0.2,
+                    y1: 0.2,
+                },
+            });
+        }
+        for (query, expected, first, last) in [
+            ("日本", "日本", 0, 0),
+            ("語の本", "語 の本", 0, 1),
+            ("A日B", "A日B", 2, 2),
+        ] {
+            let spans = FixedPattern::new(query, false, false)
+                .unwrap()
+                .ranges(&page, 10);
+            assert_eq!(spans.len(), 1, "{query}");
+            assert_eq!(&page.text[spans[0].clone()], expected);
+            let hits = crate::search::PdfSearch::new(query, false)
+                .unwrap()
+                .hits(0, &page, 10);
+            assert_eq!(hits.len(), 1);
+            assert_eq!(
+                hits[0].bounds,
+                page.words[first..=last]
+                    .iter()
+                    .map(|word| word.bounds)
+                    .collect::<Vec<_>>()
+            );
+        }
+        // A one-character query is still one result for each provider box.
+        let single = FixedPattern::new("日", false, false)
+            .unwrap()
+            .ranges(&page, 10);
+        assert_eq!(
+            single,
+            [page.words[0].bytes.clone(), page.words[2].bytes.clone()]
+        );
+        assert!(
+            FixedPattern::new("都語", false, false)
+                .unwrap()
+                .ranges(&page, 10)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn grouped_cjk_phrase_does_not_cross_a_visual_column_boundary() {
+        let mut page = PdfPageText::default();
+        page.text = "日本 左岸".into();
+        page.words = vec![
+            PdfTextSpan {
+                bytes: 0..6,
+                bounds: PdfTextRect {
+                    x0: 0.05,
+                    y0: 0.1,
+                    x1: 0.1,
+                    y1: 0.2,
+                },
+            },
+            PdfTextSpan {
+                bytes: 7..13,
+                bounds: PdfTextRect {
+                    x0: 0.8,
+                    y0: 0.1,
+                    x1: 0.85,
+                    y1: 0.2,
+                },
+            },
+        ];
+        page.lines.push(PdfTextSpan {
+            bytes: 0..13,
+            bounds: PdfTextRect {
+                x0: 0.05,
+                y0: 0.1,
+                x1: 0.85,
+                y1: 0.2,
+            },
+        });
+        assert!(
+            FixedPattern::new("本左", false, false)
+                .unwrap()
+                .ranges(&page, 10)
+                .is_empty()
+        );
+    }
 
     #[test]
     fn matches_compatible_words_and_phrases_at_the_original_byte_ranges() {

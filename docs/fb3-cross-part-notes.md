@@ -2,15 +2,20 @@
 
 ## Current behavior
 
-Reader can copy one complete text-only FB3 note from a different converted
-chapter into the reference page's bottom band. It requires exactly one eligible
-reference and note, and it verifies that the entire band and separator cover
+Reader can copy complete text-only FB3 notes from different converted
+chapters into their reference pages' bottom bands. Repeated references to the
+same note on one page share a band. Different notes can be stacked on one page
+in reference order beneath a shared separator, and each placement verifies
+that the entire band and separator cover
 only blank pixels on the original page. The original link, canonical note and
 host reading position remain available. Interactions inside a displayed note
 resolve against its original chapter: this includes links, selections, custom
 contents and page translation. A note whose own body spans converted
-chapters, a crowded page, multiple references, or unsupported content keeps
-the ordinary link flow. [FB3 reading](fb3-reading.md#in-page-footnotes)
+chapters, a crowded page, a stack that cannot fit completely, or unsupported
+content keeps the ordinary link flow. Foreground preparation considers at most
+32 reference pages per chapter. The multiple-note and repeated-reference
+implementation is awaiting simulator and Kindle verification.
+[FB3 reading](fb3-reading.md#in-page-footnotes)
 
 The bounded import inventory records up to 512 complete, unique note IDs and
 their existing converted chapter paths. It excludes split, nested, duplicate
@@ -69,8 +74,8 @@ behavior; they do not establish pixel-level parity.
 
 1. Validate the supported band on the Kindle, including reflow, sleep and USB
    lifecycle. Keep the reference page and canonical note positions intact.
-2. Support repeated references and notes that need repagination without
-   overlapping the host body. Add explicit presentation anchors before allowing
+2. Verify stacking multiple different notes on one page and support notes that
+   need repagination without overlapping the host body. Add explicit presentation anchors before allowing
    note-only continuation pages.
 3. Handle notes whose bodies themselves span parts using out-of-band
    continuation spans, preserving each part's canonical Source. Cross-source

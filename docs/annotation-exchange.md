@@ -10,6 +10,23 @@ and available dates. This workflow uses KOReader’s built-in book transfer.
 The separate **Export annotations** screen still produces JSON, Markdown and
 other reading exports.
 
+Reader also implements a page-bookmark note candidate. In the open book’s
+saved marks list, hold a page bookmark to enter or edit its note; save an
+empty note to remove it. Notes are saved separately from highlight notes,
+searched with Notes enabled, shown in the saved-mark list and library-wide
+bookmark browser, and included in backup and KOReader annotation transfers.
+Older bookmark records without a note remain readable. Page-bookmark titles
+remain location labels, not extracted page passages. The open-book export
+includes these bookmarks and notes in plain text, Markdown, HTML and Kindle
+clippings. The first three identify bookmark labels separately from quoted
+highlights; clippings use a bookmark record and a separate note record at the
+same location. Fixed-page clippings identify the page, while reflow clippings
+identify the chapter because displayed pages can change with layout. Library-wide
+exports also include saved page bookmarks and notes when both highlight filters
+are clear. Bookmark-note editing, legacy imports,
+transfer compatibility, search, persistence, and these export additions remain
+unverified on the computer and Kindle.
+
 Turn on close export to write the transfer after Reader saves and closes the
 book, exits, or finishes preparing a different book. Sleep and cancelled or
 failed document opens keep the current book open. **Export annotation
@@ -33,8 +50,14 @@ import keeps one copy of each matched mark.
 Reader verifies EPUB source pointers and text before applying them. A fixed
 source page is one-based on the wire and selected text is checked against
 its page rectangles. The current adapter covers packaged reflowable EPUBs
-and supported PDF and DjVu locations. Unsupported structural XPointers
-and multi-page fixed highlights remain open. Reader previews imports on
+and supported PDF and DjVu locations. A multi-page fixed highlight uses
+KOReader's page-indexed `ext` rectangles: Reader verifies the page keys,
+positions, document bounds and selected words before merging it. An unsupported
+or mismatched entry is counted as unavailable and prevents removal of older
+local marks. Reader keeps page geometry, style, color and notes; it inserts its
+own newline between imported page excerpts. Multi-page transfer is an
+unverified implementation candidate, not yet compared on desktop or Kindle.
+Unsupported structural XPointers remain open. Reader previews imports on
 demand and leaves the transfer file in place. KOReader checks foreign
 transfers on open and removes the consumed file. KOReader also supports
 other global metadata folder policies. [Stock source for export paths, dates and merge](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerannotation.lua#L250-L333) · [Stock settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L263-L301)

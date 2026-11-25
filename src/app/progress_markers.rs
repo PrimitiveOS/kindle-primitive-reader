@@ -49,6 +49,19 @@ impl Probe {
 }
 
 impl Reader {
+    pub(super) fn publisher_filtered_marker_demand(&self) -> bool {
+        self.active.as_ref().is_some_and(|book| {
+            book.entry.format == crate::library::DocumentFormat::Epub
+                && book.reading.probe.chapter_count() > 1
+                && !book.reading.config.hidden_flows.enabled
+                && !book.reading.hides_nonlinear()
+                && !self.uses_alternative_contents()
+                && self.library.state(book.id).is_some_and(|state| {
+                    state.contents_depths.has_ignored() && !state.custom_contents.enabled
+                })
+        })
+    }
+
     pub(super) fn has_whole_book_marker_coordinates(&self) -> bool {
         self.fixed.is_some()
             || self
@@ -143,6 +156,36 @@ impl Reader {
                     })
                     .collect()
             };
+        starts.sort_unstable_by(f64::total_cmp);
+        starts.dedup();
+        Some(starts)
+    }
+
+    /// Project measured publisher headings onto the same source-weighted
+    /// whole-book track as the footer or Skim thumb. Only activate this
+    /// path for an explicit level filter; the unfiltered track keeps its
+    /// established spine ticks while the complete index is unavailable.
+    pub(super) fn publisher_book_marker_fractions(&self, track: MarkerTrack) -> Option<Vec<f64>> {
+        let book = self.active.as_ref()?;
+        let state = self.library.state(book.id)?;
+        let reading = &book.reading;
+        if reading.probe.chapter_count() <= 1
+            || !state.contents_depths.has_ignored()
+            || state.custom_contents.enabled
+            || reading.config.hidden_flows.enabled
+            || reading.hides_nonlinear()
+        {
+            return None;
+        }
+        let locations = reading
+            .whole_book_publisher_locations(|depth| state.contents_depths.includes(depth))?;
+        let mut starts: Vec<_> = locations
+            .starts
+            .into_iter()
+            .filter_map(|location| {
+                book_marker_fraction(book, track, location.chapter, location.page, location.pages)
+            })
+            .collect();
         starts.sort_unstable_by(f64::total_cmp);
         starts.dedup();
         Some(starts)

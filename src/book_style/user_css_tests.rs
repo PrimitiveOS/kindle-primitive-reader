@@ -221,6 +221,21 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
                 "font-weight:300!important",
                 "font-weight:300!important;font-style:italic!important",
             ),
+            "margin_horizontal_all_0" | "paragraph_no_horizontal_margin" => markup.replace(
+                "text-indent:2em!important;padding:8px!important",
+                "margin-left:14px!important;margin-right:20px!important;text-indent:2em!important;padding:8px!important",
+            ),
+            "margin_vertical_all_0" | "paragraph_no_vertical_margin" => markup.replace(
+                "text-indent:2em!important;padding:8px!important",
+                "margin-top:14px!important;margin-bottom:20px!important;text-indent:2em!important;padding:8px!important",
+            ),
+            "margin_body_0" => markup.replace(
+                "<body style=\"",
+                "<body id=\"body\" style=\"margin:14px!important;",
+            ),
+            "text_align_most_right" | "text_align_all_right" => {
+                markup.replace("text-align:right!important", "text-align:left!important")
+            }
             "td_vertical_align_none" => markup.replace(
                 "<td>Cell</td>",
                 "<td id='td' style='vertical-align:middle!important'>Cell</td><th id='th' style='vertical-align:bottom!important'>Header</th>",
@@ -254,12 +269,41 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
             "paragraph-align-left" | "paragraph-align-justify" => {
                 assert_ne!(p.alignment, old.alignment)
             }
+            "text_align_most_right" | "text_align_all_right" => {
+                assert_eq!(p.alignment, Some(Alignment::Right));
+                assert_ne!(p.alignment, old.alignment);
+                assert_eq!(at(&source, &after, "h").alignment, Some(Alignment::Right));
+            }
             "headings-centered" => assert_ne!(
                 at(&source, &after, "h").alignment,
                 at(&source, &before, "h").alignment
             ),
-            "horizontal-padding-none" => assert_ne!(p.padding, old.padding),
-            "vertical-padding-none" => assert_ne!(p.vertical_padding, old.vertical_padding),
+            "horizontal-padding-none" | "paragraph_no_horizontal_padding" => {
+                assert_ne!(p.padding, old.padding)
+            }
+            "vertical-padding-none" | "paragraph_no_vertical_padding" => {
+                assert_ne!(p.vertical_padding, old.vertical_padding)
+            }
+            "margin_vertical_all_0" | "paragraph_no_vertical_margin" => {
+                assert_eq!(
+                    old.vertical_margin.map(|x| x.pixels(1000, 42.0)),
+                    [14.0, 20.0]
+                );
+                assert_eq!(p.vertical_margin.map(|x| x.pixels(1000, 42.0)), [0.0, 0.0]);
+            }
+            "margin_body_0" => {
+                let body = at(&source, &before, "body");
+                let changed = at(&source, &after, "body");
+                let pixels = |margin: BoxMargin| match margin {
+                    BoxMargin::Length(value) => value.pixels(1000, 42.0),
+                    BoxMargin::Auto => f32::NAN,
+                };
+                assert_ne!(
+                    body.horizontal_margin.map(pixels),
+                    changed.horizontal_margin.map(pixels)
+                );
+                assert_ne!(body.vertical_margin, changed.vertical_margin);
+            }
             "publisher-breaks-none" => assert!(p.page_breaks.before != old.page_breaks.before),
             "headings-new-page" => assert!(
                 at(&source, &after, "h").page_breaks.before
@@ -338,6 +382,14 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
                     at(&source, &after, "t").image_width,
                     Some(ImageLength::Auto)
                 ));
+            }
+            "margin_horizontal_all_0" | "paragraph_no_horizontal_margin" => {
+                let pixels = |margin: BoxMargin| match margin {
+                    BoxMargin::Length(value) => value.pixels(1000, 42.0),
+                    BoxMargin::Auto => f32::NAN,
+                };
+                assert_eq!(old.horizontal_margin.map(pixels), [14.0, 20.0]);
+                assert_eq!(p.horizontal_margin.map(pixels), [0.0, 0.0]);
             }
             "table_margin_left_right_auto" => {
                 assert!(matches!(

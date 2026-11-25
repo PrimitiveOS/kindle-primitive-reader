@@ -3,8 +3,8 @@ use super::{Field, FixedProvider, Profile};
 use crate::document_defaults::FixedDefaults;
 use crate::font_render::{GAMMA_LEVELS, NORMAL_GAMMA};
 use crate::library::{
-    BookPreferences, DEFAULT_CROP_MARGIN, MAX_CROP_MARGIN, SCAN_GAMMA_DEFAULT, SCAN_GAMMA_MAX,
-    SCAN_GAMMA_MIN,
+    BookPreferences, DEFAULT_CROP_MARGIN, MAX_CROP_MARGIN, MAX_STRAIGHTEN_DEGREES,
+    SCAN_GAMMA_DEFAULT, SCAN_GAMMA_MAX, SCAN_GAMMA_MIN,
 };
 use std::{io, ops::RangeInclusive};
 
@@ -19,6 +19,7 @@ pub(crate) enum ValueField {
     Margin(MarginEdge),
     CropMargin,
     ScanGamma,
+    AutoStraighten,
     HorizontalOverlap,
     VerticalOverlap,
 }
@@ -93,6 +94,7 @@ impl ValueField {
             Self::Margin(edge) => edge.label(),
             Self::CropMargin => "Crop margin",
             Self::ScanGamma => "Scan contrast",
+            Self::AutoStraighten => "Auto straighten",
             Self::HorizontalOverlap => "Horizontal overlap",
             Self::VerticalOverlap => "Vertical overlap",
         }
@@ -109,6 +111,7 @@ impl ValueField {
             Self::Margin(_) => 0.0..=f64::from(crate::document_defaults::MAX_SAVED_MARGIN),
             Self::CropMargin => 0.0..=f64::from(MAX_CROP_MARGIN) / 100.0,
             Self::ScanGamma => f64::from(SCAN_GAMMA_MIN) / 10.0..=f64::from(SCAN_GAMMA_MAX) / 10.0,
+            Self::AutoStraighten => 0.0..=f64::from(MAX_STRAIGHTEN_DEGREES),
             Self::HorizontalOverlap | Self::VerticalOverlap => 0.0..=90.0,
         }
     }
@@ -124,6 +127,7 @@ impl ValueField {
             Self::Margin(_) => f64::from(crate::Settings::default().margin),
             Self::CropMargin => f64::from(DEFAULT_CROP_MARGIN) / 100.0,
             Self::ScanGamma => f64::from(SCAN_GAMMA_DEFAULT) / 10.0,
+            Self::AutoStraighten => 0.0,
             Self::HorizontalOverlap | Self::VerticalOverlap => 36.0,
         }
     }
@@ -157,6 +161,7 @@ impl ValueField {
             Self::Margin(_) => format!("{value} px"),
             Self::CropMargin => format!("{value:.2} in"),
             Self::ScanGamma => format!("{value:.1}"),
+            Self::AutoStraighten => format!("{value}°"),
             _ => format!("{value}%"),
         }
     }
@@ -235,6 +240,7 @@ impl ValueField {
             Self::Margin(_) => Field::Margins,
             Self::CropMargin => Field::CropMargin,
             Self::ScanGamma => Field::ScanContrast,
+            Self::AutoStraighten => Field::Straighten,
             Self::HorizontalOverlap | Self::VerticalOverlap => Field::PanOverlap,
         };
         selection.contains(&field)
@@ -263,15 +269,18 @@ impl Profile {
                     ValueField::VerticalOverlap,
                     ValueField::CropMargin,
                     ValueField::ScanGamma,
+                    ValueField::AutoStraighten,
                 ],
                 FixedProvider::Comic => &[
                     ValueField::HorizontalOverlap,
                     ValueField::VerticalOverlap,
                     ValueField::ScanGamma,
                 ],
-                FixedProvider::Djvu => {
-                    &[ValueField::HorizontalOverlap, ValueField::VerticalOverlap]
-                }
+                FixedProvider::Djvu => &[
+                    ValueField::HorizontalOverlap,
+                    ValueField::VerticalOverlap,
+                    ValueField::AutoStraighten,
+                ],
             },
         }
     }
@@ -396,6 +405,11 @@ impl Profile {
                     .unwrap_or(SCAN_GAMMA_DEFAULT);
                 Some(f64::from(gamma) / 10.0)
             }
+            (Self::Fixed { fixed, .. }, ValueField::AutoStraighten)
+                if fixed.provider != FixedProvider::Comic =>
+            {
+                Some(f64::from(fixed.values().straighten_limit))
+            }
             _ => None,
         }
     }
@@ -445,6 +459,9 @@ impl Profile {
                         let tenths = (value * 10.0).round() as u16;
                         view.scan_contrast = false;
                         view.scan_gamma_tenths = (tenths != SCAN_GAMMA_DEFAULT).then_some(tenths);
+                    }
+                    ValueField::AutoStraighten if fixed.provider != FixedProvider::Comic => {
+                        view.straighten_limit = value as u8;
                     }
                     _ => return Err(unavailable()),
                 }

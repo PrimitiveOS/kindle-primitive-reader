@@ -35,7 +35,7 @@ impl fmt::Display for ScanReflowError {
             Self::Viewport => "The scan reading view has unsupported dimensions",
             Self::NoWords => "This scan has no recognized word boxes",
             Self::OcrGeometry => "The scan needs complete OCR word positions",
-            Self::Direction => "Scan reflow supports horizontal left-to-right words",
+            Self::Direction => "Scan reflow needs consistently ordered horizontal words",
             Self::Limit => "This scan exceeds Reader's reflow limits",
         })
     }
@@ -105,9 +105,9 @@ impl ScanReflow {
             return Err(ScanReflowError::Raster);
         }
         let viewport = Viewport::new(width, height, text_height)?;
-        let mut words = word_crops(text, raster.width, raster.height)?;
+        let (mut words, direction) = word_crops(text, raster.width, raster.height)?;
         viewport.size_words(&mut words);
-        let placements = viewport.wrap(&words, spacing)?;
+        let placements = viewport.wrap(&words, spacing, direction)?;
         let max_word_height = placements.iter().map(|word| word.height).max().unwrap_or(0);
         Ok(Self {
             raster,
@@ -165,7 +165,13 @@ impl ScanReflow {
     }
 }
 
-fn word_crops(text: &PdfPageText, width: u32, height: u32) -> Result<Vec<Word>> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    LeftToRight,
+    RightToLeft,
+}
+
+fn word_crops(text: &PdfPageText, width: u32, height: u32) -> Result<(Vec<Word>, Direction)> {
     if text.words.is_empty() {
         return Err(ScanReflowError::NoWords);
     }
@@ -175,9 +181,7 @@ fn word_crops(text: &PdfPageText, width: u32, height: u32) -> Result<Vec<Word>> 
     if text.truncated || !text.valid_ocr_cache() {
         return Err(ScanReflowError::OcrGeometry);
     }
-    if text.text.chars().any(unsupported_direction) {
-        return Err(ScanReflowError::Direction);
-    }
+    let direction = text_direction(&text.text)?;
 
     let mut words = Vec::with_capacity(text.words.len());
     let mut previous: Option<Crop> = None;
@@ -193,7 +197,7 @@ fn word_crops(text: &PdfPageText, width: u32, height: u32) -> Result<Vec<Word>> 
         let crop = Crop::from_bounds(word.bounds, width, height)?;
         if let Some(last) = previous
             && !separator.contains('\n')
-            && !last.followed_by(crop)
+            && !last.followed_by(crop, direction)
         {
             return Err(ScanReflowError::Direction);
         }
@@ -218,15 +222,28 @@ fn word_crops(text: &PdfPageText, width: u32, height: u32) -> Result<Vec<Word>> 
     if tall_words >= 4 && tall_words * 5 > words.len() * 4 {
         return Err(ScanReflowError::Direction);
     }
-    Ok(words)
+    Ok((words, direction))
 }
 
-fn unsupported_direction(ch: char) -> bool {
-    use BidiClass::{AL, AN, FSI, LRE, LRI, LRO, PDF, PDI, R, RLE, RLI, RLO};
-    matches!(
-        bidi_class(ch),
-        AL | AN | R | RLE | RLO | RLI | LRE | LRO | LRI | FSI | PDF | PDI
-    )
+fn text_direction(text: &str) -> Result<Direction> {
+    use BidiClass::{AL, FSI, L, LRE, LRI, LRO, PDF, PDI, R, RLE, RLI, RLO};
+    let mut strong = None;
+    for ch in text.chars() {
+        let direction = match bidi_class(ch) {
+            L => Direction::LeftToRight,
+            R | AL => Direction::RightToLeft,
+            // Image crops cannot safely apply embedded bidirectional overrides.
+            RLE | RLO | RLI | LRE | LRO | LRI | FSI | PDF | PDI => {
+                return Err(ScanReflowError::Direction);
+            }
+            _ => continue,
+        };
+        if strong.is_some_and(|previous| previous != direction) {
+            return Err(ScanReflowError::Direction);
+        }
+        strong = Some(direction);
+    }
+    Ok(strong.unwrap_or(Direction::LeftToRight))
 }
 
 impl Crop {
@@ -248,12 +265,16 @@ impl Crop {
         })
     }
 
-    fn followed_by(self, next: Self) -> bool {
+    fn followed_by(self, next: Self, direction: Direction) -> bool {
         let gap = self
             .top
             .max(next.top)
             .saturating_sub((self.top + self.height).min(next.top + next.height));
-        next.left + 3 >= self.left && gap <= self.height.min(next.height).max(6) / 2
+        let ordered = match direction {
+            Direction::LeftToRight => next.left + 3 >= self.left,
+            Direction::RightToLeft => next.left <= self.left + 3,
+        };
+        ordered && gap <= self.height.min(next.height).max(6) / 2
     }
 }
 
@@ -299,7 +320,12 @@ impl Viewport {
         }
     }
 
-    fn wrap(self, words: &[Word], spacing: FixedReflowSpacing) -> Result<Vec<Placement>> {
+    fn wrap(
+        self,
+        words: &[Word],
+        spacing: FixedReflowSpacing,
+        direction: Direction,
+    ) -> Result<Vec<Placement>> {
         let mut placements = Vec::with_capacity(words.len());
         let mut line_start = 0;
         let mut y = 0;
@@ -326,8 +352,14 @@ impl Viewport {
             if y + line_height > self.height * MAX_PAGES as u32 {
                 return Err(ScanReflowError::Limit);
             }
-            let mut x = self.left;
+            let mut x = match direction {
+                Direction::LeftToRight => self.left,
+                Direction::RightToLeft => self.left + self.width,
+            };
             for word in &words[line_start..line_end] {
+                if direction == Direction::RightToLeft {
+                    x -= word.width;
+                }
                 placements.push(Placement {
                     crop: word.crop,
                     x,
@@ -335,7 +367,10 @@ impl Viewport {
                     width: word.width,
                     height: word.height,
                 });
-                x += word.width + word_space;
+                match direction {
+                    Direction::LeftToRight => x += word.width + word_space,
+                    Direction::RightToLeft => x = x.saturating_sub(word_space),
+                }
             }
             let pitch = spacing
                 .scaled_pitch(line_height + line_space)
@@ -563,13 +598,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_rtl_characters_and_reverse_or_vertical_intraline_geometry() {
+    fn accepts_rtl_characters_and_rejects_reverse_or_vertical_intraline_geometry() {
         let mut rtl = Fixture::new();
         rtl.word("", "مرحبا", crop(50, 4), 30);
-        assert!(matches!(
-            rtl.finish(64, 48, 10),
-            Err(ScanReflowError::Direction)
-        ));
+        assert!(rtl.finish(64, 48, 10).is_ok());
 
         let mut backwards = Fixture::new();
         backwards.word("", "A", crop(60, 4), 30);

@@ -12,11 +12,15 @@ a parent level does not remove a child at another selected level. A custom
 outline has one level and uses the same book preferences.
 
 Fixed-page documents and single-section reflow books use the filtered page
-markers in the reading footer and Skim. For a multi-section reflow book,
-filtering applies to the existing reading-header chapter markers in the current
-section. The whole-book footer continues using source section boundaries so
-opening a settings panel never needs to lay out the rest of the book. Chapter
-title and time-to-end rules have their own stock settings.
+markers in the reading footer and Skim. For a multi-section EPUB with publisher
+Contents, excluding a level requests the existing bounded background page index.
+When the index is complete, the footer and Skim project the included headings
+onto their existing source-weighted tracks; until then they retain their current
+section-boundary markers. The reading header can filter the current section.
+Custom outlines, hidden flows, unsupported layouts and an unavailable index keep
+their existing fallback. The progress track, chapter caption and Exit layout do
+not change. This new multi-section path awaits simulator and Kindle verification.
+Chapter title and time-to-end rules have their own stock settings.
 
 The desktop workflow checks normal and filtered chapter jumps, reopening the
 book, backup round trips, custom outlines, and same-page headings. The footer

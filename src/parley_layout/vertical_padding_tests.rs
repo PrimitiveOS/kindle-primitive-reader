@@ -325,6 +325,8 @@ fn compares_real_vertical_cells_and_saved_checkpoint_with_installed_reference() 
         };
         state.position = Some(old.clone());
         state.bookmarks.push(Bookmark {
+            note: None,
+            updated_at: None,
             chapter_title: None,
             created_at: None,
             label: "Checkpoint".into(),

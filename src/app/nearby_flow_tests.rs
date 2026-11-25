@@ -98,3 +98,70 @@ fn stepping_a_completed_directional_match_cannot_rebind_a_stale_style_key() {
     assert!(app.nearby.current.is_none());
     assert!(app.hits.is_empty());
 }
+
+// Exercise the same directional controls that are drawn on Find and on the
+// selected passage, including KOReader's current-page boundary for edge jumps.
+#[test]
+fn reflow_search_edge_controls_find_and_highlight_source_passages() {
+    let (fixture, mut app) = open();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let expected = |app: &Reader, direction| {
+        let active = app.active.as_ref().unwrap();
+        let boundary_direction = match direction {
+            SearchDirection::Next => SearchDirection::Previous,
+            SearchDirection::Previous => SearchDirection::Next,
+        };
+        let boundary = active.reading.search_boundary(boundary_direction).unwrap();
+        let context = app.current_reflow_context().unwrap();
+        let mut book = Book::open(&fixture.book).unwrap();
+        let chapters = book.chapters.len();
+        NearbySearch::new("Linh", false, false, direction)
+            .unwrap()
+            .with_flow_config(context.flow.clone())
+            .scan_edge(
+                context.publication,
+                active.reading.chapter,
+                Some(&boundary),
+                &AtomicBool::new(false),
+                chapters,
+                |index| ChapterText::read_with_flow(&mut book, index, &context.flow),
+            )
+            .unwrap()
+            .unwrap()
+            .anchor
+    };
+    let settle = |app: &mut Reader| {
+        let started = Instant::now();
+        while app.nearby.pending.is_some() {
+            assert!(started.elapsed() < std::time::Duration::from_secs(15));
+            app.poll_nearby(Instant::now()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    };
+    let tap_rect = |rect: Rect| ((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
+    app.show(Screen::Find);
+    app.editor.text = "Linh".chars().collect();
+    app.editor.caret = app.editor.text.len();
+    crate::app::tests::capture_test_screen(&app, &fonts, "READER_REFLOW_EDGE_FIND_FRAME", false);
+    let last = expected(&app, SearchDirection::Previous);
+    let (x, y) = tap_rect(
+        app.search_layout()
+            .find_direction(FixedNavigation::Last.entry().0),
+    );
+    assert_eq!(app.nearby_input(x, y), Some(Change::Partial));
+    settle(&mut app);
+    assert_eq!(app.hits[0].anchor, last);
+    assert!(app.fixed_result_navigation());
+    assert_eq!(app.result_selection.as_ref().unwrap().start, last);
+    crate::app::tests::capture_test_screen(&app, &fonts, "READER_REFLOW_EDGE_RESULT_FRAME", false);
+    let first = expected(&app, SearchDirection::Next);
+    let (x, y) = tap_rect(
+        app.search_layout()
+            .reading_footer(FixedNavigation::First.button()),
+    );
+    assert_eq!(app.search_result_input(x, y), Some(Change::Partial));
+    settle(&mut app);
+    assert_eq!(app.hits[0].anchor, first);
+    assert_eq!(app.result_selection.as_ref().unwrap().start, first);
+    assert!(app.search_result.is_some());
+}

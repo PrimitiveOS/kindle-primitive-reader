@@ -23,9 +23,16 @@ These rules share the existing cascade and immutable flow view used by layout,
 search and copy. A hidden note stays in canonical source but leaves the main
 reading flow. Extracted popups omit the linked stylesheet and retain their own
 inline attributes. Existing `[href]` presence matching remains supported. Other
-attribute names, substring/dash operators, full non-ASCII CRE case-table parity
-and namespace-collision precedence remain separate work. Strict user CSS still
+attribute names, full non-ASCII CRE case-table parity and namespace-collision
+precedence remain separate work. Strict user CSS still
 rejects display/visibility until the remaining consumer gates are resolved.
+
+The semantic-type adapter also implements CRE's dash-word (`|=`), prefix
+(`^=`), suffix (`$=`) and substring (`*=`) comparisons on the existing local
+`type` metadata. The pinned dash-word implementation folds the comparison
+pattern for `i` but does not fold the attribute, unlike its other operators;
+the adapter preserves this source behavior. The new operators are implemented
+but have not yet been compiled or checked against the native runtime.
 
 Four authored ordinary tests cover selector matching and an actual rendered
 main-flow/popup comparison. A separate opt-in check reads the unchanged owner

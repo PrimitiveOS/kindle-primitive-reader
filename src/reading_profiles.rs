@@ -280,7 +280,11 @@ impl Profile {
             return None;
         };
         let Some(fields) = fields else {
-            return Some(preferences.clone());
+            let mut settings = preferences.clone();
+            if settings.publisher_render_mode.is_none() {
+                settings.publisher_render_mode = current.publisher_render_mode;
+            }
+            return Some(settings);
         };
         let mut settings = current.clone();
         for field in fields {

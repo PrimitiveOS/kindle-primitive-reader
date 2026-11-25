@@ -1743,15 +1743,19 @@ impl FixedReading {
     }
 
     pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<PdfLink> {
-        let FixedDocument::Pdf(pdf) = &self.source else {
-            return None;
-        };
         let page = self.page_at(y)?;
         let point = self.source_point(page, x, y)?;
-        pdf.page_links(page)
-            .ok()?
+        self.page_links(page)
             .into_iter()
             .find(|link| source_rect((1.0, 1.0), link.bounds).contains(point))
+    }
+
+    fn page_links(&self, page: usize) -> Vec<PdfLink> {
+        match &self.source {
+            FixedDocument::Pdf(pdf) => pdf.page_links(page).unwrap_or_default(),
+            FixedDocument::Djvu(djvu) => djvu.page_links(page).unwrap_or_default(),
+            _ => Vec::new(),
+        }
     }
 
     pub(crate) fn visible_links(&self) -> Vec<PdfLink> {
@@ -1761,11 +1765,7 @@ impl FixedReading {
     }
 
     fn visible_pdf_page_links(&self, page: usize) -> impl Iterator<Item = PdfLink> + '_ {
-        let links = match &self.source {
-            FixedDocument::Pdf(pdf) => pdf.page_links(page).unwrap_or_default(),
-            _ => Vec::new(),
-        };
-        links
+        self.page_links(page)
             .into_iter()
             .filter(move |link| self.visible_rectangle(page, link.bounds).is_some())
     }

@@ -217,8 +217,8 @@ fn selected(label: impl Into<String>, command: Command, on: bool) -> Item {
     if on { item.detail("Selected") } else { item }
 }
 
-fn has_highlights(book: &crate::library::BookState) -> bool {
-    !book.highlights.is_empty() || !book.pdf_highlights.is_empty()
+fn has_marks(book: &crate::library::BookState) -> bool {
+    !book.bookmarks.is_empty() || !book.highlights.is_empty() || !book.pdf_highlights.is_empty()
 }
 
 impl Reader {
@@ -279,7 +279,7 @@ impl Reader {
                 rows.extend(
                     self.library
                         .recently_read()
-                        .filter(|book| has_highlights(book))
+                        .filter(|book| has_marks(book))
                         .map(|book| {
                             selected(
                                 &book.title,
@@ -414,7 +414,7 @@ impl Reader {
                 self.library_export.books = self
                     .library
                     .recently_read()
-                    .filter(|book| has_highlights(book))
+                    .filter(|book| has_marks(book))
                     .map(|book| book.id)
                     .collect();
                 self.show(Screen::LibraryExport(Page::Options));
@@ -436,7 +436,7 @@ impl Reader {
                 let all: BTreeSet<_> = self
                     .library
                     .recently_read()
-                    .filter(|book| has_highlights(book))
+                    .filter(|book| has_marks(book))
                     .map(|book| book.id)
                     .collect();
                 self.library_export.books = if self.library_export.books == all {
@@ -451,7 +451,7 @@ impl Reader {
                     self.library_export.books = self
                         .library
                         .recently_read()
-                        .filter(|book| has_highlights(book))
+                        .filter(|book| has_marks(book))
                         .filter(|book| {
                             self.library_export.collections.iter().any(|name| {
                                 self.library
@@ -522,7 +522,7 @@ impl Reader {
                     Vec::new()
                 };
                 if self.library_export.books.is_empty() && kindle_clippings.is_empty() {
-                    return Err("Choose a book with highlights or include Kindle clippings".into());
+                    return Err("Choose a book with annotations or include Kindle clippings".into());
                 }
                 self.save_library()?;
                 let preferences = self.export_settings.preferences.clone();
@@ -605,6 +605,57 @@ impl Reader {
                 drawer: Some(mark.style), color: Some(mark.color), page: Some(serde_json::json!(mark.page + 1)), chapter: None,
                 primitiveos: serde_json::json!({"page": mark.page, "bounds": mark.bounds, "continuation": mark.continuation}),
             }, None));
+        }
+        // A page bookmark has no highlight style or color. Like Kindle
+        // clippings, include it only when both highlight filters are clear.
+        if styles.is_none() && colors.is_none() {
+            let fixed = entry.format.is_still_image()
+                || entry.format.is_comic()
+                || matches!(
+                    entry.format,
+                    crate::library::DocumentFormat::Pdf | crate::library::DocumentFormat::Djvu
+                )
+                || book.as_ref().is_some_and(|book| book.is_fixed_layout());
+            for mark in &state.bookmarks {
+                let anchor = if fixed {
+                    None
+                } else {
+                    mark.position.anchor.as_ref().and_then(|anchor| {
+                        book.as_ref()?
+                            .chapter_index(&anchor.chapter)
+                            .map(|chapter| (chapter, anchor.clone()))
+                    })
+                };
+                let page = if fixed {
+                    mark.position
+                        .page
+                        .checked_add(1)
+                        .map(|page| serde_json::json!(page))
+                } else {
+                    None
+                };
+                let mut primitiveos = serde_json::json!({
+                    "position": mark.position,
+                    "updated_at": mark.updated_at,
+                });
+                if fixed {
+                    primitiveos["page"] = serde_json::json!(mark.position.page);
+                }
+                marks.push_back((
+                    Entry {
+                        sort: "bookmark",
+                        text: mark.label.clone(),
+                        note: mark.note.clone(),
+                        time: mark.created_at,
+                        drawer: None,
+                        color: None,
+                        page,
+                        chapter: mark.chapter_title.clone(),
+                        primitiveos,
+                    },
+                    anchor,
+                ));
+            }
         }
         marks
             .make_contiguous()
@@ -777,7 +828,7 @@ impl Reader {
             combine_clippings(&mut job.documents, job.kindle_clippings);
             if job.documents.is_empty() {
                 self.show(Screen::LibraryExport(Page::Options));
-                return Err("No highlights to export from the available books".into());
+                return Err("No annotations to export from the available books".into());
             }
             let contents = render(&job.documents, job.format)?;
             let source = match job.documents.as_slice() {
@@ -813,8 +864,8 @@ impl Reader {
             let label = match (includes_clippings, marks) {
                 (true, 1) => "clipping",
                 (true, _) => "clippings",
-                (false, 1) => "highlight",
-                (false, _) => "highlights",
+                (false, 1) => "annotation",
+                (false, _) => "annotations",
             };
             let books = job.documents.len();
             let book_label = if books == 1 { "book" } else { "books" };
@@ -913,6 +964,16 @@ fn render(documents: &[Document], format: Format) -> Result<Vec<u8>> {
                         &entry.text,
                         entry.note.as_deref(),
                     );
+                } else if kind == Kind::Bookmark && !entry.primitiveos.is_null() {
+                    kindle_clippings::write_bookmark(
+                        &mut output,
+                        title,
+                        author,
+                        location.as_deref(),
+                        entry.time,
+                        entry.primitiveos["updated_at"].as_i64(),
+                        entry.note.as_deref(),
+                    );
                 } else {
                     kindle_clippings::write(
                         &mut output,
@@ -959,9 +1020,15 @@ fn render(documents: &[Document], format: Format) -> Result<Vec<u8>> {
             for entry in &document.entries {
                 output.push_str("<article><p>");
                 crate::annotation_export::html_text(&mut output, &caption(entry));
-                output.push_str("</p><blockquote>");
-                crate::annotation_export::html_text(&mut output, &entry.text);
-                output.push_str("</blockquote>");
+                if entry.sort == "bookmark" && !entry.primitiveos.is_null() {
+                    output.push_str("</p><p>");
+                    crate::annotation_export::html_text(&mut output, &entry.text);
+                    output.push_str("</p>");
+                } else {
+                    output.push_str("</p><blockquote>");
+                    crate::annotation_export::html_text(&mut output, &entry.text);
+                    output.push_str("</blockquote>");
+                }
                 if let Some(note) = &entry.note {
                     output.push_str("<p><strong>Note</strong><br>");
                     crate::annotation_export::html_text(&mut output, note);
@@ -988,6 +1055,7 @@ fn render(documents: &[Document], format: Format) -> Result<Vec<u8>> {
         let excerpts: Vec<_> = document
             .entries
             .iter()
+            .filter(|entry| entry.sort != "bookmark" || entry.primitiveos.is_null())
             .map(|entry| {
                 let caption = caption(entry);
                 let quote = if caption.is_empty() {
@@ -998,9 +1066,14 @@ fn render(documents: &[Document], format: Format) -> Result<Vec<u8>> {
                 (quote, entry.note.as_deref())
             })
             .collect();
-        output.push_str(&format.render(
+        let bookmarks = document
+            .entries
+            .iter()
+            .filter(|entry| entry.sort == "bookmark" && !entry.primitiveos.is_null());
+        output.push_str(&format.render_with_bookmarks(
             &title,
             excerpts.iter().map(|(quote, note)| (quote.as_str(), *note)),
+            bookmarks.map(|entry| (entry.text.as_str(), entry.note.as_deref())),
         ));
     }
     Ok(output.into_bytes())

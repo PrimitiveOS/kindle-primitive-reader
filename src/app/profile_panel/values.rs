@@ -103,7 +103,7 @@ impl Reader {
                         "Book rendering",
                         Action::Show(Screen::ReadingProfileBookRendering(index)),
                     )
-                    .detail("Publisher styles, fonts and images"),
+                    .detail("Page mode, alignment, styles and images"),
                 );
             }
         }

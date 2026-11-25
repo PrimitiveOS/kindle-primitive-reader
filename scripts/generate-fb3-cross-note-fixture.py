@@ -40,6 +40,14 @@ QUIET_ENDING = '''</section>
 <notes><notebody id="rain-note"><p>Rainfall reached six millimeters overnight. <a l:href="#dispatch">Return to dispatch</a>.</p></notebody></notes>
 </fb3-body>'''
 
+MULTI_OPENING = '''<?xml version="1.0" encoding="UTF-8"?>
+<fb3-body xmlns="http://www.fictionbook.org/FictionBook3/body" xmlns:l="http://www.w3.org/1999/xlink">
+<section><title><p>Field Dispatch</p></title><p id="dispatch">The dispatch has <note href="rain-note" l:role="footnote">rain one</note> and <note href="rain-note" l:role="footnote">rain two</note>.</p><p id="later">The next report has <note href="snow-note" l:role="footnote">snow note</note>.</p><p id="again">A later report repeats <note href="rain-note" l:role="footnote">rain three</note>.</p></section>
+<section id="filler"><title><p>Long Log</p></title>'''
+MULTI_ENDING = '''</section>
+<notes><notebody id="rain-note"><p>Rainfall reached six millimeters. <a l:href="#dispatch">Return to dispatch</a>.</p></notebody><notebody id="snow-note"><p>Snowfall reached four centimeters. <a l:href="#later">Return to report</a>.</p></notebody></notes>
+</fb3-body>'''
+
 
 def package(body: str) -> bytes:
     output = BytesIO()
@@ -57,7 +65,7 @@ def package(body: str) -> bytes:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true", help="regenerate the selected tracked fixtures")
-    parser.add_argument("--fixture", choices=("all", "continuation", "quiet"), default="all")
+    parser.add_argument("--fixture", choices=("all", "continuation", "quiet", "multiple"), default="all")
     args = parser.parse_args()
     fixtures = {
         "continuation": ("harbor-continuation.fb3", OPENING + PASSAGE * 4290 + ENDING),
@@ -65,6 +73,7 @@ def main() -> None:
         # 384 KiB grouping budget. The short host and notes each force a
         # separate generated section without splitting any individual node.
         "quiet": ("cross-note-quiet.fb3", QUIET_OPENING + PASSAGE.rstrip("\n") * 4139 + QUIET_ENDING),
+        "multiple": ("cross-note-multiple.fb3", MULTI_OPENING + PASSAGE.rstrip("\n") * 4139 + MULTI_ENDING),
     }
     for key, (name, body) in fixtures.items():
         if args.fixture not in ("all", key):

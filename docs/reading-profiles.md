@@ -302,7 +302,15 @@ then applies its reading settings while the source is active.
 Open a profile and tap **Edit values**. Reflowable profiles have **Font
 size**, **Content zoom**, **Line spacing**, **Word spacing**, **Word
 expansion**, **Page margins**, and **Font rendering**. **Book rendering**
-groups publisher styles, publisher fonts, image scaling, and night images.
+groups page-turn or scrolling mode, one or facing pages, alignment, publisher
+styles, publisher fonts, image scaling, and night images. These values edit the
+saved profile without changing the current document. Their Included settings
+switches remain independent, and the usual checks still apply when a profile
+is applied. These newly added choices await integrated and device testing.
+**Book rendering** also edits the saved base stylesheet and publisher render
+mode. New profiles capture the current mode; older profiles that have no saved
+mode leave the book's mode unchanged. These additions await integrated and
+device testing. [KOReader profile capture](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/profiles.koplugin/main.lua#L346-L409) · [KOReader render-mode action](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L261)
 Fixed-page profiles have **Horizontal overlap**, **Vertical overlap**, and
 scan controls for supported formats. Tap a numeric value to type it or use
 its step buttons.
@@ -311,6 +319,14 @@ its step buttons.
 The open book keeps its settings until **Apply to this book** is used.
 Edit values keeps the existing Included settings selection, including
 the single **Zoom pan overlap** switch that governs both axes.
+
+PDF and DjVu profiles also expose **Auto straighten**, editable from 0°
+(off) through 25° in one-degree steps, or five degrees on a hold. It uses
+the profile's existing **Auto straighten** inclusion switch; changing the
+saved value does not change the open document until the profile is applied.
+KOReader's dispatcher likewise exposes auto-straightening as a numeric
+profile action. This newly added editor awaits integrated testing. [Pinned
+dispatcher](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/dispatcher.lua#L314) · [Pinned scan controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L139-L155)
 
 The pinned KOReader profile editor offers font sizes 12–44, with a 22
 default and steps of 0.5 on tap and 5 on hold. Its Content zoom choices

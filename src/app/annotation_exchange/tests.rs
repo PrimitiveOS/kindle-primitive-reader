@@ -387,3 +387,84 @@ fn annotation_exchange_original_book_keeps_same_bytes_and_passage() {
     let reopened = setup(&fixture);
     assert_eq!(reopened.current_position(), Some(location));
 }
+
+#[test]
+fn annotation_exchange_preserves_multi_page_pdf_marks_and_unmatched_local_data() {
+    let fixture = Fixture::new();
+    let source = fixture.root.join("Two pages.pdf");
+    let content = "BT /F1 14 Tf 20 45 Td (PDF) Tj ET\n";
+    let original = crate::fixed::tests::pdf_objects(&[
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] /Resources << /Font << /F1 6 0 R >> >> >>"
+            .to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 120 80] /Contents 5 0 R >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 120 80] /Contents 5 0 R >>".to_owned(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}endstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+    ]);
+    fs::write(&source, &original).unwrap();
+    let mut app = fixture.app();
+    app.open_path(&source).unwrap();
+    let fixed = app.fixed.as_ref().unwrap();
+    let id = fixed.id;
+    let first = fixed.reading.page_text(0).unwrap().words[0].bounds;
+    let second = fixed.reading.page_text(1).unwrap().words[0].bounds;
+    app.library
+        .state_mut(id)
+        .unwrap()
+        .add_pdf_highlight(PdfHighlight {
+            updated_at: None,
+            chapter_title: None,
+            created_at: Some(1_740_777_800),
+            style: crate::highlight_style::HighlightStyle::Underline,
+            color: crate::highlight_style::HighlightColor::Yellow,
+            page: 0,
+            bounds: vec![first],
+            text: "PDF\nPDF".into(),
+            note: Some("Both pages".into()),
+            continuation: vec![crate::library::HighlightPage {
+                page: 1,
+                bounds: vec![second],
+                text_offset: 4,
+            }],
+        })
+        .unwrap();
+    let state = app.library.state(id).unwrap();
+    let (marks, unavailable) = app.export_transfer_marks(&source, state).unwrap();
+    assert_eq!(unavailable, 0);
+    let snapshot = exchange::Snapshot {
+        device: "authored-peer".into(),
+        fixed: true,
+        datetime: 1_740_777_900,
+        fingerprint: None,
+        incomplete: false,
+        unavailable: 0,
+        marks,
+    };
+    let wire = exchange::encode(&snapshot).unwrap();
+    let parsed = exchange::decode(wire.as_bytes()).unwrap();
+    let mut restored = state.clone();
+    restored.pdf_highlights.clear();
+    let summary = app
+        .apply_transfer(&source, parsed.clone(), &mut restored, true)
+        .unwrap();
+    assert_eq!(summary.added, 1);
+    let mark = &restored.pdf_highlights[0];
+    assert_eq!(mark.text, "PDF\nPDF");
+    assert_eq!(mark.note.as_deref(), Some("Both pages"));
+    assert_eq!(mark.continuation.len(), 1);
+    assert_eq!(mark.continuation[0].page, 1);
+    assert_eq!(mark.continuation[0].text_offset, 4);
+    let mut bad = parsed;
+    bad.marks[0].text = "different words".into();
+    let before = restored.pdf_highlights.clone();
+    let result = app
+        .apply_transfer(&source, bad, &mut restored, false)
+        .unwrap();
+    assert_eq!(result.unavailable, 1);
+    assert_eq!(restored.pdf_highlights, before);
+    assert_eq!(fs::read(&source).unwrap(), original);
+}

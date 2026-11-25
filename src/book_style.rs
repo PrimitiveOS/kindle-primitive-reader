@@ -1377,6 +1377,7 @@ impl FontPath {
                 ext.eq_ignore_ascii_case("ttf")
                     || ext.eq_ignore_ascii_case("otf")
                     || ext.eq_ignore_ascii_case("woff")
+                    || ext.eq_ignore_ascii_case("woff2")
             })
             .then_some(Self::Local(path))
     }
@@ -1437,6 +1438,7 @@ impl FontFace {
 struct FontAssets {
     files: HashMap<FontPath, Option<Blob<u8>>>,
     bytes: usize,
+    woff2_deadline: Option<std::time::Instant>,
 }
 
 impl FontAssets {
@@ -1456,6 +1458,11 @@ impl FontAssets {
         .and_then(|bytes| {
             let bytes = if bytes.starts_with(b"wOFF") {
                 crate::woff::decode(&bytes, limit).ok()?
+            } else if bytes.starts_with(b"wOF2") {
+                let deadline = *self.woff2_deadline.get_or_insert_with(|| {
+                    std::time::Instant::now() + std::time::Duration::from_millis(1500)
+                });
+                crate::woff2::decode(&bytes, limit, deadline)?
             } else {
                 bytes
             };
@@ -2651,7 +2658,10 @@ fn font_url<'i>(input: &mut Parser<'i>) -> CssResult<String> {
     {
         input.parse_nested_block(|format| {
             let format_name = format.expect_ident_or_string()?.to_ascii_lowercase();
-            if !matches!(format_name.as_str(), "truetype" | "opentype" | "woff") {
+            if !matches!(
+                format_name.as_str(),
+                "truetype" | "opentype" | "woff" | "woff2"
+            ) {
                 return Err(ParseError::unexpected_token());
             }
             Ok(())

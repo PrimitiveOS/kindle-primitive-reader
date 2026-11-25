@@ -476,6 +476,59 @@ fn text_offset(raw: &str, end: usize) -> Option<usize> {
     Some(offset)
 }
 
+/// A CRE element point is an index between children of its actual DOM node.
+/// Infer it from publisher markup only for an inline tree whose child list is
+/// unaffected by CSS, HTML repair, hidden nodes, or engine text splitting.
+fn plain_inline_element_boundary(
+    target: Node<'_, '_>,
+    offset: usize,
+    xml: &str,
+    styled: bool,
+) -> Result<usize> {
+    fn inline(name: &str) -> bool {
+        matches!(
+            name,
+            "p" | "span" | "b" | "i" | "em" | "strong" | "a" | "code" | "small" | "s"
+        )
+    }
+    if styled || !target.is_element() || !inline(target.tag_name().name()) {
+        return Err("This KOReader element point needs its rendered child tree".into());
+    }
+    for node in target.descendants() {
+        if node.is_element() {
+            if node.tag_name().namespace() != Some(XHTML)
+                || !inline(node.tag_name().name())
+                || node.has_attribute("hidden")
+                || node.has_attribute("style")
+            {
+                return Err("This KOReader element point has an ambiguous child".into());
+            }
+        } else if node.is_text() {
+            let raw = &xml[node.range()];
+            if raw.starts_with("<![CDATA[")
+                || raw.chars().take(TEXT_SPLIT_SIZE).count() >= TEXT_SPLIT_SIZE
+                || raw.chars().all(xml_space)
+            {
+                return Err("This KOReader element point has ambiguous text nodes".into());
+            }
+        } else {
+            return Err("This KOReader element point has an unsupported child node".into());
+        }
+    }
+    let children: Vec<_> = target.children().collect();
+    if offset > children.len() {
+        return Err("The KOReader element point is outside this node".into());
+    }
+    if let Some(next) = children.get(offset) {
+        Ok(next.range().start)
+    } else {
+        children
+            .last()
+            .map(|last| last.range().end)
+            .ok_or_else(|| "The KOReader element point has no readable child".into())
+    }
+}
+
 fn locate_in_chapter(
     xhtml: &str,
     steps: &[Step<'_>],
@@ -535,7 +588,7 @@ fn locate_in_chapter(
             .range()
             .start
     } else {
-        return Err("Nonzero KOReader element offsets need its rendered child tree".into());
+        plain_inline_element_boundary(target, offset, &xml, styled)?
     };
     // A publication may itself use the preferred marker as an ID.
     let marker = if document
@@ -630,6 +683,40 @@ mod tests {
                 locate_in_chapter(&xhtml, &pointer.steps, 2, |_| css.map(str::to_owned)).is_err()
             );
         }
+    }
+
+    #[test]
+    fn element_points_recover_simple_inline_child_boundaries() {
+        let markup = "<p>Alpha <em>βeta</em> gamma <strong>delta</strong> end.</p>";
+        for (suffix, expected) in [
+            ("/p.1", "βeta gamma delta end."),
+            ("/p.2", " gamma delta end."),
+            ("/p.3", "delta end."),
+            ("/p.4", " end."),
+        ] {
+            let (text, at) = location(markup, suffix).unwrap();
+            assert_eq!(&text[at..], expected, "{suffix}");
+        }
+        let (text, at) = location("<p>α&amp;β<strong>more</strong></p>", "/p.1").unwrap();
+        assert_eq!(&text[at..], "more");
+        let (text, at) = location("<p>Hello <b>world</b></p>", "/p.2").unwrap();
+        assert_eq!(at, text.len());
+    }
+
+    #[test]
+    fn element_points_do_not_guess_publisher_or_engine_tree_changes() {
+        for markup in [
+            "<p>first<!-- hidden by parser -->second</p>",
+            "<p>first <span hidden='hidden'>hidden</span> second</p>",
+            "<p>first <span style='display:none'>hidden</span> second</p>",
+            "<p>first <img src='a.png'/> second</p>",
+            "<p><em>first</em> <strong>second</strong></p>",
+            "<p><![CDATA[first]]><b>second</b></p>",
+        ] {
+            assert!(location(markup, "/p.1").is_err(), "{markup}");
+        }
+        assert!(location("<p>first<b>second</b></p>", "/p.3").is_err());
+        assert!(location("<div><p>first</p><p>second</p></div>", "/div.1").is_err());
     }
 
     #[test]

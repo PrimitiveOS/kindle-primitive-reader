@@ -47,3 +47,19 @@ pending worker against an authored PDF, drives each cancellation path, and
 checks the page and recognizer cache.
 [Pinned KOReader OCR path](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/koptinterface.lua#L776-L788) ·
 [Landscape cancellation](screenshots/landscape-ocr-cancel.png)
+
+## Bilingual scanned pages
+
+When English and another OCR model are installed, the recognition language
+list also offers that language paired with English. Reader stages only the
+two selected models in its private temporary work directory and passes their
+ordered combination to Tesseract. The selection is remembered for the book;
+cached OCR remains associated with the full language combination, so choosing
+another language requires fresh recognition. Individual languages continue to
+work when English is unavailable. Recognition and cancellation use the same
+bounded worker as single-language OCR.
+
+Pinned KOReader passes its document language to Tesseract for native and
+reflowed word recognition. Reader's two-language option extends that
+single-language workflow for bilingual source pages; output quality depends on
+the installed language models and page quality. [KOReader OCR language](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/koptinterface.lua#L790-L848)

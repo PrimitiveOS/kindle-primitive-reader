@@ -38,10 +38,7 @@ impl Probe {
         words: usize,
     ) -> Option<(String, String)> {
         #[cfg(feature = "kindle")]
-        if let Some(band) = &self.foreign_note_band
-            && band.layout.note_contains_anchor(&selection.start)
-            && band.layout.note_contains_anchor(&selection.end)
-        {
+        if let Some(band) = self.foreign_band_for_anchors(&selection.start, &selection.end) {
             return band.layout.note_word_context(selection, words);
         }
         let spans = self.selection_spans(&selection.start, &selection.end)?;
@@ -96,10 +93,7 @@ impl Probe {
     /// The returned endpoint is an actual source anchor, never a lookup form.
     pub(crate) fn dictionary_scan(&self, selection: &TextSelection) -> Option<TextSelection> {
         #[cfg(feature = "kindle")]
-        if let Some(band) = &self.foreign_note_band
-            && band.layout.note_contains_anchor(&selection.start)
-            && band.layout.note_contains_anchor(&selection.end)
-        {
+        if let Some(band) = self.foreign_band_for_anchors(&selection.start, &selection.end) {
             return band.layout.note_dictionary_scan(selection);
         }
         let spans = self.selection_spans(&selection.start, &selection.end)?;
@@ -220,10 +214,7 @@ impl Probe {
     /// chapter. The caller may supply the endpoints in either direction.
     pub fn select_range(&self, start: &Anchor, end: &Anchor) -> Option<TextSelection> {
         #[cfg(feature = "kindle")]
-        if let Some(band) = &self.foreign_note_band
-            && band.layout.note_contains_anchor(start)
-            && band.layout.note_contains_anchor(end)
-        {
+        if let Some(band) = self.foreign_band_for_anchors(start, end) {
             return band.layout.note_select_range(start, end);
         }
         self.select_quote(start, end, false)
@@ -237,10 +228,7 @@ impl Probe {
         end: &Anchor,
     ) -> Option<TextSelection> {
         #[cfg(feature = "kindle")]
-        if let Some(band) = &self.foreign_note_band
-            && band.layout.note_contains_anchor(start)
-            && band.layout.note_contains_anchor(end)
-        {
+        if let Some(band) = self.foreign_band_for_anchors(start, end) {
             return band.layout.note_select_range(start, end);
         }
         self.select_quote(start, end, true)
@@ -335,10 +323,10 @@ impl Probe {
             })
             .collect();
         #[cfg(feature = "kindle")]
-        if let Some(band) = self.foreign_band(page) {
+        for band in self.foreign_bands(page) {
             rects.extend(band.layout.note_selection_rects(selection).into_iter().map(
                 |mut rect| {
-                    rect.y += band.y_offset() as i32;
+                    rect.y += band.y_offset(page) as i32;
                     rect
                 },
             ));

@@ -169,8 +169,8 @@ struct Mark<'a> {
 impl Mark<'_> {
     fn kind(&self) -> Kind {
         match (self.style, self.note) {
-            (None, _) => Kind::Bookmark,
             (_, Some(_)) => Kind::Note,
+            (None, _) => Kind::Bookmark,
             _ => Kind::Highlight,
         }
     }
@@ -433,7 +433,7 @@ fn get_mark<'a>(
             };
             Mark {
                 quote: &mark.label,
-                note: None,
+                note: mark.note.as_deref(),
                 style: None,
                 color: None,
                 created_at: mark.created_at,

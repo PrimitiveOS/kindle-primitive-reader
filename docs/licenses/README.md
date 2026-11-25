@@ -15,6 +15,10 @@ Launcher. [Launcher artwork terms](https://github.com/PrimitiveOS/kindle-primiti
 - [Spanish, Italian, and Portuguese hyphenation patterns](HYPHENATION-ES-IT-PT.txt) record the upstream versions, checksums, and terms for those dictionaries.
 - [Estonian and Finnish hyphenation patterns](HYPHENATION-ET-FI.txt) record the upstream versions, checksums, and terms for those dictionaries.
 - [Danish and Dutch hyphenation patterns](HYPHENATION-DA-NL.txt) record the upstream versions, checksums, and terms for those dictionaries.
+- [Wuff](WUFF.txt) contains the MIT terms for the isolated WOFF 2 decoder.
+- [French and German hyphenation patterns](HYPHENATION-FR-DE.txt) record the upstream versions, checksums, and terms for those dictionaries.
+- [Bulgarian, Galician, Irish and Ukrainian hyphenation patterns](HYPHENATION-BG-GL-GA.txt) record their individual upstream terms and checksums.
+- [Polish hyphenation patterns](HYPHENATION-PL.txt) record the upstream source, checksum and selected MIT terms.
 - [PDF assets](pdf/README.md) covers embedded fonts, character maps, and colour
   profiles supplied by the Hayro PDF libraries.
 - The KOReader statistics importer links the SQLite 3.50.2 amalgamation

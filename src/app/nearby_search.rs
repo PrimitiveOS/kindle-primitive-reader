@@ -93,7 +93,9 @@ struct Request {
     path: PathBuf,
     chapters: usize,
     chapter: usize,
-    anchor: Anchor,
+    anchor: Option<Anchor>,
+    publication: u64,
+    stop_anchor: Option<Anchor>,
     flow: FlowConfig,
     cancelled: Arc<AtomicBool>,
     output: mpsc::Sender<Result<Option<SearchHit>>>,
@@ -110,13 +112,22 @@ fn load_text(path: &Path, ci: usize, flow: &FlowConfig) -> Result<ChapterText> {
 
 impl Request {
     fn run(self) {
-        let found = self.engine.scan(
-            self.chapter,
-            &self.anchor,
-            &self.cancelled,
-            self.chapters,
-            |ci| load_text(&self.path, ci, &self.flow),
-        );
+        let found = match self.anchor.as_ref() {
+            Some(anchor) => {
+                self.engine
+                    .scan(self.chapter, anchor, &self.cancelled, self.chapters, |ci| {
+                        load_text(&self.path, ci, &self.flow)
+                    })
+            }
+            None => self.engine.scan_edge(
+                self.publication,
+                self.chapter,
+                self.stop_anchor.as_ref(),
+                &self.cancelled,
+                self.chapters,
+                |ci| load_text(&self.path, ci, &self.flow),
+            ),
+        };
         if !self.cancelled.load(Ordering::Relaxed) {
             let _ = self.output.send(found);
         }
@@ -574,7 +585,7 @@ impl Reader {
             return None;
         }
         let layout = self.search_layout();
-        if self.fixed.is_some() && !self.nearby.searching_direction() {
+        if !self.nearby.searching_direction() {
             let step = FixedNavigation::ITEMS
                 .into_iter()
                 .find(|s| layout.find_direction(s.entry().0).contains(x, y))?;
@@ -610,19 +621,11 @@ impl Reader {
                 false,
                 false,
             );
-        } else if self.fixed.is_some() {
+        } else {
             for step in FixedNavigation::ITEMS {
                 let (rect, label) = step.entry();
                 canvas.button(layout.find_direction(rect), label, false, false);
             }
-        } else {
-            canvas.button(
-                layout.find_direction(PREVIOUS),
-                "Find previous",
-                false,
-                false,
-            );
-            canvas.button(layout.find_direction(NEXT_HERE), "Find next", false, false);
         }
     }
     fn fixed_navigation(&mut self, step: FixedNavigation, continuing: bool) -> Change {
@@ -633,7 +636,7 @@ impl Reader {
     }
 
     pub(super) fn fixed_result_navigation(&self) -> bool {
-        self.fixed.is_some() && self.nearby.result() && self.search_result.is_some()
+        self.nearby.result() && self.search_result.is_some()
     }
 
     pub(super) fn fixed_result_input(&mut self, x: f32, y: f32) -> Option<Change> {
@@ -746,20 +749,24 @@ impl Reader {
             )?
         }
         .with_flow_config(context.flow.clone());
-        let anchor = if continuing {
+        let anchor = if from_edge {
+            None
+        } else if continuing {
             let selection = self
                 .result_selection
                 .as_ref()
                 .ok_or("The current match has moved")?;
-            match direction {
+            Some(match direction {
                 SearchDirection::Previous => selection.start.clone(),
                 SearchDirection::Next => selection.end.clone(),
-            }
+            })
         } else {
-            active
-                .reading
-                .search_boundary(direction)
-                .ok_or("The current page has no searchable position")?
+            Some(
+                active
+                    .reading
+                    .search_boundary(direction)
+                    .ok_or("The current page has no searchable position")?,
+            )
         };
         let (tx, rx) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -769,6 +776,19 @@ impl Reader {
             chapter: active.reading.chapter,
             chapters: active.reading.probe.chapter_count(),
             anchor,
+            publication: context.publication,
+            stop_anchor: if from_edge {
+                let boundary_direction = match direction {
+                    SearchDirection::Next => SearchDirection::Previous,
+                    SearchDirection::Previous => SearchDirection::Next,
+                };
+                active
+                    .reading
+                    .search_boundary(boundary_direction)
+                    .filter(|anchor| anchor.illustration.is_none())
+            } else {
+                None
+            },
             flow: context.flow.clone(),
             cancelled: Arc::clone(&cancelled),
             output: tx,

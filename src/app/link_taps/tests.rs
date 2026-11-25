@@ -94,7 +94,8 @@ fn cross_part_note_link_taps_and_listing_use_the_foreign_base_chapter() {
         .find(|(label, _, _)| label == "Return to dispatch")
         .unwrap();
     let rect = rects[0];
-    let point = (rect.y + band.y_offset() as i32..rect.y + band.y_offset() as i32 + rect.height)
+    let point = (rect.y + band.y_offset(reading.page) as i32
+        ..rect.y + band.y_offset(reading.page) as i32 + rect.height)
         .find_map(|y| {
             (rect.x..rect.x + rect.width).find_map(|x| {
                 let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);

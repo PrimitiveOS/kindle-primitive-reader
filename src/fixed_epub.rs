@@ -372,9 +372,16 @@ impl FixedEpub {
             } else {
                 let xhtml = book.chapter(page)?;
                 let xhtml = loose::without_plain_html_doctype(&xhtml);
+                let (xhtml, inline_svg) = prepare_inline_svg(&mut book, &href, &xhtml)?;
                 let (width, height) = viewport_size(&xhtml, self.content_size)?;
-                let gray =
-                    blitz::fixed_page(book, &href, &xhtml, self.fonts.clone(), (width, height))?;
+                let gray = blitz::fixed_page(
+                    book,
+                    &href,
+                    &xhtml,
+                    self.fonts.clone(),
+                    (width, height),
+                    inline_svg,
+                )?;
                 ImagePage::from_grayscale(width, height, gray)?
             };
             *cache = Some((page, Arc::new(image)));
@@ -383,6 +390,88 @@ impl FixedEpub {
             cache.as_ref().unwrap().1.as_ref()
         }))
     }
+}
+
+/// Rasterize supported inline vectors into temporary, page-local images. This
+/// transient layout copy is never stored as the chapter or reading identity.
+fn prepare_inline_svg(
+    book: &mut Book,
+    href: &str,
+    xhtml: &str,
+) -> Result<(String, BTreeMap<String, Vec<u8>>)> {
+    const SVG_NS: &str = "http://www.w3.org/2000/svg";
+    const MAX_GRAPHICS: usize = 32;
+    const MAX_TEMPORARY_BYTES: usize = 8 * 1024 * 1024;
+    let document = Document::parse_with_options(
+        xhtml,
+        ParsingOptions {
+            nodes_limit: 80_000,
+            ..ParsingOptions::default()
+        },
+    )?;
+    let mut output = String::with_capacity(xhtml.len());
+    let mut images = BTreeMap::new();
+    let mut cursor = 0;
+    let mut pixels = 0usize;
+    let mut bytes = 0usize;
+    for node in document
+        .descendants()
+        .filter(|node| node.has_tag_name((SVG_NS, "svg")))
+    {
+        if node
+            .ancestors()
+            .skip(1)
+            .any(|parent| parent.has_tag_name((SVG_NS, "svg")))
+        {
+            continue;
+        }
+        if images.len() >= MAX_GRAPHICS {
+            return Err("The fixed-layout page has too many inline SVG graphics".into());
+        }
+        let svg = svg_image::inline_source(node, xhtml)
+            .ok_or("The fixed-layout page contains an unsupported inline SVG graphic")?;
+        let (png, used) = svg_image::inline_png_resource(
+            book,
+            href,
+            &svg,
+            svg_image::MAX_SVG_PIXELS.saturating_sub(pixels),
+        )?;
+        pixels = pixels
+            .checked_add(used)
+            .ok_or("The inline SVG pixel limit was exceeded")?;
+        bytes = bytes
+            .checked_add(png.len())
+            .filter(|&n| n <= MAX_TEMPORARY_BYTES)
+            .ok_or("The inline SVG resource limit was exceeded")?;
+        let path = format!("{}.png", images.len());
+        output.push_str(&xhtml[cursor..node.range().start]);
+        output.push_str("<img src=\"https://");
+        output.push_str(blitz::INLINE_SVG_HOST);
+        output.push('/');
+        output.push_str(&path);
+        output.push_str("\" alt=\"\"");
+        for name in ["id", "class", "style", "width", "height"] {
+            if let Some(value) = node.attribute(name) {
+                output.push(' ');
+                output.push_str(name);
+                output.push_str("=\"");
+                for character in value.chars() {
+                    match character {
+                        '&' => output.push_str("&amp;"),
+                        '<' => output.push_str("&lt;"),
+                        '"' => output.push_str("&quot;"),
+                        _ => output.push(character),
+                    }
+                }
+                output.push('"');
+            }
+        }
+        output.push_str("/>");
+        images.insert(path, png);
+        cursor = node.range().end;
+    }
+    output.push_str(&xhtml[cursor..]);
+    Ok((output, images))
 }
 
 // EPUB 3.3 §8.2.2.6: https://www.w3.org/TR/epub-33/#sec-fxl-dimensions

@@ -30,6 +30,8 @@ const ZONE_BYTES: usize = 17;
 pub struct Djvu {
     document: Document,
     contents: contents::Contents,
+    #[cfg(feature = "kindle")]
+    links: std::cell::RefCell<Option<(usize, Vec<crate::fixed::PdfLink>)>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,7 +100,12 @@ impl Djvu {
             return Err(DjvuError::UnsupportedOrDamaged);
         }
         let contents = contents::Contents::read(&document);
-        Ok(Self { document, contents })
+        Ok(Self {
+            document,
+            contents,
+            #[cfg(feature = "kindle")]
+            links: std::cell::RefCell::new(None),
+        })
     }
 
     /// Publisher contents for the current page, including labels without a local destination.
@@ -120,6 +127,111 @@ impl Djvu {
 
     pub fn page_size(&self, index: usize) -> Result<(f32, f32), DjvuError> {
         display_size(&self.page(index)?)
+    }
+
+    /// Local rectangular page links, in normalized upright display coordinates.
+    #[cfg(feature = "kindle")]
+    pub(crate) fn page_links(&self, index: usize) -> Result<Vec<crate::fixed::PdfLink>, DjvuError> {
+        if let Some((page, links)) = self.links.borrow().as_ref()
+            && *page == index
+        {
+            return Ok(links.clone());
+        }
+        let links = catch_unwind(AssertUnwindSafe(|| self.read_links(index)))
+            .map_err(|_| DjvuError::UnsupportedOrDamaged)??;
+        *self.links.borrow_mut() = Some((index, links.clone()));
+        Ok(links)
+    }
+
+    #[cfg(feature = "kindle")]
+    fn read_links(&self, index: usize) -> Result<Vec<crate::fixed::PdfLink>, DjvuError> {
+        use crate::fixed::{PdfLink, PdfLinkTarget};
+        use djvu_rs::annotation::Shape;
+        const MAX_ANNOTATION_BYTES: usize = 256 * 1024;
+        const MAX_LINKS: usize = 1024;
+        let page = self.page(index)?;
+        let inner = self
+            .document
+            .inner()
+            .page(index)
+            .map_err(|_| DjvuError::UnsupportedOrDamaged)?;
+        if [b"ANTa", b"ANTz"].into_iter().any(|id| {
+            inner
+                .raw_chunk(id)
+                .is_some_and(|data| data.len() > MAX_ANNOTATION_BYTES)
+        }) {
+            return Ok(Vec::new());
+        }
+        // The project's patched BZZ decoder bounds decompression before this
+        // stricter annotation-size check and before the S-expression parser.
+        let Some(data) = inner
+            .chunk_payload(b"ANTz", b"ANTa")
+            .map_err(|_| DjvuError::UnsupportedOrDamaged)?
+        else {
+            return Ok(Vec::new());
+        };
+        if data.len() > MAX_ANNOTATION_BYTES {
+            return Ok(Vec::new());
+        }
+        let (_, areas) = djvu_rs::annotation::parse_annotations(&data)
+            .map_err(|_| DjvuError::UnsupportedOrDamaged)?;
+        if areas.len() > MAX_LINKS {
+            return Ok(Vec::new());
+        }
+        let urls: Vec<_> = areas.iter().map(|area| area.url.clone()).collect();
+        let destinations = contents::maparea_targets(&self.document, &urls, index);
+        let (width, height) = (page.width(), page.height());
+        let (display_width, display_height) = display_size(&page)?;
+        let mut links = Vec::new();
+        for (area, destination) in areas.into_iter().zip(destinations) {
+            let rect = match area.shape {
+                Shape::Rect(rect) | Shape::Text(rect) => rect,
+                _ => continue,
+            };
+            let Some(right) = rect.x.checked_add(rect.width).filter(|&x| x <= width) else {
+                continue;
+            };
+            let Some(bottom) = rect.y.checked_add(rect.height).filter(|&y| y <= height) else {
+                continue;
+            };
+            if right == rect.x || bottom == rect.y {
+                continue;
+            }
+            // DjVu map areas use a bottom-left origin; text::Rect::rotate uses
+            // the top-left coordinates shared by Reader's fixed-page surface.
+            let upright = djvu_rs::text::Rect {
+                x: rect.x,
+                y: height - bottom,
+                width: rect.width,
+                height: rect.height,
+            }
+            .rotate(width, height, page.rotation());
+            let bounds = PdfTextRect {
+                x0: upright.x as f32 / display_width,
+                y0: upright.y as f32 / display_height,
+                x1: (upright.x + upright.width) as f32 / display_width,
+                y1: (upright.y + upright.height) as f32 / display_height,
+            };
+            let (target, uri) = if let Some(page) = destination {
+                (PdfLinkTarget::Page(page), None)
+            } else if area.url.len() <= 4096
+                && !area.url.chars().any(char::is_control)
+                && url::Url::parse(&area.url)
+                    .ok()
+                    .is_some_and(|url| matches!(url.scheme(), "http" | "https") && url.has_host())
+            {
+                (PdfLinkTarget::External, Some(area.url))
+            } else {
+                continue;
+            };
+            links.push(PdfLink {
+                bounds,
+                target,
+                uri,
+                destination_point: None,
+            });
+        }
+        Ok(links)
     }
 
     /// Return one row-major grayscale viewport, with white outside the page.

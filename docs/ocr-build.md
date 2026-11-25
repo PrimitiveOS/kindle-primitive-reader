@@ -5,9 +5,26 @@ or DjVu page. The app sends a bounded grayscale raster, imports the word boxes,
 and keeps recognized text with the document's reading data. Recognition can
 be cancelled. The text can be searched, selected, or opened in the page's
 reflowed text view. Reflow scan uses the original grayscale word crops from
-complete horizontal left-to-right OCR. Pages are rendered on demand, and
+complete horizontal OCR. The current implementation detects consistently
+left-to-right or right-to-left text and wraps word images from the corresponding
+edge. Pages are rendered on demand, and
 the size controls keep the first visible word in view. Reading data offers
 a way to clear the OCR cache.
+
+For recognized Chinese and Japanese horizontal text, Reader joins adjacent
+Han or kana word boxes when their geometric gap is small. This avoids adding
+artificial spaces inside ordinary phrases while retaining larger visual gaps,
+line and paragraph breaks, Korean word spaces, and each word's source box.
+This reconstruction awaits integrated and Kindle testing; it does not support
+vertical Japanese layout. [KOReader's native OCR word boxes](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/koptinterface.lua#L716-L743)
+
+KOReader exposes a writing-direction selector for LTR, RTL and vertical
+right-to-left scan reflow. Reader's automatic RTL path is limited to pages with
+one strong text direction and correctly ordered OCR word boxes. Mixed-direction
+text, vertical writing and an explicit direction selector remain open. The RTL
+implementation has not yet been tested on the computer or Kindle; recognition
+also requires an appropriate separately installed language model. [Pinned
+KOReader direction options](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L645-L667)
 
 | Input | Version and source |
 | --- | --- |
@@ -32,8 +49,9 @@ Install additional compatible Tesseract `.traineddata` files in
 `reader/ocr/tessdata/` alongside the English model. Names use lowercase
 language codes such as `vie.traineddata` or `chi_sim.traineddata`. Each model
 must be a regular file of up to 16 MiB. Open OCR from the reading bar to pick
-among the installed languages. Reader stages only the selected model and
-keeps its language code with the recognized page text. Additional models are
+among the installed languages, or combine a model with English for bilingual
+pages when both are installed. Reader stages only the selected one or two
+models and keeps the ordered language codes with the recognized page text. Additional models are
 provided separately under their original terms.
 
 The desktop OCR worker recognized 316 words from a public-domain scan with the

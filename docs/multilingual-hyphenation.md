@@ -11,10 +11,18 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Spanish | 2 / 2 | 4,692 |
 | Italian | 2 / 2 | 326 |
 | Portuguese (Portugal) | 2 / 3 | 308 |
+| Portuguese (Brazil, shared rules) | 2 / 3 | 308 shared Portuguese rules; dedicated Brazilian dictionary remains open |
 | Estonian | 2 / 3 | 3,691 |
 | Finnish | 2 / 2 | 284 |
 | Danish | 2 / 2 | 1,144 |
 | Dutch | 2 / 2 | 12,764 |
+| French | 2 / 1 | 1,074 upstream rules; stock comparison pending |
+| German, reformed spelling | 2 / 2 | 36,709 upstream rules; stock comparison pending |
+| Bulgarian | 2 / 2 | 6,883 upstream word rules; stock comparison pending |
+| Galician | 2 / 2 | 2,321 upstream word rules; stock comparison pending |
+| Irish | 2 / 3 | 6,033 upstream word rules and 46 exceptions; stock comparison pending |
+| Ukrainian | 2 / 2 | 1,989 upstream word and apostrophe rules; stock comparison pending |
+| Polish | 2 / 2 | 4,053 upstream word rules and 20 exceptions; stock comparison pending |
 
 Reader compiles upstream TeX patterns into immutable tables. The build
 normalizes word-edge markers, removes patterns for punctuation outside the
@@ -26,11 +34,32 @@ with an internal word boundary. The matcher adds boundaries only at each
 word's edges, so Reader compiles the 284 reachable patterns. The Dutch table
 includes 40 exceptions from the upstream TeX source. Sharing identical weight
 sequences keeps that table within its 16-bit weight indexes. The US and UK
-English tables retain their rule fingerprints. Brazilian Portuguese, French,
-and German remain open.
+English tables retain their rule fingerprints. French uses the upstream 2016
+MIT patterns and German the 2024 reformed-spelling MIT patterns. KOReader's
+pinned French dictionary contains additional adaptations whose distribution
+terms are not established in that file, and its German dictionary uses a
+different 2023 pattern revision. These implementations provide automatic
+hyphenation but do not yet claim exact KOReader word-break parity. The
+comparison of real books and the associated Kindle checks remain pending.
+Bulgarian and Ukrainian (including explicit Cyrillic tags), Galician and Irish
+use licensed upstream patterns and KOReader's default minima. Ukrainian
+normalizes typographic apostrophes for matching, preserving source offsets;
+patterns containing literal hyphens are not supported by the current word
+matcher. Their normalized rule sets and Irish exceptions have not yet been
+compared exhaustively with the pinned KOReader dictionaries, and simulator and
+device checks remain pending. [Pattern provenance and notices](licenses/HYPHENATION-BG-GL-GA.txt)
+Polish uses the 1995 MIT-licensed upstream rules and exceptions with 2 / 2
+minima. The compiled rules have not yet been compared exhaustively with
+KOReader or tested on the computer or Kindle. [Polish source and notice](licenses/HYPHENATION-PL.txt) · [KOReader Polish selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypography.lua#L83)
+Brazilian Portuguese now uses the same BSD-licensed Portuguese TeX rules as a
+fallback. KOReader selects a separate Brazilian dictionary with the same 2 / 3
+limits; its word breaks can differ. Reader labels the shared rules in its
+dictionary picker and does not claim Brazilian dictionary parity. This fallback
+has not yet been compiled or tested. [KOReader language selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypography.lua#L84-L85) · [KOReader's Brazilian pattern provenance](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/Portuguese_BR.pattern)
 [Pinned language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp#L56-L111) ·
 [Spanish, Italian, and Portuguese sources](licenses/HYPHENATION-ES-IT-PT.txt) ·
 [Estonian and Finnish sources](licenses/HYPHENATION-ET-FI.txt) ·
+[French and German sources](licenses/HYPHENATION-FR-DE.txt) ·
 [Danish and Dutch sources](licenses/HYPHENATION-DA-NL.txt)
 
 The matcher composes accented letters for lookup and derives each break from

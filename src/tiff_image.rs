@@ -4,6 +4,7 @@
 use std::fmt;
 use std::ops::Range;
 
+use flate2::{Decompress, FlushDecompress, Status};
 use image::GrayImage;
 
 const HEADER_BYTES: usize = 8;
@@ -35,7 +36,7 @@ impl fmt::Display for TiffError {
             Self::Directory => "This TIFF has an invalid image directory",
             Self::Strips => "This TIFF has invalid or overlapping image strips",
             Self::Limit => "This TIFF exceeds Reader's image limits",
-            Self::Unsupported => "Reader supports single-page, uncompressed grayscale TIFF stored in strips with top-left orientation (1-bit or 8-bit)",
+            Self::Unsupported => "Reader supports single-page grayscale TIFF stored in uncompressed, PackBits, LZW or Deflate strips with top-left orientation (1-bit or 8-bit)",
         })
     }
 }
@@ -58,14 +59,19 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let bits = image.scalar(258, SHORT_ONLY, 1)?;
     let photometric = image.required(262, SHORT_ONLY)?;
     let fill_order = image.scalar(266, SHORT_ONLY, 1)?;
+    let compression = image.scalar(259, SHORT_ONLY, 1)?;
+    let predictor = image.scalar(317, SHORT_ONLY, 1)?;
     if !matches!(bits, 1 | 8)
         || photometric > 1
         || !(fill_order == 1 || (bits == 1 && fill_order == 2))
-        || image.scalar(259, SHORT_ONLY, 1)? != 1 // Compression
+        || !matches!(compression, 1 | 5 | 8 | 32946 | 32773)
+        // TIFF reserves reverse fill order for special-purpose bilevel data;
+        // the bit ordering of LZW streams is ambiguous in that combination.
+        || (fill_order == 2 && matches!(compression, 5 | 8 | 32946))
         || image.scalar(274, SHORT_ONLY, 1)? != 1 // Orientation
         || image.scalar(277, SHORT_ONLY, 1)? != 1 // SamplesPerPixel
         || image.scalar(284, SHORT_ONLY, 1)? != 1 // PlanarConfiguration
-        || image.scalar(317, SHORT_ONLY, 1)? != 1 // Predictor
+        || !(predictor == 1 || (predictor == 2 && bits == 8 && matches!(compression, 5 | 8 | 32946)))
         || image.scalar(339, SHORT_ONLY, 1)? != 1 // SampleFormat
         || image.scalar(254, LONG_ONLY, 0)? != 0 // NewSubfileType
         || image.scalar(255, SHORT_ONLY, 1)? != 1
@@ -107,7 +113,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         let range = start..end;
         if start < HEADER_BYTES
             || end > bytes.len()
-            || length != rows as usize * row_bytes
+            || length == 0
+            || (compression == 1 && length != rows as usize * row_bytes)
             || occupied.iter().flatten().any(|used| overlaps(&range, used))
         {
             return Err(TiffError::Strips);
@@ -125,8 +132,26 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
 
     let invert = if photometric == 0 { 255 } else { 0 };
     let mut pixels = Vec::with_capacity(pixel_count as usize);
+    remaining_rows = height;
     for range in ranges {
         let strip = &bytes[range];
+        let rows = remaining_rows.min(rows_per_strip) as usize;
+        remaining_rows -= rows as u32;
+        let mut unpacked = match compression {
+            32773 => Some(unpack_packbits(strip, row_bytes, rows)?),
+            5 => Some(unpack_lzw(strip, row_bytes, rows)?),
+            8 | 32946 => Some(unpack_deflate(strip, row_bytes, rows)?),
+            _ => None,
+        };
+        if predictor == 2 {
+            let samples = unpacked.as_mut().ok_or(TiffError::Unsupported)?;
+            for row in samples.chunks_exact_mut(row_bytes) {
+                for index in 1..row.len() {
+                    row[index] = row[index].wrapping_add(row[index - 1]);
+                }
+            }
+        }
+        let strip = unpacked.as_deref().unwrap_or(strip);
         if bits == 8 {
             pixels.extend(strip.iter().map(|&gray| gray ^ invert));
         } else {
@@ -140,6 +165,172 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         }
     }
     GrayImage::from_raw(width, height, pixels).ok_or(TiffError::Strips)
+}
+
+/// TIFF LZW uses MSB-first codes, an initial Clear, and the TIFF early-change
+/// 9-to-12-bit transitions. Each strip resets its own fixed-size dictionary.
+fn unpack_lzw(input: &[u8], row_bytes: usize, rows: usize) -> Result<Vec<u8>, TiffError> {
+    const CLEAR: usize = 256;
+    const END: usize = 257;
+    const FIRST: usize = 258;
+    const TABLE: usize = 4096;
+
+    let expected = row_bytes.checked_mul(rows).ok_or(TiffError::Limit)?;
+    let mut output = Vec::with_capacity(expected);
+    let mut prefix = [0u16; TABLE];
+    let mut suffix = [0u8; TABLE];
+    let mut stack = [0u8; TABLE];
+    let (mut position, mut bits, mut buffered) = (0usize, 0u32, 0u32);
+    let (mut width, mut next, mut previous) = (9u32, FIRST, None::<usize>);
+    let mut started = false;
+    let mut clears = 0usize;
+
+    loop {
+        while buffered < width {
+            bits = (bits << 8) | u32::from(*input.get(position).ok_or(TiffError::Strips)?);
+            position += 1;
+            buffered += 8;
+        }
+        buffered -= width;
+        let code = ((bits >> buffered) & ((1 << width) - 1)) as usize;
+        bits &= (1 << buffered) - 1;
+        if code == CLEAR {
+            clears += 1;
+            if clears > 8192 {
+                return Err(TiffError::Limit);
+            }
+            width = 9;
+            next = FIRST;
+            previous = None;
+            started = true;
+            continue;
+        }
+        if !started {
+            return Err(TiffError::Strips);
+        }
+        if code == END {
+            return (output.len() == expected)
+                .then_some(output)
+                .ok_or(TiffError::Strips);
+        }
+
+        let special = code == next && next < TABLE && previous.is_some();
+        if code >= next && !special {
+            return Err(TiffError::Strips);
+        }
+        let mut cursor = if special { previous.unwrap() } else { code };
+        let mut length = 0;
+        while cursor >= FIRST {
+            if cursor >= next || length >= stack.len() {
+                return Err(TiffError::Strips);
+            }
+            stack[length] = suffix[cursor];
+            length += 1;
+            let ancestor = prefix[cursor] as usize;
+            if ancestor >= cursor {
+                return Err(TiffError::Strips);
+            }
+            cursor = ancestor;
+        }
+        if cursor >= CLEAR || length >= stack.len() {
+            return Err(TiffError::Strips);
+        }
+        let first = cursor as u8;
+        stack[length] = first;
+        length += 1;
+        let produced = length + usize::from(special);
+        if produced > expected.saturating_sub(output.len()) {
+            return Err(TiffError::Strips);
+        }
+        output.extend(stack[..length].iter().rev().copied());
+        if special {
+            output.push(first);
+        }
+        if let Some(old) = previous
+            && next < TABLE
+        {
+            prefix[next] = old as u16;
+            suffix[next] = first;
+            next += 1;
+            // TIFF decoders switch after writing entries 510, 1022 and 2046.
+            if width < 12 && next == (1usize << width) - 1 {
+                width += 1;
+            }
+        }
+        previous = Some(code);
+    }
+}
+
+/// Inflate one zlib-compressed strip without permitting output past its
+/// declared image dimensions. Some encoders pad a strip with zero bytes.
+fn unpack_deflate(input: &[u8], row_bytes: usize, rows: usize) -> Result<Vec<u8>, TiffError> {
+    let expected = row_bytes.checked_mul(rows).ok_or(TiffError::Limit)?;
+    let capacity = expected.checked_add(1).ok_or(TiffError::Limit)?;
+    let mut output = vec![0u8; capacity];
+    let mut decoder = Decompress::new(true);
+    loop {
+        let before_in = decoder.total_in() as usize;
+        let before_out = decoder.total_out() as usize;
+        let status = decoder
+            .decompress(
+                &input[before_in..],
+                &mut output[before_out..],
+                FlushDecompress::Finish,
+            )
+            .map_err(|_| TiffError::Strips)?;
+        let consumed = decoder.total_in() as usize;
+        let produced = decoder.total_out() as usize;
+        if status == Status::StreamEnd {
+            if produced != expected || input[consumed..].iter().any(|&byte| byte != 0) {
+                return Err(TiffError::Strips);
+            }
+            output.truncate(expected);
+            return Ok(output);
+        }
+        if produced > expected || (consumed == before_in && produced == before_out) {
+            return Err(TiffError::Strips);
+        }
+    }
+}
+
+/// TIFF PackBits encodes each row independently. Bound output to exactly the
+/// expected strip dimensions and reject packets that cross a row boundary.
+fn unpack_packbits(input: &[u8], row_bytes: usize, rows: usize) -> Result<Vec<u8>, TiffError> {
+    let expected = row_bytes.checked_mul(rows).ok_or(TiffError::Limit)?;
+    let mut output = Vec::with_capacity(expected);
+    let mut offset = 0usize;
+    for _ in 0..rows {
+        let row_end = output.len() + row_bytes;
+        while output.len() < row_end {
+            let control = *input.get(offset).ok_or(TiffError::Strips)?;
+            offset += 1;
+            match control {
+                0..=127 => {
+                    let count = usize::from(control) + 1;
+                    let end = offset.checked_add(count).ok_or(TiffError::Strips)?;
+                    if count > row_end - output.len() {
+                        return Err(TiffError::Strips);
+                    }
+                    output.extend_from_slice(input.get(offset..end).ok_or(TiffError::Strips)?);
+                    offset = end;
+                }
+                128 => {} // PackBits no-op.
+                129..=255 => {
+                    let count = 257 - usize::from(control);
+                    let byte = *input.get(offset).ok_or(TiffError::Strips)?;
+                    offset += 1;
+                    if count > row_end - output.len() {
+                        return Err(TiffError::Strips);
+                    }
+                    output.resize(output.len() + count, byte);
+                }
+            }
+        }
+    }
+    if input[offset..].iter().any(|&byte| byte != 128) {
+        return Err(TiffError::Strips);
+    }
+    Ok(output)
 }
 
 #[derive(Clone, Copy)]
@@ -411,6 +602,83 @@ mod tests {
         HEADER_BYTES + 2 + index * FIELD_BYTES
     }
 
+    fn lzw_short(codes: &[u16]) -> Vec<u8> {
+        let mut output = Vec::new();
+        let (mut buffer, mut bits) = (0u32, 0u32);
+        for &code in codes {
+            buffer = (buffer << 9) | u32::from(code);
+            bits += 9;
+            while bits >= 8 {
+                bits -= 8;
+                output.push((buffer >> bits) as u8);
+                buffer &= (1 << bits) - 1;
+            }
+        }
+        if bits > 0 {
+            output.push((buffer << (8 - bits)) as u8);
+        }
+        output
+    }
+
+    #[test]
+    fn tiff_lzw_decodes_each_strip_and_special_dictionary_entries() {
+        let encode = |raw: &[u8]| {
+            let mut codes = vec![256];
+            codes.extend(raw.iter().map(|&sample| u16::from(sample)));
+            codes.push(257);
+            lzw_short(&codes)
+        };
+        let first = encode(STRIPS[0]);
+        let second = encode(STRIPS[1]);
+        let third = encode(STRIPS[2]);
+        for order in [ByteOrder::Little, ByteOrder::Big] {
+            let mut image = fixture(order, GRAY, &[&first, &second, &third]);
+            let compression = field(&image, 259, order);
+            put(&mut image, compression + 8, SHORT, 5, order);
+            assert_eq!(
+                decode(&image).unwrap().into_raw(),
+                (1..=15).collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(
+            unpack_lzw(&lzw_short(&[256, 65, 258, 257]), 3, 1).unwrap(),
+            b"AAA"
+        );
+        assert!(unpack_lzw(&lzw_short(&[65, 257]), 1, 1).is_err());
+        assert!(unpack_lzw(&lzw_short(&[256, 65, 258, 257]), 2, 1).is_err());
+        assert!(unpack_lzw(&lzw_short(&[256, 65]), 1, 1).is_err());
+    }
+
+    #[test]
+    fn tiff_deflate_reconstructs_each_strip_with_horizontal_predictor() {
+        let encode = |raw: &[u8]| {
+            let mut encoder =
+                flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+            encoder.write_all(raw).unwrap();
+            encoder.finish().unwrap()
+        };
+        let first = encode(&[1, 1, 1, 4, 1, 1]);
+        let second = encode(&[7, 1, 1, 10, 1, 1]);
+        let third = encode(&[13, 1, 1]);
+        for order in [ByteOrder::Little, ByteOrder::Big] {
+            for compression in [8, 32946] {
+                let mut image = fixture(order, GRAY, &[&first, &second, &third]);
+                let tag = field(&image, 259, order);
+                put(&mut image, tag + 8, SHORT, compression, order);
+                // Replace the optional SampleFormat tag with Predictor.
+                let tag = field(&image, 339, order);
+                put(&mut image, tag, SHORT, 317, order);
+                put(&mut image, tag + 8, SHORT, 2, order);
+                assert_eq!(
+                    decode(&image).unwrap().into_raw(),
+                    (1..=15).collect::<Vec<_>>()
+                );
+            }
+        }
+        assert!(unpack_deflate(&first[..first.len() - 1], 3, 2).is_err());
+        assert!(unpack_deflate(&first, 2, 2).is_err());
+    }
+
     #[test]
     fn decodes_strips_in_logical_order_in_both_byte_orders_and_photometries() {
         for (order, photometric, invert) in [(ByteOrder::Little, 1, 0), (ByteOrder::Big, 0, 255)] {
@@ -500,7 +768,7 @@ mod tests {
         let bytes = fixture(order, GRAY, &STRIPS);
         for (tag, value) in [
             (258, 4),
-            (259, 32773),
+            (259, 6),
             (262, 2),
             (266, 2),
             (274, 6),

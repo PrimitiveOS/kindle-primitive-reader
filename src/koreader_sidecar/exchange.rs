@@ -5,7 +5,8 @@ use crate::highlight_style::{HighlightColor, HighlightStyle};
 use std::{fmt::Write, num::NonZeroU32};
 
 const MAX_MARKS: usize = 512;
-const MAX_BOXES: usize = 512;
+pub(crate) const MAX_BOXES: usize = 512;
+pub(crate) const MAX_PAGES: usize = 64;
 const FIELDS: [&str; 12] = [
     "page",
     "pos0",
@@ -34,6 +35,7 @@ pub(crate) struct Mark {
     pub updated: Option<i64>,
     pub chapter: Option<String>,
     pub text: String,
+    pub note: Option<String>,
     pub highlight: Option<Highlight>,
 }
 
@@ -49,6 +51,13 @@ pub(crate) struct Highlight {
 pub(crate) enum Range {
     Text { start: String, end: String },
     Boxes(Vec<PageBox>),
+    MultiBoxes(Vec<PageBoxes>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PageBoxes {
+    pub page: NonZeroU32,
+    pub boxes: Vec<PageBox>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -155,6 +164,89 @@ fn read_box(value: &Value<'_>) -> Result<Option<PageBox>, SidecarError> {
     Ok((x >= -1.0 && y >= -1.0 && w > 0.0 && h > 0.0).then_some(PageBox { x, y, w, h }))
 }
 
+// Unlike the generic Lua literal parser, page-indexed ext tables must retain
+// numeric keys: KOReader uses the key to choose the page it paints on.
+fn indexed_pages(bytes: &[u8]) -> Result<Option<Vec<PageBoxes>>, SidecarError> {
+    let mut parser = super::Parser {
+        bytes,
+        offset: 0,
+        fields: 0,
+    };
+    parser.expect(b'{')?;
+    parser.space()?;
+    let mut pages = Vec::new();
+    let mut box_count = 0usize;
+    while !parser.take(b'}') {
+        if pages.len() >= MAX_PAGES {
+            return Err(SidecarError::TooLarge);
+        }
+        parser.expect(b'[')?;
+        let Some(number) = parser.scalar()?.integer().and_then(NonZeroU32::new) else {
+            return Ok(None);
+        };
+        parser.expect(b']')?;
+        parser.expect(b'=')?;
+        let value = parser.value(1)?;
+        let Ok(record) = table(&value) else {
+            return Ok(None);
+        };
+        let [start, end, boxes] = read_keys(record, &["pos0", "pos1", "pboxes"])?;
+        if position_page(start.as_ref())? != Some(number)
+            || position_page(end.as_ref())? != Some(number)
+        {
+            return Ok(None);
+        }
+        let Some(boxes) = boxes.as_ref().and_then(|v| table(v).ok()) else {
+            return Ok(None);
+        };
+        let (boxes, missing) = records(boxes, MAX_BOXES, read_box)?;
+        box_count += boxes.len();
+        if boxes.is_empty() || missing != 0 || box_count > MAX_BOXES {
+            return Ok(None);
+        }
+        pages.push(PageBoxes {
+            page: number,
+            boxes,
+        });
+        parser.space()?;
+        if parser.take(b',') || parser.take(b';') {
+            parser.space()?;
+        } else {
+            parser.expect(b'}')?;
+            break;
+        }
+    }
+    parser.space()?;
+    if parser.offset != bytes.len() {
+        return Err(SidecarError::InvalidData);
+    }
+    pages.sort_by_key(|part| part.page);
+    if pages.len() < 2
+        || pages
+            .windows(2)
+            .any(|parts| parts[0].page.get().checked_add(1) != Some(parts[1].page.get()))
+    {
+        return Ok(None);
+    }
+    Ok(Some(pages))
+}
+
+fn position_page(value: Option<&Value<'_>>) -> Result<Option<NonZeroU32>, SidecarError> {
+    let Some(value) = value else { return Ok(None) };
+    let Ok(record) = table(value) else {
+        return Ok(None);
+    };
+    let [key, x, y] = read_keys(record, &["page", "x", "y"])?;
+    let coordinates_valid = |value: &Option<Value<'_>>| {
+        matches!(value,
+        Some(Value::Number(n)) if n.is_finite() && *n >= -1.0)
+    };
+    if !coordinates_valid(&x) || !coordinates_valid(&y) {
+        return Ok(None);
+    }
+    Ok(page(key.as_ref()))
+}
+
 fn read_mark(value: &Value<'_>, fixed: bool) -> Result<Option<Mark>, SidecarError> {
     let record = match table(value) {
         Ok(record) => record,
@@ -185,18 +277,31 @@ fn read_mark(value: &Value<'_>, fixed: bool) -> Result<Option<Mark>, SidecarErro
     let highlight = match string(drawer, 128) {
         Some(drawer) if !text.trim().is_empty() => {
             let range = if fixed {
-                // A multi-page highlight carries its per-page ranges in ext.
-                if ext.is_some_and(|v| !matches!(v, Value::Nil)) {
-                    return Ok(None);
+                if let Some(ext) = ext.filter(|v| !matches!(v, Value::Nil)) {
+                    let Ok(ext) = table(ext) else { return Ok(None) };
+                    let Some(pages) = indexed_pages(ext)? else {
+                        return Ok(None);
+                    };
+                    let Place::Page(first) = &place else {
+                        return Ok(None);
+                    };
+                    if pages.first().map(|p| p.page) != Some(*first)
+                        || position_page(start)? != Some(*first)
+                        || position_page(end)? != pages.last().map(|p| p.page)
+                    {
+                        return Ok(None);
+                    }
+                    Range::MultiBoxes(pages)
+                } else {
+                    let Some(boxes) = boxes.and_then(|boxes| table(boxes).ok()) else {
+                        return Ok(None);
+                    };
+                    let (boxes, missing) = records(boxes, MAX_BOXES, read_box)?;
+                    if boxes.is_empty() || missing != 0 {
+                        return Ok(None);
+                    }
+                    Range::Boxes(boxes)
                 }
-                let Some(boxes) = boxes.and_then(|boxes| table(boxes).ok()) else {
-                    return Ok(None);
-                };
-                let (boxes, missing) = records(boxes, MAX_BOXES, read_box)?;
-                if boxes.is_empty() || missing != 0 {
-                    return Ok(None);
-                }
-                Range::Boxes(boxes)
             } else if let (Some(start), Some(end)) = (pointer(start), pointer(end)) {
                 Range::Text { start, end }
             } else {
@@ -210,7 +315,7 @@ fn read_mark(value: &Value<'_>, fixed: bool) -> Result<Option<Mark>, SidecarErro
                 range,
             })
         }
-        None if ![start, end, note, drawer]
+        None if ![start, end, drawer]
             .into_iter()
             .flatten()
             .any(|v| !matches!(v, Value::Nil)) =>
@@ -225,6 +330,11 @@ fn read_mark(value: &Value<'_>, fixed: bool) -> Result<Option<Mark>, SidecarErro
         updated: timestamp(updated),
         chapter: string(chapter, 1024).filter(|s| !s.trim().is_empty()),
         text,
+        note: if highlight.is_none() {
+            string(note, 4096).filter(|note| !note.trim().is_empty())
+        } else {
+            None
+        },
         highlight,
     }))
 }
@@ -335,6 +445,11 @@ pub(crate) fn encode(snapshot: &Snapshot) -> Result<String, SidecarError> {
         if let Some(date) = mark.updated.and_then(crate::mark_time::local_datetime) {
             field(&mut output, "datetime_updated", &date);
         }
+        if mark.highlight.is_none() {
+            if let Some(note) = &mark.note {
+                field(&mut output, "note", note);
+            }
+        }
         if let Some(highlight) = &mark.highlight {
             if let Some(note) = &highlight.note {
                 field(&mut output, "note", note);
@@ -382,6 +497,45 @@ pub(crate) fn encode(snapshot: &Snapshot) -> Result<String, SidecarError> {
                     }
                     output.push_str("},");
                 }
+                (Place::Page(first), Range::MultiBoxes(parts))
+                    if (2..=MAX_PAGES).contains(&parts.len())
+                        && parts.first().is_some_and(|part| part.page == *first)
+                        && parts.iter().all(|part| !part.boxes.is_empty())
+                        && parts.iter().map(|part| part.boxes.len()).sum::<usize>()
+                            <= MAX_BOXES
+                        && parts.windows(2).all(|pair| {
+                            pair[0].page.get().checked_add(1) == Some(pair[1].page.get())
+                        }) =>
+                {
+                    let start = parts.first().unwrap().boxes.first().unwrap();
+                    let end_part = parts.last().unwrap();
+                    let end = end_part.boxes.last().unwrap();
+                    write!(
+                        output,
+                        "pos0={{page={first},x={},y={},zoom=1,rotation=0}},",
+                        start.x + start.w * 0.125,
+                        start.y + start.h * 0.25
+                    )
+                    .unwrap();
+                    write!(
+                        output,
+                        "pos1={{page={},x={},y={},zoom=1,rotation=0}},ext={{",
+                        end_part.page,
+                        end.x + end.w * 0.875,
+                        end.y + end.h * 0.75
+                    )
+                    .unwrap();
+                    for part in parts {
+                        let a = part.boxes.first().unwrap();
+                        let b = part.boxes.last().unwrap();
+                        write!(output, "[{}]={{pos0={{page={},x={},y={}}},pos1={{page={},x={},y={}}},pboxes={{", part.page, part.page, a.x + a.w * 0.125, a.y + a.h * 0.25, part.page, b.x + b.w * 0.875, b.y + b.h * 0.75).unwrap();
+                        for PageBox { x, y, w, h } in &part.boxes {
+                            write!(output, "{{x={x},y={y},w={w},h={h}}},").unwrap();
+                        }
+                        output.push_str("}},");
+                    }
+                    output.push_str("},");
+                }
                 _ => return Err(SidecarError::InvalidField("annotations")),
             }
         }
@@ -392,4 +546,74 @@ pub(crate) fn encode(snapshot: &Snapshot) -> Result<String, SidecarError> {
     }
     output.push_str("}}\n");
     Ok(output)
+}
+
+#[cfg(test)]
+mod multi_page_tests {
+    use super::*;
+
+    fn snapshot() -> Snapshot {
+        let bounds = vec![PageBox {
+            x: 10.,
+            y: 20.,
+            w: 30.,
+            h: 8.,
+        }];
+        Snapshot {
+            device: "peer".into(),
+            fixed: true,
+            datetime: 1_740_777_900,
+            fingerprint: None,
+            incomplete: false,
+            unavailable: 0,
+            marks: vec![Mark {
+                place: Place::Page(NonZeroU32::new(2).unwrap()),
+                created: Some(1_740_777_800),
+                updated: None,
+                chapter: None,
+                text: "first second".into(),
+                note: None,
+                highlight: Some(Highlight {
+                    note: Some("remember".into()),
+                    style: HighlightStyle::Underline,
+                    color: HighlightColor::default(),
+                    range: Range::MultiBoxes(vec![
+                        PageBoxes {
+                            page: NonZeroU32::new(2).unwrap(),
+                            boxes: bounds.clone(),
+                        },
+                        PageBoxes {
+                            page: NonZeroU32::new(3).unwrap(),
+                            boxes: bounds,
+                        },
+                    ]),
+                }),
+            }],
+        }
+    }
+
+    #[test]
+    fn multi_page_exchange_round_trips_keyed_koreader_page_rectangles() {
+        let expected = snapshot();
+        let wire = encode(&expected).unwrap();
+        let got = decode(wire.as_bytes()).unwrap();
+        assert_eq!(got.unavailable, 0);
+        assert_eq!(got.marks, expected.marks);
+        assert!(wire.contains("[2]={pos0={page=2"));
+        assert!(wire.contains("[3]={pos0={page=3"));
+    }
+
+    #[test]
+    fn multi_page_exchange_rejects_ambiguous_or_missing_page_records() {
+        let wire = encode(&snapshot()).unwrap();
+        for damaged in [
+            wire.replacen("[3]={pos0={page=3", "[4]={pos0={page=3", 1),
+            wire.replacen("[3]={pos0={page=3", "[2]={pos0={page=3", 1),
+            wire.replacen("pos1={page=3", "pos1={page=4", 1),
+        ] {
+            let parsed = decode(damaged.as_bytes()).unwrap();
+            assert!(parsed.marks.is_empty());
+            assert_eq!(parsed.unavailable, 1);
+        }
+    }
 }

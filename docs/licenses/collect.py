@@ -18,6 +18,7 @@ UPSTREAM = {
     "debug_timer": "dioxuslabs/blitz/078b082ced8cc1e35b87c4d5fd85b9cffafc9e47/LICENSE-MIT",
     "taffy": "DioxusLabs/taffy/0064bd54cbe38bf1d8bcd6ec6ab0704d45fb048a/LICENSE",
     "void": "reem/rust-void/a6e061227f47ba8798b7e828ed0ac4e25382eb15/LICENSE-MIT",
+    "wuff": "nicoburns/wuff/0bb77cb3448100b8f560abf796014c8b85d75e23/LICENSE",
 }
 BLITZ_MIT = "dioxuslabs/blitz/92b11f1bd8ab7975411328b0406a95a09445b4e7/LICENSE-MIT"
 MPL = "https://www.mozilla.org/media/MPL/2.0/index.815ca599c9df.txt"
@@ -101,6 +102,10 @@ def collect():
         "For the compiled Spanish, Italian, and Portuguese patterns, see HYPHENATION-ES-IT-PT.txt.",
         "For the compiled Estonian and Finnish patterns, see HYPHENATION-ET-FI.txt.",
         "For the compiled Danish and Dutch patterns, see HYPHENATION-DA-NL.txt.",
+        "For the compiled French and German patterns, see HYPHENATION-FR-DE.txt.",
+        "For the compiled Bulgarian, Galician, Irish and Ukrainian patterns, see HYPHENATION-BG-GL-GA.txt.",
+        "For the compiled Polish patterns, see HYPHENATION-PL.txt.",
+        "For Wuff WOFF 2 decoding, see WUFF.txt.",
         "",
     ]
     fetched = {}

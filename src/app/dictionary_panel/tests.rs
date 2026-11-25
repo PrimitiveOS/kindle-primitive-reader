@@ -895,16 +895,16 @@ fn dictionary_cross_reference_opens_the_originating_source_and_restores_the_pass
             .unwrap()
     };
     let before = s.app.lookup_history.dictionary.clone();
-    for label in ["Web article", "Bare target"] {
+    let (x, y) = link_point(&s, "Web article");
+    assert_eq!(s.app.input(Input::Tap(x, y)), Change::None);
+    for label in ["Unlisted sense", "Bare target"] {
         let (x, y) = link_point(&s, label);
-        assert_eq!(s.app.input(Input::Tap(x, y)), Change::None);
+        assert_eq!(s.app.input(Input::Tap(x, y)), Change::Partial);
+        assert_eq!(
+            s.app.notice.as_deref(),
+            Some("Reference not found in this dictionary")
+        );
     }
-    let (x, y) = link_point(&s, "Unlisted sense");
-    assert_eq!(s.app.input(Input::Tap(x, y)), Change::Partial);
-    assert_eq!(
-        s.app.notice.as_deref(),
-        Some("Reference not found in this dictionary")
-    );
     assert_eq!(s.app.list_page, index);
     assert_eq!(s.app.lookup_history.dictionary, before);
     assert!(s.app.spelling_lookup.is_none());

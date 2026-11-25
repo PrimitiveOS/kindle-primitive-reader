@@ -814,6 +814,22 @@ impl Reading {
         )
     }
 
+    pub(crate) fn whole_book_publisher_locations(
+        &self,
+        allow_depth: impl Fn(usize) -> bool,
+    ) -> Option<screen_pages::AlternativeLocations> {
+        if self.quote_marker.is_some() {
+            return None;
+        }
+        self.config.screen_pages.publisher_locations(
+            &self.config,
+            &self.probe,
+            self.chapter,
+            self.page,
+            allow_depth,
+        )
+    }
+
     pub(crate) fn whole_book_alternative_locations(
         &self,
         entries: &[crate::generated_contents::OutlineEntry],
@@ -1309,8 +1325,12 @@ impl Reading {
         saved: &TextSelection,
         word: &TextSelection,
     ) -> Result<TextSelection> {
-        if let Some(band) = self.probe.foreign_note_band.as_ref() {
-            let anchors = [&saved.start, &saved.end, &word.start, &word.end];
+        let anchors = [&saved.start, &saved.end, &word.start, &word.end];
+        if let Some(band) = self.probe.foreign_note_bands.iter().find(|band| {
+            anchors
+                .iter()
+                .any(|anchor| band.layout.note_contains_anchor(anchor))
+        }) {
             let in_note = anchors.map(|anchor| band.layout.note_contains_anchor(anchor));
             if in_note.iter().any(|inside| *inside) {
                 if !in_note.iter().all(|inside| *inside) {
@@ -1356,10 +1376,7 @@ impl Reading {
     }
 
     pub(crate) fn rendered_quote(&self, start: &Anchor, end: &Anchor) -> Result<TextSelection> {
-        if let Some(band) = self.probe.foreign_note_band.as_ref()
-            && band.layout.note_contains_anchor(start)
-            && band.layout.note_contains_anchor(end)
-        {
+        if let Some(band) = self.probe.foreign_band_for_anchors(start, end) {
             return band
                 .layout
                 .note_select_range(start, end)
@@ -1369,10 +1386,7 @@ impl Reading {
     }
 
     pub(crate) fn anchored_quote(&self, start: &Anchor, end: &Anchor) -> Result<TextSelection> {
-        if let Some(band) = self.probe.foreign_note_band.as_ref()
-            && band.layout.note_contains_anchor(start)
-            && band.layout.note_contains_anchor(end)
-        {
+        if let Some(band) = self.probe.foreign_band_for_anchors(start, end) {
             return band
                 .layout
                 .note_select_range(start, end)
@@ -1452,10 +1466,10 @@ impl Reading {
                     })
             })
             .collect();
-        if let Some(band) = self.probe.foreign_band(self.page) {
+        for band in self.probe.foreign_bands(self.page) {
             rects.extend(band.layout.note_selection_rects(selection).into_iter().map(
                 |mut rect| {
-                    rect.y += band.y_offset() as i32;
+                    rect.y += band.y_offset(self.page) as i32;
                     rect
                 },
             ));
@@ -1579,13 +1593,13 @@ impl Reading {
                 text.push_str(&selection.text);
             }
         }
-        if let Some(note) = self.probe.foreign_band(self.page)
-            && let Some(note_text) = note.layout.note_visible_text()
-        {
-            if !text.is_empty() {
-                text.push('\n');
+        for note in self.probe.foreign_bands(self.page) {
+            if let Some(note_text) = note.layout.note_visible_text() {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(&note_text);
             }
-            text.push_str(&note_text);
         }
         text
     }
@@ -2718,8 +2732,8 @@ mod tests {
             .unwrap();
         assert_eq!(label, "Return to dispatch");
         let link_rect = rects[0];
-        let link_hit = (link_rect.y + band.y_offset() as i32
-            ..link_rect.y + band.y_offset() as i32 + link_rect.height)
+        let link_hit = (link_rect.y + band.y_offset(reading.page) as i32
+            ..link_rect.y + band.y_offset(reading.page) as i32 + link_rect.height)
             .find_map(|y| {
                 (link_rect.x..link_rect.x + link_rect.width).find_map(|x| {
                     let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
@@ -2742,7 +2756,8 @@ mod tests {
         assert!(reading.extend_saved_quote(&host, &selected).is_err());
         assert!(reading.extend_saved_quote(&selected, &host).is_err());
         assert_eq!(reading.anchor(), Some(progress));
-        let margin_y = (reading.probe.settings.top_margin() + band.y_offset()) as f32 + 1.0;
+        let margin_y =
+            (reading.probe.settings.top_margin() + band.y_offset(reading.page)) as f32 + 1.0;
         assert!(reading.word_at(1.0, margin_y).is_none());
         assert!(reading.link_at(1.0, margin_y).is_none());
     }

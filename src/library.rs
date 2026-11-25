@@ -1030,6 +1030,10 @@ pub struct ReadingPosition {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bookmark {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
     #[serde(
         default,
         deserialize_with = "read_mark_chapter_title",
@@ -1428,7 +1432,7 @@ fn read_ocr_language<'de, D: serde::Deserializer<'de>>(
     let value = serde_json::Value::deserialize(reader)?;
     Ok(value
         .as_str()
-        .filter(|code| crate::ocr::valid_language_name(code))
+        .filter(|code| crate::ocr::valid_language_spec(code))
         .map(str::to_owned))
 }
 
@@ -2563,10 +2567,13 @@ impl Library {
         if replacement.bookmarks.len() > MAX_IMPORTED_MARKS
             || replacement.highlights.len() > MAX_IMPORTED_MARKS
             || replacement.pdf_highlights.len() > MAX_PDF_HIGHLIGHTS
-            || !replacement
-                .bookmarks
-                .iter()
-                .all(|mark| valid_position(&mark.position))
+            || !replacement.bookmarks.iter().all(|mark| {
+                valid_position(&mark.position)
+                    && mark
+                        .note
+                        .as_ref()
+                        .is_none_or(|note| note.len() <= MAX_NOTE_BYTES)
+            })
             || !replacement.highlights.iter().all(valid_highlight)
             || !replacement
                 .pdf_highlights
@@ -2857,7 +2864,13 @@ pub(crate) fn merge_text_marks(
 ) {
     for bookmark in bookmarks {
         let label = clean_metadata(&bookmark.label);
-        if !valid_position(&bookmark.position) || label.is_empty() {
+        if !valid_position(&bookmark.position)
+            || label.is_empty()
+            || bookmark
+                .note
+                .as_ref()
+                .is_some_and(|note| note.len() > MAX_NOTE_BYTES)
+        {
             summary.skipped += 1;
         } else if let Some(existing) = target
             .bookmarks
@@ -2865,13 +2878,15 @@ pub(crate) fn merge_text_marks(
             .find(|existing| same_position(&existing.position, &bookmark.position))
         {
             merge_created_at(&mut existing.created_at, bookmark.created_at, summary);
+            merge_note(&mut existing.note, &bookmark.note, summary);
             merge_chapter_title(
                 &mut existing.chapter_title,
                 bookmark.chapter_title.as_deref(),
             );
-            summary.duplicates += 1;
         } else if target.bookmarks.len() < MAX_IMPORTED_MARKS {
             target.bookmarks.push(Bookmark {
+                note: bookmark.note.clone(),
+                updated_at: bookmark.updated_at,
                 chapter_title: bookmark
                     .chapter_title
                     .as_deref()
@@ -2881,6 +2896,7 @@ pub(crate) fn merge_text_marks(
                 position: bookmark.position.clone(),
             });
             summary.bookmarks_added += 1;
+            summary.notes_added += usize::from(bookmark.note.is_some());
         } else {
             summary.skipped += 1;
         }
@@ -3592,6 +3608,8 @@ mod tests {
         first_state.position = Some(position.clone());
         first_state.preferences.font_size = Some(54.0);
         first_state.bookmarks.push(Bookmark {
+            note: None,
+            updated_at: None,
             chapter_title: None,
             created_at: None,
             label: "Beginning".into(),
@@ -4203,6 +4221,8 @@ mod tests {
             anchor: Some(anchor(offset)),
         };
         let bookmark = |page, offset| Bookmark {
+            note: None,
+            updated_at: None,
             chapter_title: None,
             created_at: None,
             label: "A bookmark".into(),

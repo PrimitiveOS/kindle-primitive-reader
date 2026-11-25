@@ -134,3 +134,26 @@ fn in_page_footnote_effect_preserves_version_one_inheritance() {
     assert!(!data.books[&1].choices.contains_key(EPUB_FOOTNOTES));
     assert!(data.snapshot(2).unwrap().in_page_epub_footnotes());
 }
+
+#[test]
+fn horizontal_margin_tweaks_inherit_and_resolve_conflicts_per_book() {
+    let mut data = Data::default();
+    data.make_global(1, "margin_horizontal_all_0", true)
+        .unwrap();
+    assert!(data.enabled(2, "margin_horizontal_all_0"));
+    data.choose(2, "paragraph_no_horizontal_margin", Some(true))
+        .unwrap();
+    assert!(!data.enabled(2, "margin_horizontal_all_0"));
+    assert!(data.enabled(2, "paragraph_no_horizontal_margin"));
+    assert!(data.enabled(1, "margin_horizontal_all_0"));
+    let book_css = data.snapshot(2).unwrap();
+    assert!(book_css.css().contains("p, li {margin-left:0 !important"));
+    assert!(!book_css.css().contains("* {margin-left:0 !important"));
+    let saved: Data = serde_json::from_slice(&serde_json::to_vec(&data).unwrap()).unwrap();
+    assert_eq!(saved, data);
+    data.choose(2, "paragraph_no_horizontal_margin", Some(false))
+        .unwrap();
+    data.choose(2, "margin_horizontal_all_0", None).unwrap();
+    assert!(data.enabled(2, "margin_horizontal_all_0"));
+    assert!(!data.enabled(2, "paragraph_no_horizontal_margin"));
+}

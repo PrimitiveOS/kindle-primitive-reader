@@ -28,9 +28,13 @@ the shared preset manager supplies create, load, update, rename, and delete
 operations in [`presets.lua`](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/presets.lua#L171-L277).
 
 Reader implements those named-preset operations for its native footer options
-and saves custom footer text with each preset. It does not reproduce KOReader's
-special fallback from an Off mode to Page Progress when saving a preset. Device
-appearance and foreground operation remain to be checked on the Oasis.
+and saves custom footer text with each preset. When the current footer is off
+but its progress track setting is enabled, creating or updating a preset now
+stores Page numbers as its mode, matching KOReader's Page Progress fallback.
+The live footer remains unchanged until the preset is applied. With the progress
+track disabled, the off mode is preserved. The fallback still needs simulator
+and Kindle verification, and device appearance and foreground operation remain
+to be checked on the Oasis.
 
 The Mac unit and application workflow tests cover create, apply, update, rename,
 delete, persistence across reopening, and preservation of unrelated settings.

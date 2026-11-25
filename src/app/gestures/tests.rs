@@ -201,3 +201,126 @@ fn corner_gestures_pause_on_pdf_without_rearming_or_claiming_an_old_release() {
     assert_eq!(corner_pause_seconds(&reopened.controls), 5);
     assert!(reopened.gestures.corner_pause_until.is_none());
 }
+
+#[test]
+fn assigned_reading_size_and_mode_gestures_preserve_location_and_reopen() {
+    let fixture = Fixture::new();
+    let mut app = canvas_reader(&fixture);
+    app.open_path(&fixture.book).unwrap();
+    let settings = app.active.as_ref().unwrap().reading.config.settings;
+    app.activate(Action::Text(crate::Settings {
+        font_size: 42.0,
+        logical_font_size: None,
+        ..settings
+    }))
+    .unwrap();
+    let initial = app.active.as_ref().unwrap().reading.anchor().unwrap();
+    let scale = app
+        .active
+        .as_ref()
+        .unwrap()
+        .reading
+        .config
+        .settings
+        .font_scale;
+    app.gestures
+        .set(Gesture::TapTopLeft, Binding::IncreaseFont)
+        .unwrap();
+    app.gestures
+        .set(Gesture::TapTopRight, Binding::DecreaseFont)
+        .unwrap();
+    app.gestures
+        .set(Gesture::TapBottomLeft, Binding::TogglePageScroll)
+        .unwrap();
+    app.input(Input::Tap(5.0, 5.0));
+    assert_eq!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .settings
+            .font_size,
+        (42.0 + scale.physical_delta(0.5)).clamp(20.0, 100.0)
+    );
+    assert_eq!(
+        app.active.as_ref().unwrap().reading.anchor(),
+        Some(initial.clone())
+    );
+    app.input(Input::Tap(
+        app.reading_viewport().dimensions().0 as f32 - 5.0,
+        5.0,
+    ));
+    assert!(
+        (app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .settings
+            .font_size
+            - 42.0)
+            .abs()
+            < 0.001
+    );
+    let y = app.reading_viewport().page_height() as f32 - 10.0;
+    app.input(Input::Tap(5.0, y));
+    assert!(app.active.as_ref().unwrap().reading.config.scroll);
+    assert_eq!(app.active.as_ref().unwrap().reading.anchor(), Some(initial));
+    app.save().unwrap();
+    drop(app);
+    let mut reopened = canvas_reader(&fixture);
+    reopened.open_path(&fixture.book).unwrap();
+    assert!(reopened.active.as_ref().unwrap().reading.config.scroll);
+    assert_eq!(
+        reopened.gestures.get(Gesture::TapTopLeft),
+        Binding::IncreaseFont
+    );
+    assert_eq!(
+        reopened.gestures.get(Gesture::TapTopRight),
+        Binding::DecreaseFont
+    );
+    assert_eq!(
+        reopened.gestures.get(Gesture::TapBottomLeft),
+        Binding::TogglePageScroll
+    );
+    reopened.show(Screen::GestureBinding(Gesture::TapTopLeft));
+    let index = reopened
+        .gestures
+        .choices(Gesture::TapTopLeft, &reopened.book_shortcuts)
+        .iter()
+        .position(|item| item.title == "Increase font size")
+        .unwrap();
+    reopened.list_page = index / reopened.list_geometry().rows;
+    crate::app::tests::capture_test_screen(
+        &reopened,
+        &[crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        "READER_GESTURE_READING_ACTIONS_FRAME",
+        false,
+    );
+}
+
+#[test]
+fn assigned_reflow_actions_do_not_turn_or_mutate_fixed_page_documents() {
+    let fixture = Fixture::new();
+    let source = fixture.root.join("Gesture.pdf");
+    let original = crate::fixed::tests::document();
+    fs::write(&source, &original).unwrap();
+    let mut app = canvas_reader(&fixture);
+    app.open_path(&source).unwrap();
+    let before = app.current_position();
+    app.gestures
+        .set(Gesture::TapTopLeft, Binding::IncreaseFont)
+        .unwrap();
+    app.gestures
+        .set(Gesture::TapTopRight, Binding::TogglePageScroll)
+        .unwrap();
+    app.input(Input::Tap(5.0, 5.0));
+    app.input(Input::Tap(
+        app.reading_viewport().dimensions().0 as f32 - 5.0,
+        5.0,
+    ));
+    assert_eq!(app.current_position(), before);
+    assert!(app.fixed.is_some());
+    assert_eq!(fs::read(&source).unwrap(), original);
+}

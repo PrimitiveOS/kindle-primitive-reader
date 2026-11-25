@@ -10,7 +10,7 @@ use crate::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Item {
     label: String,
     depth: usize,
@@ -18,7 +18,7 @@ pub(crate) struct Item {
     pub(crate) fragment: Option<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Contents {
     pub(crate) items: Vec<Item>,
     pub(crate) insertions: Vec<Addition>,

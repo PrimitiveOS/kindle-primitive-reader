@@ -108,6 +108,7 @@ enum Content {
         format: loose::Format,
         xhtml: BTreeMap<String, String>,
         prior_mobi: BTreeMap<String, Vec<String>>,
+        mobi_shadow: Option<MobiShadow>,
         resources: BTreeMap<String, Vec<u8>>,
         fonts: Option<kf8::fonts::FontSource>,
         fb2_note_sections: BTreeMap<String, loose::Fb2NoteKind>,
@@ -115,6 +116,36 @@ enum Content {
         complete_fb3_notes: BTreeMap<String, String>,
     },
     Chm(Box<Chm>),
+}
+
+struct MobiShadow {
+    chapter: String,
+    xhtml: String,
+    ids: BTreeSet<String>,
+    contents: crate::kf8::legacy_contents::Contents,
+}
+
+fn mobi_shadow_resolved(
+    canonical: &str,
+    shadow: &MobiShadow,
+    language: Option<parley::Language>,
+    embedded: bool,
+) -> Option<BTreeSet<String>> {
+    let mut source = crate::source::Source::parse_with_typography(
+        canonical,
+        language,
+        embedded,
+        &Default::default(),
+    )
+    .ok()?;
+    let other = crate::source::Source::parse_with_typography(
+        &shadow.xhtml,
+        language,
+        embedded,
+        &Default::default(),
+    )
+    .ok()?;
+    Some(source.apply_mobi_shadow(&other, &shadow.ids))
 }
 
 struct Item {
@@ -508,6 +539,7 @@ impl Book {
                     !extension.eq_ignore_ascii_case("ttf")
                         && !extension.eq_ignore_ascii_case("otf")
                         && !extension.eq_ignore_ascii_case("woff")
+                        && !extension.eq_ignore_ascii_case("woff2")
                 })
             }))
     }
@@ -519,6 +551,7 @@ impl Book {
                 extension.eq_ignore_ascii_case("ttf")
                     || extension.eq_ignore_ascii_case("otf")
                     || extension.eq_ignore_ascii_case("woff")
+                    || extension.eq_ignore_ascii_case("woff2")
             })
         };
         match &self.content {
@@ -638,6 +671,7 @@ impl Book {
                 format,
                 xhtml: BTreeMap::from([(chapter_path, document.xhtml)]),
                 prior_mobi: BTreeMap::new(),
+                mobi_shadow: None,
                 resources: document.resources,
                 fb2_note_sections: document.fb2_note_sections,
                 incomplete_fb3_notes: BTreeSet::new(),
@@ -721,11 +755,12 @@ impl Book {
         font_input: kf8::fonts::Input,
     ) -> Result<Self> {
         let mut prior_mobi = BTreeMap::new();
+        let mut mobi_shadow = None;
         let mut revision = crate::revision_bytes(bytes);
         let mut small_legacy = false;
         let mut publisher_contents = crate::kf8::legacy_contents::Contents::default();
         let publication = match kf8::open_edition(bytes)? {
-            kf8::Edition::Legacy(document) => {
+            kf8::Edition::Legacy(mut document) => {
                 publisher_contents = document.contents;
                 let label = document
                     .title
@@ -741,6 +776,31 @@ impl Book {
                     label,
                     xhtml: document.xhtml,
                 };
+                if small_legacy && let Some(shadow) = document.shadow.take() {
+                    let shadow_chapter = kf8::Kf8Chapter {
+                        continued: chapter.continued,
+                        path: chapter.path.clone(),
+                        label: chapter.label.clone(),
+                        xhtml: chapter.xhtml.clone(),
+                    };
+                    if let Ok((mut parts, _)) = crate::kindle_sections::legacy(
+                        shadow_chapter,
+                        shadow.additions,
+                        document.presentation.clone(),
+                        &shadow.contents.insertions,
+                        false,
+                    ) && parts.len() == 1
+                        && parts[0].xhtml.len() <= 1024 * 1024
+                    {
+                        let part = parts.remove(0);
+                        mobi_shadow = Some(MobiShadow {
+                            chapter: part.path,
+                            xhtml: part.xhtml,
+                            ids: shadow.ids,
+                            contents: shadow.contents,
+                        });
+                    }
+                }
                 let chapters = if document.additions.is_empty()
                     && document.presentation.is_empty()
                     && publisher_contents.insertions.is_empty()
@@ -804,6 +864,30 @@ impl Book {
         }
         if !publisher_contents.items.is_empty() {
             toc = publisher_contents.entries(&xhtml);
+            if let Some(shadow) = &mobi_shadow
+                && let Some(canonical) = xhtml.get(&shadow.chapter)
+                && let Some(resolved) =
+                    mobi_shadow_resolved(canonical, shadow, publication.language, true)
+                && let Some(without_embedded) =
+                    mobi_shadow_resolved(canonical, shadow, publication.language, false)
+            {
+                let shadow_sections =
+                    BTreeMap::from([(shadow.chapter.clone(), shadow.xhtml.clone())]);
+                let alternatives = shadow.contents.clone().entries(&shadow_sections);
+                for (row, alternate) in toc.iter_mut().zip(alternatives) {
+                    if row.destination.is_none()
+                        && alternate
+                            .destination
+                            .as_ref()
+                            .and_then(|destination| destination.fragment.as_ref())
+                            .is_some_and(|id| {
+                                resolved.contains(id) && without_embedded.contains(id)
+                            })
+                    {
+                        row.destination = alternate.destination;
+                    }
+                }
+            }
         } else if !publication.contents.rows.is_empty() {
             toc = publication.contents.finish(&xhtml);
         }
@@ -827,6 +911,7 @@ impl Book {
                 format: loose::Format::Mobi,
                 xhtml,
                 prior_mobi,
+                mobi_shadow,
                 resources: publication.resources,
                 fb2_note_sections: Default::default(),
                 incomplete_fb3_notes: BTreeSet::new(),
@@ -904,7 +989,7 @@ impl Book {
     pub(crate) fn automatic_stylesheet(&self) -> crate::BaseStylesheet {
         match &self.content {
             Content::Loose {
-                format: loose::Format::Fb2 | loose::Format::Text,
+                format: loose::Format::Fb2 | loose::Format::Fb3 | loose::Format::Text,
                 ..
             } => crate::BaseStylesheet::FictionBook,
             Content::Archive { .. } | Content::Loose { .. } | Content::Chm(_) => {
@@ -1011,7 +1096,27 @@ impl Book {
             .filter_map(|destination| destination.fragment.as_deref())
             .filter_map(crate::kf8::publisher_contents::element_index)
             .collect();
-        crate::source::Source::parse_with_typography(xhtml, language, respect_embedded, &ordinals)
+        let mut source = crate::source::Source::parse_with_typography(
+            xhtml,
+            language,
+            respect_embedded,
+            &ordinals,
+        )?;
+        if let Content::Loose {
+            mobi_shadow: Some(shadow),
+            ..
+        } = &self.content
+            && shadow.chapter == href
+            && let Ok(other) = crate::source::Source::parse_with_typography(
+                &shadow.xhtml,
+                language,
+                respect_embedded,
+                &ordinals,
+            )
+        {
+            source.apply_mobi_shadow(&other, &shadow.ids);
+        }
+        Ok(source)
     }
 
     pub(crate) fn previous_mobi_chapters(&self, name: &str) -> &[String] {

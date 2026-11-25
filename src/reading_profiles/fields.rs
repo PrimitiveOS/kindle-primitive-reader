@@ -18,6 +18,11 @@ macro_rules! fields {
             }
 
             pub(super) fn merge_text(self, from: &BookPreferences, to: &mut BookPreferences) {
+                // Profiles written before render-mode capture have no value.
+                // Applying one must not silently reset the current book.
+                if self == Self::PublisherRenderMode && from.publisher_render_mode.is_none() {
+                    return;
+                }
                 match self {
                     $( Self::$text => { $( to.$preference = from.$preference.clone(); )+ } )+
                     _ => {}
@@ -51,6 +56,7 @@ fields! {
         FontWeight => "Font weight": bold_text, font_weight_delta;
         FontContrast => "Font contrast": text_contrast, font_gamma_index;
         PublisherStyles => "Publisher styles": publisher_styles;
+        PublisherRenderMode => "Render mode": publisher_render_mode;
         BaseStyle => "Base stylesheet": base_stylesheet;
         Kerning => "Kerning": font_kerning, font_kerning_mode;
         Hinting => "Font hinting": font_hinting;

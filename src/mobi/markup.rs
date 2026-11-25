@@ -155,6 +155,99 @@ pub(super) fn target_tags<'a>(
     result
 }
 
+/// Candidate source-byte positions in text, never inside tags or references.
+pub(super) fn target_text(
+    text: &str,
+    encoding: Encoding,
+    contents: &Contents,
+) -> Vec<(usize, usize)> {
+    let requested = destinations(text, encoding, contents);
+    let mut result = Vec::new();
+    let (mut cursor, mut next) = (0, 0);
+    while cursor < text.len() && next < requested.len() {
+        let start = text[cursor..].find('<').map_or(text.len(), |n| cursor + n);
+        while next < requested.len() && requested[next].1 < start {
+            let (source, at) = requested[next];
+            if at >= cursor && text.is_char_boundary(at) && safe_text_boundary(text, cursor, at) {
+                result.push((source, at));
+            }
+            next += 1;
+        }
+        if start == text.len() {
+            break;
+        }
+        let rest = &text[start..];
+        if let Some(comment) = rest.strip_prefix("<!--") {
+            let Some(end) = comment.find("-->") else {
+                break;
+            };
+            cursor = start + 4 + end + 3;
+            continue;
+        }
+        let Some((name, end)) = opening(text, start) else {
+            let special = rest
+                .as_bytes()
+                .get(1)
+                .is_some_and(|b| matches!(b, b'/' | b'!' | b'?') || b.is_ascii_alphabetic());
+            cursor = if special {
+                rest.find('>').map_or(text.len(), |n| start + n + 1)
+            } else {
+                start + 1
+            };
+            continue;
+        };
+        cursor = end;
+        if ["script", "style", "title", "iframe"]
+            .iter()
+            .any(|raw| name.eq_ignore_ascii_case(raw))
+        {
+            loop {
+                let Some(relative) = text[cursor..].find("</") else {
+                    cursor = text.len();
+                    break;
+                };
+                cursor += relative + 2;
+                let end = cursor + name.len();
+                if text
+                    .get(cursor..end)
+                    .is_some_and(|tag| tag.eq_ignore_ascii_case(name))
+                    && text
+                        .as_bytes()
+                        .get(end)
+                        .is_some_and(|b| b.is_ascii_whitespace() || *b == b'>')
+                {
+                    cursor = text[end..].find('>').map_or(text.len(), |n| end + n + 1);
+                    break;
+                }
+            }
+        }
+    }
+    result
+}
+
+fn safe_text_boundary(text: &str, start: usize, at: usize) -> bool {
+    // An ending '<' can leave the tokenizer in tag-open state even when its
+    // input queue is empty; CR can leave pending newline preprocessing.
+    if at > 0
+        && text
+            .as_bytes()
+            .get(at - 1)
+            .is_some_and(|&b| matches!(b, b'<' | b'\r'))
+    {
+        return false;
+    }
+    let preceding = &text[start..at];
+    if let Some(amp) = preceding.rfind('&') {
+        if preceding[amp + 1..]
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'#')
+        {
+            return false;
+        }
+    }
+    true
+}
+
 fn opening(text: &str, at: usize) -> Option<(&str, usize)> {
     let rest = text.get(at..)?.strip_prefix('<')?;
     let len = rest
@@ -195,7 +288,7 @@ pub(super) struct Features {
     pub presentation: super::Presentation,
     pub next: Option<(usize, String)>,
     ids: BTreeMap<String, usize>,
-    destinations: BTreeMap<usize, (usize, Option<String>)>,
+    destinations: BTreeMap<usize, (usize, Option<String>, bool)>,
     links: Vec<(usize, usize)>,
     images: Vec<(usize, usize, String)>,
 }
@@ -252,7 +345,7 @@ impl Features {
                 && safe_tag(tag.name.as_ref()).is_some()
             {
                 self.destinations
-                    .insert(position, (at, id.map(str::to_owned)));
+                    .insert(position, (at, id.map(str::to_owned), false));
             }
         }
         if name == "a"
@@ -262,6 +355,9 @@ impl Features {
         {
             self.links.push((at, target));
         }
+    }
+    pub(super) fn text_destination(&mut self, source: usize, at: usize) {
+        self.destinations.insert(source, (at, None, true));
     }
     pub fn image(&mut self, tag: &Tag, at: usize) -> Result<()> {
         let Some(n) = attribute(tag, "recindex")
@@ -292,12 +388,13 @@ impl Features {
         records: &[usize],
         first: Option<usize>,
         contents: &mut Contents,
-    ) -> Result<(Vec<Addition>, BTreeMap<String, Vec<u8>>)> {
+    ) -> Result<(Vec<Addition>, BTreeMap<String, Vec<u8>>, BTreeSet<String>)> {
         let mut edits = Vec::new();
         let mut names = BTreeMap::new();
+        let mut shadow_ids = BTreeSet::new();
         let used: BTreeSet<_> = self.links.iter().map(|&(_, n)| n).collect();
         let navigation: BTreeSet<_> = contents.items.iter().map(|entry| entry.position).collect();
-        for (source, (at, id)) in self.destinations {
+        for (source, (at, id, text_target)) in self.destinations {
             if !used.contains(&source) && !navigation.contains(&source) {
                 continue;
             }
@@ -307,13 +404,21 @@ impl Features {
                 }
                 id
             } else {
-                let mut id = format!("mobi-filepos-{source}");
+                let mut id = if text_target {
+                    format!("mobi-shadow-text-{source}")
+                } else {
+                    format!("mobi-filepos-{source}")
+                };
                 while self.ids.contains_key(&id) {
                     id.push('_');
                 }
                 let edit = Addition {
                     at,
-                    xml: format!(" id=\"{id}\""),
+                    xml: if text_target {
+                        format!("<span id=\"{id}\"></span>")
+                    } else {
+                        format!(" id=\"{id}\"")
+                    },
                 };
                 if used.contains(&source) {
                     edits.push(edit)
@@ -322,6 +427,9 @@ impl Features {
                 }
                 id
             };
+            if text_target {
+                shadow_ids.insert(id.clone());
+            }
             names.insert(source, id);
         }
         for item in &mut contents.items {
@@ -377,6 +485,6 @@ impl Features {
             }
         }
         edits.sort_by_key(|edit| edit.at);
-        Ok((edits, resources))
+        Ok((edits, resources, shadow_ids))
     }
 }

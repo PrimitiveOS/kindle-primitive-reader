@@ -9,7 +9,7 @@ use primitive_app::with_storage;
 use serde::{Deserialize, Serialize};
 
 use super::footer_custom_text::Preference as FooterCustomText;
-use crate::reading_controls::ReadingControls;
+use crate::reading_controls::{ProgressScope, ReadingControls, StatusBar};
 
 const MAX_BYTES: u64 = 32 * 1024;
 const MAX_PRESETS: usize = 16;
@@ -153,8 +153,21 @@ pub(crate) fn save(path: &Path, presets: &[Preset]) -> io::Result<()> {
 }
 
 fn footer_controls(controls: ReadingControls) -> ReadingControls {
+    // KOReader saves Page Progress when its footer is off but the progress
+    // bar is enabled. Only the captured preset changes; the reader stays in
+    // its current mode until the preset is applied.
+    let footer_off = controls.status_bar == StatusBar::Minimal
+        || (controls.status_bar == StatusBar::Custom
+            && controls
+                .footer_item_cycle
+                .is_some_and(|cycle| cycle.selected.is_none()));
+    let status_bar = if footer_off && controls.footer_scope != ProgressScope::Off {
+        StatusBar::PageNumbers
+    } else {
+        controls.status_bar
+    };
     ReadingControls {
-        status_bar: controls.status_bar,
+        status_bar,
         footer_items: controls.footer_items,
         footer_order: controls.footer_order,
         footer_item_cycle: controls.footer_item_cycle,

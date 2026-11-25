@@ -104,7 +104,17 @@ pub(super) fn language(tag: &str) -> Option<Language> {
 }
 
 fn reference(href: &str) -> Option<String> {
-    let encoded = href.strip_prefix("bword://")?;
+    let Some(encoded) = href.strip_prefix("bword://") else {
+        // KOReader treats a target without a protocol as a literal headword
+        // in the dictionary that provided this definition. Keep percent
+        // characters in those literal entries rather than URL-decoding them.
+        let word = href.trim();
+        return (!word.is_empty()
+            && word.len() <= super::MAX_WORD_BYTES
+            && !word.contains("://")
+            && !word.chars().any(char::is_control))
+        .then(|| word.to_owned());
+    };
     if encoded.len() > super::MAX_WORD_BYTES * 3 {
         return None;
     }

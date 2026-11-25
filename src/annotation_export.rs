@@ -33,6 +33,17 @@ impl Format {
         title: &str,
         marks: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
     ) -> String {
+        self.render_with_bookmarks(title, marks, std::iter::empty())
+    }
+
+    /// Export saved page bookmarks separately from highlighted quotations.
+    /// Labels describe locations and must not be presented as book excerpts.
+    pub(crate) fn render_with_bookmarks<'a>(
+        self,
+        title: &str,
+        marks: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+        bookmarks: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+    ) -> String {
         let mut output = String::new();
         match self {
             Self::Text => {
@@ -42,6 +53,17 @@ impl Format {
                     output.push_str(quote);
                     output.push('\n');
                     if let Some(note) = note {
+                        output.push_str(note);
+                        output.push('\n');
+                    }
+                    output.push('\n');
+                }
+                for (label, note) in bookmarks {
+                    output.push_str("Bookmark: ");
+                    output.push_str(label);
+                    output.push('\n');
+                    if let Some(note) = note {
+                        output.push_str("Note: ");
                         output.push_str(note);
                         output.push('\n');
                     }
@@ -65,6 +87,16 @@ impl Format {
                         output.push_str("\n\n");
                     }
                 }
+                for (label, note) in bookmarks {
+                    output.push_str("**Bookmark:** ");
+                    markdown_text(&mut output, label);
+                    output.push_str("\n\n");
+                    if let Some(note) = note {
+                        output.push_str("**Note**\n\n");
+                        markdown_text(&mut output, note);
+                        output.push_str("\n\n");
+                    }
+                }
             }
             Self::Html => {
                 output
@@ -77,6 +109,17 @@ impl Format {
                     output.push_str("<article><blockquote><p>");
                     html_text(&mut output, quote);
                     output.push_str("</p></blockquote>");
+                    if let Some(note) = note {
+                        output.push_str("<p><strong>Note</strong><br>");
+                        html_text(&mut output, note);
+                        output.push_str("</p>");
+                    }
+                    output.push_str("</article>\n");
+                }
+                for (label, note) in bookmarks {
+                    output.push_str("<article><p><strong>Bookmark</strong><br>");
+                    html_text(&mut output, label);
+                    output.push_str("</p>");
                     if let Some(note) = note {
                         output.push_str("<p><strong>Note</strong><br>");
                         html_text(&mut output, note);

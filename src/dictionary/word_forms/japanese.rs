@@ -42,6 +42,49 @@ pub(super) fn candidates(word: &str) -> Vec<(String, usize)> {
 
 fn bases(word: &str) -> Vec<String> {
     let mut out = Vec::new();
+    // Productive colloquial contractions return the original te/de form.
+    // A later bounded step applies the ordinary verb-class mappings below.
+    // Candidates are checked against installed dictionaries, so ambiguities
+    // remain visible rather than guessing the input's lexical class.
+    for (ending, connector) in [
+        ("ちゃう", "て"),
+        ("ちゃった", "て"),
+        ("ちゃって", "て"),
+        ("ちまう", "て"),
+        ("ちまった", "て"),
+        ("ちまって", "て"),
+        ("じゃう", "で"),
+        ("じゃった", "で"),
+        ("じゃって", "で"),
+        ("じまう", "で"),
+        ("じまった", "で"),
+        ("じまって", "で"),
+        ("とく", "て"),
+        ("といた", "て"),
+        ("といて", "て"),
+        ("どく", "で"),
+        ("どいた", "で"),
+        ("どいて", "で"),
+        ("てる", "て"),
+        ("てた", "て"),
+        ("てます", "て"),
+        ("でる", "で"),
+        ("でた", "で"),
+        ("でます", "で"),
+        ("たら", "た"),
+        ("だら", "だ"),
+        ("たり", "た"),
+        ("だり", "だ"),
+        ("なくちゃ", "ない"),
+        ("なくっちゃ", "ない"),
+        ("なきゃ", "ない"),
+    ] {
+        if let Some(stem) = word.strip_suffix(ending)
+            && !stem.is_empty()
+        {
+            out.push(format!("{stem}{connector}"));
+        }
+    }
     {
         let mut replace = |ending: &str, replacements: &[&str]| {
             if let Some(stem) = word.strip_suffix(ending) {
@@ -110,7 +153,20 @@ fn bases(word: &str) -> Vec<String> {
     }
     // Progressive/perfect auxiliaries return a te/de form for a later bounded
     // pass. Passive/causative/potential forms may likewise compose with tense.
-    for ending in ["いる", "いた", "います", "いました", "いない"] {
+    for ending in [
+        "いる",
+        "いた",
+        "います",
+        "いました",
+        "いない",
+        "おる",
+        "おく",
+        "おいた",
+        "おいて",
+        "しまう",
+        "しまった",
+        "しまって",
+    ] {
         if let Some(stem) = word.strip_suffix(ending)
             && stem.ends_with(['て', 'で'])
         {
@@ -141,6 +197,24 @@ fn bases(word: &str) -> Vec<String> {
     for ending in ["たい", "たかった", "たくない", "たくなかった", "たくて"] {
         if let Some(stem) = word.strip_suffix(ending) {
             stem_bases(stem, &I_ROW, &mut out);
+        }
+    }
+    // Polite imperatives and excess/appearance predicates use the same
+    // i-row stems as polite verbs. Adjective and nominal readings remain
+    // possible alongside the verb readings when the dictionary has them.
+    for ending in ["なさい", "すぎる", "過ぎる", "そう"] {
+        if let Some(stem) = word.strip_suffix(ending)
+            && !stem.is_empty()
+        {
+            stem_bases(stem, &I_ROW, &mut out);
+            irregular(stem, "し", "する", &mut out);
+            irregular(stem, "き", "くる", &mut out);
+            if ending != "なさい" {
+                out.push(format!("{stem}い"));
+                if ending == "そう" {
+                    out.push(stem.to_owned());
+                }
+            }
         }
     }
     for (surface, base) in [
@@ -300,6 +374,24 @@ mod tests {
             ("持ってきた", "持ってくる"),
             ("勉強できる", "勉強する"),
             ("こられた", "くる"),
+            ("食べちゃった", "食べる"),
+            ("読んじゃう", "読む"),
+            ("書いちまった", "書く"),
+            ("読んじまった", "読む"),
+            ("書いとく", "書く"),
+            ("読んどいた", "読む"),
+            ("食べてる", "食べる"),
+            ("読んでた", "読む"),
+            ("食べてしまった", "食べる"),
+            ("読んでおいた", "読む"),
+            ("読んだら", "読む"),
+            ("食べたり", "食べる"),
+            ("読まなきゃ", "読む"),
+            ("読みなさい", "読む"),
+            ("勉強しなさい", "勉強する"),
+            ("高すぎる", "高い"),
+            ("読みすぎる", "読む"),
+            ("静かそう", "静か"),
         ] {
             let found = candidates(surface);
             assert!(

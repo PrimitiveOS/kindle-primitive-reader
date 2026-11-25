@@ -20,6 +20,23 @@ The reference is KOReader `9192014d8bd82a91dc1012473be0f238dedfdb54`, especially
 
 Dates from older saved-word lists remain unknown. Those words become available for review without a fabricated creation date. The previous 256-word truncation no longer applies. Lookup history and vocabulary share an atomic JSON save, bounded at 8 MiB. A failed save keeps both the prior in-memory state and the existing file.
 
+To rename a vocabulary source, open **Review options › Filter by book** and
+hold its title. Enter a nonempty replacement and tap **Save**. Reader updates
+all saved words for that title and carries its Included or Excluded state to
+the new name; review progress and reading context stay intact. A title already
+used by another vocabulary source is rejected. **Back** cancels, and a failed
+save leaves the editor open. This changes the vocabulary source label, not the
+book file or its metadata. The new workflow awaits integrated testing. [Pinned
+KOReader rename dialog](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/vocabbuilder.koplugin/main.lua#L1795-L1830)
+
+To move one saved word, open it and choose **Change source book**. Select an
+existing title or choose **New book title** and type one. The change is saved
+for that word alone; review counts, schedule, reading context and the book
+filter remain intact. **Back** cancels. The previous review remains undoable
+without restoring the old source. Unlike KOReader's separate title catalog,
+Reader creates the new title when the word is assigned. This workflow awaits
+integrated testing. [Pinned KOReader book assignment](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/vocabbuilder.koplugin/main.lua#L1148-L1247)
+
 ## Acceptance evidence
 
 The development tests cover schedule boundaries, long streaks, failed reviews, explicit replacement, per-word undo, due and source filters, 600-word legacy migration, atomic save failure, cancellation, confirmed reset scope, Unicode context bounds, normal touch controls and reading-position restoration. `scripts/compare-vocabulary-review.py` runs the pinned upstream Lua scheduling method to generate 2,720 independent transitions for the opt-in Rust comparison.
@@ -33,4 +50,4 @@ Five authored framebuffer captures cover the word list, review in both themes, f
 <img src="screenshots/vocabulary-review.png" width="340" alt="Saved word with its source book, context, review choices and dates">
 <img src="screenshots/vocabulary-context.png" width="340" alt="The retained source passage around a saved word">
 
-Native execution remains pending while the Kindle is disconnected. SQLite database import/export, synchronization and editing the vocabulary's source-title catalog retain separate acceptance work.
+Native execution remains pending while the Kindle is disconnected. SQLite database import/export and synchronization retain separate acceptance work.

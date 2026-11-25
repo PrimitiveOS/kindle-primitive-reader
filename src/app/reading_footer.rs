@@ -1342,7 +1342,7 @@ impl Reader {
                 'r' => Some(self.controls.footer_separator.text().to_owned()),
                 'D' => clock().map(|clock| clock.date.clone()),
                 'd' => clock().map(|clock| clock.short_date.clone()),
-                'm' => clock().map(|clock| clock.time.clone()),
+                'm' => clock().map(|clock| clock.custom_time(self.controls.twelve_hour_clock)),
                 'M' => clock().map(|clock| clock.time_with_seconds.clone()),
                 _ => None,
             })
@@ -1752,6 +1752,10 @@ impl Reader {
             };
             if let Some(markers) =
                 self.alternative_book_marker_fractions(super::progress_markers::MarkerTrack::Footer)
+            {
+                markers.into_iter().for_each(draw);
+            } else if let Some(markers) =
+                self.publisher_book_marker_fractions(super::progress_markers::MarkerTrack::Footer)
             {
                 markers.into_iter().for_each(draw);
             } else {

@@ -3,7 +3,8 @@
 use super::*;
 use crate::Anchor;
 use crate::fixed_text::PdfTextRect;
-use exchange::{Mark, PageBox, Place, Range};
+use crate::library::HighlightPage;
+use exchange::{Mark, PageBox, PageBoxes, Place, Range};
 use std::num::NonZeroU32;
 
 impl Reader {
@@ -33,9 +34,10 @@ impl Reader {
                         marks.push(Mark {
                             place: Place::Pointer(place),
                             created: mark.created_at,
-                            updated: None,
+                            updated: mark.updated_at,
                             chapter: mark.chapter_title.clone(),
                             text: mark.label.clone(),
+                            note: mark.note.clone(),
                             highlight: None,
                         });
                     }
@@ -52,6 +54,7 @@ impl Reader {
                             updated: mark.updated_at,
                             chapter: mark.chapter_title.clone(),
                             text: mark.selection.text.clone(),
+                            note: None,
                             highlight: Some(exchange::Highlight {
                                 note: mark.note.clone(),
                                 style: mark.style,
@@ -147,7 +150,7 @@ impl Reader {
             &mut state.bookmarks,
             points,
             cutoff,
-            |mark| mark.created_at,
+            |mark| mark.updated_at.or(mark.created_at),
             |a, b| match (&a.position.anchor, &b.position.anchor) {
                 (Some(a), Some(b)) => a == b,
                 (None, None) => a.position.page == b.position.page,
@@ -160,18 +163,8 @@ impl Reader {
                 &mut state.pdf_highlights,
                 fixed_ranges,
                 cutoff,
-                |mark| {
-                    if mark.continuation.is_empty() {
-                        mark.updated_at.or(mark.created_at)
-                    } else {
-                        None
-                    }
-                },
-                |a, b| {
-                    a.continuation.is_empty()
-                        && b.continuation.is_empty()
-                        && same_pdf_highlight(a, b)
-                },
+                |mark| mark.updated_at.or(mark.created_at),
+                |a, b| a.page == b.page && same_pdf_highlight(a, b),
                 &mut summary,
             );
         } else {
@@ -229,9 +222,10 @@ fn export_fixed_bookmark(mark: &Bookmark, count: usize) -> Option<Mark> {
     Some(Mark {
         place: Place::Page(NonZeroU32::new(u32::try_from(index + 1).ok()?)?),
         created: mark.created_at,
-        updated: None,
+        updated: mark.updated_at,
         chapter: mark.chapter_title.clone(),
         text: mark.label.clone(),
+        note: mark.note.clone(),
         highlight: None,
     })
 }
@@ -240,35 +234,52 @@ fn export_fixed_highlight(
     mark: &PdfHighlight,
     reader: &crate::fixed_session::FixedReading,
 ) -> Option<Mark> {
-    if !mark.continuation.is_empty() || !mark.is_valid() {
+    if !mark.is_valid() {
         return None;
     }
-    let (w, h) = reader.annotation_page_size(mark.page).ok()?;
-    let boxes = mark
-        .bounds
-        .iter()
-        .map(|bounds| {
-            let x = f64::from(bounds.x0) * f64::from(w);
-            let y = f64::from(bounds.y0) * f64::from(h);
-            PageBox {
-                x,
-                y,
-                w: f64::from(bounds.x1) * f64::from(w) - x,
-                h: f64::from(bounds.y1) * f64::from(h) - y,
-            }
-        })
-        .collect();
+    let mut parts = Vec::new();
+    for (index, bounds, _) in mark.parts() {
+        let (w, h) = reader.annotation_page_size(index).ok()?;
+        let boxes = bounds
+            .iter()
+            .map(|bounds| {
+                let x = f64::from(bounds.x0) * f64::from(w);
+                let y = f64::from(bounds.y0) * f64::from(h);
+                PageBox {
+                    x,
+                    y,
+                    w: f64::from(bounds.x1) * f64::from(w) - x,
+                    h: f64::from(bounds.y1) * f64::from(h) - y,
+                }
+            })
+            .collect();
+        parts.push(PageBoxes {
+            page: NonZeroU32::new(u32::try_from(index.checked_add(1)?).ok()?)?,
+            boxes,
+        });
+    }
+    if parts.len() > exchange::MAX_PAGES
+        || parts.iter().map(|part| part.boxes.len()).sum::<usize>() > exchange::MAX_BOXES
+    {
+        return None;
+    }
+    let range = if parts.len() == 1 {
+        Range::Boxes(parts.pop()?.boxes)
+    } else {
+        Range::MultiBoxes(parts)
+    };
     Some(Mark {
         place: Place::Page(NonZeroU32::new(u32::try_from(mark.page + 1).ok()?)?),
         created: mark.created_at,
         updated: mark.updated_at,
         chapter: mark.chapter_title.clone(),
         text: mark.text.clone(),
+        note: None,
         highlight: Some(exchange::Highlight {
             note: mark.note.clone(),
             style: mark.style,
             color: mark.color,
-            range: Range::Boxes(boxes),
+            range,
         }),
     })
 }
@@ -288,8 +299,10 @@ fn load_fixed_mark(mark: Mark, reader: &crate::fixed_session::FixedReading) -> O
     }
     let Some(details) = mark.highlight else {
         return Some(FixedMark::Point(Bookmark {
+            note: mark.note,
+            updated_at: mark.updated,
             chapter_title: mark.chapter,
-            created_at: mark.updated.or(mark.created),
+            created_at: mark.created,
             label: label(mark.text, || format!("Page {page}")),
             position: ReadingPosition {
                 chapter: 0,
@@ -298,42 +311,88 @@ fn load_fixed_mark(mark: Mark, reader: &crate::fixed_session::FixedReading) -> O
             },
         }));
     };
-    let Range::Boxes(boxes) = details.range else {
-        return None;
+    let parts = match details.range {
+        Range::Boxes(boxes) => vec![PageBoxes { page, boxes }],
+        Range::MultiBoxes(parts) => parts,
+        Range::Text { .. } => return None,
     };
-    let (width, height) = reader.annotation_page_size(index).ok()?;
-    let (width, height) = (f64::from(width), f64::from(height));
-    let mut bounds = Vec::new();
-    for rect in boxes {
-        let right = rect.x + rect.w;
-        let bottom = rect.y + rect.h;
-        if right > width + 1.0 || bottom > height + 1.0 {
+    let mut checked = Vec::with_capacity(parts.len());
+    let mut selected = Vec::with_capacity(parts.len());
+    for part in parts {
+        let part_page = part.page.get() as usize - 1;
+        if part_page >= reader.count() {
             return None;
         }
-        bounds.push(PdfTextRect {
-            x0: (rect.x / width).clamp(0., 1.) as f32,
-            y0: (rect.y / height).clamp(0., 1.) as f32,
-            x1: (right / width).clamp(0., 1.) as f32,
-            y1: (bottom / height).clamp(0., 1.) as f32,
-        });
+        let (width, height) = reader.annotation_page_size(part_page).ok()?;
+        let (width, height) = (f64::from(width), f64::from(height));
+        let mut bounds = Vec::new();
+        for rect in part.boxes {
+            let right = rect.x + rect.w;
+            let bottom = rect.y + rect.h;
+            if right > width + 1.0 || bottom > height + 1.0 {
+                return None;
+            }
+            bounds.push(PdfTextRect {
+                x0: (rect.x / width).clamp(0., 1.) as f32,
+                y0: (rect.y / height).clamp(0., 1.) as f32,
+                x1: (right / width).clamp(0., 1.) as f32,
+                y1: (bottom / height).clamp(0., 1.) as f32,
+            });
+        }
+        let page_text = reader.page_text(part_page).ok()?;
+        let words = page_text
+            .words
+            .iter()
+            .filter(|word| {
+                let x = (word.bounds.x0 + word.bounds.x1) / 2.;
+                let y = (word.bounds.y0 + word.bounds.y1) / 2.;
+                bounds
+                    .iter()
+                    .any(|rect| x >= rect.x0 && x <= rect.x1 && y >= rect.y0 && y <= rect.y1)
+            })
+            .map(|word| page_text.text.get(word.bytes.clone()))
+            .collect::<Option<Vec<_>>>()?;
+        if words.is_empty() {
+            return None;
+        }
+        selected.push(words.join(" "));
+        checked.push((part_page, bounds));
     }
-    let page_text = reader.page_text(index).ok()?;
-    let matches = page_text
-        .words
+    // KOReader concatenates the extracted page strings, which may or may not
+    // include a newline at a physical page break. Compare every non-space
+    // character before reconstructing Reader's explicit page separators.
+    if selected.len() == 1 {
+        if !same_words(&selected[0], &mark.text) {
+            return None;
+        }
+    } else if selected
         .iter()
-        .filter(|word| {
-            let x = (word.bounds.x0 + word.bounds.x1) / 2.;
-            let y = (word.bounds.y0 + word.bounds.y1) / 2.;
-            bounds
-                .iter()
-                .any(|rect| x >= rect.x0 && x <= rect.x1 && y >= rect.y0 && y <= rect.y1)
-        })
-        .filter_map(|word| page_text.text.get(word.bytes.clone()));
-    if !matches
-        .flat_map(str::split_whitespace)
-        .eq(mark.text.split_whitespace())
+        .flat_map(|s| s.chars())
+        .filter(|c| !c.is_whitespace())
+        .ne(mark.text.chars().filter(|c| !c.is_whitespace()))
     {
         return None;
+    }
+    let mut text = String::new();
+    let mut continuation = Vec::new();
+    let mut checked = checked.into_iter();
+    let (first_page, bounds) = checked.next()?;
+    if first_page != index {
+        return None;
+    }
+    text.push_str(if selected.len() == 1 {
+        &mark.text
+    } else {
+        selected.first()?
+    });
+    for ((part_page, part_bounds), part_text) in checked.zip(selected.iter().skip(1)) {
+        text.push('\n');
+        continuation.push(HighlightPage {
+            page: part_page,
+            bounds: part_bounds,
+            text_offset: text.len(),
+        });
+        text.push_str(part_text);
     }
     let mark = PdfHighlight {
         chapter_title: mark.chapter,
@@ -343,9 +402,9 @@ fn load_fixed_mark(mark: Mark, reader: &crate::fixed_session::FixedReading) -> O
         style: details.style,
         page: index,
         bounds,
-        text: mark.text,
+        text,
         note: details.note,
-        continuation: Vec::new(),
+        continuation,
     };
     mark.is_valid().then_some(FixedMark::Range(mark))
 }
@@ -363,8 +422,10 @@ fn load_reflow_mark(mut mark: Mark, book: &mut Book) -> Option<TextMark> {
     let p = crate::cre_pointer::resolve(book, value, version).ok()?;
     let Some(details) = mark.highlight.take() else {
         let bookmark = Bookmark {
+            note: mark.note,
+            updated_at: mark.updated,
             chapter_title: mark.chapter,
-            created_at: mark.updated.or(mark.created),
+            created_at: mark.created,
             label: label(mark.text, || book.chapters[p.chapter].label.clone()),
             position: ReadingPosition {
                 chapter: p.chapter,

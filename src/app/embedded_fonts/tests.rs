@@ -266,6 +266,104 @@ fn embedded_fonts_woff_matches_ttf_and_bad_woff_falls_back() {
 }
 
 #[test]
+#[ignore = "Requires a debug reader-woff2-worker at READER_WOFF2_TEST_HELPER on macOS"]
+fn embedded_fonts_woff2_fixture_matches_ttf_and_preserves_selection() {
+    use crate::{Engine, Probe, Settings};
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let raw = crate::test_fixture("publisher-woff-ttf.epub");
+    let packed = crate::test_fixture("publisher-woff2.epub");
+    let original = fs::read(&packed).unwrap();
+    let open = |path: &Path, enabled| {
+        Probe::open(
+            path,
+            Engine::Parley,
+            &fonts,
+            Settings {
+                embedded_fonts: enabled,
+                ..Settings::default()
+            },
+            0,
+        )
+        .unwrap()
+    };
+    let mut ttf = open(&raw, true);
+    let mut woff2 = open(&packed, true);
+    let mut off = open(&packed, false);
+    assert!(!woff2.embedded_font_usage.is_empty());
+    assert!(off.embedded_font_usage.is_empty());
+    let anchor = woff2.matches("Harbor lettering").remove(0);
+    let mut end = anchor.clone();
+    end.offset += "Harbor lettering".len();
+    let selection = woff2.select_range(&anchor, &end).unwrap();
+    assert_eq!(selection.text, "Harbor lettering");
+    let page = woff2.page_for(&anchor).unwrap();
+    assert!(!woff2.selection_rects(page, &selection).is_empty());
+    assert_eq!(off.restore_anchor(&anchor), Some(anchor.clone()));
+    let pixels = woff2.capture(page).unwrap();
+    assert_eq!(pixels, ttf.capture(0).unwrap());
+    assert_ne!(pixels, off.capture(off.page_for(&anchor).unwrap()).unwrap());
+    if let Some(directory) = std::env::var_os("READER_SELECTION_VIEWPORT_CAPTURES") {
+        primitive_app::write_png(
+            &Path::new(&directory).join("woff2-reader-on.png"),
+            woff2.settings.width,
+            woff2.settings.height,
+            &pixels,
+        )
+        .unwrap();
+    }
+    assert_eq!(fs::read(packed).unwrap(), original);
+}
+
+#[test]
+fn embedded_fonts_woff2_unavailable_source_uses_the_next_ttf() {
+    use crate::{Engine, Probe, Settings};
+    use std::io::Read;
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Malformed WOFF2.epub");
+    let mut input = zip::ZipArchive::new(
+        fs::File::open(crate::test_fixture("publisher-woff-fallback.epub")).unwrap(),
+    )
+    .unwrap();
+    let mut output = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+    let options = zip::write::SimpleFileOptions::default();
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        let name = entry
+            .name()
+            .replace("Silkscreen-Regular.woff", "Silkscreen-Regular.woff2");
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        if name.ends_with(".css") || name.ends_with(".opf") {
+            bytes = String::from_utf8(bytes)
+                .unwrap()
+                .replace("Silkscreen-Regular.woff", "Silkscreen-Regular.woff2")
+                .replace("font/woff", "font/woff2")
+                .replace("format(\"woff\")", "format(\"woff2\")")
+                .into_bytes();
+        } else if name.ends_with(".woff2") {
+            bytes = b"wOF2-invalid".to_vec();
+        }
+        output.start_file(name, options).unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    output.finish().unwrap();
+    let original = fs::read(&path).unwrap();
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut expected = Probe::open(
+        &crate::test_fixture("publisher-woff-ttf.epub"),
+        Engine::Parley,
+        &fonts,
+        Settings::default(),
+        0,
+    )
+    .unwrap();
+    let mut actual = Probe::open(&path, Engine::Parley, &fonts, Settings::default(), 0).unwrap();
+    assert!(!actual.embedded_font_usage.is_empty());
+    assert_eq!(actual.capture(0).unwrap(), expected.capture(0).unwrap());
+    assert_eq!(fs::read(path).unwrap(), original);
+}
+
+#[test]
 fn embedded_fonts_woff_control_preserves_location_and_saved_preference() {
     let fixture = Fixture::new();
     let path = fixture.root.join("WOFF specimen.epub");

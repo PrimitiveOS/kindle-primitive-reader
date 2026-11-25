@@ -109,6 +109,8 @@ fn bookmark_appearance_switches_persist_and_keep_epub_note_targets_in_both_layou
     state.highlight_color = Some(HighlightColor::Red);
     state.highlights.extend(highlights);
     state.bookmarks.push(Bookmark {
+        note: None,
+        updated_at: None,
         chapter_title: None,
         position: position.clone(),
         label: PAGE_MARK.into(),

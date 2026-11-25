@@ -74,7 +74,9 @@ impl Reader {
                 .state(*id)
                 .is_some_and(|state| state.alternative_toc)
         });
-        let want_markers = self.uses_alternative_contents();
+        let want_markers = self.uses_alternative_contents()
+            || self.publisher_filtered_marker_demand()
+            || self.contents_chapter_lengths_demand();
         if let Some(active) = &mut self.active {
             active
                 .reading

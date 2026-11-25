@@ -1,7 +1,7 @@
 //! Local vocabulary review data and the reading workflow that owns it.
 //! Scheduling follows the observed KOReader vocabulary-builder contract.
 use primitive_app::Change;
-use primitive_ui::{BODY, CAPTION, Canvas, Input, Rect};
+use primitive_ui::{BODY, CAPTION, Canvas, Input, PAPER, Press, Rect, keyboard_key};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -133,6 +133,9 @@ pub(super) enum Command {
     ToggleContext,
     ToggleDue,
     ToggleBook(String),
+    AssignBook,
+    ChooseBook(String),
+    NewBook,
     ClearFilter,
     Search,
 }
@@ -148,6 +151,14 @@ pub(super) struct View {
     confirmation_origin: Option<Screen>,
     text_page: usize,
     text_pages: std::cell::Cell<usize>,
+    rename_book: Option<BookEdit>,
+    assigning_book: bool,
+}
+
+#[derive(Clone)]
+enum BookEdit {
+    Rename(String),
+    Assign,
 }
 
 pub(super) fn now() -> u64 {
@@ -218,7 +229,14 @@ impl Reader {
                     .values()
                     .map(|entry| entry.book.clone())
                     .collect();
-                books
+                let assigning = self.vocabulary_view.assigning_book;
+                let current = self
+                    .vocabulary_view
+                    .word
+                    .as_ref()
+                    .and_then(|word| data.words.get(word))
+                    .map(|entry| entry.book.as_str());
+                let mut items: Vec<_> = books
                     .into_iter()
                     .map(|book| {
                         Item::new(
@@ -227,15 +245,32 @@ impl Reader {
                             } else {
                                 &book
                             },
-                            Action::Vocabulary(Command::ToggleBook(book.clone())),
+                            Action::Vocabulary(if assigning {
+                                Command::ChooseBook(book.clone())
+                            } else {
+                                Command::ToggleBook(book.clone())
+                            }),
                         )
-                        .detail(if data.excluded_books.contains(&book) {
-                            "Excluded"
-                        } else {
-                            "Included"
-                        })
+                        .detail(
+                            if assigning && current == Some(book.as_str()) {
+                                "Current source"
+                            } else if assigning {
+                                "Move this word here"
+                            } else if data.excluded_books.contains(&book) {
+                                "Excluded · Hold to rename"
+                            } else {
+                                "Included · Hold to rename"
+                            },
+                        )
                     })
-                    .collect()
+                    .collect();
+                if assigning {
+                    items.insert(
+                        0,
+                        Item::new("New book title", Action::Vocabulary(Command::NewBook)),
+                    );
+                }
+                items
             }
             Screen::VocabularyWord => {
                 let Some(word) = &self.vocabulary_view.word else {
@@ -257,6 +292,11 @@ impl Reader {
                 }
                 items.extend([
                     Item::new("Show definition", Action::LookUp(word.clone())),
+                    Item::new(
+                        "Change source book",
+                        Action::Vocabulary(Command::AssignBook),
+                    )
+                    .detail(source(entry)),
                     Item::new("Got it", Action::Vocabulary(Command::Review(true)))
                         .detail("Schedule the next review"),
                     Item::new("Forgot", Action::Vocabulary(Command::Review(false)))
@@ -392,6 +432,16 @@ impl Reader {
                     h.review.excluded_books.insert(book);
                 }
             })?,
+            Command::AssignBook => {
+                self.vocabulary_view.assigning_book = true;
+                self.show(Screen::VocabularyBooks);
+            }
+            Command::ChooseBook(book) => self.assign_vocabulary_book(book)?,
+            Command::NewBook => {
+                self.editor = super::Editor::new(512);
+                self.vocabulary_view.rename_book = Some(BookEdit::Assign);
+                self.notice = None;
+            }
             Command::ClearFilter => {
                 self.vocabulary_view.query.clear();
                 self.show(Screen::Vocabulary);
@@ -403,6 +453,30 @@ impl Reader {
                 self.show(Screen::VocabularySearch);
             }
         }
+        Ok(())
+    }
+
+    fn assign_vocabulary_book(&mut self, title: String) -> Result<()> {
+        let word = self
+            .vocabulary_view
+            .word
+            .clone()
+            .ok_or("Choose a vocabulary word first")?;
+        if !self.lookup_history.review.words.contains_key(&word) {
+            return Err("That vocabulary word is unavailable".into());
+        }
+        self.update_lookup_history(|history| {
+            if let Some(entry) = history.review.words.get_mut(&word) {
+                entry.book.clone_from(&title);
+            }
+        })?;
+        if let Some(previous) = self.vocabulary_view.undo.get_mut(&word) {
+            previous.book = title;
+        }
+        self.vocabulary_view.assigning_book = false;
+        self.vocabulary_view.rename_book = None;
+        self.notice = None;
+        self.show(Screen::VocabularyWord);
         Ok(())
     }
 
@@ -457,6 +531,28 @@ impl Reader {
     }
 
     pub(super) fn draw_vocabulary_dialog(&self, canvas: &mut Canvas) {
+        if let Some(editor) = &self.vocabulary_view.rename_book {
+            let layout = self.navigation_layout();
+            canvas.fill(Rect::new(0, 0, layout.width, layout.height), PAPER);
+            layout.header(
+                canvas,
+                match editor {
+                    BookEdit::Rename(_) => "Change vocabulary book title",
+                    BookEdit::Assign => "Move word to book",
+                },
+            );
+            canvas.single_line_field(
+                layout.body(super::LIST_Y, 130),
+                &self.editor,
+                "Book title",
+                false,
+            );
+            if let Some(notice) = &self.notice {
+                canvas.text(layout.body(super::LIST_Y + 140, 70), notice, CAPTION);
+            }
+            canvas.keyboard(self.editor.layer, "Save", None);
+            return;
+        }
         if let Some((word, _)) = &self.vocabulary_view.repeated {
             let Some(entry) = self.lookup_history.review.words.get(word) else {
                 return;
@@ -513,6 +609,106 @@ impl Reader {
     }
 
     pub(super) fn vocabulary_dialog_input(&mut self, input: Input) -> Option<Change> {
+        if let Some(editor) = self.vocabulary_view.rename_book.clone() {
+            if matches!(input, Input::Sleep | Input::Wake) {
+                return None;
+            }
+            let layout = self.navigation_layout();
+            if input == Input::PageBack
+                || matches!(input, Input::Tap(x, y) if layout.back().contains(x, y))
+            {
+                self.vocabulary_view.rename_book = None;
+                self.notice = None;
+                return Some(Change::Partial);
+            }
+            let Input::Tap(x, y) = input else {
+                return Some(Change::None);
+            };
+            let Some(key) = keyboard_key(&layout.keyboard(), &self.editor, "Save", x, y) else {
+                return Some(Change::None);
+            };
+            if self.editor.press(key) != Press::Go {
+                self.notice = None;
+                return Some(Change::Partial);
+            }
+            let title = self.editor.string().trim().to_owned();
+            if title.is_empty() || title.len() > 512 || title.chars().any(char::is_control) {
+                self.notice = Some("Enter a nonempty title of at most 512 bytes".into());
+                return Some(Change::Partial);
+            }
+            let BookEdit::Rename(original) = editor else {
+                return Some(match self.assign_vocabulary_book(title) {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                });
+            };
+            if title != original
+                && (self
+                    .lookup_history
+                    .review
+                    .words
+                    .values()
+                    .any(|entry| entry.book == title)
+                    || self.lookup_history.review.excluded_books.contains(&title))
+            {
+                self.notice = Some("That vocabulary book title is already in use".into());
+                return Some(Change::Partial);
+            }
+            if title != original {
+                if let Err(error) = self.update_lookup_history(|history| {
+                    for entry in history.review.words.values_mut() {
+                        if entry.book == original {
+                            entry.book.clone_from(&title);
+                        }
+                    }
+                    if history.review.excluded_books.remove(&original) {
+                        history.review.excluded_books.insert(title.clone());
+                    }
+                }) {
+                    return Some(self.report(error));
+                }
+                // Undo snapshots belong to the same saved words and must not
+                // silently resurrect a renamed source title on the next undo.
+                for entry in self.vocabulary_view.undo.values_mut() {
+                    if entry.book == original {
+                        entry.book.clone_from(&title);
+                    }
+                }
+            }
+            self.vocabulary_view.rename_book = None;
+            self.notice = None;
+            return Some(Change::Partial);
+        }
+        if self.screen == Screen::VocabularyBooks && self.vocabulary_view.assigning_book {
+            let back = self.navigation_layout().back();
+            if input == Input::PageBack || matches!(input, Input::Tap(x, y) if back.contains(x, y))
+            {
+                self.vocabulary_view.assigning_book = false;
+                self.show(Screen::VocabularyWord);
+                return Some(Change::Partial);
+            }
+        }
+        if self.screen == Screen::VocabularyBooks
+            && !self.vocabulary_view.assigning_book
+            && let Input::LongTap(x, y) = input
+        {
+            let (count, mut items) = self.list_window();
+            let geometry = self.list_geometry();
+            let Some(index) = geometry.item_at(self.list_page, count, x, y) else {
+                return Some(Change::None);
+            };
+            let Action::Vocabulary(Command::ToggleBook(book)) =
+                items.swap_remove(index % geometry.rows).action
+            else {
+                return Some(Change::None);
+            };
+            self.editor = super::Editor::new(512);
+            self.editor.text = book.chars().collect();
+            self.editor.caret = self.editor.text.len();
+            self.vocabulary_view.rename_book = Some(BookEdit::Rename(book));
+            self.notice = None;
+            return Some(Change::Partial);
+        }
         if let Some((word, entry)) = self.vocabulary_view.repeated.clone() {
             match input {
                 Input::Sleep | Input::Wake => return None,

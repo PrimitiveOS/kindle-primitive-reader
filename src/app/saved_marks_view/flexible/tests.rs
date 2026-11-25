@@ -71,6 +71,8 @@ fn flexible_bookmark_lines_persist_and_restore_the_previous_fixed_layout() {
     let id = app.open_book_id().unwrap();
     let state = app.library.state_mut(id).unwrap();
     state.bookmarks.extend((1..=15).map(|index| Bookmark {
+        note: None,
+        updated_at: None,
         chapter_title: None,
         created_at: None,
         label: format!("Reading mark {index:02}"),

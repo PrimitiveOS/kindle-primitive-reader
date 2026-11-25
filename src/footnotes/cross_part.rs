@@ -73,60 +73,138 @@ pub(crate) struct Layout {
 
 /// A single foreign note copied into blank space on an existing body page.
 /// It does not change host page ranges, page count or progress anchors.
-pub(crate) struct Band {
-    pub(crate) page: usize,
-    pub(crate) layout: Layout,
+#[derive(Clone, Copy)]
+struct Placement {
+    page: usize,
     y: u32,
+    clear_from: u32,
+    separator: Option<(u32, bool)>,
+}
+
+pub(crate) struct Band {
+    pub(crate) layout: Layout,
     rows: u32,
-    separator: u32,
+    placements: Vec<Placement>,
 }
 
 impl Band {
-    pub(crate) fn y_offset(&self) -> u32 {
-        self.y
-    }
-
-    /// Create only after capturing the exact uninverted host page. Scan the
-    /// full width, including margins, so no painted content can be covered.
-    pub(crate) fn new(page: usize, layout: Layout, host: &[u8]) -> Option<Self> {
-        let settings = layout.settings;
+    pub(crate) fn unplaced(layout: Layout) -> Self {
         let rows = layout.extent.ceil() as u32;
-        let height = settings.text_height();
-        let gap = settings.font_size.ceil() as u32;
-        let y = height.checked_sub(rows)?;
-        let separator = y.checked_sub((gap / 3).max(1))?;
-        let band = Self {
-            page,
+        Self {
             layout,
-            y,
             rows,
-            separator,
-        };
-        band.blank(host).then_some(band)
+            placements: Vec::new(),
+        }
     }
 
-    fn blank(&self, pixels: &[u8]) -> bool {
-        let settings = self.layout.settings;
+    #[cfg(test)]
+    pub(crate) fn new(page: usize, layout: Layout, host: &[u8]) -> Option<Self> {
+        let mut band = Self::unplaced(layout);
+        let y = band.layout.settings.text_height().checked_sub(band.rows)?;
+        let gap = (band.layout.settings.font_size.ceil() as u32 / 3).max(1);
+        let separator = y.checked_sub(gap)?;
+        if !Self::page_blank(band.layout.settings, separator, host) {
+            return None;
+        }
+        band.place(page, y, separator, Some(band.layout.separator_on_right));
+        Some(band)
+    }
+
+    pub(crate) fn rows(&self) -> u32 {
+        self.rows
+    }
+
+    pub(crate) fn rtl_lines(&self) -> usize {
+        let blocks = self.layout.renderer.pagination_rtl_blocks();
+        self.layout
+            .lines
+            .iter()
+            .filter(|line| blocks.contains(&line.block))
+            .count()
+    }
+
+    pub(crate) fn line_count(&self) -> usize {
+        self.layout.lines.len()
+    }
+
+    /// The complete stack, separator included, may cover only blank host pixels.
+    pub(crate) fn page_blank(settings: Settings, clear_from: u32, pixels: &[u8]) -> bool {
         let width = settings.width as usize;
         let Some(total) = width.checked_mul(settings.height as usize) else {
             return false;
         };
-        if pixels.len() != total {
+        if pixels.len() != total || clear_from > settings.text_height() {
             return false;
         }
-        let first = (settings.top_margin() + self.separator) as usize * width;
+        let first = (settings.top_margin() + clear_from) as usize * width;
         let end = (settings.top_margin() + settings.text_height()) as usize * width;
         pixels
             .get(first..end)
             .is_some_and(|rows| rows.iter().all(|&pixel| pixel == 255))
     }
 
-    /// Recheck the live host raster before touching it. A failed note paint
-    /// leaves the host buffer unmodified and preserves ordinary link flow.
-    pub(crate) fn paint(&mut self, pixels: &mut [u8]) -> crate::Result<bool> {
-        if !self.blank(pixels) {
-            return Ok(false);
+    /// Positions are planned together for the whole page before being installed.
+    pub(crate) fn place(&mut self, page: usize, y: u32, clear_from: u32, separator: Option<bool>) {
+        self.placements.retain(|placement| placement.page != page);
+        self.placements.push(Placement {
+            page,
+            y,
+            clear_from,
+            separator: separator.map(|right| (clear_from, right)),
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn add_page(&mut self, page: usize, host: &[u8]) -> bool {
+        if self.displays(page) {
+            return true;
         }
+        let Some(original) = self.placements.first().copied() else {
+            return false;
+        };
+        if !Self::page_blank(self.layout.settings, original.clear_from, host) {
+            return false;
+        }
+        self.placements.push(Placement { page, ..original });
+        true
+    }
+
+    fn placement(&self, page: usize) -> Option<Placement> {
+        self.placements
+            .iter()
+            .find(|placement| placement.page == page)
+            .copied()
+    }
+
+    pub(crate) fn y_offset(&self, page: usize) -> u32 {
+        self.placement(page)
+            .expect("the note is not displayed on that page")
+            .y
+    }
+
+    pub(crate) fn displays(&self, page: usize) -> bool {
+        self.placement(page).is_some()
+    }
+
+    pub(crate) fn remove_page(&mut self, page: usize) {
+        self.placements.retain(|placement| placement.page != page);
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.placements.is_empty()
+    }
+
+    pub(crate) fn host_is_blank(&self, page: usize, pixels: &[u8]) -> bool {
+        self.placement(page)
+            .is_some_and(|p| Self::page_blank(self.layout.settings, p.clear_from, pixels))
+    }
+
+    /// Caller validates the untouched host for every note before painting into
+    /// a temporary buffer, so errors cannot leave a partially displayed stack.
+    pub(crate) fn paint_on(&mut self, page: usize, pixels: &mut [u8]) -> crate::Result<bool> {
+        let Some(placement) = self.placement(page) else {
+            return Ok(false);
+        };
         let settings = self.layout.settings;
         let width = settings.width as usize;
         let note = self
@@ -137,7 +215,7 @@ impl Band {
             return Ok(false);
         }
         let from = settings.top_margin() as usize * width;
-        let to = (settings.top_margin() + self.y) as usize * width;
+        let to = (settings.top_margin() + placement.y) as usize * width;
         let count = self.rows as usize * width;
         let Some(note_rows) = note.get(from..from + count) else {
             return Ok(false);
@@ -146,27 +224,43 @@ impl Band {
             return Ok(false);
         };
         target.copy_from_slice(note_rows);
-        let left = if self.layout.separator_on_right {
-            width - settings.right_margin() as usize - width / 7
-        } else {
-            settings.left_margin() as usize
-        };
-        let start = (settings.top_margin() + self.separator) as usize * width + left;
-        pixels[start..start + width / 7].fill(85);
+        if let Some((separator, right)) = placement.separator {
+            let left = if right {
+                width - settings.right_margin() as usize - width / 7
+            } else {
+                settings.left_margin() as usize
+            };
+            let start = (settings.top_margin() + separator) as usize * width + left;
+            let Some(rule) = pixels.get_mut(start..start + width / 7) else {
+                return Ok(false);
+            };
+            rule.fill(85);
+        }
         Ok(true)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn paint(&mut self, pixels: &mut [u8]) -> crate::Result<bool> {
+        let Some(page) = self.placements.first().map(|p| p.page) else {
+            return Ok(false);
+        };
+        if !self.host_is_blank(page, pixels) {
+            return Ok(false);
+        }
+        self.paint_on(page, pixels)
     }
 
     /// True even in note margins so a blank part of the band cannot fall
     /// through to a host-chapter hit behind the overlay.
     pub(crate) fn contains(&self, page: usize, x: f32, y: f32) -> bool {
+        let Some(placement) = self.placement(page) else {
+            return false;
+        };
         let settings = self.layout.settings;
-        let top = (settings.top_margin() + self.y) as f32;
-        page == self.page
-            && (0.0..settings.width as f32).contains(&x)
-            && (top..top + self.rows as f32).contains(&y)
+        let top = (settings.top_margin() + placement.y) as f32;
+        (0.0..settings.width as f32).contains(&x) && (top..top + self.rows as f32).contains(&y)
     }
 
-    /// Convert screen coordinates to the foreign renderer's text columns.
     pub(crate) fn coordinates(&self, page: usize, x: f32, y: f32) -> Option<(f32, f32)> {
         if !self.contains(page, x, y) {
             return None;
@@ -177,7 +271,10 @@ impl Band {
         if !(left..right).contains(&x) {
             return None;
         }
-        Some((x - left, y - (settings.top_margin() + self.y) as f32))
+        Some((
+            x - left,
+            y - (settings.top_margin() + self.y_offset(page)) as f32,
+        ))
     }
 
     /// Both values are needed by callers: relative links inside the note are
@@ -356,7 +453,9 @@ pub(crate) fn prepare_for_settings(
         for link in &block.links {
             inspected += 1;
             if inspected > MAX_REFERENCES {
-                break;
+                // A later reference could compete for a page already planned
+                // above. Do not publish a partial reference inventory.
+                return None;
             }
             if link.note_reference != Reference::Explicit
                 || block
@@ -374,9 +473,6 @@ pub(crate) fn prepare_for_settings(
                 continue;
             }
             targets.push((block.key, link.bytes.clone(), target.path, id));
-        }
-        if inspected > MAX_REFERENCES {
-            break;
         }
     }
     let mut plan = Plan {

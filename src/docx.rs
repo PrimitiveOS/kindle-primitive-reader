@@ -25,6 +25,9 @@ const MAX_OUTPUT: usize = 1024 * 1024;
 const MAX_HEADINGS: usize = 512;
 const MAX_LABEL: usize = 512;
 const MAX_STYLES: usize = 1024;
+const MAX_IMAGES: usize = 128;
+const MAX_IMAGE_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_IMAGE_TOTAL: u64 = 16 * 1024 * 1024;
 
 const WORD_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const STRICT_WORD_NS: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main";
@@ -32,6 +35,10 @@ const TYPES_NS: &str = "http://schemas.openxmlformats.org/package/2006/content-t
 const RELS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 const OFFICE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
 const STRICT_OFFICE_REL: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships/";
+const DRAWING_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const STRICT_DRAWING_NS: &str = "http://purl.oclc.org/ooxml/drawingml/main";
+const REL_ATTR_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const STRICT_REL_ATTR_NS: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships";
 const CORE_REL: &str =
     "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
 const CORE_NS: &str = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
@@ -75,10 +82,10 @@ pub(crate) fn open(
         return Err("The package does not declare a macro-free Word document main part".into());
     }
     let main = read_xml_part(&mut archive, &parts, &main_path, MAX_MAIN_XML)?;
-    let styles = match relations
+    let main_relations = relations
         .remove(&relationships_name(&main_path))
-        .and_then(|refs| refs.styles)
-    {
+        .unwrap_or_default();
+    let styles = match main_relations.styles {
         Some(path) => read_styles(&read_xml_part(&mut archive, &parts, &path, MAX_OTHER_XML)?)?,
         None => BTreeMap::new(),
     };
@@ -86,7 +93,8 @@ pub(crate) fn open(
         Some(path) => read_metadata(&read_xml_part(&mut archive, &parts, &path, MAX_OTHER_XML)?)?,
         None => (None, None, Default::default()),
     };
-    let output = convert_main(&main, &styles)?;
+    let (images, resources) = read_images(&mut archive, &parts, &main, &main_relations.images)?;
+    let output = convert_main_with_images(&main, &styles, images)?;
     Ok(Document {
         fb2_note_sections: Default::default(),
         metadata,
@@ -95,7 +103,7 @@ pub(crate) fn open(
         chapter_path: CHAPTER_PATH.to_owned(),
         xhtml: output.xhtml,
         toc: output.toc,
-        resources: BTreeMap::new(),
+        resources,
     })
 }
 
@@ -190,6 +198,74 @@ fn read_xml_part<R: Read + Seek>(
         );
     }
     Ok(text)
+}
+
+fn read_images<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    parts: &BTreeMap<String, usize>,
+    main: &str,
+    relationships: &BTreeMap<String, String>,
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, Vec<u8>>)> {
+    let xml = xml(main)?;
+    let mut images = BTreeMap::new();
+    let mut resources = BTreeMap::new();
+    let mut remaining = MAX_IMAGE_TOTAL;
+    for node in xml.descendants().filter(|node| drawing_blip(*node)) {
+        let Some(id) = rel_attribute(node, "embed") else {
+            continue;
+        };
+        if images.contains_key(id) {
+            continue;
+        }
+        let Some(path) = relationships.get(id) else {
+            continue;
+        };
+        let extension = match path.rsplit_once('.').map(|(_, ext)| ext) {
+            Some("png") => "png",
+            Some("jpg" | "jpeg") => "jpg",
+            _ => continue,
+        };
+        if images.len() >= MAX_IMAGES {
+            return Err("The Word document contains too many images".into());
+        }
+        let index = *parts.get(path).ok_or("A Word image part is missing")?;
+        let entry = archive.by_index(index)?;
+        if entry.size() > MAX_IMAGE_BYTES
+            || entry.size() > remaining
+            || !matches!(
+                entry.compression(),
+                CompressionMethod::Stored | CompressionMethod::Deflated
+            )
+        {
+            return Err("A Word image exceeds Reader's resource limits".into());
+        }
+        let mut bytes = Vec::new();
+        entry.take(MAX_IMAGE_BYTES + 1).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > MAX_IMAGE_BYTES || bytes.len() as u64 > remaining {
+            return Err("A Word image exceeds Reader's resource limits".into());
+        }
+        let valid_signature = match extension {
+            "png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+            _ => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+        };
+        if !valid_signature {
+            return Err("A Word image does not match its declared format".into());
+        }
+        remaining -= bytes.len() as u64;
+        let name = format!("reader-docx-image-{}.{}", images.len(), extension);
+        images.insert(id.to_owned(), name.clone());
+        resources.insert(name, bytes);
+    }
+    Ok((images, resources))
+}
+
+fn drawing_blip(node: Node<'_, '_>) -> bool {
+    node.has_tag_name((DRAWING_NS, "blip")) || node.has_tag_name((STRICT_DRAWING_NS, "blip"))
+}
+
+fn rel_attribute<'a>(node: Node<'a, '_>, name: &str) -> Option<&'a str> {
+    node.attribute((REL_ATTR_NS, name))
+        .or_else(|| node.attribute((STRICT_REL_ATTR_NS, name)))
 }
 
 fn xml(text: &str) -> Result<Xml<'_>> {
@@ -295,6 +371,7 @@ struct Relationships {
     main: Option<String>,
     core: Option<String>,
     styles: Option<String>,
+    images: BTreeMap<String, String>,
 }
 
 fn relationships_name(source: &str) -> String {
@@ -394,6 +471,10 @@ fn parse_relationships(text: &str, source: &str, package: bool) -> Result<Relati
             _ => return Err("The Word package relationship mode is invalid".into()),
         }
         let path = target_part(source, target)?;
+        if !package && office == Some("image") {
+            found.images.insert(id.to_owned(), path);
+            continue;
+        }
         let field = match (package, office, kind) {
             (true, Some("officeDocument"), _) => &mut found.main,
             (true, _, CORE_REL) => &mut found.core,
@@ -561,6 +642,8 @@ struct Output {
     toc: Vec<TocEntry>,
     headings: usize,
     has_text: bool,
+    images: BTreeMap<String, String>,
+    bookmarks: BTreeSet<String>,
 }
 
 impl fmt::Write for Output {
@@ -573,7 +656,11 @@ impl fmt::Write for Output {
     }
 }
 
-fn convert_main(text: &str, styles: &Styles) -> Result<Output> {
+fn convert_main_with_images(
+    text: &str,
+    styles: &Styles,
+    images: BTreeMap<String, String>,
+) -> Result<Output> {
     let document = xml(text)?;
     let root = document.root_element();
     if !word(root, "document") {
@@ -592,7 +679,10 @@ fn convert_main(text: &str, styles: &Styles) -> Result<Output> {
     if bodies.next().is_some() {
         return Err("The Word document has more than one main body".into());
     }
-    let mut output = Output::default();
+    let mut output = Output {
+        images,
+        ..Output::default()
+    };
     (|| -> fmt::Result {
         output.write_str("<html xmlns=\"http://www.w3.org/1999/xhtml\"><head/><body>")?;
         output.blocks(body, styles, false)?;
@@ -600,7 +690,7 @@ fn convert_main(text: &str, styles: &Styles) -> Result<Output> {
     })()
     .map_err(|_| "The Word document exceeds Reader's reflow output limit")?;
     if !output.has_text {
-        return Err("The Word document has no supported reading text".into());
+        return Err("The Word document has no supported reading text or images".into());
     }
     Ok(output)
 }
@@ -616,6 +706,8 @@ impl Output {
                 if let Some(content) = child(node, "sdtContent") {
                     self.blocks(content, styles, in_table)?;
                 }
+            } else if word(node, "bookmarkStart") {
+                self.bookmark(node)?;
             } else if transparent(node) {
                 self.blocks(node, styles, in_table)?;
             }
@@ -655,6 +747,9 @@ impl Output {
     }
 
     fn table(&mut self, table: Node<'_, '_>, styles: &Styles) -> fmt::Result {
+        for bookmark in table.children().filter(|node| word(*node, "bookmarkStart")) {
+            self.bookmark(bookmark)?;
+        }
         self.write_str("<table><tbody>")?;
         for row in table.children().filter(|node| word(*node, "tr")) {
             self.write_str("<tr>")?;
@@ -678,7 +773,20 @@ impl Output {
                 if let Some(content) = child(node, "sdtContent") {
                     self.inline(content, heading.as_deref_mut())?;
                 }
-            } else if word(node, "hyperlink") || transparent(node) {
+            } else if word(node, "bookmarkStart") {
+                self.bookmark(node)?;
+            } else if word(node, "hyperlink") {
+                let anchor = value(node, "anchor")
+                    .filter(|_| rel_attribute(node, "id").is_none())
+                    .and_then(bookmark_id);
+                if let Some(anchor) = &anchor {
+                    write!(self, "<a href=\"#{anchor}\">")?;
+                }
+                self.inline(node, heading.as_deref_mut())?;
+                if anchor.is_some() {
+                    self.write_str("</a>")?;
+                }
+            } else if transparent(node) {
                 self.inline(node, heading.as_deref_mut())?;
             }
         }
@@ -729,6 +837,16 @@ impl Output {
                 append_label(&mut heading, "\u{2011}");
             } else if word(item, "softHyphen") {
                 self.write_char('\u{00ad}')?;
+            } else if word(item, "drawing") {
+                for image in item.descendants().filter(|node| drawing_blip(*node)) {
+                    if let Some(name) = rel_attribute(image, "embed")
+                        .and_then(|id| self.images.get(id))
+                        .cloned()
+                    {
+                        write!(self, "<img src=\"{name}\" alt=\"\"/>")?;
+                        self.has_text = true;
+                    }
+                }
             }
         }
         if italic {
@@ -755,6 +873,26 @@ impl Output {
         }
         self.write_str(&text[from..])
     }
+
+    fn bookmark(&mut self, node: Node<'_, '_>) -> fmt::Result {
+        if let Some(id) = value(node, "name").and_then(bookmark_id)
+            && self.bookmarks.insert(id.clone())
+        {
+            write!(self, "<a id=\"{id}\"></a>")?;
+        }
+        Ok(())
+    }
+}
+
+fn bookmark_id(name: &str) -> Option<String> {
+    if name.is_empty() || name.len() > MAX_LABEL {
+        return None;
+    }
+    let mut id = String::from("word-bookmark-");
+    for byte in name.bytes() {
+        write!(&mut id, "{byte:02x}").ok()?;
+    }
+    Some(id)
 }
 
 fn transparent(node: Node<'_, '_>) -> bool {
