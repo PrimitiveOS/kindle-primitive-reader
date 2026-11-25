@@ -59,6 +59,7 @@ pub(super) enum Page {
     Results,
     Filters,
     RemoveNotesConfirm,
+    SelectNotes,
     Colors,
     Search,
     Detail,
@@ -86,6 +87,7 @@ impl Page {
             Self::Results => "Bookmark browser",
             Self::Filters => "Bookmark filters",
             Self::RemoveNotesConfirm => "Remove notes",
+            Self::SelectNotes => "Choose notes",
             Self::Colors => "Highlight color filter",
             Self::Search => "Find saved marks",
             Self::Detail => "Saved mark",
@@ -195,6 +197,8 @@ pub(super) enum Command {
     FocusCurrentPage,
     PreviewRemoveCurrentNotes,
     ConfirmRemoveCurrentNotes,
+    ToggleReviewedNote(usize),
+    SetAllReviewedNotes(bool),
     ToggleDefault(Source),
     OpenFolder(PathBuf, bool),
     ToggleBook(u64),
@@ -226,6 +230,25 @@ enum NoteTarget {
 }
 
 impl NoteTarget {
+    fn preview(&self) -> (&str, &str, Option<&str>) {
+        match self {
+            Self::Bookmark(_, mark) => (
+                mark.note.as_deref().unwrap_or(""),
+                &mark.label,
+                mark.chapter_title.as_deref(),
+            ),
+            Self::Reflow(_, mark) => (
+                mark.note.as_deref().unwrap_or(""),
+                &mark.selection.text,
+                mark.chapter_title.as_deref(),
+            ),
+            Self::Fixed(_, mark) => (
+                mark.note.as_deref().unwrap_or(""),
+                &mark.text,
+                mark.chapter_title.as_deref(),
+            ),
+        }
+    }
     fn capture(book: &BookState, locator: Locator) -> Result<Option<Self>> {
         Ok(match locator {
             Locator::Bookmark(index) => {
@@ -303,7 +326,18 @@ impl NoteTarget {
 struct PendingNoteRemoval {
     book: u64,
     title: String,
-    targets: Vec<NoteTarget>,
+    targets: Vec<ReviewedNote>,
+}
+
+struct ReviewedNote {
+    target: NoteTarget,
+    selected: bool,
+}
+
+impl PendingNoteRemoval {
+    fn selected_count(&self) -> usize {
+        self.targets.iter().filter(|item| item.selected).count()
+    }
 }
 
 struct ListedBook {
@@ -667,7 +701,7 @@ impl Reader {
                 self.show(Screen::BookmarkBrowser(Page::Sources));
             }
             Command::Go(page) => {
-                if page != Page::RemoveNotesConfirm {
+                if !matches!(page, Page::RemoveNotesConfirm | Page::SelectNotes) {
                     self.bookmark_browser.pending_note_removal = None;
                 }
                 if page == Page::Sources {
@@ -884,7 +918,10 @@ impl Reader {
                         if targets.len() == 512 {
                             return Err("Too many matching notes; narrow the filters first".into());
                         }
-                        targets.push(target);
+                        targets.push(ReviewedNote {
+                            target,
+                            selected: true,
+                        });
                     }
                 }
                 if targets.is_empty() {
@@ -915,8 +952,12 @@ impl Reader {
                 let id = pending.book;
                 let state = self.library.state(id).ok_or("That book is unavailable")?;
                 if state.title != pending.title
-                    || pending.targets.is_empty()
-                    || !pending.targets.iter().all(|target| target.matches(state))
+                    || pending.selected_count() == 0
+                    || !pending
+                        .targets
+                        .iter()
+                        .filter(|item| item.selected)
+                        .all(|item| item.target.matches(state))
                 {
                     return Err("A matching mark changed; review the notes again".into());
                 }
@@ -928,8 +969,8 @@ impl Reader {
                     .state_mut(id)
                     .ok_or("That book is unavailable")?;
                 let now = crate::mark_time::now();
-                for target in &pending.targets {
-                    target.clear(state, now);
+                for item in pending.targets.iter().filter(|item| item.selected) {
+                    item.target.clear(state, now);
                 }
                 if let Err(error) = self.library.persist() {
                     if let Some(state) = self.library.state_mut(id) {
@@ -947,6 +988,31 @@ impl Reader {
                         .bookmark_text("Notes removed")
                         .into(),
                 );
+            }
+            Command::ToggleReviewedNote(index) => {
+                if self.screen != Screen::BookmarkBrowser(Page::SelectNotes) {
+                    return Err("Review the notes before selecting them".into());
+                }
+                let item = self
+                    .bookmark_browser
+                    .pending_note_removal
+                    .as_mut()
+                    .and_then(|pending| pending.targets.get_mut(index))
+                    .ok_or("That reviewed note is unavailable")?;
+                item.selected = !item.selected;
+            }
+            Command::SetAllReviewedNotes(selected) => {
+                if self.screen != Screen::BookmarkBrowser(Page::SelectNotes) {
+                    return Err("Review the notes before selecting them".into());
+                }
+                let pending = self
+                    .bookmark_browser
+                    .pending_note_removal
+                    .as_mut()
+                    .ok_or("Review the notes before selecting them")?;
+                for item in &mut pending.targets {
+                    item.selected = selected;
+                }
             }
             Command::ToggleDefault(source) => {
                 let browser = &mut self.bookmark_browser;
@@ -1502,15 +1568,17 @@ impl Reader {
             Page::RemoveNotesConfirm => {
                 let mut rows = Vec::new();
                 if let Some(pending) = &browser.pending_note_removal {
-                    let message = if language.is_english() {
+                    let message = if pending.selected_count() == 0 {
+                        language.bookmark_text("No notes selected").to_owned()
+                    } else if language.is_english() {
                         format!(
-                            "Delete {} matching notes in this book?",
-                            pending.targets.len()
+                            "Delete {} selected notes in this book?",
+                            pending.selected_count()
                         )
                     } else {
                         format!(
-                            "Xóa {} ghi chú phù hợp trong sách này?",
-                            pending.targets.len()
+                            "Xóa {} ghi chú đã chọn trong sách này?",
+                            pending.selected_count()
                         )
                     };
                     rows.push(Item::new(message, Action::Heading));
@@ -1520,11 +1588,51 @@ impl Reader {
                         Action::Heading,
                     ));
                     rows.push(item(
-                        language.bookmark_text("Delete notes"),
-                        C::ConfirmRemoveCurrentNotes,
+                        language.bookmark_text("Choose notes"),
+                        C::Go(Page::SelectNotes),
                     ));
+                    if pending.selected_count() > 0 {
+                        rows.push(item(
+                            language.bookmark_text("Delete notes"),
+                            C::ConfirmRemoveCurrentNotes,
+                        ));
+                    }
                 }
                 rows.push(item(language.bookmark_text("Cancel"), C::Go(Page::Filters)));
+                rows
+            }
+            Page::SelectNotes => {
+                let mut rows = vec![
+                    item(
+                        language.bookmark_text("Select all"),
+                        C::SetAllReviewedNotes(true),
+                    ),
+                    item(
+                        language.bookmark_text("Clear selection"),
+                        C::SetAllReviewedNotes(false),
+                    ),
+                    item(
+                        language.bookmark_text("Done"),
+                        C::Go(Page::RemoveNotesConfirm),
+                    ),
+                ];
+                if let Some(pending) = &browser.pending_note_removal {
+                    rows.extend(pending.targets.iter().enumerate().map(|(index, item_)| {
+                        let (note, quote, chapter) = item_.target.preview();
+                        let selection = language.bookmark_text(if item_.selected {
+                            "Selected"
+                        } else {
+                            "Not selected"
+                        });
+                        let detail = chapter
+                            .filter(|title| !title.trim().is_empty())
+                            .map_or_else(
+                                || format!("{selection} · {}", excerpt(quote, 8)),
+                                |title| format!("{selection} · {title} · {}", excerpt(quote, 8)),
+                            );
+                        item(excerpt(note, 22), C::ToggleReviewedNote(index)).detail(detail)
+                    }));
+                }
                 rows
             }
             Page::Colors => Vec::new(),
@@ -1984,6 +2092,7 @@ impl Reader {
                 self.bookmark_browser.pending_note_removal = None;
                 self.show(Screen::BookmarkBrowser(Page::Filters));
             }
+            Page::SelectNotes => self.show(Screen::BookmarkBrowser(Page::RemoveNotesConfirm)),
             _ => self.show(Screen::BookmarkBrowser(Page::Results)),
         }
     }

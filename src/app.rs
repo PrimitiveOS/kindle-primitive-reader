@@ -1566,6 +1566,12 @@ impl Reader {
             self.library.recover_live_metadata(&entry, id);
             Ok(())
         })?;
+        if !crate::parley_layout::RAW_LAYOUT_ENABLED && self.library.has_raw_whitespace_state(id) {
+            return Err(
+                "This book has raw whitespace positions that this reader cannot yet restore safely"
+                    .into(),
+            );
+        }
         let unseen = self.library.state(id).is_none();
         if unseen && check_archive && password.is_none() && self.offer_archived_metadata(&entry, id)
         {

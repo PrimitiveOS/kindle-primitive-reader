@@ -1663,6 +1663,10 @@ pub struct Library {
 }
 
 impl Library {
+    pub(crate) fn has_raw_whitespace_state(&self, id: u64) -> bool {
+        self.state(id).is_some_and(raw_v2::book_has_raw)
+    }
+
     pub(crate) fn state_path(&self) -> &Path {
         &self.state_path
     }

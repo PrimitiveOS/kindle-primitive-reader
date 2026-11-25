@@ -298,7 +298,7 @@ impl Probe {
 
     /// Detect raw text anywhere in a selection, including when both of its
     /// endpoints happen to lie in ordinary paragraphs.
-    fn selection_uses_raw(&self, start: &Anchor, end: &Anchor) -> Option<bool> {
+    pub(crate) fn selection_uses_raw(&self, start: &Anchor, end: &Anchor) -> Option<bool> {
         if start.raw_caret.is_some() || end.raw_caret.is_some() {
             return Some(true);
         }

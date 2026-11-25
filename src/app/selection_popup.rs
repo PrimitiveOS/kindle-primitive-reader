@@ -465,6 +465,31 @@ impl Reader {
     }
 
     fn copy_selection(&mut self) -> Result<()> {
+        let preserve_raw = if let (Some(selection), Some(active)) = (&self.selection, &self.active)
+        {
+            let raw = if crate::parley_layout::RAW_LAYOUT_ENABLED
+                && selection.start.chapter != selection.end.chapter
+            {
+                true
+            } else {
+                active
+                    .reading
+                    .probe
+                    .selection_uses_raw(&selection.start, &selection.end)
+                    .ok_or("The selected text cannot be verified safely")?
+            };
+            if raw {
+                let verified = active
+                    .reading
+                    .anchored_quote(&selection.start, &selection.end)?;
+                if verified != *selection {
+                    return Err("The selected text changed; select it again".into());
+                }
+            }
+            raw
+        } else {
+            false
+        };
         let text = self
             .selection
             .as_ref()
@@ -475,7 +500,11 @@ impl Reader {
                     .map(|selection| selection.text())
             })
             .ok_or_else(|| std::io::Error::other("There is no selected text to copy"))?;
-        let text = cleanup_selected_text(text);
+        let text = if preserve_raw {
+            text.to_owned()
+        } else {
+            cleanup_selected_text(text)
+        };
         if text.is_empty() {
             return Err("There is no selected text to copy".into());
         }

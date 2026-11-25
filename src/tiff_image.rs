@@ -60,13 +60,28 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let samples = image.scalar(277, SHORT_ONLY, 1)?;
     if !matches!(
         (photometric, samples),
-        (0 | 1 | 3, 1) | (0 | 1, 2) | (2, 3 | 4)
+        (0 | 1 | 3, 1) | (0 | 1, 2) | (2, 3 | 4) | (5, 4)
     ) {
         return Err(TiffError::Unsupported);
     }
+    if photometric == 5 {
+        // The fallback below only approximates ordinary process-CMYK. Do not
+        // silently discard a profile, a custom ink set, or transfer metadata.
+        if image.scalar(332, SHORT_ONLY, 1)? != 1
+            || image.scalar(334, SHORT_ONLY, 4)? != 4
+            || [301, 318, 319, 333, 336, 340, 341, 342, 532, 34675]
+                .iter()
+                .any(|&tag| image.has_tag(tag))
+        {
+            return Err(TiffError::Unsupported);
+        }
+        if u64::from(pixel_count) * 5 > 32 * 1024 * 1024 {
+            return Err(TiffError::Limit);
+        }
+    }
     // Alpha-bearing grayscale and RGB must explicitly describe the extra
     // channel. Bound decoded strips and output together to the existing cap.
-    let alpha = if samples == 2 || samples == 4 {
+    let alpha = if samples == 2 || (photometric == 2 && samples == 4) {
         let kind = image.scalar(338, SHORT_ONLY, 0)?;
         if !matches!(kind, 1 | 2) {
             return Err(TiffError::Unsupported);
@@ -256,6 +271,14 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
                 } else {
                     ((gray * a + 255 * (255 - a) + 127) / 255) as u8
                 }
+            }));
+        } else if photometric == 5 {
+            // Approximate unprofiled device CMYK for a white paper display;
+            // exact color-managed conversion requires the source profile.
+            pixels.extend(strip.chunks_exact(4).map(|cmyk| {
+                let black = 255 - u32::from(cmyk[3]);
+                let rgb = |value: u8| ((255 - u32::from(value)) * black + 127) / 255;
+                ((rgb(cmyk[0]) * 2126 + rgb(cmyk[1]) * 7152 + rgb(cmyk[2]) * 722) / 10000) as u8
             }));
         } else if samples == 3 {
             // Match image's sRGB-to-luma conversion used by other comic pages.
@@ -500,6 +523,12 @@ struct Directory<'a> {
 }
 
 impl<'a> Directory<'a> {
+    fn has_tag(&self, tag: u16) -> bool {
+        self.entries
+            .binary_search_by_key(&tag, |entry| self.order.short([entry[0], entry[1]]))
+            .is_ok()
+    }
+
     fn open(bytes: &'a [u8]) -> Result<Self, TiffError> {
         if bytes.len() > MAX_BYTES {
             return Err(TiffError::Limit);

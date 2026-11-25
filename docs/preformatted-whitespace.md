@@ -70,7 +70,9 @@ without legacy sanitization and save it through the checked encoder and Kindle
 recovery journal. Backup merging into v2 is rejected. Raw resumes and history
 locations are rejected before fixed or reflow page fallback. Operations using
 an unjournaled generic save are rejected for v2, and a pending journal requires
-Reader to reopen before saving its in-memory state. Raw rendering, app-level
+Reader to reopen before saving its in-memory state. While raw rendering is
+disabled, Reader refuses to open books containing any raw positions or marks
+instead of exposing incomplete legacy editing paths. Raw rendering, app-level
 raw restoration and v2 merging remain incomplete.
 The decoder also validates book identities, retained collection
 membership, position lists and mark limits without invoking v1 sanitization or

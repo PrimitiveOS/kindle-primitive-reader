@@ -22,7 +22,7 @@ The latter also supports other compression and color modes, so this is a subset
 of KOReader's TIFF support, not complete TIFF parity. [KOReader TIFF provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L410-L415) · [Pinned MuPDF TIFF decoder](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L360-L369) · [PackBits filter](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L408-L418) · [TIFF 6.0 specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
 These additions have not yet been compared against KOReader or exercised on
-the simulator or Kindle. Associated-alpha white-is-zero grayscale and palette alpha, CMYK, multi-page and tiled TIFFs and CCITT remain outside this decoder's support. [TIFF 6.0 LZW
+the simulator or Kindle. Associated-alpha white-is-zero grayscale, palette alpha, profiled or nonstandard CMYK, multi-page and tiled TIFFs and CCITT remain outside this decoder's support. [TIFF 6.0 LZW
 and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
 ## Image orientation
@@ -67,13 +67,26 @@ candidate. The
 combined decoded-strip and grayscale-output allocation is capped at 32 MiB,
 plus Deflate’s one-byte overflow sentinel; compressed input remains separately
 bounded. These alpha changes are not yet
-behaviorally tested. Associated-alpha white-is-zero grayscale, palette alpha, CMYK, planar, tiled and
+behaviorally tested. Associated-alpha white-is-zero grayscale, palette alpha, profiled or nonstandard CMYK, planar, tiled and
 multi-page TIFFs remain unsupported.
 KOReader exposes TIFF via MuPDF, whose pinned loader accepts RGB photometric
 data and horizontal differencing; this limited subset is not full MuPDF
 parity. The authored compression, byte-order, predictor, orientation and
 invalid-metadata checks have not yet run on the computer or Kindle.
 [KOReader TIFF provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L414-L415) · [Pinned MuPDF loader](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c)
+
+## Process CMYK strips
+
+Contiguous 8-bit process-CMYK strips without alpha can use the same stored,
+PackBits, LZW and Deflate decoders and horizontal predictor. Reader approximates
+unprofiled device CMYK in grayscale using a simple component-and-black
+conversion; this is not color-managed or guaranteed to match KOReader. The
+decoder rejects ICC profiles, custom ink names or ranges, sample ranges,
+transfer/white-point metadata and nonstandard ink counts or sets. Decoded strip plus grayscale
+output is limited to 32 MiB; the separately bounded compressed input and
+Deflate overflow sentinel remain. Planar and alpha-bearing CMYK are not
+supported. This candidate has not yet been behaviorally checked or compared
+with KOReader or tested on Kindle. [Pinned MuPDF CMYK selection](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L1396-L1401)
 
 
 ## Palette-color strips
