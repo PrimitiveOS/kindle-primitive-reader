@@ -471,6 +471,7 @@ impl VerticalChapter {
                 block: block.key,
                 bytes: shaped.clusters[start].bytes.start..shaped.clusters[end - 1].bytes.end,
                 spans: None,
+                additional_sources: None,
                 top: logical_top + slot as f32 * logical_pitch,
                 bottom: logical_end,
                 page_extension: [0.0; 2],

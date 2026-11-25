@@ -4,8 +4,8 @@ use super::*;
 use crate::user_styles::{
     self, CLASSIC_FOOTNOTES, COMBINE_NONLINEAR_NOTES, Data, EPUB_FOOTNOTES, EXTEND_NOTES,
     EXTEND_NOTES_UNTIL_HEADING, FB2_ENDNOTES, FB2_FOOTNOTES, FB2_REGULAR_NOTE_SIZE, FootnoteSize,
-    NOTE_BLOCK_SPACING, NOTE_COSMETIC_SPACING, NOTE_INDENTATION, NOTE_INLINE_SIZING,
-    NOTE_JUSTIFICATION, PRESETS, Snapshot, WIKIPEDIA_FOOTNOTES,
+    INLINE_ALL_FOOTNOTE_CONTENT, NOTE_BLOCK_SPACING, NOTE_COSMETIC_SPACING, NOTE_INDENTATION,
+    NOTE_INLINE_SIZING, NOTE_JUSTIFICATION, PRESETS, Snapshot, WIKIPEDIA_FOOTNOTES,
 };
 use primitive_ui::{TextStyle, editor::Multiline};
 #[derive(Clone)]
@@ -67,6 +67,7 @@ fn advanced_note(preset: &str) -> bool {
             | NOTE_JUSTIFICATION
             | NOTE_BLOCK_SPACING
             | NOTE_COSMETIC_SPACING
+            | INLINE_ALL_FOOTNOTE_CONTENT
             | NOTE_INLINE_SIZING
             | COMBINE_NONLINEAR_NOTES
     )
@@ -541,6 +542,9 @@ impl Reader {
                     NOTE_JUSTIFICATION => "Justify the lines of the note text",
                     NOTE_BLOCK_SPACING => "Remove margins and padding around note blocks",
                     NOTE_COSMETIC_SPACING => "Remove margins and padding on inline note elements",
+                    INLINE_ALL_FOOTNOTE_CONTENT => {
+                        "Combine simple note paragraphs with their number"
+                    }
                     NOTE_INLINE_SIZING => "Use inherited note text size, line height and baseline",
                     COMBINE_NONLINEAR_NOTES => "Group original notes for Hide non-linear fragments",
                     _ => "Book choice overrides the live all-books default",

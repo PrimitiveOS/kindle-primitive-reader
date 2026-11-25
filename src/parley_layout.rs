@@ -6,10 +6,11 @@ mod hyphenation_options_tests;
 mod inline_blocks;
 #[cfg(test)]
 mod inline_blocks_tests;
+mod note_inline;
 #[cfg(test)]
 mod special_glyph_tests;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -179,6 +180,7 @@ pub(crate) struct Paragraph {
     ruby: Vec<RubyOverlay>,
     flow: Option<Arc<OwnedProjection>>,
     pub(crate) inline_text: Option<inline_blocks::InlineText>,
+    pub(crate) joined_note: Option<Arc<note_inline::JoinedNote>>,
 }
 
 impl Paragraph {
@@ -190,6 +192,17 @@ impl Paragraph {
         match &self.flow {
             Some(flow) => flow.source_offset(offset, affinity),
             None => Some(offset),
+        }
+    }
+
+    pub(crate) fn source_location(
+        &self,
+        offset: usize,
+        affinity: crate::flow_projection::Affinity,
+    ) -> Option<(usize, usize)> {
+        match &self.joined_note {
+            Some(note) => note.source_location(offset, affinity),
+            None => Some((self.key, self.source_offset(offset, affinity)?)),
         }
     }
 
@@ -403,7 +416,7 @@ impl ParleyChapter {
     ) -> Result<(Self, Vec<Line>, f32)> {
         let flow = ChapterFlow::from_styles(source, styles)?;
         Self::with_flow(
-            book, href, source, fonts, settings, styles, user_rules, &flow,
+            book, href, source, fonts, settings, styles, user_rules, &flow, None,
         )
     }
 
@@ -416,9 +429,10 @@ impl ParleyChapter {
         styles: &[Style],
         user_rules: &crate::user_hyphenation::Rules,
         flow: &ChapterFlow,
+        footnotes: Option<&crate::footnotes::in_page::Targets>,
     ) -> Result<(Self, Vec<Line>, f32)> {
         Self::with_flow_mode(
-            book, href, source, fonts, settings, styles, user_rules, flow, false,
+            book, href, source, fonts, settings, styles, user_rules, flow, false, footnotes,
         )
     }
 
@@ -433,7 +447,7 @@ impl ParleyChapter {
         flow: &ChapterFlow,
     ) -> Result<(Self, Vec<Line>, f32)> {
         Self::with_flow_mode(
-            book, href, source, fonts, settings, styles, user_rules, flow, true,
+            book, href, source, fonts, settings, styles, user_rules, flow, true, None,
         )
     }
 
@@ -447,6 +461,7 @@ impl ParleyChapter {
         user_rules: &crate::user_hyphenation::Rules,
         flow: &ChapterFlow,
         source_order: bool,
+        footnotes: Option<&crate::footnotes::in_page::Targets>,
     ) -> Result<(Self, Vec<Line>, f32)> {
         let float_plan = crate::float_layout::Plan::prepare(source, styles, settings);
         let mut layout = |fonts, float_plan| {
@@ -461,6 +476,7 @@ impl ParleyChapter {
                 flow,
                 source_order,
                 float_plan,
+                footnotes,
             )
         };
         let Some(plan) = &float_plan else {
@@ -508,6 +524,7 @@ impl ParleyChapter {
         flow: &ChapterFlow,
         source_order: bool,
         float_plan: Option<&crate::float_layout::Plan>,
+        footnotes: Option<&crate::footnotes::in_page::Targets>,
     ) -> Result<(Self, Vec<Line>, f32)> {
         if source
             .blocks
@@ -772,7 +789,20 @@ impl ParleyChapter {
                 }
             }
         }
+        let mut joined = match footnotes {
+            Some(targets) if float_plan.is_none() && targets.inlines_all() => {
+                note_inline::plan(source, styles, flow, targets)?
+            }
+            _ => BTreeMap::new(),
+        };
+        let mut joined_until = 0;
         for (index, source_block) in source.blocks.iter().enumerate() {
+            if index < joined_until {
+                if let Some(points) = &mut fill_positions {
+                    points.push((y, y));
+                }
+                continue;
+            }
             let marker_host = source_block
                 .list_item
                 .is_some_and(|item| marker_hosts.get(&item.element) == Some(&source_block.key));
@@ -786,7 +816,13 @@ impl ParleyChapter {
                 .view(source, source_block)
                 .map_err(|error| error.to_string())?;
             let input = flow.layout_block(source, source_block)?;
-            let block = &input;
+            let note = joined.remove(&index);
+            let note_layout = note.as_ref().map(|note| Arc::clone(&note.layout));
+            let flattened = note.zip(note_layout.as_ref()).map(|(note, layout)| {
+                joined_until = note.end_index;
+                input.text_fragment(note.element, &layout.text, note.runs)
+            });
+            let block = flattened.as_ref().unwrap_or(&input);
             let cell = column_for(block);
             let (natural_column, natural_width) = bounds_for(block);
             let float = float_plan.and_then(|plan| plan.floats[index]);
@@ -894,10 +930,10 @@ impl ParleyChapter {
             let first_image = chapter.illustrations.len();
             let available = MAX_IMAGE_BOXES
                 .saturating_sub(first_image)
-                .min(block.images.len());
+                .min(input.images.len());
             let mut inline_boxes = Vec::with_capacity(available);
-            for image in block.images.iter().take(available) {
-                let inline = !block.text.is_empty();
+            for image in input.images.iter().take(available) {
+                let inline = !input.text.is_empty();
                 let sizing = ImageSizing::new(
                     &image,
                     settings,
@@ -1057,6 +1093,7 @@ impl ParleyChapter {
                 );
                 let mut plan = None;
                 if settings.inline_block_mode != crate::InlineBlockMode::Ignore
+                    && note_layout.is_none()
                     && cell.is_none()
                     && float.is_none()
                     && contour.is_none()
@@ -1169,6 +1206,7 @@ impl ParleyChapter {
                         block: block.key,
                         bytes: line.text_range(),
                         spans: None,
+                        additional_sources: None,
                         top,
                         bottom: line_bottom,
                         page_extension: [0.0; 2],
@@ -1184,7 +1222,9 @@ impl ParleyChapter {
                             })
                             .sum(),
                     };
-                    if let Some(boxed) = &mut inline_text {
+                    if let Some(note) = &note_layout {
+                        note.project_line(&mut source_line, line.text_range());
+                    } else if let Some(boxed) = &mut inline_text {
                         boxed.project_line(&mut source_line, &line, &projection)?;
                     } else {
                         source_line.project(&projection, line.text_range())?;
@@ -1265,8 +1305,13 @@ impl ParleyChapter {
                     }),
                     layout,
                     ruby,
-                    flow: flow.shared(block.key),
+                    flow: if note_layout.is_none() {
+                        flow.shared(block.key)
+                    } else {
+                        None
+                    },
                     inline_text,
+                    joined_note: note_layout.as_ref().map(Arc::clone),
                 });
             }
 
@@ -1278,6 +1323,7 @@ impl ParleyChapter {
                         block: block.key,
                         bytes: 0..0,
                         spans: None,
+                        additional_sources: None,
                         top,
                         bottom,
                         page_extension: [0.0; 2],
@@ -1495,6 +1541,10 @@ impl ParleyChapter {
                 .inline_text
                 .as_ref()
                 .map_or(text, |boxed| boxed.text.as_str());
+            let text = paragraph
+                .joined_note
+                .as_ref()
+                .map_or(text, |note| note.text.as_str());
             let ruby = paragraph
                 .ruby
                 .iter()
@@ -1556,8 +1606,7 @@ impl ParleyChapter {
                 Some(child) => child.source.start + offset,
                 None => paragraph.visible_text_offset(offset, After)?,
             };
-            let offset = paragraph.source_offset(offset, After)?;
-            Some((paragraph.key, offset))
+            paragraph.source_location(offset, After)
         };
         if self.float_geometry {
             candidates.find_map(hit)
@@ -1568,6 +1617,12 @@ impl ParleyChapter {
 
     pub(crate) fn uses_float_geometry(&self) -> bool {
         self.float_geometry
+    }
+
+    pub(crate) fn uses_joined_notes(&self) -> bool {
+        self.paragraphs
+            .iter()
+            .any(|paragraph| paragraph.joined_note.is_some())
     }
 
     pub(crate) fn limitations(&self) -> &[String] {

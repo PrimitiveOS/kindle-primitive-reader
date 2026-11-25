@@ -103,6 +103,21 @@ chapters = {
 <ol class="references"><li id="cite_note-grid"><span class="mw-cite-backlink"><a href="#fallback-ref">Table return</a></span>
 <table><tr><td>Inshore readings</td><td>Offshore readings</td></tr></table>
 </li></ol>""",
+    "inline-all": """<p id="inline-start">The harbor chart shows a second passage<a href="#inline-note" id="inline-ref" epub:type="noteref"><sup>7</sup></a>.</p>
+<p>The chart keeper left a copy at the ferry house.</p>
+<p style="page-break-before:always">The log continues on another leaf.</p>
+<aside id="inline-note" epub:type="footnote">
+<p id="inline-number">[7]</p>
+<div><p id="inline-body">The signal lamp marked the inner ferry landing.</p></div>
+<p id="inline-return"><a href="#inline-ref" role="doc-backlink">Return to the chart</a>.</p>
+</aside>""",
+    "inline-complex": """<p id="complex-start">The final ledger includes the spare inventory<a href="#complex-note" epub:type="noteref"><sup>8</sup></a>.</p>
+<aside id="complex-note" epub:type="footnote">
+<p>Inventory number eight.</p><ul><li>North lantern.</li><li>Spare wick.</li></ul>
+</aside>""",
+    "inline-fallback": """<p id="fallback-start">A separate schedule records the lantern count<a href="#fallback-note" epub:type="noteref"><sup>9</sup></a>.</p>
+<table><tbody><tr><td>Item</td><td>Quantity</td></tr><tr><td>Lantern</td><td>2</td></tr></tbody></table>
+<aside id="fallback-note" epub:type="footnote"><p>[9]</p><p>The count excludes the ferry light.</p></aside>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)

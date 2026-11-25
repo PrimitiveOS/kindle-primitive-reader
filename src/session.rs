@@ -1382,14 +1382,12 @@ impl Reading {
                 } else {
                     lines.next()
                 }?;
-                Some(self.probe.anchor(
-                    line.block,
-                    if previous {
-                        line.bytes.end
-                    } else {
-                        line.bytes.start
-                    },
-                ))
+                let (key, byte) = if previous {
+                    line.sources().last().map(|(key, span)| (key, span.end))?
+                } else {
+                    (line.block, line.bytes.start)
+                };
+                Some(self.probe.anchor(key, byte))
             });
         if previous { edges.last() } else { edges.next() }.or_else(|| self.anchor())
     }

@@ -18,6 +18,7 @@ pub(crate) const NOTE_INDENTATION: &str = "inpage_footnote_text-indent_0";
 pub(crate) const NOTE_JUSTIFICATION: &str = "inpage_footnote_text_justify";
 pub(crate) const NOTE_BLOCK_SPACING: &str = "inpage_footnote_no_block_spacing";
 pub(crate) const NOTE_COSMETIC_SPACING: &str = "inpage_footnote_no_inline_spacing";
+pub(crate) const INLINE_ALL_FOOTNOTE_CONTENT: &str = "inpage_footnote_all_inline";
 pub(crate) const COMBINE_NONLINEAR_NOTES: &str = "inpage_footnote_combine_non_linear";
 pub(crate) const NOTE_INLINE_SIZING: &str = "inpage_footnote_regularize_text";
 pub(crate) const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
@@ -126,6 +127,7 @@ pub(crate) struct NoteFormatting {
     pub(crate) justify: bool,
     pub(crate) no_block_spacing: bool,
     pub(crate) no_inline_spacing: bool,
+    pub(crate) inline_all: bool,
     pub(crate) regularize: bool,
 }
 
@@ -178,6 +180,11 @@ impl Snapshot {
         if !snapshot.notes.explicit_epub && !snapshot.notes.classic_epub {
             snapshot.notes.epub_size = None;
         }
+        snapshot
+    }
+    pub(crate) fn without_inline_footnotes(&self) -> Self {
+        let mut snapshot = self.clone();
+        snapshot.notes.formatting.inline_all = false;
         snapshot
     }
     pub(crate) fn note_extension(&self) -> NoteExtension {
@@ -236,6 +243,7 @@ pub(crate) enum Effect {
     JustifyNotes,
     RemoveNoteBlockSpacing,
     RemoveNoteInlineSpacing,
+    InlineAllFootnoteContent,
     RegularizeNoteText,
     CombineNonlinearNotes,
 }
@@ -332,6 +340,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         group: "in-page-note-cosmetic-spacing",
         priority: 0,
         effect: Effect::RemoveNoteInlineSpacing,
+    },
+    Preset {
+        id: INLINE_ALL_FOOTNOTE_CONTENT,
+        title: "Inline all footnote content",
+        group: "in-page-note-flatten",
+        priority: 0,
+        effect: Effect::InlineAllFootnoteContent,
     },
     Preset {
         id: NOTE_INLINE_SIZING,
@@ -635,6 +650,7 @@ impl Data {
                 Effect::JustifyNotes => notes.formatting.justify = true,
                 Effect::RemoveNoteBlockSpacing => notes.formatting.no_block_spacing = true,
                 Effect::RemoveNoteInlineSpacing => notes.formatting.no_inline_spacing = true,
+                Effect::InlineAllFootnoteContent => notes.formatting.inline_all = true,
                 Effect::RegularizeNoteText => notes.formatting.regularize = true,
                 Effect::CombineNonlinearNotes => notes.combine_nonlinear = true,
             }

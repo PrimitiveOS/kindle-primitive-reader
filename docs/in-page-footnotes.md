@@ -196,8 +196,35 @@ the original position after reopening, and unchanged EPUB bytes.
 [KOReader reference band](screenshots/stock-combined-note-band.png) ·
 [KOReader originals](screenshots/stock-combined-note-originals.png)
 
-Whole-note flattening still needs layout support for a visual line
-spanning multiple original source blocks.
+## Inline all footnote content
+
+Open **Style tweaks › More footnote options › Inline all footnote content**.
+The note number and simple paragraphs share the same text flow inside the
+note. This removes the extra line for a number stored in its own paragraph.
+The page band and canonical note use the same layout. Tapping or selecting
+text on their shared lines resolves to the original block and byte offset.
+Selection spanning the two paragraphs keeps their original text and newline,
+and backlinks keep their targets.
+[KOReader inline note tweak](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L1129-L1148) ·
+[Reader setting](screenshots/whole-note-inline-settings.png) ·
+[Reader before](screenshots/reader-note-inline-before.png) ·
+[Reader after](screenshots/reader-note-inline-after.png) ·
+[Reader original note](screenshots/reader-note-inline-original.png)
+
+Formatting applies to supported horizontal in-page notes. Lists, tables,
+images, ruby, inline boxes, preformatted blocks, and authored page breaks
+inside a note keep their original layout. If the chapter cannot fit the
+joined notes, Reader retries the original layout. The publication stays unchanged.
+Reader stores this option with the edition's existing style settings.
+
+The pinned native replay uses the actual KOReader style callback. On the
+authored EPUB, its canonical note number and text change from y=72 and
+y=112 to the same line at y=72. The body text stays at y=32.
+Run the replay below with `inline-all` as its fifth argument. Physical
+E Ink verification remains pending.
+[KOReader before](screenshots/stock-note-inline-before.png) ·
+[KOReader after](screenshots/stock-note-inline-after.png) ·
+[KOReader original note](screenshots/stock-note-inline-original.png)
 
 ## Replay on macOS
 
@@ -217,6 +244,9 @@ READER_SELECTION_VIEWPORT_CAPTURES="$scratch/captures" \
 READER_SELECTION_VIEWPORT_CAPTURES="$scratch/captures" \
   READER_IN_PAGE_FOOTNOTE_CAPTURES="$scratch/captures" \
   cargo test --locked --features kindle --lib advanced_note
+READER_SELECTION_VIEWPORT_CAPTURES="$scratch/captures" \
+  READER_IN_PAGE_FOOTNOTE_CAPTURES="$scratch/captures" \
+  cargo test --locked --features kindle --lib whole_note_inline
 cd "$stock/runtime/koreader"
 KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
   SDL_VIDEODRIVER=dummy ./luajit "$reader/scripts/koreader-in-page-footnotes-check.lua" \
@@ -224,8 +254,8 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
   "$reader/tests/fixtures/fonts/NotoSans-Regular.ttf" "$scratch/captures"
 ```
 
-Pass `cosmetic` or `wikipedia` as the fifth argument to select either
-advanced style replay.
+Pass `cosmetic`, `wikipedia`, or `inline-all` as the fifth argument
+to select the corresponding advanced style replay.
 
 Run the combined note flow checks with the same stock runtime and scratch
 paths.

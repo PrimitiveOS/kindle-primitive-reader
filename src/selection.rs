@@ -185,8 +185,8 @@ impl Probe {
                     Some(child) => child.source.start + cursor.index(),
                     None => paragraph.visible_text_offset(cursor.index(), affinity)?,
                 };
-                let offset = paragraph.source_offset(visible, affinity)?;
-                return Some(self.anchor(paragraph.key, offset));
+                let (key, offset) = paragraph.source_location(visible, affinity)?;
+                return Some(self.anchor(key, offset));
             }
         }
         None
@@ -340,6 +340,38 @@ impl Probe {
         };
         let mut rects = Vec::new();
         for paragraph in renderer.paragraphs_in(page.clone()) {
+            if let Some(note) = &paragraph.joined_note {
+                let columns = paragraph.paint_columns(self.settings);
+                let geometry = Geometry {
+                    layout: &paragraph.layout,
+                    x: paragraph.x,
+                    y: paragraph.y,
+                    placed_boxes: false,
+                };
+                for piece in &note.pieces {
+                    let Some(index) = self.selection_block(piece.block) else {
+                        continue;
+                    };
+                    let block = &self.source.blocks[index];
+                    let Some(span) = spans.in_block(index, block.text.len()) else {
+                        continue;
+                    };
+                    let Ok(view) = self.reading_flow.view(&self.source, block) else {
+                        continue;
+                    };
+                    for local in view.layout_spans(span).unwrap_or_default() {
+                        let start = piece.joined.start;
+                        geometry.append(
+                            start + local.start..start + local.end,
+                            &page,
+                            self.settings,
+                            &columns,
+                            &mut rects,
+                        );
+                    }
+                }
+                continue;
+            }
             let Some(index) = self.selection_block(paragraph.key) else {
                 continue;
             };

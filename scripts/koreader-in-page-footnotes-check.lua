@@ -152,6 +152,38 @@ local function width_in_canonical_note(view_, text)
     return boxes[#boxes].x1 - boxes[1].x0, boxes[1].x0
 end
 
+if arg[5] == "inline-all" then
+    controller:onReadSettings(Settings:wrap({}))
+    local option = assert(find_tweak(menu.style_tweaks.sub_item_table,
+        "inpage_footnote_all_inline"))
+    local function measure(name, same_line)
+        local view = open(assert(controller:getCssText()))
+        local page, body_y = position(view, "The harbor chart")
+        assert(capture(view, page, "stock-note-inline-" .. name))
+        local number, number_y = position(view, "[7]")
+        local text, text_y = position(view, "signal lamp")
+        assert(number == text and text > page)
+        assert((number_y == text_y) == same_line)
+        local _, number_x = width_in_canonical_note(view, "[7]")
+        local _, text_x = width_in_canonical_note(view, "signal lamp")
+        if same_line then
+            assert(text_x > number_x)
+            capture(view, text, "stock-note-inline-original")
+        end
+        view:close()
+        return body_y
+    end
+    assert(not option.checked_func())
+    local before = measure("before", false)
+    option.callback()
+    assert(option.checked_func())
+    assert(measure("after", true) == before)
+    option.callback()
+    assert(not option.checked_func())
+    print("Pinned whole-note inline toggle shares the canonical line and keeps ordinary body unchanged")
+    return
+end
+
 if arg[5] == "cosmetic" then
     controller:onReadSettings(Settings:wrap({}))
     local option = assert(find_tweak(menu.style_tweaks.sub_item_table,

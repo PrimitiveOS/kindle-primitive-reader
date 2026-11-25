@@ -236,6 +236,22 @@ const CLASSIC_NOTE_CLASSES: &[&str] = &[
 ];
 
 impl Targets {
+    pub(crate) fn inlines_all(&self) -> bool {
+        self.formatting.inline_all
+    }
+
+    pub(crate) fn inline_part(&self, source: &Source, mut element: usize) -> Option<usize> {
+        if !self.formatting.inline_all || self.ancestry[element].is_none() {
+            return None;
+        }
+        loop {
+            if self.starts_note_part[element] {
+                return Some(element);
+            }
+            element = source.elements[element].parent?;
+        }
+    }
+
     pub(crate) fn epub(
         chapter: &str,
         xhtml: &str,
@@ -759,6 +775,118 @@ mod tests {
         let start = probe.matches(phrase).remove(0);
         let end = probe.anchor(start.block, start.offset + phrase.len());
         probe.selection_rects(page, &probe.select_range(&start, &end).unwrap())
+    }
+
+    #[test]
+    fn whole_note_inline_keeps_multiple_canonical_blocks_on_one_visual_line() {
+        use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
+        let mut before = advanced_note_layout(12, &[EPUB_FOOTNOTES]);
+        let mut joined = advanced_note_layout(12, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        let reference = before.fragment("inline-ref").unwrap();
+        let page = before.page_for(&reference).unwrap();
+        assert_eq!(joined.page_for(&reference), Some(page));
+        assert!(
+            before.in_page_notes.as_ref().unwrap()[page]
+                .separator
+                .is_some()
+        );
+        assert!(
+            joined.in_page_notes.as_ref().unwrap()[page]
+                .separator
+                .is_some()
+        );
+
+        let number = joined.fragment("inline-number").unwrap();
+        let body = joined.fragment("inline-body").unwrap();
+        assert_ne!(number.block, body.block);
+        assert_eq!(before.fragment("inline-body"), Some(body.clone()));
+        let original = joined.page_for(&body).unwrap();
+        assert!(original > page);
+        assert_eq!(joined.page_for(&number), Some(original));
+        assert_eq!(joined.coverage(), before.coverage());
+        assert!(joined.lines.iter().any(|line| {
+            let blocks: Vec<_> = line.sources().map(|(key, _)| key).collect();
+            blocks.contains(&number.block) && blocks.contains(&body.block)
+        }));
+
+        for current in [page, original] {
+            let a = phrase_rects(&joined, current, "[7]")[0];
+            let b = phrase_rects(&joined, current, "signal lamp")[0];
+            assert_eq!(a.y, b.y);
+            assert!(a.x < b.x);
+            let word = joined
+                .word_at(current, (b.x + 5) as f32, (b.y + b.height / 2) as f32)
+                .unwrap();
+            assert_eq!(word.start.block, body.block);
+            assert_eq!(word.text, "signal");
+            let link = phrase_rects(&joined, current, "Return")[0];
+            assert_eq!(
+                joined
+                    .link_at(
+                        current,
+                        (link.x + 5) as f32,
+                        (link.y + link.height / 2) as f32
+                    )
+                    .unwrap()
+                    .fragment
+                    .as_deref(),
+                Some("inline-ref")
+            );
+            assert!(
+                joined
+                    .links_on_page(current)
+                    .iter()
+                    .any(|(label, _)| label == "Return to the chart")
+            );
+        }
+        let original_ref = phrase_rects(&before, page, "signal lamp")[0];
+        let old_number = phrase_rects(&before, page, "[7]")[0];
+        assert!(original_ref.y > old_number.y);
+        let selection = joined
+            .select_range(&number, &joined.anchor(body.block, 10))
+            .unwrap();
+        assert_eq!(selection.text, "[7]\nThe signal");
+        let selected = joined.selection_rects(page, &selection);
+        assert!(selected.len() >= 2 && selected.iter().all(|part| part.y == selected[0].y));
+        assert!(
+            capture(&mut before, page, "reader-note-inline-before.png")
+                != capture(&mut joined, page, "reader-note-inline-after.png")
+        );
+        capture(&mut joined, original, "reader-note-inline-original.png");
+    }
+
+    #[test]
+    fn whole_note_inline_keeps_list_structure_and_disabled_notes_ordinary() {
+        use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
+        let mut before = advanced_note_layout(13, &[EPUB_FOOTNOTES]);
+        let mut option = advanced_note_layout(13, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        let page = before
+            .page_for(&before.fragment("complex-start").unwrap())
+            .unwrap();
+        assert!(before.capture(page).unwrap() == option.capture(page).unwrap());
+
+        let ordinary = advanced_note_layout(12, &[]);
+        let disabled = advanced_note_layout(12, &[INLINE_ALL_FOOTNOTE_CONTENT]);
+        assert!(disabled.in_page_notes.is_none());
+        assert_eq!(disabled.lines.len(), ordinary.lines.len());
+        assert!(
+            disabled
+                .lines
+                .iter()
+                .all(|line| line.additional_sources.is_none())
+        );
+
+        // The note is simple, but a table in the body prevents composition.
+        let mut ordinary = advanced_note_layout(14, &[EPUB_FOOTNOTES]);
+        let mut option = advanced_note_layout(14, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        assert!(ordinary.in_page_notes.is_none() && option.in_page_notes.is_none());
+        assert!(
+            option
+                .lines
+                .iter()
+                .all(|line| line.additional_sources.is_none())
+        );
+        assert_eq!(ordinary.capture(0).unwrap(), option.capture(0).unwrap());
     }
 
     #[test]

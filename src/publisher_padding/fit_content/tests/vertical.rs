@@ -198,6 +198,7 @@ fn fit_content_vertical_edge_overflow_moves_the_text_with_the_decoration() {
         block: 0,
         bytes: 0..1,
         spans: None,
+        additional_sources: None,
         top,
         bottom,
         page_extension,

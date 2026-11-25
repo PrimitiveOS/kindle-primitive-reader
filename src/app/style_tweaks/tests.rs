@@ -681,6 +681,52 @@ fn advanced_note_options_reflow_from_controls_keep_position_and_persist() {
 }
 
 #[test]
+fn whole_note_inline_reflows_from_the_visible_setting_and_reopens() {
+    use crate::user_styles::INLINE_ALL_FOOTNOTE_CONTENT;
+    let fixture = Fixture::new();
+    let path = footnote_book(&fixture, "Joined footnotes.epub");
+    let original = fs::read(&path).unwrap();
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    app.follow_reflow_page(12, 0).unwrap();
+    let position = app.current_history_location();
+    let history = app.back.clone();
+    let id = app.active.as_ref().unwrap().id;
+    let is_joined = |app: &Reader| {
+        let probe = &app.active.as_ref().unwrap().reading.probe;
+        matches!(&probe.renderer, crate::Renderer::Parley(renderer) if renderer.uses_joined_notes())
+    };
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "In-page EPUB footnotes");
+    tap_contents_item(&mut app, "On for this book");
+    assert!(has_note_band(&app));
+    assert!(!is_joined(&app));
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "More footnote options");
+    tap_contents_item(&mut app, "Inline all footnote content");
+    tap_contents_item(&mut app, "On for this book");
+    assert!(is_joined(&app));
+    assert_eq!(app.current_history_location(), position);
+    assert_eq!(app.back, history);
+    let mut canvas = crate::app::selection_viewport_tests::canvas(&app, ReadingViewport::PORTRAIT);
+    capture_viewport(&app, &mut canvas, "whole-note-inline-settings.png", false);
+    app.show(Screen::Book);
+    app.save().unwrap();
+    drop(app);
+
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    assert_eq!(app.current_history_location(), position);
+    assert!(is_joined(&app));
+    assert!(
+        app.style_store
+            .data
+            .enabled(id, INLINE_ALL_FOOTNOTE_CONTENT)
+    );
+    assert_eq!(fs::read(path).unwrap(), original);
+}
+
+#[test]
 fn classic_in_page_notes_apply_and_resume_from_the_visible_style_options() {
     let fixture = Fixture::new();
     let path = footnote_book(&fixture, "Classic notes.epub");

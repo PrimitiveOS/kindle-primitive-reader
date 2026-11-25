@@ -461,10 +461,9 @@ fn nearest_reflow_link(
             .iter()
             .filter(|line| line.bottom >= top)
         {
-            visible_spans
-                .entry(line.block)
-                .or_insert_with(Vec::new)
-                .extend(line.source_spans());
+            for (key, span) in line.sources() {
+                visible_spans.entry(key).or_insert_with(Vec::new).push(span);
+            }
         }
         for (key, spans) in visible_spans {
             let Ok(index) = probe

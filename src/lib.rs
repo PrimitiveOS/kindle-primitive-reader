@@ -766,6 +766,7 @@ struct Line {
     /// Exact canonical spans when projected layout crosses omitted source text.
     /// `bytes` remains the envelope for pagination endpoints only.
     spans: Option<std::sync::Arc<[Range<usize>]>>,
+    additional_sources: Option<Box<[(usize, Range<usize>)]>>,
     top: f32,
     bottom: f32,
     // Attached paint at the first and last line of a fitted paragraph.
@@ -791,10 +792,25 @@ impl Line {
             .unwrap_or_else(|| std::slice::from_ref(&self.bytes))
     }
 
-    fn contains_source(&self, offset: usize) -> bool {
+    fn sources(&self) -> impl Iterator<Item = (usize, &Range<usize>)> {
         self.source_spans()
             .iter()
-            .any(|span| span.contains(&offset))
+            .map(|span| (self.block, span))
+            .chain(
+                self.additional_sources
+                    .iter()
+                    .flat_map(|spans| spans.iter().map(|(key, span)| (*key, span))),
+            )
+    }
+
+    fn set_joined_sources(&mut self, mut spans: Vec<(usize, Range<usize>)>) {
+        if let Some((key, _)) = spans.first() {
+            self.block = *key;
+        }
+        let first = spans.partition_point(|(key, _)| *key == self.block);
+        let rest = spans.split_off(first);
+        self.set_source_spans(spans.into_iter().map(|(_, span)| span), || 0);
+        self.additional_sources = (!rest.is_empty()).then(|| rest.into_boxed_slice());
     }
 
     fn project(
@@ -1436,6 +1452,7 @@ impl Probe {
                                 &styles,
                                 user_rules,
                                 &reading_flow,
+                                footnote_targets.as_ref(),
                             )
                         };
                         let (layout, lines, extent) = if has_table {
@@ -1498,12 +1515,8 @@ impl Probe {
         };
         lines.sort_by(|a, b| a.top.total_cmp(&b.top));
         let height = settings.text_height() as f32;
-        let mut pages = if matches!(&renderer, Renderer::Vertical(_)) {
-            Pagination::fixed_stride_capped(
-                height,
-                content_height,
-                settings.chapter_height_limit(),
-            )?
+        let pages = if matches!(&renderer, Renderer::Vertical(_)) {
+            Pagination::fixed_stride_capped(height, content_height, settings.chapter_height_limit())
         } else {
             let (split_spaces, fitted_height_tails) = match &renderer {
                 Renderer::Parley(chapter) => (
@@ -1520,7 +1533,26 @@ impl Probe {
                 split_spaces,
                 fitted_height_tails,
                 settings.chapter_height_limit(),
-            )?
+            )
+        };
+        let used_joined_notes =
+            matches!(&renderer, Renderer::Parley(layout) if layout.uses_joined_notes());
+        let mut pages = match pages {
+            Ok(pages) => pages,
+            Err(_) if used_joined_notes => {
+                drop((renderer, lines, source, reading_flow));
+                return Self::layout_opened_book(
+                    opened,
+                    engine,
+                    settings,
+                    chapter,
+                    None,
+                    user_rules,
+                    &user_styles.without_inline_footnotes(),
+                    load_fonts,
+                );
+            }
+            Err(error) => return Err(error),
         };
         if pages.len() > 1
             && let Renderer::Parley(chapter) = &renderer
@@ -1549,23 +1581,24 @@ impl Probe {
             }
             _ => None,
         };
-        if in_page_notes.is_none()
-            && footnote_targets
-                .as_ref()
-                .is_some_and(footnotes::in_page::Targets::has_wikipedia_notes)
+        let reflow_without = if in_page_notes.is_some() {
+            None
+        } else if used_joined_notes {
+            Some(user_styles.without_inline_footnotes())
+        } else if footnote_targets
+            .as_ref()
+            .is_some_and(footnotes::in_page::Targets::has_wikipedia_notes)
         {
+            Some(user_styles.without_wikipedia_notes())
+        } else {
+            None
+        };
+        if let Some(fallback) = reflow_without {
             // Release the failed composition's glyph layouts and text
             // projections before laying out the ordinary chapter again.
             drop((renderer, lines, source, pages, reading_flow));
             return Self::layout_opened_book(
-                opened,
-                engine,
-                settings,
-                chapter,
-                None,
-                user_rules,
-                &user_styles.without_wikipedia_notes(),
-                load_fonts,
+                opened, engine, settings, chapter, None, user_rules, &fallback, load_fonts,
             );
         }
         Ok(Self {
@@ -1934,11 +1967,11 @@ impl Probe {
             for link in &block.links {
                 let visible = visible_lines.iter().any(|line| {
                     line.bottom > bounds.start
-                        && line.block == block.key
-                        && line
-                            .source_spans()
-                            .iter()
-                            .any(|span| span.start < link.bytes.end && span.end > link.bytes.start)
+                        && line.sources().any(|(key, span)| {
+                            key == block.key
+                                && span.start < link.bytes.end
+                                && span.end > link.bytes.start
+                        })
                 });
                 if visible {
                     let Ok(view) = self.reading_flow.view(&self.source, block) else {
@@ -2256,7 +2289,10 @@ impl Probe {
         let exact = self
             .lines
             .iter()
-            .find(|line| line.block == block.key && line.contains_source(offset))
+            .find(|line| {
+                line.sources()
+                    .any(|(key, span)| key == block.key && span.contains(&offset))
+            })
             .map(|line| line.top);
         exact.or_else(|| {
             if offset != block.text.len() {
@@ -2271,7 +2307,10 @@ impl Probe {
                 self.lines
                     .iter()
                     .rev()
-                    .find(|line| line.block == block.key && !line.bytes.is_empty())
+                    .find(|line| {
+                        line.sources()
+                            .any(|(key, span)| key == block.key && !span.is_empty())
+                    })
                     .map(|line| line.top)
             }
         })
@@ -2355,9 +2394,9 @@ impl Probe {
     pub fn coverage(&self) -> (usize, usize) {
         let mut seen = std::collections::BTreeMap::<usize, Vec<Range<usize>>>::new();
         for line in &self.lines {
-            seen.entry(line.block)
-                .or_default()
-                .extend(line.source_spans().iter().cloned());
+            for (key, span) in line.sources() {
+                seen.entry(key).or_default().push(span.clone());
+            }
         }
         self.source
             .blocks
