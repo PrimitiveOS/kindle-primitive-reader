@@ -3722,8 +3722,8 @@ impl InterfaceLanguage {
             "Filled numbered badges are previous locations; outlines are next locations." => {
                 "Ô số đặc là vị trí trước; ô có viền là vị trí sau."
             }
-            "Shading indicates hidden pages; the small outline marks the browser focus." => {
-                "Vùng tô xám biểu thị trang ẩn; ô viền nhỏ đánh dấu trang đang duyệt."
+            "Triangle: reading page. Small outline: browser focus. Shading: hidden pages." => {
+                "Tam giác: trang đang đọc. Ô viền nhỏ: trang đang duyệt. Nền xám: trang ẩn."
             }
             "In a crowded slot, a note icon can replace a highlight icon." => {
                 "Khi ô chật, biểu tượng ghi chú có thể thay biểu tượng tô sáng."

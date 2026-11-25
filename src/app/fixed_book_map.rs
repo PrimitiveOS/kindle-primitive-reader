@@ -247,9 +247,20 @@ impl Reader {
                 },
             );
             let browser_marker = ribbon.is_some_and(|(_, page)| slot.contains(&page));
-            let label_width = rect.w - if browser_marker { 50 } else { 22 };
+            let reading_marker = slot.contains(&reading_page);
+            let label_inset = if reading_marker { 38 } else { 12 };
+            let label_width = (rect.w - label_inset - if browser_marker { 38 } else { 10 }).max(1);
+            if reading_marker {
+                // Keep the actual reading page visible even when the map's
+                // focus came from a different Page Browser position.
+                let x = rect.x + 12;
+                let y = rect.y + 23;
+                canvas.fill(Rect::new(x + 6, y, 6, 6), ink);
+                canvas.fill(Rect::new(x + 3, y + 6, 12, 6), ink);
+                canvas.fill(Rect::new(x, y + 12, 18, 6), ink);
+            }
             canvas.text(
-                Rect::new(rect.x + 12, rect.y + 10, label_width, 53),
+                Rect::new(rect.x + label_inset, rect.y + 10, label_width, 53),
                 &range_label(&slot),
                 TextStyle::new(29).bold().ink(ink),
             );
@@ -464,7 +475,7 @@ impl Reader {
             "Bookmark, marker and pencil icons indicate bookmarks, highlights and notes.",
             "Reading-time bars show visits; gray includes this session when known.",
             "Filled numbered badges are previous locations; outlines are next locations.",
-            "Shading indicates hidden pages; the small outline marks the browser focus.",
+            "Triangle: reading page. Small outline: browser focus. Shading: hidden pages.",
             "In a crowded slot, a note icon can replace a highlight icon.",
         ]
         .into_iter()

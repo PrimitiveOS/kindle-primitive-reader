@@ -566,6 +566,31 @@ pub(crate) fn verify_captured_state(state: &Path, expected: &[u8; 32]) -> io::Re
     }
     Ok(())
 }
+/// A fresh install may create a v2 state only when the journal proves that
+/// no prior library existed at capture time. No v1 backup exists in this case.
+pub(crate) fn verify_no_captured_state(state: &Path) -> io::Result<()> {
+    let root = root(state)?;
+    let directory = root.join(DIRECTORY);
+    let journal: Journal =
+        serde_json::from_slice(&read_nofollow(&directory.join(JOURNAL), 1024 * 1024)?)?;
+    let Some(first) = journal.entries.first() else {
+        return Err(invalid("The reader state journal has no library entry"));
+    };
+    if journal.version != 1
+        || journal.committed
+        || first.key != Key::Library
+        || first.old_sha256.is_some()
+        || first.old_bytes != 0
+    {
+        return Err(invalid("A reader state appeared before creation"));
+    }
+    match fs::symlink_metadata(directory.join("old-0")) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Ok(_) => Err(invalid("A reader state appeared before creation")),
+        Err(error) => Err(error),
+    }
+}
+
 fn transaction_observed<T>(
     state: &Path,
     updates: &[(Key, Vec<u8>)],

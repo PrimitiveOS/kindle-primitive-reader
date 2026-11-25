@@ -25,7 +25,7 @@ These additions have not yet been compared against KOReader or exercised on
 the simulator or Kindle. Associated-alpha white-is-zero grayscale and palette images, packed palette alpha, profiled or nonstandard CMYK, multi-page and tiled TIFFs and advanced fax options remain outside this decoder's support. [TIFF 6.0 LZW
 and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
-## CCITT Group 3 and 4 scans
+## CCITT 1D, Group 3 and Group 4 scans
 
 Single-sample, one-bit grayscale strips with TIFF CCITT Group 4 compression can
 use Reader's already packaged `hayro-ccitt` 0.5.0 decoder. Each strip has a
@@ -34,10 +34,13 @@ image and strip dimension limits. Reader requires exactly the declared rows,
 rejects malformed data and nonzero trailing bytes, and maps the resulting
 white/black runs to the TIFF photometric polarity. Reverse fill order uses the
 existing bounded compressed-byte reversal. The same bounded path accepts
-Group 3 one-dimensional strips with default T4 options and an initial unpadded
-end-of-line marker. Group 3 two-dimensional or nondefault options, nonzero T6
-options, TIFF CCITT compression 2, alpha, other bit depths and predictors are
-not supported by this path. Exact end-of-line and return-to-control behavior
+Group 3 one-dimensional strips with default T4 options and mixed 1D/2D strips
+with T4Options=1; both require an initial unpadded end-of-line marker, and the
+mixed mode requires a 1D first-row tag. Other T4 options, nonzero T6 options,
+alpha, other bit depths and predictors are not supported by this path.
+Compression 2 also uses the bounded 1D decoder with byte-aligned rows and no
+required end-of-line or end-of-block markers. The decoder may tolerate EOLs;
+it does not enforce their absence. Exact framing and return-to-control behavior
 has not yet been compared with KOReader. The decoder's
 Apache-2.0/MIT notices are included in the existing third-party package notices;
 the TIFF integration has not been compared with KOReader or behaviorally

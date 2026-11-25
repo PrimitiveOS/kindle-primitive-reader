@@ -476,9 +476,15 @@ impl Reader {
                 if let Some(expected) = baseline {
                     archive::verify_captured_state(&state, &expected)?;
                 }
-                if let Some((backup, expected)) = &transition {
-                    archive::verify_captured_state(&state, expected)?;
-                    archive::verify_retained_v1(backup, expected)?;
+                match &transition {
+                    Some(crate::library::V2RestoreBaseline::Existing { backup, digest }) => {
+                        archive::verify_captured_state(&state, digest)?;
+                        archive::verify_retained_v1(backup, digest)?;
+                    }
+                    Some(crate::library::V2RestoreBaseline::Absent) => {
+                        archive::verify_no_captured_state(&state)?;
+                    }
+                    None => {}
                 }
                 Self::open_data(&documents, &state, fonts)
             })

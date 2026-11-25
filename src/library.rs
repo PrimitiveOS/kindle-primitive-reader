@@ -1665,6 +1665,12 @@ pub struct Library {
     live_metadata: live_metadata::Store,
 }
 
+#[cfg(feature = "kindle")]
+pub(crate) enum V2RestoreBaseline {
+    Existing { backup: PathBuf, digest: [u8; 32] },
+    Absent,
+}
+
 impl Library {
     #[cfg(feature = "kindle")]
     pub(crate) fn v2_disk_baseline(&self) -> io::Result<Option<[u8; 32]>> {
@@ -1683,7 +1689,7 @@ impl Library {
     pub(crate) fn prepare_v2_restore(
         &self,
         candidate: &[u8],
-    ) -> io::Result<Option<(PathBuf, [u8; 32])>> {
+    ) -> io::Result<Option<V2RestoreBaseline>> {
         let header: serde_json::Value =
             serde_json::from_slice(candidate).map_err(io::Error::other)?;
         if self.state_version.get() != 1
@@ -1692,11 +1698,18 @@ impl Library {
             return Ok(None);
         }
         raw_v2::decode(candidate)?;
-        let expected = self
-            .state_digest
-            .get()
-            .ok_or_else(|| invalid_state("The reader state has no verified v1 disk baseline"))?;
         crate::reading_backup::require_no_pending(&self.state_path)?;
+        let Some(expected) = self.state_digest.get() else {
+            return match fs::symlink_metadata(&self.state_path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    Ok(Some(V2RestoreBaseline::Absent))
+                }
+                Ok(_) => Err(invalid_state(
+                    "A reader state appeared since the library was opened",
+                )),
+                Err(error) => Err(error),
+            };
+        };
         let prior = crate::reading_backup::read_state_strict(&self.state_path)?;
         if state_hash(&prior) != expected {
             return Err(invalid_state(
@@ -1708,7 +1721,10 @@ impl Library {
             &prior,
             validate_v1_state_bytes,
         )?;
-        Ok(Some((backup, expected)))
+        Ok(Some(V2RestoreBaseline::Existing {
+            backup,
+            digest: expected,
+        }))
     }
 
     #[cfg(feature = "kindle")]
@@ -2803,16 +2819,21 @@ impl Library {
                 self.state_digest.set(Some(state_hash(&bytes)));
             } else if self.checked_v1_save.get() {
                 crate::reading_backup::require_no_pending(&self.state_path)?;
-                let expected = self.state_digest.get().ok_or_else(|| {
-                    invalid_state("The reader state has no verified v1 disk baseline")
-                })?;
+                let expected = self.state_digest.get();
                 let bytes = self.bytes()?;
                 validate_v1_state_bytes(&bytes)?;
                 crate::reading_backup::transaction(
                     &self.state_path,
                     &[(crate::reading_backup::Key::Library, bytes.clone())],
                     || {
-                        crate::reading_backup::verify_captured_state(&self.state_path, &expected)?;
+                        if let Some(expected) = expected {
+                            crate::reading_backup::verify_captured_state(
+                                &self.state_path,
+                                &expected,
+                            )?;
+                        } else {
+                            crate::reading_backup::verify_no_captured_state(&self.state_path)?;
+                        }
                         if crate::reading_backup::read_state_strict(&self.state_path)? != bytes {
                             return Err(invalid_state("Reader state changed during publication"));
                         }
@@ -2831,17 +2852,33 @@ impl Library {
     #[cfg(feature = "kindle")]
     fn promote_raw_state(&self) -> io::Result<()> {
         crate::reading_backup::require_no_pending(&self.state_path)?;
-        let expected = self
-            .state_digest
-            .get()
-            .ok_or_else(|| invalid_state("The reader state has no verified v1 disk baseline"))?;
+        let next = raw_v2::encode(&self.v2_snapshot())?;
+        let Some(expected) = self.state_digest.get() else {
+            // The library was opened with no state file. The journal must
+            // prove it was still absent when captured; otherwise roll back.
+            crate::reading_backup::transaction(
+                &self.state_path,
+                &[(crate::reading_backup::Key::Library, next.clone())],
+                || {
+                    crate::reading_backup::verify_no_captured_state(&self.state_path)?;
+                    let written = crate::reading_backup::read_state_strict(&self.state_path)?;
+                    if written != next {
+                        return Err(invalid_state("Reader state changed during creation"));
+                    }
+                    raw_v2::decode(&written)?;
+                    Ok(())
+                },
+            )?;
+            self.state_version.set(2);
+            self.state_digest.set(Some(state_hash(&next)));
+            return Ok(());
+        };
         let prior = crate::reading_backup::read_state_strict(&self.state_path)?;
         if state_hash(&prior) != expected {
             return Err(invalid_state(
                 "The reader state changed since it was loaded",
             ));
         }
-        let next = raw_v2::encode(&self.v2_snapshot())?;
         crate::reading_backup::publish_raw_anchor_v2(
             &self.state_path,
             &prior,

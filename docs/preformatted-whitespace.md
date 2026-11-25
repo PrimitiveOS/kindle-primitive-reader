@@ -68,7 +68,7 @@ without legacy sanitization and save it through the checked encoder and Kindle r
 merge from verified v1 or v2 backups; conflicting positions, marks, metadata,
 contents or flow settings reject the entire merge instead of silently choosing
 one. The multi-component restore verifies the captured disk baseline before
-commit. Restoring a v2 backup into a v1 library uses the same strict conflict checks; it first retains the exact verified v1 state, journals any required pre-restore save against the loaded baseline, and rechecks both the journal capture and retained backup before commit. These checks coordinate Reader writes; they cannot provide an atomic compare-and-swap against an unrelated process writing the same file concurrently. An absent baseline or a v1 state that cannot be represented without loss is rejected. Raw resumes and history
+commit. Restoring a v2 backup into a v1 library uses the same strict conflict checks; it first retains the exact verified v1 state, journals any required pre-restore save against the loaded baseline, and rechecks both the journal capture and retained backup before commit. These checks coordinate Reader writes; they cannot provide an atomic compare-and-swap against an unrelated process writing the same file concurrently. A missing baseline for an existing file, or a v1 state that cannot be represented without loss, is rejected. Raw resumes and history
 locations are rejected before fixed or reflow page fallback. Operations using
 an unjournaled generic save are rejected for v2, and a pending journal requires
 Reader to reopen before saving its in-memory state. While raw rendering is
@@ -199,3 +199,13 @@ would lose data and retains an exact digest-named v1 backup; replacement uses th
 existing archive lock and an atomic, directory-synced rename. Older Reader
 versions cannot open v2 archives. These paths remain untested, and the archive
 lock coordinates cooperating writers rather than arbitrary external processes.
+
+On a fresh installation with no library file, the first raw-bearing state can
+be created through the recovery journal only if its captured old slot proves
+that no prior file existed. A newly appeared file causes rollback rather than
+overwrite; no v1 backup exists in this case. This path remains untested.
+
+A v2 backup can likewise be restored into a fresh installation without a
+previous library file: both any preliminary v1 save and the restore journal
+verify the absent captured slot. An existing or newly appeared library is never
+assumed absent. This path remains untested.
