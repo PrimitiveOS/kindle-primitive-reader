@@ -110,10 +110,12 @@ The detached shaped-block search can use Reader's existing literal-query
 case/accent folding and return exact raw quotes with grapheme-checked endpoints.
 If any result has an unsupported boundary it fails closed; it is not yet used
 by the whole-book search UI or regular-expression search.
-Reader's selection value can now carry a verified raw quote and raw endpoints
-within one captured block, including through the reading-session quote API.
-Mixed raw/canonical endpoints and selections across blocks or sections are
-rejected, and selection geometry is not yet installed in the active renderer.
+Reader's selection value can carry a verified raw quote and raw endpoints,
+including through the reading-session quote API. Within one section it can
+also assemble cross-block quotes and geometry when both endpoint layouts are
+verified, using each intermediate block's installed projection. Chapters with
+joined notes, mixed raw/canonical endpoints and cross-section raw selections
+remain unsupported. The active renderer has not yet installed raw layouts.
 
 This stage does **not** change rendering, copying, selection, source revisions,
 existing anchors or saved state. It does not yet implement preformatted EPUB

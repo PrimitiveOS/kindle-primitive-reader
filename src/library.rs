@@ -1283,6 +1283,22 @@ impl From<PageBrowserGrid> for [u8; 2] {
     }
 }
 
+/// How many thumbnails in each Page Browser row display a page number.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PageBrowserNumbers {
+    None,
+    RowStart,
+    #[default]
+    All,
+}
+
+impl PageBrowserNumbers {
+    pub(crate) fn is_default(&self) -> bool {
+        *self == Self::All
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BookState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1334,6 +1350,8 @@ pub struct BookState {
     pub(crate) reading_identity: BookIdentity,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) page_browser_grid: Option<PageBrowserGrid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) page_browser_numbers: Option<PageBrowserNumbers>,
     #[cfg(feature = "kindle")]
     #[serde(
         default,
@@ -1487,6 +1505,7 @@ impl BookState {
             top_status_header: None,
             reading_identity: BookIdentity::default(),
             page_browser_grid: None,
+            page_browser_numbers: None,
             #[cfg(feature = "kindle")]
             document_turns: Default::default(),
             screen_orientation: None,
@@ -2592,6 +2611,25 @@ impl Library {
         Ok(())
     }
 
+    #[cfg(feature = "kindle")]
+    pub(crate) fn save_page_browser_numbers(
+        &mut self,
+        id: u64,
+        numbers: Option<PageBrowserNumbers>,
+    ) -> io::Result<()> {
+        let index = self
+            .recent
+            .iter()
+            .position(|state| state.id == id)
+            .ok_or_else(|| invalid_state("Open a book before changing its page browser"))?;
+        let previous = std::mem::replace(&mut self.recent[index].page_browser_numbers, numbers);
+        if let Err(error) = self.persist() {
+            self.recent[index].page_browser_numbers = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub fn save_with(&self, write: impl FnOnce(&Path, &[u8]) -> io::Result<()>) -> io::Result<()> {
         if self.state_version == 2 {
             return Err(invalid_state(
@@ -2901,6 +2939,9 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
         target.document_turns.fill_missing(source.document_turns);
         if target.page_browser_grid.is_none() {
             target.page_browser_grid = source.page_browser_grid;
+        }
+        if target.page_browser_numbers.is_none() {
+            target.page_browser_numbers = source.page_browser_numbers;
         }
         if target.font_size_rendering.is_none() {
             target.font_size_rendering = source.font_size_rendering;

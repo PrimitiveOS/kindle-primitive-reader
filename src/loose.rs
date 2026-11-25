@@ -239,6 +239,15 @@ impl Document {
         };
         let input = decode_document(&bytes, format)?;
         let input = input.trim_start_matches('\u{feff}');
+        if *effective_format == Format::Text
+            && !*large_text
+            && input.len() > MAX_INPUT
+            && !text_starts_with_html(&strip_terminal_colors(input))
+        {
+            // Some single-byte text expands when decoded to UTF-8. Use the
+            // same verified section path as larger encoded plain-text books.
+            *large_text = true;
+        }
         match format {
             Format::Text => text_document_limited(input, fallback_title, *large_text),
             Format::Html => {
@@ -1068,18 +1077,7 @@ fn text_document(input: &str, title: &str) -> Result<Document> {
 
 fn text_document_limited(input: &str, title: &str, large: bool) -> Result<Document> {
     let cleaned = strip_terminal_colors(input);
-    let start = cleaned.trim_start();
-    let html_tag = start
-        .get(..5)
-        .is_some_and(|tag| tag.eq_ignore_ascii_case("<html"))
-        && start
-            .as_bytes()
-            .get(5)
-            .is_some_and(|byte| *byte == b'>' || byte.is_ascii_whitespace());
-    let html_doctype = start
-        .get(..15)
-        .is_some_and(|head| head.eq_ignore_ascii_case("<!doctype html>"));
-    if html_tag || html_doctype {
+    if text_starts_with_html(&cleaned) {
         if large {
             return Err("Large HTML content in a text file is not supported".into());
         }
@@ -1108,6 +1106,21 @@ fn text_document_limited(input: &str, title: &str, large: bool) -> Result<Docume
         resources: BTreeMap::new(),
         fb2_note_sections: BTreeMap::new(),
     })
+}
+
+fn text_starts_with_html(input: &str) -> bool {
+    let start = input.trim_start();
+    let html_tag = start
+        .get(..5)
+        .is_some_and(|tag| tag.eq_ignore_ascii_case("<html"))
+        && start
+            .as_bytes()
+            .get(5)
+            .is_some_and(|byte| *byte == b'>' || byte.is_ascii_whitespace());
+    let html_doctype = start
+        .get(..15)
+        .is_some_and(|head| head.eq_ignore_ascii_case("<!doctype html>"));
+    html_tag || html_doctype
 }
 
 fn strip_terminal_colors(input: &str) -> Cow<'_, str> {

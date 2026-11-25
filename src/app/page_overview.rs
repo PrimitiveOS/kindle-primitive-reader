@@ -5,7 +5,7 @@ use primitive_ui::{CAPTION, Canvas, GrayImage, Input, Rect};
 use super::fixed_book_map::MapWindow;
 use super::navigation_layout::NavigationLayout;
 use super::{Action, LIST_X, LIST_Y, OVERVIEW_PAGES, Reader, Screen, fixed_page_label};
-use crate::library::PageBrowserGrid;
+use crate::library::{PageBrowserGrid, PageBrowserNumbers};
 use crate::session::{PageThumbnail, page_thumbnail};
 use crate::{Anchor, Probe, Result};
 
@@ -211,6 +211,13 @@ impl OverviewLayout {
 }
 
 impl Reader {
+    fn overview_page_numbers(&self) -> PageBrowserNumbers {
+        self.open_book_id()
+            .and_then(|id| self.library.state(id))
+            .and_then(|book| book.page_browser_numbers)
+            .unwrap_or(self.controls.page_browser_numbers_default)
+    }
+
     fn book_map_previews_on_tap(&self) -> bool {
         self.controls.book_map_tap_to_page_browser.unwrap_or(true)
     }
@@ -443,12 +450,23 @@ impl Reader {
                     if hidden { 235 } else { 255 },
                 );
             }
-            let mut label = self.fixed.as_ref().map_or_else(
-                || format!("{} {}", language.overview_text("Page"), page + 1),
-                |fixed| fixed_page_label(&fixed.reading, page),
-            );
+            let show_number = match self.overview_page_numbers() {
+                PageBrowserNumbers::None => false,
+                PageBrowserNumbers::RowStart => index % layout.columns() == 0,
+                PageBrowserNumbers::All => true,
+            };
+            let mut label = if show_number {
+                self.fixed.as_ref().map_or_else(
+                    || format!("{} {}", language.overview_text("Page"), page + 1),
+                    |fixed| fixed_page_label(&fixed.reading, page),
+                )
+            } else {
+                String::new()
+            };
             if hidden {
-                label.push_str(" · ");
+                if !label.is_empty() {
+                    label.push_str(" · ");
+                }
                 label.push_str(language.overview_text("Hidden"));
             }
             if let Some(tile) = tile {

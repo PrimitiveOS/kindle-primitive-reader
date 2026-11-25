@@ -244,6 +244,21 @@ impl Plan {
 }
 
 impl Prepared {
+    /// Move a verified raw layout and its page metadata into the chapter
+    /// builder. This remains unused while raw reading is disabled.
+    pub(in crate::parley_layout) fn into_page_parts(
+        self,
+        block: &Block,
+    ) -> Option<(
+        Layout<PaintBrush>,
+        InlineText,
+        Vec<crate::RawLinePosition>,
+        SourceBinding,
+    )> {
+        let lines = self.page_lines(block)?;
+        Some((self.layout, self.text, lines, self.binding))
+    }
+
     /// Search a verified raw-shaped block using the same folded literal query
     /// as ordinary reflow search. Returned quotes and both endpoints retain
     /// raw whitespace; callers must still validate them through the open Probe.

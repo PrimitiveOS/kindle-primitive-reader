@@ -6,9 +6,15 @@ to 4 MiB and may reach that limit earlier when text requires XML escaping.
 Markdown, HTML, XML and TCR retain their existing limits. Large text files
 whose contents are actually HTML are not supported by this path.
 
-Documents already accepted by the earlier 512 KiB path keep the same converter,
-chapter path, generated publication revision and saved anchors. For newly
-accepted larger documents, Reader keeps its existing encoding, paragraph,
+The large-text path also applies when at most 512 KiB of encoded plain text
+expands beyond 512 KiB after decoding to UTF-8; this can occur with single-byte
+encodings. The encoded and expanded-input limits above still apply. The
+existing HTML-in-TXT detection and conversion remain unchanged. When the
+extracted normalized text fits the earlier 512 KiB chapter limit, the
+original converter, chapter path, publication revision and saved anchors are
+retained. Oversized text instead uses the verified section mapping below.
+
+For larger documents, Reader keeps its existing encoding, paragraph,
 terminal-color and newline handling. It partitions oversized normalized text
 into bounded reading sections and verifies the extracted source text and image
 order against the original generated document before opening it. A paragraph
@@ -25,8 +31,8 @@ are checked against that section's actual block text before use. A quote import
 uses the same section text and is verified before saving. Quotes crossing an
 artificial section boundary may not be found by the import search.
 
-These changes are implementation candidates: no build, simulation, behavioral,
-performance or Kindle tests have yet been run. Very long inputs may still hit
+The decoded-size routing change is an implementation candidate; behavioral,
+simulation, performance and Kindle checks remain open. Very long inputs may still hit
 node, section, line, rendering or memory bounds and report an error. They do
 not yet match KOReader's broader encoding and paragraph-detection behavior.
 Standalone loose-document decoding recognizes BOM-marked UTF-32 little- and

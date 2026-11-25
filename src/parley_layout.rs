@@ -302,10 +302,32 @@ pub(crate) struct Paragraph {
     ruby: Vec<RubyOverlay>,
     flow: Option<Arc<OwnedProjection>>,
     pub(crate) inline_text: Option<inline_blocks::InlineText>,
+    /// Present only for an explicitly installed, source-bound raw layout.
+    pub(crate) raw_binding: Option<crate::flow_projection::SourceBinding>,
     pub(crate) joined_note: Option<Arc<note_inline::JoinedNote>>,
 }
 
 impl Paragraph {
+    pub(crate) fn is_verified_raw(&self, block: &crate::source::Block) -> bool {
+        let Some(binding) = &self.raw_binding else {
+            return false;
+        };
+        let Some(text) = &self.inline_text else {
+            return false;
+        };
+        let Some(raw) = block
+            .raw_whitespace
+            .as_ref()
+            .and_then(|snapshot| snapshot.bind(&block.text))
+        else {
+            return false;
+        };
+        self.key == block.key
+            && binding.matches(block)
+            && text.text == raw.raw()
+            && self.layout.text_len() == raw.raw().len()
+    }
+
     pub(crate) fn source_offset(
         &self,
         offset: usize,
@@ -1942,6 +1964,7 @@ impl ParleyChapter {
                         None
                     },
                     inline_text,
+                    raw_binding: None,
                     joined_note: note_layout.as_ref().map(Arc::clone),
                 });
             }
@@ -2526,6 +2549,10 @@ impl ParleyChapter {
             .iter()
             .take_while(move |paragraph| paragraph.text_top() < page.end)
             .filter(move |p| p.bottom > page.start)
+    }
+
+    pub(crate) fn paragraphs(&self) -> &[Paragraph] {
+        &self.paragraphs
     }
 
     pub fn capture(&mut self, range: Range<f32>, settings: Settings) -> Result<Vec<u8>> {

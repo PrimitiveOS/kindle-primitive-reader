@@ -40,8 +40,8 @@ pub struct HighlightRect {
 
 impl Probe {
     /// Convert two raw-bearing anchors into an exact quote while retaining the
-    /// raw endpoints in Reader's selection value. Mixed or cross-block ranges
-    /// are rejected until their projection rules can be proved end to end.
+    /// raw endpoints in Reader's selection value. Cross-block ranges require
+    /// verified raw endpoint layouts; mixed raw/canonical endpoints are rejected.
     #[allow(dead_code)]
     pub(crate) fn select_raw_anchors(
         &self,
@@ -54,7 +54,14 @@ impl Probe {
             canonical.raw_caret = None;
             Some(crate::source::raw_whitespace::RawAnchor { canonical, caret })
         };
-        let selection = self.select_raw_whitespace(&wrap(first)?, &wrap(second)?)?;
+        let first_raw = wrap(first)?;
+        let second_raw = wrap(second)?;
+        self.validate_raw_whitespace_anchor(&first_raw)?;
+        self.validate_raw_whitespace_anchor(&second_raw)?;
+        if first_raw.canonical.block != second_raw.canonical.block {
+            return self.select_raw_across_blocks(first_raw, second_raw);
+        }
+        let selection = self.select_raw_whitespace(&first_raw, &second_raw)?;
         let unwrap = |raw: crate::source::raw_whitespace::RawAnchor| {
             let mut anchor = raw.canonical;
             anchor.raw_caret = Some(raw.caret);
@@ -64,6 +71,99 @@ impl Probe {
             start: unwrap(selection.start),
             end: unwrap(selection.end),
             text: selection.text,
+        })
+    }
+
+    /// Cross-block quotes require a verified raw layout at both endpoints;
+    /// intermediate blocks follow their installed raw or normal projection.
+    fn select_raw_across_blocks(
+        &self,
+        first: crate::source::raw_whitespace::RawAnchor,
+        second: crate::source::raw_whitespace::RawAnchor,
+    ) -> Option<TextSelection> {
+        let a = self.selection_block(first.canonical.block)?;
+        let b = self.selection_block(second.canonical.block)?;
+        let (first_index, last_index, start, end) = if a < b {
+            (a, b, first, second)
+        } else {
+            (b, a, second, first)
+        };
+        let Renderer::Parley(renderer) = &self.renderer else {
+            return None;
+        };
+        if renderer
+            .paragraphs()
+            .iter()
+            .any(|paragraph| paragraph.joined_note.is_some())
+        {
+            return None;
+        }
+        let mut raw_blocks = std::collections::BTreeSet::new();
+        for paragraph in renderer.paragraphs() {
+            if paragraph.raw_binding.is_none() {
+                continue;
+            }
+            let index = self.selection_block(paragraph.key)?;
+            if !(first_index..=last_index).contains(&index) {
+                continue;
+            }
+            if !paragraph.is_verified_raw(&self.source.blocks[index]) || !raw_blocks.insert(index) {
+                return None;
+            }
+        }
+        if !raw_blocks.contains(&first_index) || !raw_blocks.contains(&last_index) {
+            return None;
+        }
+        let mut quote = String::new();
+        for index in first_index..=last_index {
+            let block = &self.source.blocks[index];
+            let part = if raw_blocks.contains(&index) {
+                let raw = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+                let from = if index == first_index {
+                    start.caret.raw_offset
+                } else {
+                    0
+                };
+                let to = if index == last_index {
+                    end.caret.raw_offset
+                } else {
+                    raw.raw().len()
+                };
+                raw.raw().get(from..to)?.to_owned()
+            } else {
+                let view = self.reading_flow.view(&self.source, block).ok()?;
+                let mut text = String::new();
+                for range in view.layout_spans(0..block.text.len())? {
+                    text.push_str(view.text().get(range)?);
+                }
+                text
+            };
+            if part.is_empty() {
+                continue;
+            }
+            let separator = usize::from(!quote.is_empty());
+            if quote
+                .len()
+                .checked_add(separator)?
+                .checked_add(part.len())?
+                > crate::library::MAX_HIGHLIGHT_TEXT_BYTES
+            {
+                return None;
+            }
+            if separator != 0 {
+                quote.push('\n');
+            }
+            quote.push_str(&part);
+        }
+        let into_anchor = |raw: crate::source::raw_whitespace::RawAnchor| {
+            let mut anchor = raw.canonical;
+            anchor.raw_caret = Some(raw.caret);
+            anchor
+        };
+        Some(TextSelection {
+            start: into_anchor(start),
+            end: into_anchor(end),
+            text: quote,
         })
     }
 
@@ -420,7 +520,106 @@ impl Probe {
         page: Range<f32>,
         selection: &TextSelection,
     ) -> Vec<HighlightRect> {
+        if selection.start.raw_caret.is_some() || selection.end.raw_caret.is_some() {
+            return self.raw_selection_rects_in(page, selection);
+        }
         self.anchor_rects_in(page, &selection.start, &selection.end)
+    }
+
+    fn raw_selection_rects_in(
+        &self,
+        page: Range<f32>,
+        selection: &TextSelection,
+    ) -> Vec<HighlightRect> {
+        let Some(verified) = self.select_raw_anchors(&selection.start, &selection.end) else {
+            return Vec::new();
+        };
+        if verified != *selection
+            || !page.start.is_finite()
+            || !page.end.is_finite()
+            || page.start >= page.end
+        {
+            return Vec::new();
+        }
+        let Some(first) = self.selection_block(selection.start.block) else {
+            return Vec::new();
+        };
+        let Some(last) = self.selection_block(selection.end.block) else {
+            return Vec::new();
+        };
+        if first > last {
+            return Vec::new();
+        }
+        let Renderer::Parley(renderer) = &self.renderer else {
+            return Vec::new();
+        };
+        let (Some(start), Some(end)) = (&selection.start.raw_caret, &selection.end.raw_caret)
+        else {
+            return Vec::new();
+        };
+        let (start, end) = (start.raw_offset, end.raw_offset);
+        let mut rects = Vec::new();
+        for paragraph in renderer.paragraphs_in(page.clone()) {
+            let Some(index) = self.selection_block(paragraph.key) else {
+                continue;
+            };
+            if !(first..=last).contains(&index) {
+                continue;
+            }
+            if paragraph.joined_note.is_some() {
+                return Vec::new();
+            }
+            let block = &self.source.blocks[index];
+            let columns = paragraph.paint_columns(self.settings);
+            let geometry = Geometry {
+                layout: &paragraph.layout,
+                x: paragraph.x,
+                y: paragraph.y,
+                placed_boxes: paragraph.inline_text.is_some(),
+            };
+            if paragraph.raw_binding.is_some() {
+                if !paragraph.is_verified_raw(block) {
+                    return Vec::new();
+                }
+                let Some(raw) = block
+                    .raw_whitespace
+                    .as_ref()
+                    .and_then(|s| s.bind(&block.text))
+                else {
+                    return Vec::new();
+                };
+                let from = if index == first { start } else { 0 };
+                let to = if index == last { end } else { raw.raw().len() };
+                if from < to {
+                    geometry.append(from..to, &page, self.settings, &columns, &mut rects);
+                }
+            } else {
+                if index == first || index == last {
+                    return Vec::new();
+                }
+                let Ok(view) = self.reading_flow.view(&self.source, block) else {
+                    return Vec::new();
+                };
+                let Some(spans) = view.layout_spans(0..block.text.len()) else {
+                    return Vec::new();
+                };
+                for span in spans {
+                    geometry.append_flow(
+                        paragraph,
+                        span,
+                        &page,
+                        self.settings,
+                        &columns,
+                        &mut rects,
+                    );
+                }
+            }
+        }
+        if rects.len() > 4096 {
+            Vec::new()
+        } else {
+            rects
+        }
     }
 
     pub(crate) fn anchor_rects_in(
@@ -429,6 +628,13 @@ impl Probe {
         start: &Anchor,
         end: &Anchor,
     ) -> Vec<HighlightRect> {
+        if start.raw_caret.is_some() || end.raw_caret.is_some() {
+            return self
+                .select_raw_anchors(start, end)
+                .map_or_else(Vec::new, |selection| {
+                    self.raw_selection_rects_in(page, &selection)
+                });
+        }
         let Some(spans) = self.selection_spans(start, end) else {
             return Vec::new();
         };

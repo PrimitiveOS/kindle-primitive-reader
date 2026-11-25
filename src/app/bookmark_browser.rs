@@ -2,8 +2,8 @@
 mod metadata;
 mod metadata_view;
 use super::{
-    Action, Book, Canvas, Change, Editor, Input, Item, Reader, Rect, Result, Screen,
-    mark_chapters::location_caption, navigation_layout::NavigationLayout, with_storage,
+    Action, AnnotationListText, Book, Canvas, Change, Editor, Input, Item, Reader, Rect, Result,
+    Screen, mark_chapters::location_caption, navigation_layout::NavigationLayout, with_storage,
 };
 use crate::highlight_style::{HighlightColor, HighlightStyle};
 use crate::library::{BookState, BrowseKind, DocumentFormat, Library, fold_search};
@@ -512,9 +512,9 @@ fn item(text: impl Into<String>, action: Command) -> Item {
     Item::new(text, Action::BookmarkBrowser(action))
 }
 
-fn excerpt(text: &str) -> String {
+fn excerpt(text: &str, limit: usize) -> String {
     text.split_whitespace()
-        .take(22)
+        .take(limit)
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -1159,8 +1159,19 @@ impl Reader {
             }
             RowKey::Mark(key) => {
                 let mark = self.bookmark_mark(key)?;
-                let title = mark.note.unwrap_or(mark.quote);
-                Some(item(excerpt(title), Command::Inspect(key)).detail(format!(
+                let note = mark.note.filter(|note| !note.trim().is_empty());
+                let title = match self.controls.annotation_list_text {
+                    AnnotationListText::HighlightedText => excerpt(mark.quote, 22),
+                    AnnotationListText::NoteIfSet => excerpt(note.unwrap_or(mark.quote), 22),
+                    AnnotationListText::HighlightAndNote => match note {
+                        Some(note) if !mark.quote.trim().is_empty() => {
+                            format!("{} · {}", excerpt(mark.quote, 11), excerpt(note, 11))
+                        }
+                        Some(note) => excerpt(note, 22),
+                        None => excerpt(mark.quote, 22),
+                    },
+                };
+                Some(item(title, Command::Inspect(key)).detail(format!(
                     "{} · {}",
                     mark.kind().label(),
                     mark.location_label

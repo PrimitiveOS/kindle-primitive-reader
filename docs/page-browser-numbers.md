@@ -1,0 +1,7 @@
+# Page Browser thumbnail numbers
+
+The Page Browser **Grid** panel offers three **Thumbnail page numbers** modes: **None**, **Row start**, and **All**. Row start labels the first thumbnail in each visual row; All is the existing default. Thumbnail touch targets, the selected-page indicator, bookmark icons, and hidden-page indicators remain available in every mode. The original reading position is unchanged until a thumbnail is opened.
+
+Changing the mode saves a choice for the current book. **Set as default** saves the displayed choice for books without their own choice. **Use default** removes the current book's override, so it follows the Reader default again. Book settings are part of the library and follow its existing save, backup, merge, and rollback paths. The default is stored with Reader controls and follows the existing reading-backup behavior for those controls. Older data without these fields continues to show all page numbers.
+
+KOReader's pinned [page-number modes](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L331-L366) and [Page Browser menu](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1080-L1104) provide the reference. Reader presents labels inside its existing thumbnail controls instead of KOReader's side labels. This implementation still requires simulation, accessibility, and Kindle display and persistence validation.

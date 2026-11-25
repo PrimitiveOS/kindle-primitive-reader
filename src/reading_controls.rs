@@ -175,6 +175,9 @@ pub(crate) struct ReadingControls {
     pub bookmark_reverse: bool,
     /// Text shown for each saved highlight in the in-book annotations list.
     pub annotation_list_text: AnnotationListText,
+    /// Default thumbnail number density for books without their own choice.
+    #[serde(skip_serializing_if = "crate::library::PageBrowserNumbers::is_default")]
+    pub page_browser_numbers_default: crate::library::PageBrowserNumbers,
     /// Reader-wide appearance of the in-book saved marks list.
     #[serde(skip_serializing_if = "ListDensity::is_default")]
     pub bookmark_density: ListDensity,
