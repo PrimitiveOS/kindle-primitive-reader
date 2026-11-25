@@ -23,7 +23,7 @@ carets on exact text or whitespace edges map back exactly. An interior raw
 whitespace caret is returned as an explicit gap with its raw offset rather
 than being silently snapped to a normalized position. Invalid UTF-8
 boundaries, mismatched canonical text or conflicting mappings fail closed.
-The mapper is not yet connected to the active reading layout, selection or saved anchors.
+The mapper is not yet connected to the active reading layout or selection.
 
 An internal, serializable raw-caret value now records a raw offset, its
 canonical edge, explicit affinity and the raw text's SHA-256. The bound mapper
@@ -38,12 +38,11 @@ publication, or project an existing canonical anchor to a raw edge without
 rewriting the saved anchor. A transient selection consumer can validate two
 raw anchors in the same captured block and return their exact raw substring;
 cross-block and invalid selections fail closed. It is not connected to the UI
-or persistence. The canonical `Anchor` type has an optional transient raw
-caret slot, but serialization fails if it is populated, deserialization rejects
-the field if present, and the canonical page resolver refuses such anchors.
-Legacy anchors serialize exactly as before; this is not v2 persistence. Before raw carets are
-persisted, the library and backup format must support version 2, preserve an
-atomic version-1 backup and reject unsupported raw data. The existing version-1
+or active rendering. The canonical `Anchor` type has an optional raw caret slot;
+ordinary serialization rejects populated slots, ordinary deserialization rejects
+the field, and the canonical page resolver refuses such anchors. The checked v2
+library codec handles them separately. Legacy anchors serialize as before. The
+existing version-1
 loader rejects other library/backup versions, which prevents older builds
 from normally opening and rewriting a version-2 state. Startup also recovers
 any pending backup journal before this check, so the eventual migration must
@@ -53,21 +52,25 @@ digest-named v1 copy, and uses the existing recovery journal to publish a
 validated v2 candidate. It rechecks the journal's captured old state and the
 retained copy before commit. An interrupted or mismatched retained copy blocks
 the transition; it is not silently replaced. Filesystems that cannot sync
-directories do not provide a guaranteed power-loss durability claim. No v2
-schema is accepted or written by the active Reader yet, and the helper has not
-been behaviorally tested.
-An inactive v2 candidate decoder rejects duplicate JSON keys and raw fields
+directories do not provide a guaranteed power-loss durability claim. The
+transition helper is not yet used by Reader and has not been behaviorally tested.
+A v2 decoder rejects duplicate JSON keys and raw fields
 outside the known resume, bookmark, highlight, custom-contents and hidden-flow
 anchors. It bounds file size and raw-caret count, checks each caret's structural
 relationship to its canonical anchor, and keeps missing books without guessing
 their source data. The canonical JSON portion must round-trip exactly through
 Reader's state types, so unsupported fields or normalizations are rejected. An
-inactive encoder clones the state, detaches and validates raw carets, serializes
+encoder clones the state, detaches and validates raw carets, serializes
 the canonical part, reinserts them at the approved paths and runs the decoder on
 the result. A separate check can validate a raw caret against an open book's
-source fingerprint and grapheme mapping. None of this activates the resulting
-library or completes v2 merge, restore and UI behavior.
-The detached decoder also validates book identities, retained collection
+source fingerprint and grapheme mapping. Reader can load a validated v2 library
+without legacy sanitization and save it through the checked encoder and Kindle
+recovery journal. Backup merging into v2 is rejected. Raw resumes and history
+locations are rejected before fixed or reflow page fallback. Operations using
+an unjournaled generic save are rejected for v2, and a pending journal requires
+Reader to reopen before saving its in-memory state. The v1-to-v2 transition, raw
+rendering, source-bound restoration and v2 merging remain incomplete.
+The decoder also validates book identities, retained collection
 membership, position lists and mark limits without invoking v1 sanitization or
 checking whether each book file is present. Raw-bearing books are explicitly
 excluded from legacy metadata sidecar checkpoints, which cannot represent them;
@@ -75,7 +78,7 @@ the user receives a warning instead of a silently incomplete sidecar.
 Resume, canonical selection, saved-mark validation and old ODT anchor migration
 also reject transient raw carets instead of silently using their collapsed
 canonical positions. Mark comparisons and custom-contents/flow ordering account
-for transient raw endpoints, but durable state still cannot contain them.
+for raw endpoints, but active reading cannot yet create or restore them.
 
 A preformatted horizontal layout plan can now build a separate raw text view
 for a verified simple block with an explicit `pre`, `pre-wrap` or

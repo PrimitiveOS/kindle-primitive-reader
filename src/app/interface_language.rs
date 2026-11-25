@@ -3096,6 +3096,7 @@ impl InterfaceLanguage {
             "Sources" => "Nguồn",
             "Filters" => "Bộ lọc",
             "History" => "Lịch sử",
+            "Current book" => "Sách đang đọc",
             "Collections" => "Bộ sưu tập",
             "Selected books" => "Sách đã chọn",
             "Archived books" => "Sách đã lưu trữ",

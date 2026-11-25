@@ -1642,6 +1642,13 @@ impl Reader {
                 fixed_preferences = state.fixed_preferences;
                 state.position.clone()
             });
+        if position
+            .as_ref()
+            .and_then(|saved| saved.anchor.as_ref())
+            .is_some_and(|anchor| anchor.raw_caret.is_some())
+        {
+            return Err("This raw whitespace position cannot yet be restored safely".into());
+        }
         let strict_odt_anchor = split_odt
             .then(|| position.as_ref().and_then(|saved| saved.anchor.clone()))
             .flatten();
@@ -6014,6 +6021,14 @@ impl Reader {
     }
 
     fn go_to_location(&mut self, target: &HistoryLocation) -> Result<()> {
+        if target
+            .position
+            .anchor
+            .as_ref()
+            .is_some_and(|anchor| anchor.raw_caret.is_some())
+        {
+            return Err("This raw whitespace position cannot yet be restored safely".into());
+        }
         if self.fixed.is_some() {
             self.jump_fixed(
                 target.position.page,

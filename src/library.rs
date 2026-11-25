@@ -1620,6 +1620,7 @@ pub struct Library {
     root: PathBuf,
     original_root: PathBuf,
     state_path: PathBuf,
+    state_version: u32,
     books: Vec<LibraryBook>,
     recent: Vec<BookState>,
     collections: Vec<Collection>,
@@ -1657,6 +1658,7 @@ impl Library {
             root: original_root.canonicalize()?,
             original_root,
             state_path: state_path.to_owned(),
+            state_version: saved.version,
             recent: saved.books,
             collections: saved.collections,
             page_browser_grid: saved.page_browser_grid,
@@ -2397,6 +2399,14 @@ impl Library {
     }
 
     pub fn bytes(&self) -> io::Result<Vec<u8>> {
+        if self.state_version == 2 {
+            return raw_v2::encode(&SavedLibrary {
+                version: 2,
+                books: self.recent.clone(),
+                collections: self.collections.clone(),
+                page_browser_grid: self.page_browser_grid,
+            });
+        }
         encode_library(
             &self.recent,
             &self.collections,
@@ -2407,6 +2417,9 @@ impl Library {
 
     /// Export Reader metadata as a versioned JSON document.
     pub fn backup_bytes(&self) -> io::Result<Vec<u8>> {
+        if self.state_version == 2 {
+            return self.bytes();
+        }
         encode_library(
             &self.recent,
             &self.collections,
@@ -2438,6 +2451,11 @@ impl Library {
 
     /// Calculate the effect of an import without touching the library, books, or state file.
     pub fn preview_backup(&self, bytes: &[u8]) -> io::Result<BackupImport> {
+        if self.state_version == 2 {
+            return Err(invalid_state(
+                "Merging backups into a v2 reader library is not yet supported",
+            ));
+        }
         if bytes.len() as u64 > MAX_BACKUP_BYTES {
             return Err(invalid_state("Reader backup exceeds its size limit"));
         }
@@ -2470,6 +2488,11 @@ impl Library {
 
     /// Revalidate the proposed merge against current state, then apply it in memory.
     pub fn merge_backup(&mut self, import: BackupImport) -> io::Result<BackupSummary> {
+        if self.state_version == 2 {
+            return Err(invalid_state(
+                "Merging backups into a v2 reader library is not yet supported",
+            ));
+        }
         let (merged, mut summary) = merge_states(&self.recent, &import.books);
         let collections = merge_collections(
             &self.collections,
@@ -2565,13 +2588,38 @@ impl Library {
     }
 
     pub fn save_with(&self, write: impl FnOnce(&Path, &[u8]) -> io::Result<()>) -> io::Result<()> {
+        if self.state_version == 2 {
+            return Err(invalid_state(
+                "This operation cannot yet save a v2 reader library safely",
+            ));
+        }
         write(&self.state_path, &self.bytes()?)
     }
 
     #[cfg(feature = "kindle")]
     pub fn persist(&self) -> io::Result<()> {
         primitive_app::with_storage(|| {
-            self.save_with(primitive_app::save)?;
+            if self.state_version == 2 {
+                crate::reading_backup::require_no_pending(&self.state_path)?;
+                let bytes = self.bytes()?;
+                crate::reading_backup::transaction(
+                    &self.state_path,
+                    &[(crate::reading_backup::Key::Library, bytes.clone())],
+                    || {
+                        let written = crate::reading_backup::read(
+                            &self.state_path,
+                            crate::reading_backup::Key::Library,
+                        )?;
+                        if written != bytes {
+                            return Err(invalid_state("Reader state changed during publication"));
+                        }
+                        raw_v2::decode(&written)?;
+                        Ok(())
+                    },
+                )?;
+            } else {
+                self.save_with(primitive_app::save)?;
+            }
             self.live_metadata.checkpoint(self);
             Ok(())
         })
@@ -3036,6 +3084,13 @@ fn load_library_state(path: &Path) -> io::Result<SavedLibrary> {
             io::ErrorKind::InvalidData,
             "Reader state exceeds its size limit",
         ));
+    }
+    if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'[') {
+        let envelope: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        if envelope.get("version").and_then(serde_json::Value::as_u64) == Some(2) {
+            return raw_v2::decode(&bytes);
+        }
     }
     let mut saved = if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'[') {
         SavedLibrary {

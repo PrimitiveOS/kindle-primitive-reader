@@ -400,6 +400,20 @@ pub(crate) fn transaction<T>(
     transaction_observed(state, updates, finish, |_| {})
 }
 
+/// A live library must not recover a prior transaction and then overwrite the
+/// recovered state with its potentially stale in-memory copy. Restart performs
+/// recovery before loading the library.
+pub(crate) fn require_no_pending(state: &Path) -> io::Result<()> {
+    let directory = root(state)?.join(DIRECTORY);
+    match fs::symlink_metadata(directory) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Ok(_) => Err(invalid(
+            "A reading-data recovery is pending; reopen Reader before saving",
+        )),
+        Err(error) => Err(error),
+    }
+}
+
 /// Stage a future raw-anchor schema upgrade only after retaining the exact v1
 /// state independently of the restore journal. This is not called by the
 /// current Reader: its v2 schema and consumers are not enabled yet.

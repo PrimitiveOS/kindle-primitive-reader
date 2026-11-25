@@ -187,6 +187,7 @@ pub(super) enum Command {
     Open,
     Go(Page),
     Use(Source),
+    UseCurrentBook,
     ToggleDefault(Source),
     OpenFolder(PathBuf, bool),
     ToggleBook(u64),
@@ -644,6 +645,22 @@ impl Reader {
                 self.refresh_bookmark_browser();
                 self.show(Screen::BookmarkBrowser(Page::Results));
             }
+            Command::UseCurrentBook => {
+                // This source is intentionally transient: unlike a chosen set of
+                // books it must never become a persistent default for later books.
+                if matches!(self.bookmark_browser.origin, Screen::Book | Screen::Fixed)
+                    && let Some(id) = self.open_book_id()
+                {
+                    self.activate_bookmark_browser(Command::Use(Source::Books(BTreeSet::from([
+                        id,
+                    ]))))?;
+                    self.bookmark_browser.source_label = self
+                        .controls
+                        .interface_language
+                        .bookmark_text("Current book")
+                        .to_owned();
+                }
+            }
             Command::ToggleDefault(source) => {
                 let browser = &mut self.bookmark_browser;
                 let previous = browser.default_source.clone();
@@ -1095,6 +1112,11 @@ impl Reader {
                     ),
                     Item::new("Hold a source to make it the default", Action::Heading),
                 ];
+                if matches!(browser.origin, Screen::Book | Screen::Fixed)
+                    && self.open_book_id().is_some()
+                {
+                    rows.insert(0, item("Current book", C::UseCurrentBook));
+                }
                 for row in &mut rows {
                     if let Action::BookmarkBrowser(C::Use(source)) = &row.action
                         && browser.default_source.as_ref() == Some(source)

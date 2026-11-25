@@ -13,6 +13,8 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 
 mod css_resources;
+#[allow(dead_code)] // Wired to the Library archive format in the integration checkpoint.
+mod generic_zip;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD_PAD_INDIFFERENT};
 use encoding_rs::{Encoding, UTF_8, WINDOWS_1252};
