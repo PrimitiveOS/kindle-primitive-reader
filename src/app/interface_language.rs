@@ -3624,13 +3624,16 @@ impl InterfaceLanguage {
             "Ribbon: gray highlight, black note, tall bookmark. Reflow marks show starting chapters." => {
                 "Thanh duyệt: xám là tô sáng, đen là ghi chú, vạch cao là dấu trang. Sách dàn trang lại hiện chương bắt đầu."
             }
-            "Page-number mode saves per book. Set as default applies when no choice is saved." => {
-                "Chế độ số trang lưu theo sách. Mặc định áp dụng khi sách chưa có lựa chọn riêng."
+            "Numbers and chapter levels save per book. Defaults apply to page numbers." => {
+                "Số trang và cấp chương được lưu theo sách. Mặc định áp dụng cho số trang."
             }
             "Done" => "Xong",
             "Thumbnail columns" => "Số cột ảnh thu nhỏ",
             "Thumbnail rows" => "Số hàng ảnh thu nhỏ",
             "Thumbnail page numbers" => "Số trang ảnh thu nhỏ",
+            "Chapter levels" => "Cấp chương",
+            "Save number default" => "Lưu mặc định số trang",
+            "Use default numbers" => "Dùng số trang mặc định",
             "None" => "Không",
             "Row start" => "Đầu hàng",
             "All" => "Tất cả",

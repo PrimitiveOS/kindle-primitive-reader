@@ -1352,6 +1352,10 @@ pub struct BookState {
     pub(crate) page_browser_grid: Option<PageBrowserGrid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) page_browser_numbers: Option<PageBrowserNumbers>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) page_browser_toc_depth: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) page_browser_custom_toc_depth: Option<u8>,
     #[cfg(feature = "kindle")]
     #[serde(
         default,
@@ -1506,6 +1510,8 @@ impl BookState {
             reading_identity: BookIdentity::default(),
             page_browser_grid: None,
             page_browser_numbers: None,
+            page_browser_toc_depth: None,
+            page_browser_custom_toc_depth: None,
             #[cfg(feature = "kindle")]
             document_turns: Default::default(),
             screen_orientation: None,
@@ -2634,6 +2640,36 @@ impl Library {
         Ok(())
     }
 
+    #[cfg(feature = "kindle")]
+    pub(crate) fn save_page_browser_toc_depth(
+        &mut self,
+        id: u64,
+        custom: bool,
+        depth: u8,
+    ) -> io::Result<()> {
+        let index = self
+            .recent
+            .iter()
+            .position(|state| state.id == id)
+            .ok_or_else(|| invalid_state("Open a book before changing its page browser"))?;
+        let field = if custom {
+            &mut self.recent[index].page_browser_custom_toc_depth
+        } else {
+            &mut self.recent[index].page_browser_toc_depth
+        };
+        let previous = field.replace(depth.min(16));
+        if let Err(error) = self.persist() {
+            let state = &mut self.recent[index];
+            if custom {
+                state.page_browser_custom_toc_depth = previous;
+            } else {
+                state.page_browser_toc_depth = previous;
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub fn save_with(&self, write: impl FnOnce(&Path, &[u8]) -> io::Result<()>) -> io::Result<()> {
         if self.state_version.get() == 2 {
             return Err(invalid_state(
@@ -2987,6 +3023,12 @@ fn merge_states(current: &[BookState], backup: &[BookState]) -> (Vec<BookState>,
         }
         if target.page_browser_numbers.is_none() {
             target.page_browser_numbers = source.page_browser_numbers;
+        }
+        if target.page_browser_toc_depth.is_none() {
+            target.page_browser_toc_depth = source.page_browser_toc_depth;
+        }
+        if target.page_browser_custom_toc_depth.is_none() {
+            target.page_browser_custom_toc_depth = source.page_browser_custom_toc_depth;
         }
         if target.font_size_rendering.is_none() {
             target.font_size_rendering = source.font_size_rendering;

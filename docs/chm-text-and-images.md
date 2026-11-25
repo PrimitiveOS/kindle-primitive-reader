@@ -18,6 +18,15 @@ existing bounded, first-frame GIF decoder; remote images and unsupported image
 formats remain unavailable. External scripts and active content are not run.
 KOReader registers CHM through CREngine and parses its topics as HTML. [KOReader provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L1588) · [CREngine HTML parsing](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/chmfmt.cpp#L876-L929)
 
+An otherwise empty topic can now retry with locally referenced BMP images,
+using the existing bounded image decoder and CHM's 4 MiB per-resource limit.
+BMP signatures and decoded dimensions are checked when the image is read;
+bad or oversized images cannot render. Topics that already had supported text
+or images retain their original generated XHTML and anchors, so BMPs in those
+mixed topics remain unavailable. External images are still rejected. This
+fallback has not been behaviorally compared with KOReader or verified in the
+simulator or on Kindle.
+
 This implementation has not yet been compared with KOReader on sample CHM
 files or tested in the simulator or on Kindle. Other CHM variants, merged
 help files and active content remain outside the current adapter.

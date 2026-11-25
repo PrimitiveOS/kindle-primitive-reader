@@ -125,8 +125,15 @@ including through the reading-session quote API. Within one section it can
 also assemble cross-block quotes and geometry when endpoint layouts are
 verified, including mixed raw and ordinary endpoints in different blocks,
 using each intermediate block's installed projection. Chapters with joined
-notes, mixed endpoints in one block and cross-section raw selections remain
-unsupported. The active renderer has not yet installed raw layouts.
+notes and cross-section raw selections remain unsupported. Mixed endpoints in
+one block are accepted only when both directional projections prove the same
+raw position; ambiguous whitespace is rejected. The active renderer has not
+yet installed raw layouts.
+Selections whose ordinary endpoints surround a raw paragraph also route through
+the raw projection, so intervening whitespace is not silently normalized.
+Word extension uses source-verified ordering, and dictionary context follows
+each displayed block's projection. Unsupported foreign-note and cross-section
+raw ranges remain fail-closed.
 
 This stage does **not** change rendering, copying, selection, source revisions,
 existing anchors or saved state. It does not yet implement preformatted EPUB

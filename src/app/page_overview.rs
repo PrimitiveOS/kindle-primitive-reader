@@ -221,6 +221,80 @@ impl Reader {
             .unwrap_or(self.controls.page_browser_numbers_default)
     }
 
+    fn overview_custom_contents(&self) -> bool {
+        self.open_book_id()
+            .and_then(|id| self.library.state(id))
+            .is_some_and(|state| state.custom_contents.enabled)
+    }
+
+    fn overview_max_chapter_levels(&self) -> u8 {
+        let Some(id) = self.open_book_id() else {
+            return 0;
+        };
+        if let Some(custom) = self
+            .library
+            .state(id)
+            .map(|state| &state.custom_contents)
+            .filter(|custom| custom.enabled)
+        {
+            return u8::from(!custom.entries().is_empty());
+        }
+        let depth = if let Some(fixed) = &self.fixed {
+            fixed
+                .reading
+                .chapter_outline()
+                .filter(|entry| entry.page.is_some_and(|page| page < fixed.reading.count()))
+                .map(|entry| entry.depth)
+                .max()
+        } else if let Some(active) = &self.active {
+            let probe = &active.reading.probe;
+            if let Some(entries) = self.alternative_entries(id) {
+                entries
+                    .iter()
+                    .filter(|entry| match &entry.target {
+                        OutlineTarget::Chapter(chapter) | OutlineTarget::Heading(chapter, _) => {
+                            *chapter < probe.chapter_count()
+                        }
+                    })
+                    .map(|entry| entry.depth)
+                    .max()
+            } else if probe.toc.is_empty() {
+                (!probe.chapter_entries().is_empty()).then_some(0)
+            } else {
+                probe
+                    .toc
+                    .iter()
+                    .filter(|entry| {
+                        entry
+                            .destination
+                            .as_ref()
+                            .and_then(|destination| probe.chapter_index(&destination.path))
+                            .is_some()
+                    })
+                    .map(|entry| entry.depth)
+                    .max()
+            }
+        } else {
+            None
+        };
+        depth.map_or(0, |depth| (depth.min(15) + 1) as u8)
+    }
+
+    fn overview_chapter_levels(&self) -> u8 {
+        let maximum = self.overview_max_chapter_levels();
+        self.open_book_id()
+            .and_then(|id| self.library.state(id))
+            .and_then(|state| {
+                if state.custom_contents.enabled {
+                    state.page_browser_custom_toc_depth
+                } else {
+                    state.page_browser_toc_depth
+                }
+            })
+            .unwrap_or(maximum)
+            .min(maximum)
+    }
+
     fn book_map_previews_on_tap(&self) -> bool {
         self.controls.book_map_tap_to_page_browser.unwrap_or(true)
     }
@@ -644,6 +718,7 @@ impl Reader {
         let mut section_title = None;
         let mut closest_section_page = None;
         let mut ticks = BTreeSet::new();
+        let levels = self.overview_chapter_levels() as usize;
         if let Some(fixed) = self.fixed.as_ref().filter(|_| overview.chapter.is_none()) {
             let mut add_section = |start: usize, title: &str| {
                 if start >= count {
@@ -672,13 +747,15 @@ impl Reader {
                 .filter(|custom| custom.enabled)
             {
                 for entry in custom.entries() {
-                    if entry.position.chapter == 0 {
+                    if levels > 0 && entry.position.chapter == 0 {
                         add_section(entry.position.page, &entry.label);
                     }
                 }
             } else {
                 for entry in fixed.reading.chapter_outline() {
-                    if let Some(page) = entry.page {
+                    if entry.depth < levels
+                        && let Some(page) = entry.page
+                    {
                         add_section(page, &entry.title);
                     }
                 }
@@ -707,7 +784,7 @@ impl Reader {
                 .map(|book| &book.custom_contents)
                 .filter(|custom| custom.enabled)
             {
-                for entry in custom.entries() {
+                for entry in custom.entries().iter().filter(|_| levels > 0) {
                     let chapter = match &entry.position.anchor {
                         Some(anchor) => probe.chapter_index(&anchor.chapter),
                         None => Some(entry.position.chapter),
@@ -717,7 +794,7 @@ impl Reader {
                     }
                 }
             } else if let Some(entries) = self.alternative_entries(active.id) {
-                for entry in entries {
+                for entry in entries.iter().filter(|entry| entry.depth < levels) {
                     let chapter = match &entry.target {
                         OutlineTarget::Chapter(chapter) | OutlineTarget::Heading(chapter, _) => {
                             *chapter
@@ -726,11 +803,16 @@ impl Reader {
                     add_chapter(chapter);
                 }
             } else if probe.toc.is_empty() {
-                for (chapter, _) in probe.chapter_entries().iter().enumerate() {
+                for (chapter, _) in probe
+                    .chapter_entries()
+                    .iter()
+                    .enumerate()
+                    .filter(|_| levels > 0)
+                {
                     add_chapter(chapter);
                 }
             } else {
-                for entry in &probe.toc {
+                for entry in probe.toc.iter().filter(|entry| entry.depth < levels) {
                     if let Some(chapter) = entry
                         .destination
                         .as_ref()

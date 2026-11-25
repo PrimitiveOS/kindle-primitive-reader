@@ -39,9 +39,8 @@ pub struct HighlightRect {
 }
 
 impl Probe {
-    /// Compare two text locations in this chapter without collapsing distinct
-    /// raw whitespace offsets. A mixed coordinate system in one block is
-    /// ambiguous and is rejected until a source-bound conversion is available.
+    /// Compare text locations without collapsing distinct raw offsets. Mixed
+    /// coordinates within a block require a uniquely provable projection.
     pub(crate) fn compare_text_anchors(
         &self,
         first: &Anchor,
@@ -74,13 +73,50 @@ impl Probe {
             return Some(a_block.cmp(&b_block));
         }
         if a_hash != b_hash {
-            return None;
+            let (canonical, raw, canonical_first) = if a_hash.is_none() {
+                (first, second, true)
+            } else if b_hash.is_none() {
+                (second, first, false)
+            } else {
+                return None;
+            };
+            let (before, _) = self.unique_raw_projection(canonical)?;
+            let raw = raw.raw_caret.as_ref()?;
+            if before.caret.raw_sha256 != raw.raw_sha256 {
+                return None;
+            }
+            let order = before.caret.raw_offset.cmp(&raw.raw_offset);
+            return Some(if canonical_first {
+                order
+            } else {
+                order.reverse()
+            });
         }
         Some(a_offset.cmp(&b_offset))
     }
 
-    /// Build an exact selection with at least one raw endpoint. Mixed raw and
-    /// ordinary endpoints are supported across distinct verified blocks.
+    fn unique_raw_projection(
+        &self,
+        canonical: &Anchor,
+    ) -> Option<(
+        crate::source::raw_whitespace::RawAnchor,
+        crate::source::raw_whitespace::RawAnchor,
+    )> {
+        let (_, offset) = self.project_anchor(canonical)?;
+        let before = self.raw_whitespace_from_anchor(canonical, SourceAffinity::Before)?;
+        let after = self.raw_whitespace_from_anchor(canonical, SourceAffinity::After)?;
+        if before.caret.raw_offset != after.caret.raw_offset
+            || before.caret.canonical_offset != offset
+            || after.caret.canonical_offset != offset
+            || before.caret.raw_sha256 != after.caret.raw_sha256
+        {
+            return None;
+        }
+        Some((before, after))
+    }
+
+    /// Build an exact selection through verified raw layouts. Endpoints may
+    /// be raw or ordinary; ambiguous projections are rejected.
     #[allow(dead_code)]
     pub(crate) fn select_raw_anchors(
         &self,
@@ -104,10 +140,43 @@ impl Probe {
                 Some(self.anchor(self.source.blocks[index].key, offset))
             }
         };
-        let first = verify(first)?;
-        let second = verify(second)?;
+        let mut first = verify(first)?;
+        let mut second = verify(second)?;
         if first.block != second.block {
             return self.select_raw_across_blocks(first, second);
+        }
+        if first.raw_caret.is_none() && second.raw_caret.is_none() {
+            let (first_before, first_after) = self.unique_raw_projection(&first)?;
+            let (second_before, second_after) = self.unique_raw_projection(&second)?;
+            if first_before.caret.raw_offset == second_before.caret.raw_offset {
+                return None;
+            }
+            let (first_raw, second_raw) =
+                if first_before.caret.raw_offset < second_before.caret.raw_offset {
+                    (first_after, second_before)
+                } else {
+                    (first_before, second_after)
+                };
+            first = first_raw.canonical;
+            first.raw_caret = Some(first_raw.caret);
+            second = second_raw.canonical;
+            second.raw_caret = Some(second_raw.caret);
+        }
+        if first.raw_caret.is_none() != second.raw_caret.is_none() {
+            let (canonical, raw) = if first.raw_caret.is_none() {
+                (&mut first, &second)
+            } else {
+                (&mut second, &first)
+            };
+            let (before, after) = self.unique_raw_projection(canonical)?;
+            let raw_offset = raw.raw_caret.as_ref()?.raw_offset;
+            let mapped = if before.caret.raw_offset <= raw_offset {
+                after
+            } else {
+                before
+            };
+            *canonical = mapped.canonical;
+            canonical.raw_caret = Some(mapped.caret);
         }
         let wrap = |anchor: Anchor| {
             let mut canonical = anchor;
@@ -227,6 +296,35 @@ impl Probe {
         Some(blocks)
     }
 
+    /// Detect raw text anywhere in a selection, including when both of its
+    /// endpoints happen to lie in ordinary paragraphs.
+    fn selection_uses_raw(&self, start: &Anchor, end: &Anchor) -> Option<bool> {
+        if start.raw_caret.is_some() || end.raw_caret.is_some() {
+            return Some(true);
+        }
+        let Renderer::Parley(renderer) = &self.renderer else {
+            return Some(false);
+        };
+        if !renderer
+            .paragraphs()
+            .iter()
+            .any(|paragraph| paragraph.raw_binding.is_some())
+        {
+            return Some(false);
+        }
+        if start.chapter != self.chapter || end.chapter != self.chapter {
+            return None;
+        }
+        let (a, _) = self.project_anchor(start)?;
+        let (b, _) = self.project_anchor(end)?;
+        let range = a.min(b)..=a.max(b);
+        Some(
+            self.verified_raw_blocks()?
+                .iter()
+                .any(|index| range.contains(index)),
+        )
+    }
+
     /// Select exact raw content inside one verified source block. Reject
     /// cross-block, stale or unrepresentable endpoints rather than snapping.
     #[allow(dead_code)]
@@ -272,12 +370,12 @@ impl Probe {
         selection: &TextSelection,
         words: usize,
     ) -> Option<(String, String)> {
-        if selection.start.raw_caret.is_some() || selection.end.raw_caret.is_some() {
-            return self.raw_word_context(selection, words);
-        }
         #[cfg(feature = "kindle")]
         if let Some(band) = self.foreign_band_for_anchors(&selection.start, &selection.end) {
             return band.layout.note_word_context(selection, words);
+        }
+        if self.selection_uses_raw(&selection.start, &selection.end)? {
+            return self.raw_word_context(selection, words);
         }
         let spans = self.selection_spans(&selection.start, &selection.end)?;
         let mut before = String::new();
@@ -622,12 +720,15 @@ impl Probe {
     /// Select an anchored range across adjacent blocks and pages of the loaded
     /// chapter. The caller may supply the endpoints in either direction.
     pub fn select_range(&self, start: &Anchor, end: &Anchor) -> Option<TextSelection> {
-        if start.raw_caret.is_some() || end.raw_caret.is_some() {
-            return self.select_raw_anchors(start, end);
-        }
         #[cfg(feature = "kindle")]
         if let Some(band) = self.foreign_band_for_anchors(start, end) {
+            if start.raw_caret.is_some() || end.raw_caret.is_some() {
+                return None;
+            }
             return band.layout.note_select_range(start, end);
+        }
+        if self.selection_uses_raw(start, end)? {
+            return self.select_raw_anchors(start, end);
         }
         self.select_quote(start, end, false)
     }
@@ -639,12 +740,15 @@ impl Probe {
         start: &Anchor,
         end: &Anchor,
     ) -> Option<TextSelection> {
-        if start.raw_caret.is_some() || end.raw_caret.is_some() {
-            return self.select_raw_anchors(start, end);
-        }
         #[cfg(feature = "kindle")]
         if let Some(band) = self.foreign_band_for_anchors(start, end) {
+            if start.raw_caret.is_some() || end.raw_caret.is_some() {
+                return None;
+            }
             return band.layout.note_select_range(start, end);
+        }
+        if self.selection_uses_raw(start, end)? {
+            return self.select_raw_anchors(start, end);
         }
         self.select_quote(start, end, true)
     }
@@ -754,8 +858,10 @@ impl Probe {
         page: Range<f32>,
         selection: &TextSelection,
     ) -> Vec<HighlightRect> {
-        if selection.start.raw_caret.is_some() || selection.end.raw_caret.is_some() {
-            return self.raw_selection_rects_in(page, selection);
+        match self.selection_uses_raw(&selection.start, &selection.end) {
+            Some(true) => return self.raw_selection_rects_in(page, selection),
+            None => return Vec::new(),
+            Some(false) => {}
         }
         self.anchor_rects_in(page, &selection.start, &selection.end)
     }
@@ -876,12 +982,16 @@ impl Probe {
         start: &Anchor,
         end: &Anchor,
     ) -> Vec<HighlightRect> {
-        if start.raw_caret.is_some() || end.raw_caret.is_some() {
-            return self
-                .select_raw_anchors(start, end)
-                .map_or_else(Vec::new, |selection| {
-                    self.raw_selection_rects_in(page, &selection)
-                });
+        match self.selection_uses_raw(start, end) {
+            Some(true) => {
+                return self
+                    .select_raw_anchors(start, end)
+                    .map_or_else(Vec::new, |selection| {
+                        self.raw_selection_rects_in(page, &selection)
+                    });
+            }
+            None => return Vec::new(),
+            Some(false) => {}
         }
         let Some(spans) = self.selection_spans(start, end) else {
             return Vec::new();
@@ -1412,6 +1522,7 @@ impl crate::footnotes::cross_part::Layout {
             || anchor.chapter != self.note.chapter
             || anchor.revision != self.note.source.revision
             || anchor.illustration.is_some()
+            || anchor.raw_caret.is_some()
         {
             return None;
         }

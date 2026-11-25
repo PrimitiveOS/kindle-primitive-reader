@@ -3,17 +3,25 @@ use super::*;
 use crate::app::step_buttons::StepButtons;
 use primitive_ui::{BODY, TextStyle};
 
-const PANEL: Rect = Rect::new(160, 420, 944, 750);
+const PANEL: Rect = Rect::new(160, 420, 944, 900);
 const CLOSE: Rect = Rect::new(868, 443, 197, 100);
 const HELP: Rect = Rect::new(666, 443, 170, 100);
 const NUMBER_ROW: i32 = 790;
-const DEFAULT: Rect = Rect::new(196, 930, 416, 100);
-const USE_DEFAULT: Rect = Rect::new(646, 930, 416, 100);
+const DEPTH_ROW: i32 = 905;
+const DEFAULT: Rect = Rect::new(196, 1045, 416, 100);
+const USE_DEFAULT: Rect = Rect::new(646, 1045, 416, 100);
 
 fn number_steps(navigation: NavigationLayout) -> StepButtons {
     StepButtons::new(
         navigation.centered(Rect::new(688, NUMBER_ROW, 100, 100)),
         navigation.centered(Rect::new(965, NUMBER_ROW, 100, 100)),
+    )
+}
+
+fn depth_steps(navigation: NavigationLayout) -> StepButtons {
+    StepButtons::new(
+        navigation.centered(Rect::new(688, DEPTH_ROW, 100, 100)),
+        navigation.centered(Rect::new(965, DEPTH_ROW, 100, 100)),
     )
 }
 
@@ -104,7 +112,7 @@ impl Reader {
                 "Tap or drag the ribbon to browse. Hold it to open the book map.",
                 "The handle is browsing; the caret is reading. Squares show page or chapter history.",
                 "Ribbon: gray highlight, black note, tall bookmark. Reflow marks show starting chapters.",
-                "Page-number mode saves per book. Set as default applies when no choice is saved.",
+                "Numbers and chapter levels save per book. Defaults apply to page numbers.",
             ]
             .into_iter()
             .enumerate()
@@ -154,26 +162,37 @@ impl Reader {
             CAPTION.bold().center(),
         );
         number_steps(nav).draw(canvas);
+        canvas.text(
+            place(Rect::new(196, DEPTH_ROW + 18, 466, 67)),
+            language.overview_text("Chapter levels"),
+            BODY,
+        );
+        canvas.text(
+            place(Rect::new(798, DEPTH_ROW + 20, 150, 72)),
+            &self.overview_chapter_levels().to_string(),
+            BODY.bold().center(),
+        );
+        depth_steps(nav).draw(canvas);
         canvas.button(
             place(DEFAULT),
-            language.overview_text("Set as default"),
+            language.overview_text("Save number default"),
             false,
             false,
         );
         canvas.button(
             place(USE_DEFAULT),
-            language.overview_text("Use default"),
+            language.overview_text("Use default numbers"),
             false,
             false,
         );
         if let Some(notice) = &self.notice {
             canvas.text(
-                place(Rect::new(198, 1050, 864, 80)),
+                place(Rect::new(198, 1170, 864, 80)),
                 notice,
                 CAPTION.lines(2),
             );
         } else {
-            let y = 1062;
+            let y = 1182;
             canvas.fill(place(Rect::new(204, y, 6, 6)), 0);
             canvas.fill(place(Rect::new(201, y + 6, 12, 6)), 0);
             canvas.fill(place(Rect::new(198, y + 12, 18, 6)), 0);
@@ -252,6 +271,9 @@ impl Reader {
         if let Some(delta) = number_steps(nav).delta(input, 1) {
             return Some(self.step_overview_numbers(delta));
         }
+        if let Some(delta) = depth_steps(nav).delta(input, 1) {
+            return Some(self.step_overview_chapter_levels(delta));
+        }
         if matches!(input, Input::Tap(x, y) if nav.centered(DEFAULT).contains(x, y)) {
             let mut controls = self.controls;
             controls.page_browser_numbers_default = self.overview_page_numbers();
@@ -289,6 +311,26 @@ impl Reader {
             _ => return Change::None,
         };
         self.save_overview_numbers(Some(next))
+    }
+
+    fn step_overview_chapter_levels(&mut self, delta: i16) -> Change {
+        let maximum = self.overview_max_chapter_levels();
+        let current = self.overview_chapter_levels();
+        let next = current.saturating_add_signed(delta as i8).min(maximum);
+        if next == current {
+            return Change::None;
+        }
+        let Some(id) = self.open_book_id() else {
+            return self.report("Open a book first");
+        };
+        let custom = self.overview_custom_contents();
+        match self.library.save_page_browser_toc_depth(id, custom, next) {
+            Ok(()) => {
+                self.notice = None;
+                Change::Partial
+            }
+            Err(error) => self.report(error),
+        }
     }
 
     fn save_overview_numbers(&mut self, numbers: Option<PageBrowserNumbers>) -> Change {

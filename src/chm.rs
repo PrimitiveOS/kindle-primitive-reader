@@ -181,18 +181,30 @@ impl Chm {
         let entry = self
             .members
             .get(path)
-            .filter(|_| is_image(path))
+            .filter(|_| is_image(path) || extension(path) == "bmp")
             .ok_or("The CHM resource is unavailable")?;
         let bytes = read_limited(&mut self.archive, entry, cap.min(MAX_ASSET_BYTES))?;
         let expected = if path.ends_with(".png") {
             bytes.starts_with(b"\x89PNG\r\n\x1a\n")
         } else if path.ends_with(".gif") {
             crate::gif_image::has_signature(&bytes)
+        } else if path.ends_with(".bmp") {
+            bytes.starts_with(b"BM")
         } else {
             bytes.starts_with(b"\xff\xd8\xff")
         };
         if !expected {
             return Err("The CHM resource is not a supported raster image".into());
+        }
+        if path.ends_with(".bmp") {
+            let reader = crate::image_reader(&bytes)?;
+            if reader.format() != Some(image::ImageFormat::Bmp) {
+                return Err("The CHM bitmap has an invalid format".into());
+            }
+            let (width, height) = reader.into_dimensions()?;
+            if !crate::comic::image_dimensions_valid(width, height) {
+                return Err("The CHM bitmap exceeds Reader's decoded image limits".into());
+            }
         }
         Ok(bytes)
     }
@@ -584,6 +596,7 @@ struct Topic<'a> {
     in_head: bool,
     invalid: bool,
     content: bool,
+    bmp_fallback: bool,
 }
 
 struct TopicSink<'a>(RefCell<Topic<'a>>);
@@ -682,7 +695,8 @@ impl Topic<'_> {
             let src = attr(&tag, "src")
                 .and_then(|value| destination(self.base, value))
                 .filter(|target| {
-                    is_image(&target.path)
+                    (is_image(&target.path)
+                        || (self.bmp_fallback && extension(&target.path) == "bmp"))
                         && target.fragment.is_none()
                         && self.members.contains_key(&target.path)
                 });
@@ -790,7 +804,30 @@ fn safe_tag(name: &str) -> Option<&'static str> {
     }
 }
 
+#[derive(Debug)]
+struct EmptyTopic;
+
+impl std::fmt::Display for EmptyTopic {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("The CHM topic is empty or exceeds Reader's layout limits")
+    }
+}
+
+impl std::error::Error for EmptyTopic {}
+
 fn read_topic(input: &str, base: &str, members: &BTreeMap<String, Entry>) -> Result<String> {
+    match read_topic_mode(input, base, members, false) {
+        Err(error) if error.is::<EmptyTopic>() => read_topic_mode(input, base, members, true),
+        result => result,
+    }
+}
+
+fn read_topic_mode(
+    input: &str,
+    base: &str,
+    members: &BTreeMap<String, Entry>,
+    bmp_fallback: bool,
+) -> Result<String> {
     let topic = Topic {
         base,
         members,
@@ -800,14 +837,18 @@ fn read_topic(input: &str, base: &str, members: &BTreeMap<String, Entry>) -> Res
         in_head: false,
         invalid: false,
         content: false,
+        bmp_fallback,
     };
     let mut topic = tokenize(input, TopicSink(RefCell::new(topic)))
         .0
         .into_inner();
     topic.close_to(0);
     topic.xhtml.push_str("</body></html>");
-    if topic.invalid || topic.xhtml.len() > MAX_OUTPUT || !topic.content {
+    if topic.invalid || topic.xhtml.len() > MAX_OUTPUT {
         return Err("The CHM topic is empty or exceeds Reader's layout limits".into());
+    }
+    if !topic.content {
+        return Err(Box::new(EmptyTopic));
     }
     attach_inline_runs(topic.xhtml)
 }
