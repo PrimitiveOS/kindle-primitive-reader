@@ -593,6 +593,7 @@ pub(crate) struct Style {
     pub(crate) table_valign_explicit: bool,
     pub(crate) image_full_line: bool,
     pub alignment: Option<Alignment>,
+    pub(crate) last_line_alignment: Option<Alignment>,
     pub line_break: Option<LineBreak>,
     /// CRE's private line-break mode, retained separately from standard CSS.
     pub(crate) loose_nonbreaking: bool,
@@ -668,6 +669,7 @@ impl Default for Style {
             table_valign_explicit: false,
             image_full_line: false,
             alignment: None,
+            last_line_alignment: None,
             line_break: None,
             loose_nonbreaking: false,
             word_break: WordBreak::Normal,
@@ -1329,6 +1331,9 @@ impl BookStyle {
                     Property::Marker(kind) => style.marker = *kind,
                     Property::Background(gray) => style.background = *gray,
                     Property::Alignment(alignment) => style.alignment = Some(*alignment),
+                    Property::LastLineAlignment(alignment) => {
+                        style.last_line_alignment = *alignment
+                    }
                     Property::Weight(weight) => {
                         style.font_weight = weight.resolve(parent.font_weight)
                     }
@@ -2194,7 +2199,8 @@ const VARIANT_EAST_ASIAN: usize = 60;
 const VARIANT_POSITION: usize = 61;
 const VARIANT_HISTORICAL: usize = 62;
 const LIGATURE_EXTRAS: usize = 63;
-const CASCADE_PROPERTY_COUNT: usize = 64;
+const LAST_LINE_ALIGNMENT: usize = 64;
+const CASCADE_PROPERTY_COUNT: usize = 65;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2254,6 +2260,7 @@ fn choose<'a>(
             Property::LineHeight(_) => 2,
             Property::Background(_) => 3,
             Property::Alignment(_) => 4,
+            Property::LastLineAlignment(_) => LAST_LINE_ALIGNMENT,
             Property::Weight(_) => 5,
             Property::Slant(_) => 6,
             Property::CommonLigatures(_) => COMMON_LIGATURES,
@@ -2375,6 +2382,7 @@ enum Property {
     LineHeight(Option<f32>),
     Background(Option<u8>),
     Alignment(Alignment),
+    LastLineAlignment(Option<Alignment>),
     Weight(Weight),
     Slant(FontStyle),
     CommonLigatures(bool),
@@ -2880,6 +2888,18 @@ impl<'i> DeclarationParser<'i> for Properties {
                         _ => return Err(ParseError::unexpected_token()),
                     })
                 }
+                "text-align-last" | "-epub-text-align-last" => Property::LastLineAlignment(
+                    match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "auto" => None,
+                        "start" => Some(Alignment::Start),
+                        "end" => Some(Alignment::End),
+                        "left" => Some(Alignment::Left),
+                        "right" => Some(Alignment::Right),
+                        "center" => Some(Alignment::Center),
+                        "justify" => Some(Alignment::Justify),
+                        _ => return Err(ParseError::unexpected_token()),
+                    },
+                ),
                 "line-break" => {
                     let (breaking, loose) =
                         match input.expect_ident()?.to_ascii_lowercase().as_str() {

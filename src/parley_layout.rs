@@ -3823,7 +3823,14 @@ fn shape_paragraph(
     };
     layout.align_with_word_expansion(
         alignment,
-        AlignmentOptions::default(),
+        AlignmentOptions {
+            last_line_alignment: if matches!(settings.alignment, crate::TextAlignment::Publisher) {
+                style.last_line_alignment
+            } else {
+                None
+            },
+            ..AlignmentOptions::default()
+        },
         &block.text,
         settings.word_expansion,
         &can_expand_word_atom,

@@ -67,7 +67,7 @@ fn base_rules(tex: &str) -> Vec<String> {
     rules
 }
 
-fn stock_word_rules(tex: &str, apostrophes: bool) -> Vec<String> {
+fn stock_word_rules(tex: &str, apostrophes: bool, include_exceptions: bool) -> Vec<String> {
     let mut rules = group(tex, "\\patterns{")
         .split_whitespace()
         .filter(|entry| {
@@ -81,7 +81,7 @@ fn stock_word_rules(tex: &str, apostrophes: bool) -> Vec<String> {
         })
         .map(str::to_owned)
         .collect();
-    if tex.contains("\\hyphenation{") {
+    if include_exceptions && tex.contains("\\hyphenation{") {
         add_exceptions(&mut rules, tex, false, "5");
     }
     rules
@@ -353,7 +353,9 @@ fn main() {
         let mut rules = if matches!(tag, "la-x-classic" | "la-x-liturgic" | "grc" | "ml") {
             decomposed_rules(&tex, tag)
         } else {
-            stock_word_rules(&tex, false)
+            // KOReader's Russian dictionary contains the source patterns but
+            // omits the TeX exception group. Other languages keep theirs.
+            stock_word_rules(&tex, false, tag != "ru")
         };
         if tag == "fi" {
             // CRE converted this two-entry TeX line into one pattern with an
@@ -394,7 +396,7 @@ fn main() {
         hungarian.len() <= 1_048_576,
         "Hungarian source limit exceeded"
     );
-    let hungarian_rules = stock_word_rules(&hungarian, false);
+    let hungarian_rules = stock_word_rules(&hungarian, false, true);
     assert_eq!(
         hungarian_rules.len(),
         62_851,

@@ -23,7 +23,7 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Irish | 2 / 3 | 6,033 upstream word rules and 46 exceptions; stock comparison pending |
 | Ukrainian | 2 / 2 | 1,897 weighted source rules match pinned KOReader; behavior pending |
 | Polish | 2 / 2 | 4,053 upstream word rules and 20 exceptions; stock comparison pending |
-| Russian | 2 / 2 | Upstream single-word rules and exceptions; stock comparison pending |
+| Russian | 2 / 2 | 4,808 source rules match pinned KOReader; behavior pending |
 | Swedish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Catalan | 2 / 2 | Upstream single-word patterns and exceptions; stock comparison pending |
 | Turkish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
@@ -85,17 +85,18 @@ offsets. U+02BC modifier-letter segmentation, actual wrapping and real-book
 behavior still need comparison. Bulgarian, Galician and Irish normalized rule
 sets and Irish exceptions have not yet been compared exhaustively, and
 simulator and device checks remain pending. [Pattern provenance and notices](licenses/HYPHENATION-BG-GL-GA.txt)
-Russian uses Alexander Lebedev's upstream TeX patterns and exceptions, also
-identified as the origin of KOReader's pinned Russian dictionary. Reader
-filters patterns that require punctuation outside its single-word matcher,
-including hyphen/dash rules, and uses 2 / 2 minima. Russian + English (UK)
-and Russian + English (US) merge the Russian and the corresponding bundled
-English pattern weights before selecting breaks, including for mixed-script
-words. Both use 2 / 2 minima, as in the pinned KOReader language defaults;
-custom limits still override them. This is not a claim of
-exact KOReader parity: the compiled candidate, whole-document behavior and
-computer/Kindle comparison remain unverified. The original source, LPPL 1.3c
-and provenance are included in release packages. [Russian terms](licenses/HYPHENATION-RU.txt)
+Russian uses Alexander Lebedev's upstream TeX patterns, also identified as
+the origin of KOReader's pinned Russian dictionary. The 4,808 selected source
+rules match pinned KOReader; 184 TeX exceptions are omitted because the pinned
+dictionary omits them. Reader filters punctuation outside its single-word
+matcher and uses 2 / 2 minima. Russian + English (UK) and Russian + English
+(US) merge the corresponding bundled pattern weights before selecting breaks,
+including for mixed-script words. Their pinned source sets equal the Russian
+and corresponding pinned English set unions, but Reader's compiled composites
+and actual breaks still need comparison. Both use 2 / 2 minima; custom limits
+still override them. Whole-document behavior and computer/Kindle comparison
+remain unverified. The original source, LPPL 1.3c and provenance are included
+in release packages. [Russian terms](licenses/HYPHENATION-RU.txt)
 Polish uses the 1995 MIT-licensed upstream rules and exceptions with 2 / 2
 minima. The compiled rules have not yet been compared exhaustively with
 KOReader or tested on the computer or Kindle. [Polish source and notice](licenses/HYPHENATION-PL.txt) · [KOReader Polish selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypography.lua#L83)
@@ -173,10 +174,10 @@ Set `READER_MULTILINGUAL_HYPHENATION_CAPTURE` for the pages and
 [Reader settings for Danish](screenshots/da-hyphenation-settings.png) ·
 [Reader settings for Dutch](screenshots/nl-hyphenation-settings.png)
 
-The combined Russian/English candidate reuses the existing licensed tables;
-it has not been built or compared against KOReader's combined dictionaries,
-and neither the simulator nor Kindle has verified its behavior. The existing
-Russian and English rule-source and punctuation limitations continue to apply.
+The combined Russian/English candidate reuses the existing licensed tables.
+Pinned KOReader composite source sets match the unions of its Russian and
+English sets; compiled composite behavior, punctuation, and simulator/Kindle
+checks remain pending.
 
 Swedish uses Jan Michael Rynning's upstream TeX patterns and KOReader's
 2 / 2 minima. The unmodified source, LPPL 1.3c and provenance are included in

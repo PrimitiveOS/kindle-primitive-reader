@@ -184,11 +184,18 @@ impl Reader {
                 }),
         );
         if picker.listing.entries.is_empty() {
-            items.push(Item::new("No folders or SQLite databases", Action::Heading));
+            items.push(Item::new(
+                self.controls
+                    .interface_language
+                    .history_import_text("No folders or SQLite databases"),
+                Action::Heading,
+            ));
         }
         if picker.listing.truncated {
             items.push(Item::new(
-                "Folder listing reached its limit",
+                self.controls
+                    .interface_language
+                    .history_import_text("Folder listing reached its limit"),
                 Action::Heading,
             ));
         }
@@ -230,16 +237,22 @@ impl Reader {
     }
 
     pub(super) fn koreader_statistics_import_items(&self) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let Some(pending) = &self.history_view.koreader_import else {
             return vec![
-                Item::new("Use a closed KOReader database", Action::Heading)
-                    .detail("Copy a checkpointed database from KOReader settings to Documents."),
                 Item::new(
-                    "Preview database",
+                    language.history_import_text("Use a closed KOReader database"),
+                    Action::Heading,
+                )
+                .detail(language.history_import_text(
+                    "Copy a checkpointed database from KOReader settings to Documents.",
+                )),
+                Item::new(
+                    language.history_import_text("Preview database"),
                     Action::ReadingHistory(Command::PreviewKoReaderImport),
                 )
                 .detail("Documents / statistics.sqlite3"),
-                browse_row(),
+                browse_row(language.history_import_text("Browse Documents")),
             ];
         };
         let preview = pending.preview;
@@ -256,22 +269,33 @@ impl Reader {
             (title, authors) => format!("{title} · {authors}"),
         };
         let mut items = vec![
-            Item::new("Matched KOReader book", Action::Heading).detail(matched),
-            Item::new("Database", Action::Heading).detail(folder_title(&pending.path)),
-            Item::new("New records", Action::Heading).detail(format!(
-                "{} · {}",
-                preview.new_visits,
-                short_time(preview.seconds)
-            )),
+            Item::new(
+                language.history_import_text("Matched KOReader book"),
+                Action::Heading,
+            )
+            .detail(matched),
+            Item::new(language.history_import_text("Database"), Action::Heading)
+                .detail(folder_title(&pending.path)),
+            Item::new(language.history_import_text("New records"), Action::Heading).detail(
+                format!("{} · {}", preview.new_visits, short_time(preview.seconds)),
+            ),
         ];
         if let (Some(first), Some(last)) = (label(preview.first_start), label(preview.last_start)) {
             items.push(
-                Item::new("Reading dates", Action::Heading).detail(format!("{first} to {last}")),
+                Item::new(
+                    language.history_import_text("Reading dates"),
+                    Action::Heading,
+                )
+                .detail(format!("{first} to {last}")),
             );
         }
         if preview.duplicate + preview.conflicting + pending.records.other_page_counts > 0 {
             items.push(
-                Item::new("Skipped records", Action::Heading).detail(format!(
+                Item::new(
+                    language.history_import_text("Skipped records"),
+                    Action::Heading,
+                )
+                .detail(format!(
                     "{} existing, {} conflicting, {} different page count",
                     preview.duplicate, preview.conflicting, pending.records.other_page_counts,
                 )),
@@ -280,21 +304,21 @@ impl Reader {
         if preview.new_visits > 0 {
             if preview.can_store {
                 items.push(Item::new(
-                    "Import records",
+                    language.history_import_text("Import records"),
                     Action::ReadingHistory(Command::ApplyKoReaderImport),
                 ));
             } else {
                 items.push(Item::new(
-                    "Reading history cannot store these records",
+                    language.history_import_text("Reading history cannot store these records"),
                     Action::Heading,
                 ));
             }
         }
         items.push(Item::new(
-            "Preview again",
+            language.history_import_text("Preview again"),
             Action::ReadingHistory(Command::PreviewKoReaderImport),
         ));
-        items.push(browse_row());
+        items.push(browse_row(language.history_import_text("Browse Documents")));
         items
     }
 }
@@ -350,9 +374,9 @@ fn folder_title(path: &Path) -> String {
     }
 }
 
-fn browse_row() -> Item {
+fn browse_row(label: &str) -> Item {
     Item::new(
-        "Browse Documents",
+        label,
         Action::ReadingHistory(Command::BrowseKoReaderDatabases),
     )
 }

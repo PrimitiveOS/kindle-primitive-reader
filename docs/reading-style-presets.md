@@ -248,6 +248,15 @@ rules; other rendering modes and actual Kindle appearance remain unverified.
 
 ## Paragraph spacing and browser defaults
 
+In horizontal Parley text, publisher and user CSS can set `text-align-last`
+or its EPUB alias to `auto`, `start`, `end`, `left`, `right`, `center` or
+`justify`. The setting inherits and accepts standard initial, inherit and
+unset resets. It affects the final line and lines ending in an explicit break;
+the reader's explicit alignment setting takes precedence. Vertical layout and
+Blitz do not yet support this property. Source text and saved anchors are
+unchanged. This addition has not yet been built or behaviorally tested.
+[Pinned CRE parser](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L3657-L3670)
+
 **Spacing between paragraphs** contains three mutually exclusive choices.
 Full and half spacing add 1em or 0.5em before a paragraph that directly
 follows another paragraph. No spacing clears the two vertical margins

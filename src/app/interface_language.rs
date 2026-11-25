@@ -551,6 +551,39 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed KOReader statistics-transfer controls; database/book data stay untouched.
+const HISTORY_IMPORT_LABELS: &[(&str, &str)] = &[
+    (
+        "No folders or SQLite databases",
+        "Không có thư mục hoặc cơ sở dữ liệu SQLite",
+    ),
+    (
+        "Folder listing reached its limit",
+        "Danh sách thư mục đã đạt giới hạn",
+    ),
+    (
+        "Use a closed KOReader database",
+        "Dùng cơ sở dữ liệu KOReader đã đóng",
+    ),
+    (
+        "Copy a checkpointed database from KOReader settings to Documents.",
+        "Sao chép cơ sở dữ liệu đã được checkpoint từ cài đặt KOReader vào Documents.",
+    ),
+    ("Preview database", "Xem trước cơ sở dữ liệu"),
+    ("Browse Documents", "Duyệt Documents"),
+    ("Matched KOReader book", "Sách KOReader khớp"),
+    ("Database", "Cơ sở dữ liệu"),
+    ("New records", "Bản ghi mới"),
+    ("Reading dates", "Ngày đọc"),
+    ("Skipped records", "Bản ghi bị bỏ qua"),
+    ("Import records", "Nhập bản ghi"),
+    (
+        "Reading history cannot store these records",
+        "Lịch sử đọc không thể lưu các bản ghi này",
+    ),
+    ("Preview again", "Xem trước lại"),
+];
+
 // Calendar month editor fixed labels; typed months and date validation stay untouched.
 const HISTORY_MONTH_LABELS: &[(&str, &str)] = &[
     ("Enter month", "Nhập tháng"),
@@ -2379,6 +2412,18 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn history_import_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = HISTORY_IMPORT_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn history_month_text<'a>(self, english: &'a str) -> &'a str {
