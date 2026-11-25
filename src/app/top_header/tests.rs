@@ -134,3 +134,159 @@ fn top_header_about_opens_from_settings_and_dismisses_without_changing_the_book(
     let footer_start = (crate::session::PAGE_HEIGHT * WIDTH) as usize;
     assert!(before[footer_start..] == after[footer_start..]);
 }
+
+#[test]
+fn top_header_live_identity_edits_from_book_details_and_preserves_the_reading_page() {
+    use crate::app::{
+        Screen, tests::capture_test_screen, tests::tap_contents_item, top_config::TopGroup,
+    };
+    use primitive_ui::{Key, Layer};
+    use std::fs;
+
+    fn tap(app: &mut Reader, target: Rect) -> Change {
+        app.input(Input::Tap(
+            (target.x + target.w / 2) as f32,
+            (target.y + target.h / 2) as f32,
+        ))
+    }
+
+    fn type_key(app: &mut Reader, key: Key) {
+        let target = app
+            .navigation_layout()
+            .keyboard()
+            .keyboard_keys_with(app.editor.layer, "Save")
+            .into_iter()
+            .find_map(|(candidate, rect)| (candidate.key == key).then_some(rect))
+            .unwrap_or_else(|| panic!("Missing {key:?} on {:?}", app.editor.layer));
+        assert_eq!(tap(app, target), Change::Partial);
+    }
+
+    fn enter_text(app: &mut Reader, text: &str) {
+        for _ in 0..app.editor.caret {
+            type_key(app, Key::Delete);
+        }
+        if app.editor.layer == Layer::Upper {
+            type_key(app, Key::Shift);
+        }
+        for character in text.chars() {
+            type_key(
+                app,
+                if character == ' ' {
+                    Key::Space
+                } else {
+                    Key::Char(character)
+                },
+            );
+        }
+        type_key(app, Key::Go);
+        assert_eq!(app.screen, Screen::BookDetails);
+    }
+
+    fn details(app: &mut Reader) {
+        let action = app
+            .top_config_items(TopGroup::Library)
+            .into_iter()
+            .find(|item| item.title == "Book details")
+            .unwrap()
+            .action;
+        app.activate(action).unwrap();
+        assert_eq!(app.screen, Screen::BookDetails);
+    }
+
+    fn reading(app: &mut Reader) {
+        assert_eq!(
+            tap(app, primitive_ui::back_button(WIDTH as i32)),
+            Change::Partial
+        );
+        assert_eq!(app.screen, Screen::BookTools);
+        // Dismiss the overlay without advancing the current page.
+        let y = app.navigation_layout().height / 2;
+        assert_eq!(app.input(Input::Tap(600., y as f32)), Change::Partial);
+        assert_eq!(app.screen, Screen::Book);
+    }
+
+    let fixture = Fixture::new();
+    let original = fs::read(crate::test_fixture("many-chapters.epub")).unwrap();
+    fs::write(&fixture.book, &original).unwrap();
+    let sidecar = fixture
+        .book
+        .with_extension("sdr")
+        .join("custom_metadata.lua");
+    fs::create_dir_all(sidecar.parent().unwrap()).unwrap();
+    let custom = b"return {custom_props = {title = 'Coastal Ledger', authors = 'Ada Scout'}}";
+    fs::write(&sidecar, custom).unwrap();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let font_paths = fonts
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    app.activate(Action::TopStatusHeader(true)).unwrap();
+    app.controls.top_header.clock = false;
+    app.controls.top_header.battery = HeaderBattery::Off;
+    let before = primitive_app::frame(&app, &mut canvas, false);
+    let location = app.current_history_location();
+    let panel = app.status_caption();
+    assert!(
+        app.top_header_caption()
+            .unwrap()
+            .starts_with("Ada Scout.  Coastal Ledger")
+    );
+
+    details(&mut app);
+    tap_contents_item(&mut app, "Title");
+    assert_eq!(app.screen, Screen::BookIdentityEdit(IdentityField::Title));
+    assert_eq!(app.editor.string(), "Coastal Ledger");
+    capture_test_screen(&app, &fonts, "READER_HEADER_IDENTITY_EDITOR", false);
+    enter_text(&mut app, "harbor log");
+
+    tap_contents_item(&mut app, "Author");
+    assert_eq!(app.editor.string(), "Ada Scout");
+    enter_text(&mut app, "linh tran");
+    reading(&mut app);
+    let after = primitive_app::frame(&app, &mut canvas, false);
+    let top = (WIDTH * TopHeader::HEIGHT) as usize;
+    assert_ne!(&before[..top], &after[..top]);
+    assert_eq!(&before[top..], &after[top..]);
+    assert_eq!(app.current_history_location(), location);
+    assert_eq!(app.status_caption(), panel);
+    assert!(
+        app.top_header_caption()
+            .unwrap()
+            .starts_with("linh tran.  harbor log")
+    );
+    capture_test_screen(&app, &fonts, "READER_HEADER_IDENTITY_READING", false);
+
+    app.save().unwrap();
+    drop(app);
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    assert!(
+        app.top_header_caption()
+            .unwrap()
+            .starts_with("linh tran.  harbor log")
+    );
+    details(&mut app);
+    tap_contents_item(&mut app, "Title");
+    let reset = app.book_identity_reset(IdentityField::Title).unwrap();
+    assert_eq!(tap(&mut app, reset), Change::Partial);
+    assert_eq!(app.screen, Screen::BookDetails);
+    tap_contents_item(&mut app, "Author");
+    type_key(&mut app, Key::Delete);
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    reading(&mut app);
+    assert!(
+        app.top_header_caption()
+            .unwrap()
+            .starts_with("linh tran.  Coastal Ledger")
+    );
+
+    app.save().unwrap();
+    assert_eq!(fs::read(&fixture.book).unwrap(), original);
+    assert_eq!(fs::read(&sidecar).unwrap(), custom);
+}

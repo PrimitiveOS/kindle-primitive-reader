@@ -23,6 +23,9 @@ const ABOUT_DONE: Rect = Rect::new(ABOUT.x + ABOUT.w - 328, ABOUT.y + 502, 280, 
 const ABOUT_BEHAVIOR_TEXT: &str = "For reflowable books, the header can appear above the footer in page-turn mode. It hides in continuous scroll.";
 const ABOUT_SETUP_TEXT: &str = "Swipe up from the bottom and open Screen. Turn on Top status header for this book or set Default for new books. Choose what it shows here.";
 
+mod identity;
+pub(super) use identity::IdentityField;
+
 pub(super) struct Metadata {
     pub(super) title: Option<String>,
     pub(super) author: Option<String>,

@@ -1301,6 +1301,8 @@ pub struct BookState {
     pub(crate) character_page_stride: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) top_status_header: Option<bool>,
+    #[serde(default, skip_serializing_if = "BookIdentity::is_empty")]
+    pub(crate) reading_identity: BookIdentity,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) page_browser_grid: Option<PageBrowserGrid>,
     #[cfg(feature = "kindle")]
@@ -1366,6 +1368,48 @@ pub struct BookState {
     pub(crate) annotation_exchange_digest: Option<String>,
 }
 
+pub(crate) const BOOK_IDENTITY_FIELD_LIMIT: usize = 160;
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct BookIdentity {
+    #[serde(
+        default,
+        deserialize_with = "read_book_identity_field",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) title: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "read_book_identity_field",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) author: Option<String>,
+}
+
+impl BookIdentity {
+    fn is_empty(&self) -> bool {
+        self.title.is_none() && self.author.is_none()
+    }
+}
+
+fn read_book_identity_field<'de, D: serde::Deserializer<'de>>(
+    reader: D,
+) -> Result<Option<String>, D::Error> {
+    let value = serde_json::Value::deserialize(reader)?;
+    Ok(value
+        .as_str()
+        .and_then(book_identity_field)
+        .map(str::to_owned))
+}
+
+pub(crate) fn book_identity_field(input: &str) -> Option<&str> {
+    let value = input.trim();
+    (!value.is_empty()
+        && value.chars().count() <= BOOK_IDENTITY_FIELD_LIMIT
+        && !value.chars().any(char::is_control))
+    .then_some(value)
+}
+
 fn read_ocr_language<'de, D: serde::Deserializer<'de>>(
     reader: D,
 ) -> Result<Option<String>, D::Error> {
@@ -1412,6 +1456,7 @@ impl BookState {
             publisher_page_margins: false,
             character_page_stride: None,
             top_status_header: None,
+            reading_identity: BookIdentity::default(),
             page_browser_grid: None,
             #[cfg(feature = "kindle")]
             document_turns: Default::default(),

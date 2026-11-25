@@ -210,6 +210,7 @@ impl Screen {
                     | Self::MenuSearch
                     | Self::ContentsSearch
                     | Self::CustomTitle
+                    | Self::BookIdentityEdit(_)
                     | Self::LibraryFind
                     | Self::DictionaryEntry
                     | Self::ProfileName(_)

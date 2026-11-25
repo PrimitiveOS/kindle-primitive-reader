@@ -13,6 +13,7 @@ local UIManager = require("ui/uimanager")
 local BB = require("ffi/blitbuffer")
 local book, cache, font, capture, nonlinear =
     assert(arg[1]), assert(arg[2]), assert(arg[3]), assert(arg[4]), assert(arg[5])
+local identity_capture = arg[6]
 local width, height = 1264, 1680
 
 local capacity, charging = 37, false
@@ -153,6 +154,34 @@ for y = 0, view:getHeaderHeight() + 2 do
 end
 assert(changed > 0 and changed < width)
 unmarked:free()
+rows["Chapter marks"].callback()
+
+local function edit_identity(prop, value)
+    local changed_frame = BB.new(width, height, BB.TYPE_BB8)
+    local old_page, old_dirty = document:getCurrentPage(), dirty
+    ui.doc_props[prop] = value
+    listener:handleEvent(require("ui/event"):new("BookMetadataChanged", {
+        metadata_key_updated = prop,
+        doc_props = ui.doc_props,
+    }))
+    assert(dirty == old_dirty + 1 and document:getCurrentPage() == old_page)
+    view:drawCurrentPage(changed_frame, false, false, false, false)
+    local changes = 0
+    for y = 0, height - 1 do
+        for x = 0, width - 1 do
+            if frame:getPixel(x, y):getColor8().a ~= changed_frame:getPixel(x, y):getColor8().a then
+                assert(y < view:getHeaderHeight() and x < width / 2)
+                changes = changes + 1
+            end
+        end
+    end
+    assert(changes > 0)
+    frame:free()
+    frame = changed_frame
+end
+edit_identity("title", "Harbor Log")
+edit_identity("authors", "Linh Tran")
+if identity_capture then frame:writePNG(identity_capture, false) end
 frame:free()
 
 listener:onSuspend()
@@ -184,4 +213,4 @@ listener:onPageUpdate(regular)
 assert(override == ("1 // %d  %.2f%%  [↯37%%]"):format(regular_count, 100 / regular_count), override)
 listener:onPageUpdate(note)
 assert(override == ("[1 / %d]1  [%.2f%%]  [↯37%%]"):format(note_count, 100 / note_count), override)
-print(("Stock CRE status header passed, page %d of %d (fields, labels, battery, refresh, and flows)"):format(page, count))
+print(("Stock CRE status header passed, page %d of %d (fields, labels, metadata edits, battery, refresh, and flows)"):format(page, count))

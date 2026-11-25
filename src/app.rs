@@ -225,6 +225,7 @@ enum Screen {
     ReadingHistory(reading_history::Page),
     BookList,
     BookDetails,
+    BookIdentityEdit(top_header::IdentityField),
     CollectionName,
     RemoveCollection,
     ReadingControls,
@@ -410,6 +411,7 @@ impl Screen {
             Self::ReadingHistory(page) => page.title(),
             Self::BookList => "Books",
             Self::BookDetails => "Book details",
+            Self::BookIdentityEdit(field) => field.editor_title(),
             Self::CollectionName => "Collection name",
             Self::RemoveCollection => "Remove collection?",
             Self::ReadingControls => "Reading controls",
@@ -2072,7 +2074,10 @@ impl Reader {
         }
         if !matches!(
             screen,
-            Screen::BookDetails | Screen::Illustration | Screen::ReadingHistory(_)
+            Screen::BookDetails
+                | Screen::BookIdentityEdit(_)
+                | Screen::Illustration
+                | Screen::ReadingHistory(_)
         ) {
             self.book_details = None;
         }
@@ -2299,6 +2304,9 @@ impl Reader {
         }
         if let Screen::DictionaryPresets(dictionary_presets::Page::Name(mode)) = screen {
             self.prepare_dictionary_preset_name(mode);
+        }
+        if let Screen::BookIdentityEdit(field) = screen {
+            self.prepare_book_identity_edit(field);
         }
         if let Screen::FooterPresetName(mode) = screen {
             self.editor = Editor::new(footer_presets::MAX_NAME);
@@ -3986,11 +3994,15 @@ impl Reader {
             },
             Screen::BookDetails => {
                 let book = self.book_details.as_ref()?;
-                let description = book.entry.author.as_deref().map_or_else(
-                    || book.entry.path.to_string_lossy().into_owned(),
-                    str::to_owned,
-                );
-                items.push(Item::new(&book.entry.title, Action::Heading).detail(description));
+                if self.editable_book_identity().is_some() {
+                    items.extend(self.book_identity_items());
+                } else {
+                    let description = book.entry.author.as_deref().map_or_else(
+                        || book.entry.path.to_string_lossy().into_owned(),
+                        str::to_owned,
+                    );
+                    items.push(Item::new(&book.entry.title, Action::Heading).detail(description));
+                }
                 if let Some(metadata) = &book.metadata {
                     if metadata.has_cover {
                         items.push(Item::new("View cover", Action::ViewCover));
@@ -5095,6 +5107,7 @@ impl Reader {
             }
             entry.author.clone_from(&metadata.author);
         }
+        self.reload_active_header_metadata(id);
         self.show(Screen::BookDetails);
         self.book_details = Some(BookDetails {
             entry,
@@ -5122,6 +5135,10 @@ impl Reader {
             Screen::FooterPresetName(mode) => Some(mode),
             _ => None,
         };
+        let book_identity = match self.screen {
+            Screen::BookIdentityEdit(field) => Some(field),
+            _ => None,
+        };
         let navigation = if self.screen.uses_navigation_viewport() {
             self.navigation_layout()
         } else {
@@ -5139,6 +5156,8 @@ impl Reader {
                 }
             } else if let Some(mode) = dictionary_preset {
                 Screen::DictionaryPresets(mode.back())
+            } else if book_identity.is_some() {
+                Screen::BookDetails
             } else if self.rename_collection.take().is_some() {
                 Screen::BookList
             } else {
@@ -5150,6 +5169,15 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
+        if let Some(field) = book_identity
+            && let Some(reset) = self.book_identity_reset(field)
+            && reset.contains(x, y)
+        {
+            return match self.save_book_identity(field, "") {
+                Ok(()) => Change::Partial,
+                Err(error) => self.report(error),
+            };
+        }
         if let Some(change) = self.choose_current_opening_book(x, y) {
             return change;
         }
@@ -5170,6 +5198,8 @@ impl Reader {
                 self.save_footer_preset_name(mode, name.trim())
             } else if let Some(mode) = dictionary_preset {
                 self.save_dictionary_preset_name(mode, name.trim())
+            } else if let Some(field) = book_identity {
+                self.save_book_identity(field, &name)
             } else {
                 self.save_collection_name(name.trim())
             };
@@ -8280,6 +8310,7 @@ impl Reader {
                 | Screen::DictionaryEntry
                 | Screen::BookmarkFind
                 | Screen::CollectionName
+                | Screen::BookIdentityEdit(_)
                 | Screen::ProfileName(_)
                 | Screen::FooterPresetName(_)
                 | Screen::DictionaryPresets(dictionary_presets::Page::Name(_))
@@ -8300,6 +8331,7 @@ impl Reader {
                 Screen::DictionaryEntry => ("Word or phrase", "Look up"),
                 Screen::BookmarkFind => ("Bookmark, highlighted text, or note", "Find"),
                 Screen::CollectionName => ("Collection name", "Save"),
+                Screen::BookIdentityEdit(field) => (field.label(), "Save"),
                 Screen::ProfileName(
                     profile_panel::Name::OpeningPath(_) | profile_panel::Name::ClosingPath(_),
                 ) => ("Path text, separated by commas", "Save"),
@@ -8415,6 +8447,11 @@ impl Reader {
             }
             if !self.dictionary_preset_picker_open() {
                 canvas.keyboard(self.editor.layer, action, None);
+            }
+            if let Screen::BookIdentityEdit(field) = self.screen
+                && let Some(reset) = self.book_identity_reset(field)
+            {
+                canvas.button(reset, "Restore book metadata", false, false);
             }
             if self.screen == Screen::DictionaryEntry {
                 self.draw_lookup_preset_button(canvas);
@@ -9812,6 +9849,7 @@ impl App for Reader {
         if matches!(
             self.screen,
             Screen::CollectionName
+                | Screen::BookIdentityEdit(_)
                 | Screen::ProfileName(_)
                 | Screen::FooterPresetName(_)
                 | Screen::DictionaryPresets(dictionary_presets::Page::Name(_))

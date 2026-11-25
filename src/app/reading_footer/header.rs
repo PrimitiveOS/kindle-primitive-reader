@@ -127,17 +127,16 @@ fn header_flows(book: &ActiveBook) -> Option<PageFlows> {
 
 impl Reader {
     fn header_parts<'a>(
-        &self,
+        &'a self,
         book: &'a ActiveBook,
         pagination: &Pagination,
         clock: Option<&ClockTokens>,
         battery: BatteryStatus,
     ) -> HeaderParts<'a> {
         let header = self.controls.top_header;
-        let metadata = book.header_metadata.as_ref();
+        let (custom_title, custom_author) = self.reading_identity(book);
         let author = if header.author {
-            metadata
-                .and_then(|data| data.author.as_deref())
+            custom_author
                 .or(book.reading.probe.author.as_deref())
                 .unwrap_or_default()
                 .trim()
@@ -145,10 +144,7 @@ impl Reader {
             ""
         };
         let title = if header.title {
-            let value = metadata
-                .and_then(|data| data.title.as_deref())
-                .unwrap_or(&book.reading.probe.title)
-                .trim();
+            let value = custom_title.unwrap_or(&book.reading.probe.title).trim();
             if value.is_empty() && author.is_empty() {
                 book.entry
                     .library_path()
