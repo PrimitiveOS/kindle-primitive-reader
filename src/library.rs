@@ -14,6 +14,7 @@ mod nearby_custom_metadata;
 #[cfg(feature = "kindle")]
 mod odt_migration;
 pub(crate) mod raw_positions;
+mod raw_v2;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};

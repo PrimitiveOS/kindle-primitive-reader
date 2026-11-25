@@ -42,6 +42,10 @@ impl HiddenFlows {
         &self.points
     }
 
+    pub(super) fn points_mut_for_raw_v2(&mut self) -> &mut [FlowPoint] {
+        &mut self.points
+    }
+
     #[cfg(feature = "kindle")]
     pub(super) fn points_mut_for_odt_migration(&mut self) -> &mut [FlowPoint] {
         &mut self.points

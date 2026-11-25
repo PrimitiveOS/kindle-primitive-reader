@@ -41,6 +41,8 @@ const NAVIGATION_LABELS: &[(&str, &str)] = &[
     ("Location history", "Lịch sử vị trí"),
     ("Footnote previews", "Xem trước chú thích"),
     ("Preview more links", "Xem trước thêm liên kết"),
+    ("Previous saved mark", "Dấu đã lưu trước"),
+    ("Next saved mark", "Dấu đã lưu tiếp"),
 ];
 
 // Titles in the Reader-owned Search group; values also supply reverse search aliases.
@@ -3575,6 +3577,9 @@ impl InterfaceLanguage {
             "Origin" => "Vị trí gốc",
             "Waiting…" => "Đang chờ…",
             "Read here" => "Đọc tại đây",
+            "No earlier saved mark" => "Không có dấu đã lưu trước đó",
+            "No later saved mark" => "Không có dấu đã lưu tiếp theo",
+            "Saved mark location is unavailable" => "Vị trí dấu đã lưu không khả dụng",
             _ => english,
         }
     }

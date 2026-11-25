@@ -22,6 +22,10 @@ impl CustomContents {
         &self.entries
     }
 
+    pub(super) fn entries_mut_for_raw_v2(&mut self) -> &mut [Bookmark] {
+        &mut self.entries
+    }
+
     #[cfg(feature = "kindle")]
     pub(super) fn entries_mut_for_odt_migration(&mut self) -> &mut [Bookmark] {
         &mut self.entries

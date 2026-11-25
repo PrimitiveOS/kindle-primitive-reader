@@ -719,6 +719,41 @@ impl Reader {
         }
     }
 
+    /// Jump directly from the reading menu to a saved mark on a different page.
+    /// Reflow anchors must resolve before reopening so stale marks cannot silently
+    /// turn into a different reading position.
+    pub(super) fn jump_adjacent_saved_mark(&mut self, direction: Direction) -> crate::Result<()> {
+        let Some(target) = self.skim_mark_destination(direction, false) else {
+            let language = self.controls.interface_language;
+            return Err(language
+                .skim_text(match direction {
+                    Direction::Previous => "No earlier saved mark",
+                    Direction::Next => "No later saved mark",
+                })
+                .into());
+        };
+        if let Some(active) = &self.active {
+            if let Some(anchor) = &target.anchor {
+                let probe = active.reading.config.chapter(target.chapter)?;
+                if probe.restore_anchor(anchor).is_none() {
+                    return Err(self
+                        .controls
+                        .interface_language
+                        .skim_text("Saved mark location is unavailable")
+                        .into());
+                }
+            }
+            let previous = self.current_history_location().ok_or("No open document")?;
+            self.restore_position(&target)?;
+            if self.current_history_location().as_ref() != Some(&previous) {
+                self.push_history(previous);
+            }
+            Ok(())
+        } else {
+            self.follow_fixed(target.page, None)
+        }
+    }
+
     fn skim_mark_destination(
         &self,
         direction: Direction,
@@ -1051,12 +1086,12 @@ impl Reader {
     }
 }
 
-const MARK_BACK: Icon = Icon {
+pub(super) const MARK_BACK: Icon = Icon {
     stroke: &["M13 5 H19 V19 L16 16 L13 19 Z", "M8 8 L4 12 L8 16"],
     fill: &[],
 };
 
-const MARK_FORWARD: Icon = Icon {
+pub(super) const MARK_FORWARD: Icon = Icon {
     stroke: &["M5 5 H11 V19 L8 16 L5 19 Z", "M16 8 L20 12 L16 16"],
     fill: &[],
 };

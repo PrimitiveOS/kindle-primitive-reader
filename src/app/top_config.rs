@@ -101,6 +101,24 @@ impl Reader {
                 ),
             ),
         ]);
+        let has_saved_marks = self
+            .open_book_id()
+            .and_then(|id| self.library.state(id))
+            .is_some_and(|state| {
+                !state.bookmarks.is_empty()
+                    || !state.highlights.is_empty()
+                    || !state.pdf_highlights.is_empty()
+            });
+        if has_saved_marks {
+            items.push(Item::new(
+                "Previous saved mark",
+                Action::SavedMark(Direction::Previous),
+            ));
+            items.push(Item::new(
+                "Next saved mark",
+                Action::SavedMark(Direction::Next),
+            ));
+        }
         if let Some(book) = self
             .active
             .as_ref()

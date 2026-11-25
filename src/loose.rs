@@ -631,7 +631,10 @@ fn read_markdown_zip(file: File, length: u64, title: &str) -> Result<Document> {
         let Ok(bytes) = read_htmlz_member(&mut archive, index, limit) else {
             continue;
         };
-        remaining -= bytes.len();
+        let Some((bytes, charged)) = reflow_resource(&relative, bytes, limit) else {
+            continue;
+        };
+        remaining -= charged;
         document.resources.insert(relative, bytes);
     }
     Ok(document)
@@ -715,7 +718,8 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
                 resources.push((index, path.to_owned(), limit));
             }
             Some(
-                "bmp" | "pnm" | "pbm" | "pgm" | "ppm" | "pam" | "ttf" | "otf" | "woff" | "woff2",
+                "bmp" | "pnm" | "pbm" | "pgm" | "ppm" | "pam" | "webp" | "ttf" | "otf" | "woff"
+                | "woff2",
             ) => {
                 match supplemental.entry(path.to_owned()) {
                     std::collections::btree_map::Entry::Vacant(slot) => {
@@ -797,10 +801,14 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
         if size > MAX_HTMLZ_IMAGE as u64 || size > remaining {
             continue;
         }
-        let Ok(bytes) = read_htmlz_member(&mut archive, index, MAX_HTMLZ_IMAGE) else {
+        let limit = MAX_HTMLZ_IMAGE.min(remaining as usize);
+        let Ok(bytes) = read_htmlz_member(&mut archive, index, limit) else {
             continue;
         };
-        remaining -= size;
+        let Some((bytes, charged)) = reflow_resource(&path, bytes, limit) else {
+            continue;
+        };
+        remaining -= charged as u64;
         document.resources.insert(path, bytes);
     }
     Ok(document)
@@ -1352,7 +1360,10 @@ fn load_local_html_resources(path: &Path, document: &mut Document) {
         let Ok(bytes) = read_bounded(file, limit) else {
             continue;
         };
-        remaining -= bytes.len();
+        let Some((bytes, charged)) = reflow_resource(&relative, bytes, limit) else {
+            continue;
+        };
+        remaining -= charged;
         if relative
             .rsplit_once('.')
             .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("css"))
@@ -1378,8 +1389,24 @@ fn local_html_resource_limit(path: &str) -> Option<usize> {
     match extension.as_str() {
         "css" => Some(MAX_HTMLZ_CSS),
         "png" | "jpg" | "jpeg" | "gif" | "svg" | "bmp" | "pnm" | "pbm" | "pgm" | "ppm" | "pam"
-        | "ttf" | "otf" | "woff" | "woff2" => Some(MAX_HTMLZ_IMAGE),
+        | "webp" | "ttf" | "otf" | "woff" | "woff2" => Some(MAX_HTMLZ_IMAGE),
         _ => None,
+    }
+}
+
+// The reflow renderer consumes PNG rather than WebP. Keep the authored path
+// and charge the larger encoded representation to the existing budget.
+fn reflow_resource(path: &str, bytes: Vec<u8>, limit: usize) -> Option<(Vec<u8>, usize)> {
+    let size = bytes.len();
+    if path
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("webp"))
+    {
+        let converted = crate::comic::ImagePage::webp_as_png(&bytes).ok()?;
+        let charged = size.max(converted.len());
+        (charged <= limit).then_some((converted, charged))
+    } else {
+        (size <= limit).then_some((bytes, size))
     }
 }
 

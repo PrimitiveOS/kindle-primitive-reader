@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::flow_projection::Affinity;
 
-const MAX_BLOCK_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_BLOCK_BYTES: usize = 64 * 1024;
 const MAX_RECORDS: usize = 4096;
 const PREFERRED_BUDGET: usize = 768 * 1024;
 const GENERAL_BUDGET: usize = 256 * 1024;

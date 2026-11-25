@@ -3,7 +3,8 @@
 When opening a standalone XML-compatible HTML or XHTML document, Reader
 snapshots referenced local images, linked CSS and supported CSS dependencies
 from the document's own directory. Supported image paths are PNG, JPEG, GIF,
-SVG, BMP and portable anymap; an inline SVG can reference the same local images.
+SVG, BMP, portable anymap and supported simple still WebP; an inline SVG can
+reference supported local images.
 Supported font paths are TTF, OTF, WOFF and WOFF2. These resources use
 the existing reading and image-rendering paths. The document's XHTML, source
 revision and saved reading positions are unchanged.
@@ -65,3 +66,11 @@ The CSS dependency and import changes passed a Mac build-only check. Containment
 and symlink races, image and stylesheet appearance, text-only recovery,
 missing-file fallback and saved position preservation still need behavioral,
 simulator and device verification before release.
+
+For HTML, HTML ZIP, Markdown and Markdown ZIP, supported simple VP8/VP8L WebP
+illustrations are converted to in-memory grayscale PNG under the original
+resource key. Both encoded input and converted output must fit the existing
+resource budgets; unsupported or oversized images are skipped. The original
+files, XHTML and reading anchors stay unchanged. VP8X, animated WebP and the
+lossless decoder's [memory and verification limits](webp-lossless-allocation-audit.md)
+remain open; these rendering paths have not been behaviorally tested.

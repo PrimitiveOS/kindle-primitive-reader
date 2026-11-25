@@ -29,8 +29,11 @@ bounded offline vector renderer. The existing archive resource limits apply.
 Scripts and remote resources do not become available through this change.
 Other HTMLZ layout and archive restrictions remain in place. [KOReader HTMLZ registration](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L1604)
 
-HTMLZ and the supported HTML ZIP aliases can also retain referenced local BMP
-and portable anymap images and TTF, OTF, WOFF and WOFF2 publisher fonts.
+HTMLZ and the supported HTML ZIP aliases can also retain referenced local BMP,
+portable anymap and supported simple WebP images, and TTF, OTF, WOFF and WOFF2
+publisher fonts. WebP images are converted to grayscale PNG in memory while
+retaining their original resource key; both representations count toward the
+per-file and aggregate limits by their larger size.
 Reader examines a bounded set of up to 64 references in the XHTML and already
 loaded CSS, resolves them inside the validated archive, and reads these extra
 members only when each is at most 2 MiB and fits the existing 8 MiB total
