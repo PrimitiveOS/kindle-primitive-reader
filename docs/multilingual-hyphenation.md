@@ -380,8 +380,10 @@ release packages. Reader includes combining-mark rules
 and uses canonical decomposition for Latin pattern matching while emitting
 only original UTF-8 grapheme boundaries. Latin words exceeding 64 graphemes,
 256 decomposed scalars, or the overall word-byte limit are skipped.
-User-defined hyphenation rules still use the `la` shaping language for both
-Latin variants. Exact stock rule/behavior comparison, canonical combining-mark
+Liturgical personal rules use a separate `la-x-liturgic` key. Existing shared
+classical `la` rules remain a fallback for words with no liturgical-specific
+entry; editing or removing that fallback also changes it for classical Latin.
+Exact stock rule/behavior comparison, canonical combining-mark
 cases, mixed-language behavior and real-document checks remain open; this
 change has not been built or tested on the computer or Kindle.
 [Latin terms](licenses/HYPHENATION-LA.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)

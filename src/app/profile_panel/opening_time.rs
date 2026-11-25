@@ -151,6 +151,7 @@ impl Reader {
     }
 
     pub(super) fn profile_time_items(&self, event: Event, index: usize) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let time = self
             .profiles
             .get(index)
@@ -159,15 +160,18 @@ impl Reader {
             .into_iter()
             .map(|endpoint| {
                 Item::new(
-                    endpoint.label(),
+                    language.reading_profile_text(endpoint.label()),
                     Action::Show(event.screen(index, Page::TimeEdit(endpoint))),
                 )
-                .detail(time.map_or_else(|| "Unset".into(), |time| clock(endpoint.select(time))))
+                .detail(time.map_or_else(
+                    || language.reading_profile_text("Unset").into(),
+                    |time| clock(endpoint.select(time)),
+                ))
             })
             .collect();
         if time.is_some() {
             items.push(Item::new(
-                "Clear time window",
+                language.reading_profile_text("Clear time window"),
                 event.action(index, Command::ClearTimeWindow),
             ));
         }
@@ -212,19 +216,20 @@ impl Reader {
         else {
             return;
         };
+        let language = self.controls.interface_language;
         let layout = self.navigation_layout();
         let place = |rect| layout.centered(rect);
         canvas.popup(place(PANEL));
         canvas.text(
             place(Rect::new(130, 599, 1004, 88)),
-            endpoint.label(),
+            language.reading_profile_text(endpoint.label()),
             TextStyle::new(48).bold(),
         );
         let minute = self.profile_opening_time_draft;
         for (part, title, left) in VALUES {
             canvas.text(
                 place(Rect::new(left, 725, 472, 52)),
-                title,
+                language.reading_profile_text(title),
                 CAPTION.center(),
             );
             canvas.button(
@@ -249,8 +254,18 @@ impl Reader {
                 CAPTION.lines(2),
             );
         }
-        canvas.button(place(CANCEL), "Cancel", false, false);
-        canvas.button(place(SAVE), "Set time", true, false);
+        canvas.button(
+            place(CANCEL),
+            language.reading_profile_text("Cancel"),
+            false,
+            false,
+        );
+        canvas.button(
+            place(SAVE),
+            language.reading_profile_text("Set time"),
+            true,
+            false,
+        );
     }
 
     pub(in crate::app) fn opening_time_input(&mut self, input: Input) -> Option<Change> {

@@ -575,7 +575,7 @@ fn property_slot(property: &Property) -> Option<usize> {
         Property::Float(_) => 9,
         Property::InitialLetter(_) => 10,
         Property::HorizontalMargin(1, _) => 11,
-        Property::LetterSpacing(_) => 12,
+        Property::LetterSpacing(_) | Property::Reset(super::LETTER_SPACING, _) => 12,
         Property::CommonLigatures(_) | Property::Reset(super::COMMON_LIGATURES, _) => 13,
         Property::LigatureExtras(_) | Property::Reset(super::LIGATURE_EXTRAS, _) => 14,
         Property::VariantCaps(_) | Property::Reset(super::VARIANT_CAPS, _) => 15,
@@ -609,7 +609,7 @@ pub(super) fn accepts_user_declaration(target: Target, property: &Property) -> b
                 })
         }
         (Target::Generated(_), _) => {
-            property_slot(property).is_some_and(|slot| slot <= 8 || (13..=21).contains(&slot))
+            property_slot(property).is_some_and(|slot| slot <= 8 || (12..=21).contains(&slot))
         }
         (Target::FirstLine, _) => is_first_line_typography(property),
         (
@@ -647,6 +647,7 @@ fn is_first_line_typography(property: &Property) -> bool {
             | Property::TextTransform(_)
             | Property::Reset(
                 super::COMMON_LIGATURES
+                    | super::LETTER_SPACING
                     | super::LIGATURE_EXTRAS
                     | super::VARIANT_CAPS
                     | super::VARIANT_NUMERIC
@@ -758,13 +759,6 @@ impl<'a> Rules<'a> {
                     _ => continue,
                 };
                 for decl in &rule.declarations {
-                    // Deferred generated quotes have a separate DPI lifecycle;
-                    // leave their letter-spacing on the existing inherited path.
-                    if matches!(target, Target::Generated(_))
-                        && matches!(decl.property, Property::LetterSpacing(_))
-                    {
-                        continue;
-                    }
                     if matches!(target, Target::FirstLine)
                         && !matches!(decl.property, Property::Display(_))
                         && !is_first_line_typography(&decl.property)
@@ -974,6 +968,7 @@ impl<'a> Rules<'a> {
                     super::VARIANT_HISTORICAL => style.variant_historical = Some(false),
                     super::OPTICAL_SIZING => style.optical_sizing = Some(true),
                     super::TEXT_TRANSFORM => style.text_transform = Some(TextTransform::None),
+                    super::LETTER_SPACING => style.letter_spacing = Some(CssLength::default()),
                     _ => {}
                 },
                 _ => (),

@@ -961,7 +961,8 @@ impl BookStyle {
         settings: crate::Settings,
         footnotes: Option<&FootnoteTargets>,
     ) -> (Vec<Style>, pseudo::quotes::Plan<'_>) {
-        let (styles, quotes) = self.compute_with_font(elements, Some(settings), footnotes);
+        let (styles, mut quotes) = self.compute_with_font(elements, Some(settings), footnotes);
+        quotes.scale_dpi(settings.render_dpi);
         (self.scale_dpi(styles, settings.render_dpi), quotes)
     }
 
@@ -977,6 +978,11 @@ impl BookStyle {
             }
             if let Some(line) = &mut style.first_line {
                 Arc::make_mut(line).scale_dpi(dpi);
+            }
+            if let Some(generated) = &mut style.generated {
+                for part in Arc::make_mut(generated).iter_mut().flatten() {
+                    part.style.letter_spacing = part.style.letter_spacing.for_dpi(dpi);
+                }
             }
             for edge in style
                 .padding

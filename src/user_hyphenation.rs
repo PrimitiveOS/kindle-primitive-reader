@@ -103,6 +103,29 @@ fn boundaries(word: &str) -> Vec<usize> {
 }
 
 impl Rules {
+    /// Liturgical Latin has its own personal dictionary despite sharing the
+    /// classical shaping language. Retain shared legacy rules as fallback.
+    pub(crate) fn locale_for_run<'a>(
+        &self,
+        language: &'a Language,
+        typography: Option<crate::TypographyLocale>,
+        word: &str,
+    ) -> &'a str {
+        if typography == Some(crate::TypographyLocale::LiturgicalLatin) {
+            const LITURGICAL: &str = "la-x-liturgic";
+            if self.contains(LITURGICAL, word) {
+                return LITURGICAL;
+            }
+            let old = self.locale_for_word(language, word);
+            return if self.contains(old, word) {
+                old
+            } else {
+                LITURGICAL
+            };
+        }
+        self.locale_for_word(language, word)
+    }
+
     /// Existing exact-region entries take precedence over a shared dictionary
     /// key, so changing the default does not discard or override saved rules.
     pub(crate) fn locale_for_word<'a>(&self, language: &'a Language, word: &str) -> &'a str {

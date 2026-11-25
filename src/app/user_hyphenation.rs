@@ -261,13 +261,17 @@ impl Reader {
             .skip_while(|s| s.bytes.end <= start)
             .take_while(|s| s.bytes.start < end);
         let run = spans.next()?;
-        let language = self
-            .user_hyphenation
-            .locale_for_word(run.language.as_ref()?, word);
+        let language = self.user_hyphenation.locale_for_run(
+            run.language.as_ref()?,
+            run.hyphenation_language,
+            word,
+        );
         let allowed = |span: &crate::source::StyledText| {
             probe.custom_hyphenation_allowed.get(span.element) == Some(&true)
                 && span.language.as_ref().is_some_and(|lang| {
-                    self.user_hyphenation.locale_for_word(lang, word) == language
+                    self.user_hyphenation
+                        .locale_for_run(lang, span.hyphenation_language, word)
+                        == language
                 })
         };
         let mut covered = run.bytes.end.min(end);

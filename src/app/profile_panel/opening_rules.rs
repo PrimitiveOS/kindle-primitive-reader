@@ -278,16 +278,26 @@ impl Reader {
                 .filter(|mode| {
                     event == Event::Opening || *mode != ReadingOrientation::FollowLauncher
                 })
-                .map(|orientation| action(orientation.label(), Command::Orientation(orientation)))
+                .map(|orientation| {
+                    action(
+                        language.reading_profile_text(orientation.label()),
+                        Command::Orientation(orientation),
+                    )
+                })
                 .collect(),
             Page::Metadata => MetadataField::ALL
                 .into_iter()
                 .map(|field| {
                     Item::new(
-                        field.label(),
+                        language.reading_profile_text(field.label()),
                         Action::Show(Screen::ProfileName(event.metadata_name(index, field))),
                     )
-                    .detail(rules.metadata.get(&field).map_or("Off", String::as_str))
+                    .detail(
+                        rules
+                            .metadata
+                            .get(&field)
+                            .map_or_else(|| language.reading_profile_text("Off"), String::as_str),
+                    )
                 })
                 .collect(),
             Page::Collections => {
@@ -310,7 +320,7 @@ impl Reader {
                     .map(|name| {
                         let item = action(name, Command::Collection(name.to_owned()));
                         if self.library.collection(name).is_none() {
-                            item.detail("Unavailable")
+                            item.detail(language.reading_profile_text("Unavailable"))
                         } else {
                             item
                         }

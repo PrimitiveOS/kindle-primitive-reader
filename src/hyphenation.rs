@@ -916,7 +916,7 @@ pub(crate) fn with_user_rules_text(
             continue;
         };
         let word = &text[range.clone()];
-        let loc = rules.locale_for_word(&language, word);
+        let loc = rules.locale_for_run(&language, run.hyphenation_language, word);
         let allowed = allows_user_rules;
         let mut covered = run.bytes.end.min(range.end);
         if run.bytes.start > range.start
@@ -924,9 +924,9 @@ pub(crate) fn with_user_rules_text(
             || !spans.all(|s| {
                 let valid = s.bytes.start <= covered
                     && allowed(&styles[s.element])
-                    && s.language
-                        .as_ref()
-                        .is_some_and(|l| rules.locale_for_word(l, word) == loc);
+                    && s.language.as_ref().is_some_and(|l| {
+                        rules.locale_for_run(l, s.hyphenation_language, word) == loc
+                    });
                 covered = covered.max(s.bytes.end.min(range.end));
                 valid
             })

@@ -175,14 +175,16 @@ spacing control adds its tracking to the computed CSS value. To keep malformed
 or extreme styles bounded, the publisher contribution is limited to
 −1–128 pixels and combined negative tracking to −1 pixel; non-finite values
 fall back to zero. `::first-letter` and `::first-line` may specify their own
-spacing, including inherited first-line descendants; absolute units follow the
-reading DPI. Relative pseudo-element lengths use Reader's existing pseudo font
-scale, which may differ from KOReader's logical-font metrics. Text and source
+spacing, including inherited first-line descendants; generated before/after
+content and deferred quotes can also declare spacing. Inherit, initial and
+unset resets are supported for these pseudo styles, and absolute units follow
+the reading DPI for both immediate and deferred content. Relative
+pseudo-element lengths use Reader's existing pseudo font scale, which may
+differ from KOReader's logical-font metrics. Text and source
 anchors remain unchanged. Ruby annotations use the same computed spacing and
 tracking as ordinary runs. Relative letter spacing declared directly on ruby
 without an explicit ruby font size can differ from the fallback visual font
-scale. Pseudo-element reset keywords, generated-content declarations,
-vertical text and Blitz rendering do not yet have equivalent support. The
+scale. Vertical text and Blitz rendering do not yet have equivalent support. The
 visual result and precise KOReader parity have not yet been tested.
 [CRE inherited value](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L11524-L11526) · [CRE text layout](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L4568-L4574)
 

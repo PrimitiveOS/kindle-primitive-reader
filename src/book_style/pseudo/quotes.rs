@@ -589,6 +589,17 @@ pub(super) struct Pending<'a> {
 pub(crate) struct Plan<'a>(pub(super) Vec<Pending<'a>>);
 
 impl Plan<'_> {
+    pub(in crate::book_style) fn scale_dpi(&mut self, dpi: u16) {
+        if dpi == 96 {
+            return;
+        }
+        for part in &mut self.0 {
+            if let Some(style) = &mut part.style {
+                style.letter_spacing = style.letter_spacing.for_dpi(dpi);
+            }
+        }
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
