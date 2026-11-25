@@ -9,8 +9,9 @@ use primitive_ui::{CAPTION, Canvas, GrayImage, HAIRLINE, Input, Rect};
 use crate::fixed_session::FixedReading;
 use crate::library::FixedReflowSpacing;
 use crate::scan_reflow::ScanReflow;
+use crate::session::page_overlap::Marker;
 use crate::session::{PAGE_REFRESH_GAP, PagePaint, PageTurns, ReadingViewport, draw_page_picture};
-use crate::{Anchor, Probe, Result, Settings};
+use crate::{Anchor, PageOverlapStyle, Probe, Result, Settings};
 
 const MIN_SCAN_HEIGHT: u32 = 24;
 const MAX_SCAN_HEIGHT: u32 = 72;
@@ -22,6 +23,8 @@ struct Controls {
     spacing: Rect,
     panel: Rect,
     choices: [(FixedReflowSpacing, &'static str, Rect); 3],
+    overlap_choices: [(bool, &'static str, Rect); 2],
+    markers: [(PageOverlapStyle, Rect); 5],
     cancel: Rect,
     apply: Rect,
     smaller: Rect,
@@ -32,8 +35,19 @@ impl Controls {
     fn new(viewport: ReadingViewport) -> Self {
         let width = viewport.dimensions().0 as i32;
         let footer_y = viewport.page_height() as i32;
-        let panel = Rect::new(0, footer_y - 146, width, 146);
-        let row = panel.y + 68;
+        let panel = Rect::new(0, footer_y - 320, width, 320);
+        let spacing_row = panel.y + 57;
+        let overlap_row = spacing_row + 66;
+        let marker_row = overlap_row + 66;
+        let action_row = marker_row + 66;
+        let marker_width = (width - 76 - 10 * 4) / 5;
+        let mut marker_x = 38;
+        let markers = std::array::from_fn(|index| {
+            let width = marker_width + [18, -6, -6, -6, 0][index];
+            let rect = Rect::new(marker_x, marker_row, width, 60);
+            marker_x += width + 10;
+            (PageOverlapStyle::ALL[index], rect)
+        });
         Self {
             footer_y,
             width,
@@ -43,21 +57,26 @@ impl Controls {
                 (
                     FixedReflowSpacing::Small,
                     "Small",
-                    Rect::new(38, row, 176, 60),
+                    Rect::new(38, spacing_row, 176, 60),
                 ),
                 (
                     FixedReflowSpacing::Medium,
                     "Medium",
-                    Rect::new(228, row, 176, 60),
+                    Rect::new(228, spacing_row, 176, 60),
                 ),
                 (
                     FixedReflowSpacing::Large,
                     "Large",
-                    Rect::new(418, row, 176, 60),
+                    Rect::new(418, spacing_row, 176, 60),
                 ),
             ],
-            cancel: Rect::new(width - 424, row, 178, 60),
-            apply: Rect::new(width - 232, row, 194, 60),
+            overlap_choices: [
+                (false, "Off", Rect::new(242, overlap_row, 150, 60)),
+                (true, "On", Rect::new(406, overlap_row, 150, 60)),
+            ],
+            markers,
+            cancel: Rect::new(width - 424, action_row, 178, 58),
+            apply: Rect::new(width - 232, action_row, 194, 58),
             smaller: Rect::new(width - 424, footer_y + 5, 120, 60),
             larger: Rect::new(width - 290, footer_y + 5, 120, 60),
         }
@@ -87,6 +106,19 @@ enum FlowLayout {
 enum FlowAnchor {
     Text(Anchor),
     Scan(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Location {
+    anchor: FlowAnchor,
+    inset: i32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FlowPreferences {
+    pub(crate) spacing: FixedReflowSpacing,
+    pub(crate) overlap_enabled: bool,
+    pub(crate) marker: PageOverlapStyle,
 }
 
 impl FlowStyle {
@@ -150,12 +182,6 @@ impl FlowStyle {
         }
     }
 
-    fn spacing(&self) -> FixedReflowSpacing {
-        match self {
-            Self::Text { spacing, .. } | Self::Scan { spacing, .. } => *spacing,
-        }
-    }
-
     fn set_spacing(&mut self, value: FixedReflowSpacing) {
         match self {
             Self::Text { spacing, .. } | Self::Scan { spacing, .. } => *spacing = value,
@@ -178,41 +204,74 @@ impl FlowStyle {
 }
 
 impl FlowLayout {
-    fn page_count(&self) -> usize {
+    fn clip(&self) -> Rect {
         match self {
-            Self::Text(probe) => probe.page_count(),
-            Self::Scan(scan) => scan.page_count(),
+            Self::Text(probe) => Rect::new(
+                0,
+                probe.settings.top_margin() as i32,
+                probe.settings.width as i32,
+                probe.settings.text_height() as i32,
+            ),
+            Self::Scan(scan) => scan.scroll_clip(),
         }
     }
 
-    fn anchor(&self, page: usize) -> Option<FlowAnchor> {
+    fn limit(&self) -> u32 {
         match self {
-            Self::Text(probe) => probe.page_anchor(page).map(FlowAnchor::Text),
-            Self::Scan(scan) => scan.page_first_word(page).map(FlowAnchor::Scan),
+            Self::Text(probe) => probe.scroll_end().round() as u32,
+            Self::Scan(scan) => scan.scroll_end(),
         }
     }
 
-    fn page_for(&self, anchor: &FlowAnchor) -> Option<usize> {
+    fn step(&self, overlap: u8) -> u32 {
+        (self.clip().h as u32 * (100 - u32::from(overlap)))
+            .div_ceil(100)
+            .max(1)
+    }
+
+    fn location(&self, top: u32) -> Option<Location> {
+        let anchor = match self {
+            Self::Text(probe) => probe
+                .anchor_in(probe.scroll_range(top as f32))
+                .map(FlowAnchor::Text),
+            Self::Scan(scan) => scan.word_at_scroll_top(top).map(FlowAnchor::Scan),
+        }?;
+        Some(Location {
+            inset: top as i32 - self.anchor_top(&anchor)? as i32,
+            anchor,
+        })
+    }
+
+    fn anchor_top(&self, anchor: &FlowAnchor) -> Option<u32> {
         match (self, anchor) {
-            (Self::Text(probe), FlowAnchor::Text(anchor)) => probe.page_for(anchor),
-            (Self::Scan(scan), FlowAnchor::Scan(word)) => scan.page_for_word(*word),
+            (Self::Text(probe), FlowAnchor::Text(anchor)) => {
+                Some(probe.anchor_top(anchor)?.round() as u32)
+            }
+            (Self::Scan(scan), FlowAnchor::Scan(word)) => scan.word_scroll_top(*word),
             _ => None,
         }
     }
 
-    fn capture(&mut self, page: usize, viewport: ReadingViewport) -> Result<GrayImage> {
+    fn resolve(&self, location: &Location) -> Option<u32> {
+        let top = self
+            .anchor_top(&location.anchor)?
+            .saturating_add_signed(location.inset);
+        Some(top.min(self.limit()))
+    }
+
+    fn capture(&mut self, top: u32, viewport: ReadingViewport) -> Result<GrayImage> {
         match self {
             Self::Text(probe) => Ok(GrayImage {
                 width: viewport.dimensions().0,
                 height: viewport.page_height(),
-                pixels: probe.capture(page)?,
+                pixels: probe.capture_range(probe.scroll_range(top as f32))?,
             }),
-            Self::Scan(scan) => Ok(scan.render(page)?),
+            Self::Scan(scan) => Ok(scan.render_scroll(top)),
         }
     }
 }
 
-/// Paginated text or image crops from a fixed document, one source page at a time.
+/// A view onto one reflowed source page from a fixed document.
 pub(crate) struct TextFlow {
     viewport: ReadingViewport,
     instance: Arc<()>,
@@ -222,10 +281,13 @@ pub(crate) struct TextFlow {
     document_pages: usize,
     style: FlowStyle,
     layout: FlowLayout,
-    page: usize,
+    top: u32,
+    zoom_overlap: u8,
+    overlap_cue: Option<Marker>,
     // Keep the original source passage across successive layout changes until a page turn.
-    retained_anchor: Option<FlowAnchor>,
-    spacing_draft: Option<FixedReflowSpacing>,
+    retained_location: Option<Location>,
+    preferences: FlowPreferences,
+    layout_draft: Option<FlowPreferences>,
     frame: GrayImage,
     turns: PageTurns,
     boundary: Option<String>,
@@ -255,10 +317,13 @@ impl TextFlow {
         settings: Settings,
         scan: bool,
     ) -> Result<Self> {
-        let spacing = document
-            .preferences()
-            .fixed_reflow_spacing
-            .unwrap_or_default();
+        let saved = document.preferences();
+        let preferences = FlowPreferences {
+            spacing: saved.fixed_reflow_spacing.unwrap_or_default(),
+            overlap_enabled: saved.page_overlap_enabled,
+            marker: saved.page_overlap_style.unwrap_or_default(),
+        };
+        let spacing = preferences.spacing;
         let style = if scan {
             FlowStyle::Scan {
                 text_height: 40,
@@ -277,7 +342,15 @@ impl TextFlow {
         let layout = style
             .layout_page(document, page, viewport)?
             .ok_or_else(|| format!("Page {} {}", page + 1, style.missing_text()))?;
-        Self::with_layout(page, document.count(), style, layout, viewport)
+        Self::with_layout(
+            page,
+            document.count(),
+            style,
+            layout,
+            viewport,
+            saved.zoom_overlap_v(),
+            preferences,
+        )
     }
 
     fn with_layout(
@@ -286,6 +359,8 @@ impl TextFlow {
         style: FlowStyle,
         mut layout: FlowLayout,
         viewport: ReadingViewport,
+        zoom_overlap: u8,
+        preferences: FlowPreferences,
     ) -> Result<Self> {
         if document_page >= document_pages {
             return Err("Document page is unavailable".into());
@@ -300,9 +375,12 @@ impl TextFlow {
             document_pages,
             style,
             layout,
-            page: 0,
-            retained_anchor: None,
-            spacing_draft: None,
+            top: 0,
+            zoom_overlap,
+            overlap_cue: None,
+            retained_location: None,
+            preferences,
+            layout_draft: None,
             frame,
             turns: PageTurns::new(Instant::now()),
             boundary: None,
@@ -320,7 +398,15 @@ impl TextFlow {
         let layout = style
             .layout_page(document, 0, viewport)?
             .ok_or_else(|| format!("Page 1 {}", style.missing_text()))?;
-        Self::with_layout(0, document.count(), style, layout, viewport)
+        Self::with_layout(
+            0,
+            document.count(),
+            style,
+            layout,
+            viewport,
+            self.zoom_overlap,
+            self.preferences,
+        )
     }
 
     pub(crate) fn prepare_viewport(
@@ -330,7 +416,7 @@ impl TextFlow {
     ) -> Result<ViewportStage> {
         // The continuous fixed view may start on an earlier source page when
         // it fills the last screen. TextFlow keeps its own explicit page.
-        let (layout, page, anchor, frame) = self.relayout(&self.style, document, viewport)?;
+        let (layout, top, location, frame) = self.relayout(&self.style, document, viewport)?;
         Ok(ViewportStage {
             candidate: Box::new(Self {
                 viewport,
@@ -341,9 +427,12 @@ impl TextFlow {
                 document_pages: self.document_pages,
                 style: self.style.clone(),
                 layout,
-                page,
-                retained_anchor: Some(anchor),
-                spacing_draft: self.spacing_draft,
+                top,
+                zoom_overlap: self.zoom_overlap,
+                overlap_cue: None,
+                retained_location: Some(location),
+                preferences: self.preferences,
+                layout_draft: self.layout_draft,
                 frame,
                 turns: PageTurns {
                     pending: self.turns.pending.clone(),
@@ -385,13 +474,13 @@ impl TextFlow {
         document: &FixedReading,
     ) -> Result<bool> {
         let controls = Controls::new(self.viewport);
-        if let Some(draft) = self.spacing_draft {
-            return self.spacing_input(input, document, &controls, draft);
+        if let Some(draft) = self.layout_draft {
+            return self.layout_input(input, document, &controls, draft);
         }
         if let Input::Tap(x, y) = input
             && controls.spacing.contains(x, y)
         {
-            self.spacing_draft = Some(self.line_spacing());
+            self.layout_draft = Some(self.preferences);
             self.pause();
             return Ok(true);
         }
@@ -415,44 +504,93 @@ impl TextFlow {
         self.tick(Instant::now(), document)
     }
 
+    #[cfg(test)]
     pub(crate) fn line_spacing(&self) -> FixedReflowSpacing {
-        self.style.spacing()
+        self.preferences.spacing
     }
 
-    fn spacing_input(
+    pub(crate) fn preferences(&self) -> FlowPreferences {
+        self.preferences
+    }
+
+    #[cfg(test)]
+    pub(crate) fn overlap_test_targets(&self) -> [Rect; 4] {
+        let controls = Controls::new(self.viewport);
+        [
+            controls.spacing,
+            controls.overlap_choices[1].2,
+            controls.markers[4].1,
+            controls.apply,
+        ]
+    }
+
+    #[cfg(test)]
+    pub(crate) fn spacing_test_targets(&self) -> [Rect; 4] {
+        let controls = Controls::new(self.viewport);
+        [
+            controls.spacing,
+            controls.choices[2].2,
+            controls.cancel,
+            controls.apply,
+        ]
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pan_offset(&self) -> u32 {
+        self.top
+    }
+
+    fn layout_input(
         &mut self,
         input: Input,
         document: &FixedReading,
         controls: &Controls,
-        draft: FixedReflowSpacing,
+        mut draft: FlowPreferences,
     ) -> Result<bool> {
         match input {
-            Input::PageBack => self.spacing_draft = None,
+            Input::PageBack => self.layout_draft = None,
             Input::Tap(x, y)
                 if controls.cancel.contains(x, y) || controls.spacing.contains(x, y) =>
             {
-                self.spacing_draft = None;
+                self.layout_draft = None;
             }
             Input::Tap(x, y) if controls.apply.contains(x, y) => {
-                if draft != self.line_spacing() {
+                if draft.spacing != self.preferences.spacing {
                     let mut style = self.style.clone();
-                    style.set_spacing(draft);
+                    style.set_spacing(draft.spacing);
                     self.refresh_layout(style, document)?;
                 }
-                self.spacing_draft = None;
+                if !draft.overlap_enabled {
+                    self.overlap_cue = None;
+                }
+                self.preferences = draft;
+                self.layout_draft = None;
             }
             Input::Tap(x, y) => {
-                let Some((choice, _, _)) = controls
+                if let Some((spacing, _, _)) = controls
                     .choices
                     .iter()
                     .find(|(_, _, rect)| rect.contains(x, y))
-                else {
-                    return Ok(false);
-                };
-                if *choice == draft {
+                {
+                    draft.spacing = *spacing;
+                } else if let Some((enabled, _, _)) = controls
+                    .overlap_choices
+                    .iter()
+                    .find(|(_, _, rect)| rect.contains(x, y))
+                {
+                    draft.overlap_enabled = *enabled;
+                } else if draft.overlap_enabled
+                    && let Some((marker, _)) = controls
+                        .markers
+                        .iter()
+                        .find(|(_, rect)| rect.contains(x, y))
+                {
+                    draft.marker = *marker;
+                }
+                if Some(draft) == self.layout_draft {
                     return Ok(false);
                 }
-                self.spacing_draft = Some(*choice);
+                self.layout_draft = Some(draft);
             }
             _ => return Ok(false),
         }
@@ -485,11 +623,12 @@ impl TextFlow {
     }
 
     fn refresh_layout(&mut self, style: FlowStyle, document: &FixedReading) -> Result<()> {
-        let (layout, page, anchor, frame) = self.relayout(&style, document, self.viewport)?;
+        let (layout, top, location, frame) = self.relayout(&style, document, self.viewport)?;
         self.style = style;
         self.layout = layout;
-        self.page = page;
-        self.retained_anchor = Some(anchor);
+        self.top = top;
+        self.retained_location = Some(location);
+        self.overlap_cue = None;
         self.frame = frame;
         self.boundary = None;
         self.pause();
@@ -501,20 +640,20 @@ impl TextFlow {
         style: &FlowStyle,
         document: &FixedReading,
         viewport: ReadingViewport,
-    ) -> Result<(FlowLayout, usize, FlowAnchor, GrayImage)> {
-        let anchor = self
-            .retained_anchor
+    ) -> Result<(FlowLayout, u32, Location, GrayImage)> {
+        let location = self
+            .retained_location
             .clone()
-            .or_else(|| self.layout.anchor(self.page))
+            .or_else(|| self.layout.location(self.top))
             .ok_or("The current reading passage is unavailable")?;
         let mut layout = style
             .layout_page(document, self.document_page, viewport)?
             .ok_or_else(|| format!("Page {} {}", self.document_page + 1, style.missing_text()))?;
-        let page = layout
-            .page_for(&anchor)
+        let top = layout
+            .resolve(&location)
             .ok_or("The current reading passage is unavailable after changing the layout")?;
-        let frame = layout.capture(page, viewport)?;
-        Ok((layout, page, anchor, frame))
+        let frame = layout.capture(top, viewport)?;
+        Ok((layout, top, location, frame))
     }
 
     pub(crate) fn tick(&mut self, now: Instant, document: &FixedReading) -> Result<bool> {
@@ -551,14 +690,16 @@ impl TextFlow {
         }
         self.advance_revision();
         let mut turns = due.into_iter();
-        let mut page = self.page;
+        let mut top = self.top;
+        let distance = self.layout.step(self.zoom_overlap) as i32;
+        let limit = self.layout.limit();
         let mut boundary = None;
         while let Some(step) = turns.next() {
-            if let Some(next) = page
-                .checked_add_signed(step)
-                .filter(|next| *next < self.layout.page_count())
-            {
-                page = next;
+            let next = top
+                .saturating_add_signed(distance * step.signum() as i32)
+                .min(limit);
+            if next != top {
+                top = next;
                 continue;
             }
             let Some(adjacent) = adjacent_page(self.document_page, step) else {
@@ -581,12 +722,13 @@ impl TextFlow {
                 ));
                 break;
             };
-            let page = if step > 0 { 0 } else { layout.page_count() - 1 };
-            let frame = layout.capture(page, self.viewport)?;
+            let top = if step > 0 { 0 } else { layout.limit() };
+            let frame = layout.capture(top, self.viewport)?;
             self.document_page = adjacent;
             self.layout = layout;
-            self.page = page;
-            self.retained_anchor = None;
+            self.top = top;
+            self.retained_location = None;
+            self.overlap_cue = None;
             self.frame = frame;
             self.boundary = None;
             // A single source-page load per refresh keeps rapid turns responsive.
@@ -595,13 +737,18 @@ impl TextFlow {
             return Ok(true);
         }
 
-        let page_changed = page != self.page;
-        if page_changed {
-            self.frame = self.layout.capture(page, self.viewport)?;
-            self.page = page;
-            self.retained_anchor = None;
+        let moved = top != self.top;
+        if moved {
+            self.frame = self.layout.capture(top, self.viewport)?;
+            self.overlap_cue = if self.preferences.overlap_enabled {
+                Marker::from_pan(self.layout.clip(), 0, self.top as i32 - top as i32)
+            } else {
+                None
+            };
+            self.top = top;
+            self.retained_location = None;
         }
-        let changed = page_changed || self.boundary != boundary;
+        let changed = moved || self.boundary != boundary;
         if changed {
             self.boundary = boundary;
             self.defer_refresh(now);
@@ -627,17 +774,21 @@ impl TextFlow {
         let controls = Controls::new(self.viewport);
         let mut paint = PagePaint::full(inverted);
         paint.reading_guides = guides;
-        if self.spacing_draft.is_some() {
+        if self.layout_draft.is_some() {
             paint.visible.end = controls.panel.y as u32;
         }
-        draw_page_picture(canvas, self.frame.clone(), paint);
+        let mut frame = self.frame.clone();
+        if let Some(marker) = self.overlap_cue {
+            marker.paint(&mut frame, self.preferences.marker);
+        }
+        draw_page_picture(canvas, frame, paint);
         canvas.button(
             controls.spacing,
-            "Spacing",
-            self.spacing_draft.is_some(),
+            "Layout",
+            self.layout_draft.is_some(),
             false,
         );
-        if let Some(draft) = self.spacing_draft {
+        if let Some(draft) = self.layout_draft {
             canvas.fill(controls.panel, 255);
             canvas.fill(Rect::new(0, controls.panel.y, controls.width, 1), HAIRLINE);
             canvas.text(
@@ -646,20 +797,35 @@ impl TextFlow {
                 CAPTION,
             );
             for (choice, label, rect) in controls.choices {
-                canvas.button(rect, label, draft == choice, false);
+                canvas.button(rect, label, draft.spacing == choice, false);
+            }
+            let overlap_row = controls.overlap_choices[0].2.y;
+            canvas.text(
+                Rect::new(38, overlap_row + 4, 198, 52),
+                "Page overlap",
+                CAPTION,
+            );
+            for (enabled, label, rect) in controls.overlap_choices {
+                canvas.button(rect, label, draft.overlap_enabled == enabled, false);
+            }
+            if draft.overlap_enabled {
+                for (marker, rect) in controls.markers {
+                    canvas.button(rect, marker.label(), marker == draft.marker, false);
+                }
             }
             canvas.button(controls.cancel, "Cancel", false, false);
             canvas.button(controls.apply, "Apply", false, false);
         }
         canvas.fill(Rect::new(0, controls.footer_y, controls.width, 1), HAIRLINE);
+        let step = self.layout.step(self.zoom_overlap);
         let caption = format!(
             "Document page {} · {} {} of {}",
             self.document_page + 1,
             self.style.label(),
-            self.page + 1,
-            self.layout.page_count(),
+            self.top.div_ceil(step) + 1,
+            self.layout.limit().div_ceil(step) + 1,
         );
-        if self.spacing_draft.is_none()
+        if self.layout_draft.is_none()
             && let FlowStyle::Scan { text_height, .. } = self.style
         {
             if text_height > MIN_SCAN_HEIGHT {
@@ -734,9 +900,10 @@ mod tests {
             flow.input(Input::PageForward, &document).unwrap();
             flow.tick(Instant::now() + Duration::from_secs(1), &document)
                 .unwrap();
-            let origin = flow.layout.anchor(flow.page).unwrap();
-            assert_eq!(flow.page, 1);
-            assert!(matches!(origin, FlowAnchor::Scan(_)) == scan);
+            let original_top = flow.top;
+            let origin = flow.layout.location(original_top).unwrap();
+            assert!(original_top > 0);
+            assert!(matches!(origin.anchor, FlowAnchor::Scan(_)) == scan);
             let original = flow.frame.pixels.clone();
             let pending = flow.deadline();
             let mut staged = flow.prepare_viewport(&document, landscape).unwrap();
@@ -744,15 +911,15 @@ mod tests {
             staged.exchange(&mut flow);
             assert_eq!(flow.viewport, landscape);
             assert_eq!(flow.document_page(), 1);
-            assert_eq!(flow.retained_anchor.as_ref(), Some(&origin));
-            assert_eq!(flow.layout.page_for(&origin), Some(flow.page));
+            assert_eq!(flow.retained_location.as_ref(), Some(&origin));
+            assert_eq!(flow.layout.resolve(&origin), Some(flow.top));
             assert_eq!(flow.frame.width, landscape.dimensions().0);
             assert_eq!(flow.frame.height, landscape.page_height());
             assert_eq!(flow.deadline(), pending);
             let mut round_trip = flow.prepare_viewport(&document, portrait).unwrap();
             round_trip.exchange(&mut flow);
-            assert_eq!(flow.page, 1);
-            assert_eq!(flow.retained_anchor.as_ref(), Some(&origin));
+            assert_eq!(flow.top, original_top);
+            assert_eq!(flow.retained_location.as_ref(), Some(&origin));
             assert_eq!(flow.frame.pixels, original);
             if scan {
                 document.forget_ocr();
@@ -779,20 +946,22 @@ mod tests {
             };
             let mut flow = TextFlow::open(&document, "Harbor", &fonts, settings, scan).unwrap();
             assert_eq!(flow.line_spacing(), FixedReflowSpacing::Medium);
-            assert!(flow.layout.page_count() > 1);
+            assert!(flow.layout.limit() > 0);
             flow.input(Input::PageForward, &document).unwrap();
             flow.tick(Instant::now() + Duration::from_secs(1), &document)
                 .unwrap();
-            assert_eq!((flow.document_page(), flow.page), (1, 1));
-            let origin = flow.layout.anchor(1).unwrap();
-            assert_ne!(Some(&origin), flow.layout.anchor(0).as_ref());
+            let original_top = flow.top;
+            assert_eq!(flow.document_page(), 1);
+            assert!(original_top > 0);
+            let origin = flow.layout.location(original_top).unwrap();
+            assert_ne!(Some(&origin), flow.layout.location(0).as_ref());
             let original = flow.frame.pixels.clone();
             assert!(flow.input(tap(controls.spacing), &document).unwrap());
             assert!(flow.input(tap(controls.choices[0].2), &document).unwrap());
             assert_eq!(flow.frame.pixels, original);
             assert!(!flow.input(Input::PageForward, &document).unwrap());
             assert!(flow.input(Input::PageBack, &document).unwrap());
-            assert_eq!(flow.page, 1);
+            assert_eq!(flow.top, original_top);
             assert_eq!(flow.line_spacing(), FixedReflowSpacing::Medium);
             assert_eq!(flow.frame.pixels, original);
 
@@ -802,15 +971,15 @@ mod tests {
                     .unwrap();
                 flow.input(tap(controls.apply), &document).unwrap();
                 assert_eq!(flow.line_spacing(), controls.choices[choice].0);
-                assert_eq!(flow.retained_anchor.as_ref(), Some(&origin));
-                assert_eq!(flow.layout.page_for(&origin), Some(flow.page));
+                assert_eq!(flow.retained_location.as_ref(), Some(&origin));
+                assert_eq!(flow.layout.resolve(&origin), Some(flow.top));
                 assert_eq!(flow.document_page(), 1);
                 assert_eq!(document.history_point(), position);
                 if choice != 1 {
                     assert_ne!(flow.frame.pixels, original);
                 }
             }
-            assert_eq!(flow.page, 1);
+            assert_eq!(flow.top, original_top);
             assert_eq!(flow.frame.pixels, original);
             if scan {
                 document.forget_ocr();
@@ -818,9 +987,76 @@ mod tests {
                 flow.input(tap(controls.choices[2].2), &document).unwrap();
                 assert!(flow.input(tap(controls.apply), &document).is_err());
                 assert_eq!(flow.line_spacing(), FixedReflowSpacing::Medium);
-                assert_eq!(flow.retained_anchor.as_ref(), Some(&origin));
+                assert_eq!(flow.retained_location.as_ref(), Some(&origin));
                 assert_eq!(flow.frame.pixels, original);
                 assert!(flow.input(tap(controls.cancel), &document).unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_reflow_overlap_moves_the_same_distance_without_the_cue_for_both_providers() {
+        use primitive_app::HEIGHT;
+
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let font_paths = fonts
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+        let settings = Settings::default();
+        let tap =
+            |rect: Rect| Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
+        for scan in [false, true] {
+            let document = authored_document(scan);
+            let mut flow = TextFlow::open(&document, "Harbor", &fonts, settings, scan).unwrap();
+            let physical = document.history_point();
+            let expected = flow.layout.limit().min(flow.layout.step(40));
+            assert!(expected > 0);
+            flow.turns.pending.push(1);
+            assert!(flow.tick(flow.deadline().unwrap(), &document).unwrap());
+            assert_eq!(flow.top, expected);
+            assert!(flow.overlap_cue.is_none());
+            let plain = flow.frame.pixels.clone();
+            canvas.begin();
+            flow.draw(&mut canvas, None, false, None);
+            let unmarked = canvas.finish(false);
+
+            flow.turns.pending.push(-1);
+            assert!(flow.tick(flow.deadline().unwrap(), &document).unwrap());
+            assert_eq!(flow.top, 0);
+            let [layout, enable, dashed, apply] = flow.overlap_test_targets();
+            for button in [layout, enable, dashed, apply] {
+                assert!(flow.input(tap(button), &document).unwrap());
+            }
+            flow.turns.pending.push(1);
+            assert!(flow.tick(flow.deadline().unwrap(), &document).unwrap());
+            assert_eq!(flow.top, expected);
+            assert_eq!(flow.frame.pixels, plain);
+            assert_eq!(flow.document_page(), document.page());
+            assert_eq!(document.history_point(), physical);
+
+            canvas.begin();
+            flow.draw(&mut canvas, None, false, None);
+            let marked = canvas.finish(false);
+            let row = (flow.layout.clip().bottom() as usize - expected as usize) * WIDTH as usize;
+            let end = row + 3 * WIDTH as usize;
+            assert_ne!(&marked[row..end], &unmarked[row..end]);
+            assert_eq!(&marked[..row], &unmarked[..row]);
+            assert_eq!(&marked[end..], &unmarked[end..]);
+
+            flow.turns.pending.push(-1);
+            assert!(flow.tick(flow.deadline().unwrap(), &document).unwrap());
+            assert_eq!(flow.top, 0);
+            assert!(flow.overlap_cue.is_some());
+            flow.turns.pending.push(-1);
+            assert!(flow.tick(flow.deadline().unwrap(), &document).unwrap());
+            if scan {
+                assert_eq!(flow.document_page(), 1);
+                assert!(flow.boundary.as_deref().unwrap().contains("needs OCR"));
+            } else {
+                assert_eq!(flow.document_page(), 0);
+                assert!(flow.overlap_cue.is_none());
             }
         }
     }
@@ -848,8 +1084,18 @@ mod tests {
         };
         let viewport = ReadingViewport::PORTRAIT;
         let layout = style.layout_text(texts[0], viewport).unwrap().unwrap();
-        let mut flow = TextFlow::with_layout(0, texts.len(), style, layout, viewport).unwrap();
-        let last = flow.layout.page_count() - 1;
+        let mut flow = TextFlow::with_layout(
+            0,
+            texts.len(),
+            style,
+            layout,
+            viewport,
+            40,
+            FlowPreferences::default(),
+        )
+        .unwrap();
+        let last = flow.layout.limit();
+        let slices = last.div_ceil(flow.layout.step(40)) as usize;
         assert!(last > 0);
         let requested = RefCell::new(Vec::new());
         let mut lookup = |style: &FlowStyle, page: usize| {
@@ -857,7 +1103,7 @@ mod tests {
             style.layout_text(texts[page], viewport)
         };
 
-        flow.turns.pending.extend(std::iter::repeat_n(1, last));
+        flow.turns.pending.extend(std::iter::repeat_n(1, slices));
         let due = flow.deadline().unwrap();
         assert!(
             !flow
@@ -865,20 +1111,20 @@ mod tests {
                 .unwrap()
         );
         assert!(flow.step(due, &mut lookup).unwrap());
-        assert_eq!((flow.document_page(), flow.page), (0, last));
+        assert_eq!((flow.document_page(), flow.top), (0, last));
         assert!(requested.borrow().is_empty());
 
         flow.turns.pending.extend([1, 1]);
         let due = flow.deadline().unwrap();
         assert!(flow.step(due, &mut lookup).unwrap());
-        assert_eq!((flow.document_page(), flow.page), (1, 0));
+        assert_eq!((flow.document_page(), flow.top), (1, 0));
         assert_eq!(*requested.borrow(), [1]);
 
         let pixels = flow.frame.pixels.clone();
         let next = flow.deadline().unwrap();
         assert!(next >= due + PAGE_REFRESH_GAP);
         assert!(flow.step(next, &mut lookup).unwrap());
-        assert_eq!((flow.document_page(), flow.page), (1, 0));
+        assert_eq!((flow.document_page(), flow.top), (1, 0));
         assert_eq!(*requested.borrow(), [1, 2]);
         assert_eq!(flow.frame.pixels, pixels);
         assert!(
@@ -890,13 +1136,15 @@ mod tests {
 
         flow.turns.pending.push(-1);
         assert!(flow.step(flow.deadline().unwrap(), &mut lookup).unwrap());
-        assert_eq!((flow.document_page(), flow.page), (0, last));
+        assert_eq!((flow.document_page(), flow.top), (0, last));
         assert_eq!(*requested.borrow(), [1, 2, 0]);
         assert!(flow.boundary.is_none());
 
-        flow.turns.pending.extend(std::iter::repeat_n(-1, last + 1));
+        flow.turns
+            .pending
+            .extend(std::iter::repeat_n(-1, slices + 1));
         assert!(flow.step(flow.deadline().unwrap(), &mut lookup).unwrap());
-        assert_eq!((flow.document_page(), flow.page), (0, 0));
+        assert_eq!((flow.document_page(), flow.top), (0, 0));
         assert_eq!(flow.boundary.as_deref(), Some("Start of document"));
         assert_eq!(*requested.borrow(), [1, 2, 0]);
     }

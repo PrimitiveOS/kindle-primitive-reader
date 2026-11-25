@@ -203,6 +203,7 @@ impl Screen {
                 | Self::TypographyLanguages(_)
                 | Self::FontRendering(_)
                 | Self::StyleTweaks
+                | Self::ParagraphSpacing
                 | Self::FootnoteTweaks
                 | Self::StylePreset
                 | Self::InPageFootnoteSize(_)

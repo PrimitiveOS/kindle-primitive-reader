@@ -716,6 +716,12 @@ impl ParleyChapter {
             settings,
             outer_width,
         );
+        let mut joined = match footnotes {
+            Some(targets) if float_plan.is_none() && targets.inlines_all() => {
+                note_inline::plan(source, styles, flow, targets)?
+            }
+            _ => BTreeMap::new(),
+        };
         // Share the bounded grayscale cache across distinct renderings. Duplicate icons
         // reuse one preview, while large later illustrations still receive space.
         let mut variants = HashSet::new();
@@ -747,9 +753,13 @@ impl ParleyChapter {
                 image_boxes += 1;
             }
         }
-        let image_variants = variants.len().min(MAX_DISTINCT_IMAGE_READS);
+        // A joined image can use the note container's width instead of its
+        // original paragraph's size or list gutter, producing a new variant.
+        let joined_images = joined.values().map(|note| note.images.len()).sum::<usize>();
+        let image_variants = (variants.len() + joined_images).min(MAX_DISTINCT_IMAGE_READS);
         let mut image_cache = HashMap::new();
-        let gap = settings.font_size * 0.32;
+        let normal_gap = settings.font_size * 0.32;
+        let mut trailing_gap = normal_gap;
         let mut row_flow = crate::table_layout::RowFlow::default();
         let mut positions = crate::table_borders::Positions::default();
         let wrapper_backgrounds = publisher_boxes.as_ref().is_some_and(|boxes| {
@@ -789,12 +799,6 @@ impl ParleyChapter {
                 }
             }
         }
-        let mut joined = match footnotes {
-            Some(targets) if float_plan.is_none() && targets.inlines_all() => {
-                note_inline::plan(source, styles, flow, targets)?
-            }
-            _ => BTreeMap::new(),
-        };
         let mut joined_until = 0;
         for (index, source_block) in source.blocks.iter().enumerate() {
             if index < joined_until {
@@ -818,10 +822,16 @@ impl ParleyChapter {
             let input = flow.layout_block(source, source_block)?;
             let note = joined.remove(&index);
             let note_layout = note.as_ref().map(|note| Arc::clone(&note.layout));
-            let flattened = note.zip(note_layout.as_ref()).map(|(note, layout)| {
-                joined_until = note.end_index;
-                input.text_fragment(note.element, &layout.text, note.runs)
-            });
+            let (flattened, note_images) = match note.zip(note_layout.as_ref()) {
+                Some((note, layout)) => {
+                    joined_until = note.end_index;
+                    (
+                        Some(input.text_fragment(note.element, &layout.text, note.runs)),
+                        note.images,
+                    )
+                }
+                None => (None, Vec::new()),
+            };
             let block = flattened.as_ref().unwrap_or(&input);
             let cell = column_for(block);
             let (natural_column, natural_width) = bounds_for(block);
@@ -858,6 +868,18 @@ impl ParleyChapter {
             let margin_space = block_margins
                 .as_ref()
                 .map_or_else(Default::default, |g| g[index]);
+            let last = index.max(joined_until.saturating_sub(1));
+            let gap = if block_margins
+                .as_ref()
+                .is_some_and(|spaces| spaces[last].suppress_gap_after)
+            {
+                0.0
+            } else {
+                normal_gap
+            };
+            if float.is_none() {
+                trailing_gap = gap;
+            }
             let margin = margin_space.before;
             if padding.before_grid > 0 {
                 y = row_flow.end(y) + padding.before_grid as f32;
@@ -934,12 +956,20 @@ impl ParleyChapter {
             let mut marker_baseline = None;
             let mut float_height = 0.0_f32;
             let first_image = chapter.illustrations.len();
-            let available = MAX_IMAGE_BOXES
-                .saturating_sub(first_image)
-                .min(input.images.len());
+            let original_images = note_layout
+                .is_none()
+                .then(|| input.images.iter().map(|image| (source_block.key, image)));
+            let image_count = original_images
+                .as_ref()
+                .map_or(note_images.len(), |_| input.images.len());
+            let available = MAX_IMAGE_BOXES.saturating_sub(first_image).min(image_count);
             let mut inline_boxes = Vec::with_capacity(available);
-            for image in input.images.iter().take(available) {
-                let inline = !input.text.is_empty();
+            for (owner, image) in note_images
+                .into_iter()
+                .chain(original_images.into_iter().flatten())
+                .take(available)
+            {
+                let inline = !block.text.is_empty();
                 let sizing = ImageSizing::new(
                     &image,
                     settings,
@@ -983,7 +1013,7 @@ impl ParleyChapter {
                     });
                 }
                 chapter.illustrations.push(Illustration {
-                    block: block.key,
+                    block: owner,
                     source_index: image.source_index,
                     painted: image.painted,
                     path,
@@ -1505,7 +1535,7 @@ impl ParleyChapter {
                     .map(|f| f.painted_bottom()),
             )
             .fold(0., f32::max);
-        let extent = float_flow.finish((row_flow.end(y) - gap).max(painted).max(0.0));
+        let extent = float_flow.finish((row_flow.end(y) - trailing_gap).max(painted).max(0.0));
         if !extent.is_finite() || extent > settings.chapter_height_limit() {
             return Err("The chapter exceeds the Parley height limit".into());
         }
@@ -1664,7 +1694,7 @@ impl ParleyChapter {
                 .iter()
                 .enumerate()
                 .take_while(|(_, line)| line.top <= top + 0.01)
-                .find(|(_, line)| line.block == image.block)?;
+                .find(|(_, line)| line.sources().any(|(key, _)| key == image.block))?;
             // Drawing rounds the image position relative to the page's origin.
             if (image.y - line.top).round() < 0.0 {
                 return None;

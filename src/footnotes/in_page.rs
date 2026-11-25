@@ -538,7 +538,7 @@ fn discover(
             return None;
         }
         if let Some(id) = targets.ancestry[block.element] {
-            if !block.images.is_empty() {
+            if line.bytes.is_empty() && !block.images.is_empty() {
                 return None;
             }
             let region = regions[id].get_or_insert(index..index);
@@ -1013,6 +1013,102 @@ mod tests {
     }
 
     #[test]
+    fn whole_note_inline_keeps_illustration_pixels_links_and_source_offsets() {
+        use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
+        let mut before = advanced_note_layout(16, &[EPUB_FOOTNOTES]);
+        let mut joined = advanced_note_layout(16, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        let reference = before.fragment("media-ref").unwrap();
+        let page = before.page_for(&reference).unwrap();
+        let media = before.fragment("media-text").unwrap();
+        let original = before.page_for(&media).unwrap();
+        assert!(original > page);
+        for probe in [&before, &joined] {
+            assert!(
+                probe.in_page_notes.as_ref().unwrap()[page]
+                    .separator
+                    .is_some()
+            );
+            assert_eq!(probe.page_for(&reference), Some(page));
+            assert_eq!(probe.page_for(&media), Some(original));
+            let mut illustration = probe.anchor(media.block, 0);
+            illustration.illustration = Some(0);
+            assert_eq!(probe.page_for(&illustration), Some(original));
+        }
+        assert_eq!(joined.fragment("media-text"), Some(media.clone()));
+        assert_eq!(
+            before.fragment("media-chart"),
+            joined.fragment("media-chart")
+        );
+        assert_eq!(before.matches("shelf depth"), joined.matches("shelf depth"));
+        assert_eq!(before.coverage(), joined.coverage());
+        let old_intro = phrase_rects(&before, page, "Cabinet diagram legend.")[0];
+        let old_caption = phrase_rects(&before, page, "for shelf depth.")[0];
+        assert!(old_intro.y < old_caption.y);
+        for current in [page, original] {
+            let a = phrase_rects(&joined, current, "Cabinet diagram legend.")[0];
+            let b = phrase_rects(&joined, current, "for shelf depth.")[0];
+            assert_eq!(a.y, b.y);
+            assert!(a.x < b.x);
+            let key = phrase_rects(&joined, current, "shelf")[0];
+            let selected = joined
+                .word_at(current, (key.x + 5) as f32, (key.y + key.height / 2) as f32)
+                .unwrap();
+            assert_eq!(selected.text, "shelf");
+            assert_eq!(selected.start.block, media.block);
+        }
+
+        let mut artwork = Vec::new();
+        for (probe, current, name) in [
+            (&mut before, page, "reader-note-inline-image-before.png"),
+            (&mut joined, page, "reader-note-inline-image-after.png"),
+        ] {
+            let pixels = capture(probe, current, name);
+            artwork.push(note_illustration_pixels(probe, current, &pixels));
+        }
+        let pixels = capture(
+            &mut joined,
+            original,
+            "reader-note-inline-image-original.png",
+        );
+        artwork.push(note_illustration_pixels(&joined, original, &pixels));
+        assert!(artwork[0].iter().any(|&pixel| pixel < 200));
+        assert!(artwork.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    fn note_illustration_pixels(probe: &Probe, page: usize, pixels: &[u8]) -> Vec<u8> {
+        let crate::Renderer::Parley(layout) = &probe.renderer else {
+            unreachable!();
+        };
+        let (columns, rows) = probe
+            .page_parts(page)
+            .find_map(|(range, offset)| {
+                layout
+                    .visible_illustrations(range, probe.settings)
+                    .find(|(path, _, _)| *path == "chart.png")
+                    .map(|(_, columns, rows)| {
+                        let offset = offset as usize;
+                        (columns, (rows.start + offset)..(rows.end + offset))
+                    })
+            })
+            .expect("the whole illustration is visible");
+        assert_eq!((columns.len(), rows.len()), (56, 36));
+        let x = (columns.start + columns.len() / 2) as f32;
+        let y = (rows.start + rows.len() / 2) as f32;
+        assert_eq!(probe.illustration_at(page, x, y), Some("chart.png"));
+        assert_eq!(
+            probe.link_at(page, x, y).unwrap().fragment.as_deref(),
+            Some("media-key")
+        );
+        assert!(probe.links_on_page(page).iter().any(|(label, target)| {
+            label == "Shelf diagram" && target.fragment.as_deref() == Some("media-key")
+        }));
+        let width = probe.settings.width as usize;
+        rows.flat_map(|row| &pixels[row * width + columns.start..row * width + columns.end])
+            .copied()
+            .collect()
+    }
+
+    #[test]
     fn whole_note_inline_keeps_unsupported_note_contents_ordinary() {
         use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
         let ordinary = advanced_note_layout(12, &[]);
@@ -1038,10 +1134,10 @@ mod tests {
         );
         assert!(ordinary.capture(0).unwrap() == option.capture(0).unwrap());
 
-        // An image inside a nested item prevents joining the note. Keep its
-        // original list, source IDs and illustration.
-        let mut ordinary = advanced_note_layout(16, &[EPUB_FOOTNOTES]);
-        let mut option = advanced_note_layout(16, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        // A standalone image block prevents joining the note. Keep the
+        // original blocks, source IDs and illustration.
+        let mut ordinary = advanced_note_layout(17, &[EPUB_FOOTNOTES]);
+        let mut option = advanced_note_layout(17, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
         let end = ordinary.fragment("image-fallback-end").unwrap();
         let page = ordinary.page_for(&end).unwrap();
         assert_eq!(option.fragment("image-fallback-end"), Some(end.clone()));

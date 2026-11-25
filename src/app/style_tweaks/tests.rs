@@ -67,6 +67,55 @@ fn reading_style_preset_controls_preserve_page_and_global_defaults() {
     choose(&mut reopened, "cjk_tailored", Some(false));
     assert!(capture(&mut reopened) == before);
 }
+
+#[test]
+fn reading_style_paragraph_spacing_menu_persists_one_effective_preset() {
+    use user_styles::ParagraphSpacing;
+
+    let f = Fixture::new();
+    fs::copy(crate::test_fixture("field-notes-epub3.epub"), &f.book).unwrap();
+    let mut app = open(&f);
+    app.open_path(&f.book).unwrap();
+    let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
+    let anchor = app.current_history_location();
+    let spacing = |app: &Reader| {
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .user_styles
+            .layout_tweaks()
+            .paragraph_spacing
+    };
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "Spacing between paragraphs");
+    assert_eq!(app.screen, Screen::ParagraphSpacing);
+    capture_viewport(
+        &app,
+        &mut canvas,
+        "reader-paragraph-spacing-controls.png",
+        false,
+    );
+    tap_contents_item(&mut app, "Spacing between paragraphs (half)");
+    tap_contents_item(&mut app, "Use on all books");
+    assert_eq!(spacing(&app), ParagraphSpacing::Half);
+    assert_eq!(app.style_preset_parent(), Screen::ParagraphSpacing);
+    app.show(app.style_preset_parent());
+    tap_contents_item(&mut app, "No spacing between paragraphs");
+    tap_contents_item(&mut app, "On for this book");
+    assert_eq!(spacing(&app), ParagraphSpacing::None);
+    assert_eq!(app.current_history_location(), anchor);
+    app.save().unwrap();
+    let mut reopened = open(&f);
+    reopened.open_path(&f.book).unwrap();
+    assert_eq!(spacing(&reopened), ParagraphSpacing::None);
+    assert_eq!(reopened.current_history_location(), anchor);
+    choose(&mut reopened, "paragraph_no_whitespace", None);
+    choose(&mut reopened, "paragraph_whitespace_half", None);
+    assert_eq!(spacing(&reopened), ParagraphSpacing::Half);
+}
+
 #[test]
 fn styles_live_defaults_and_book_overrides_survive_profiles_defaults_restart_and_source_selections()
 {

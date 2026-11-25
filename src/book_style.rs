@@ -350,6 +350,7 @@ pub(crate) struct Style {
     pub padding: [CssLength; 2],
     pub vertical_padding: [CssLength; 2],
     pub vertical_margin: [CssLength; 2],
+    pub(crate) paragraph_edges: [bool; 2],
     pub(crate) cjk_tailored: bool,
     pub horizontal_margin: [BoxMargin; 2],
     pub float_side: Option<Side>,
@@ -398,6 +399,7 @@ impl Default for Style {
             padding: Default::default(),
             vertical_padding: Default::default(),
             vertical_margin: Default::default(),
+            paragraph_edges: [false; 2],
             cjk_tailored: false,
             horizontal_margin: Default::default(),
             float_side: None,
@@ -453,8 +455,18 @@ pub(crate) struct BookStyle {
 
 impl BookStyle {
     pub fn with_user_css(mut self, snapshot: &crate::user_styles::Snapshot) -> crate::Result<Self> {
-        self.user_rules = user_css::parse(snapshot.css())?;
         self.layout_tweaks = snapshot.layout_tweaks();
+        // The built-in paragraph presets have a measured geometry path.
+        // Keep arbitrary user CSS under its existing validation rules.
+        for css in self.layout_tweaks.paragraph_rules() {
+            let mut parser = Parser::new(css);
+            for item in StyleSheetParser::new(&mut parser, &mut SheetParser).flatten() {
+                if let SheetItem::Rule(rule) = item {
+                    self.user_rules.push(rule);
+                }
+            }
+        }
+        self.user_rules.extend(user_css::parse(snapshot.css())?);
         Ok(self)
     }
 
@@ -758,6 +770,14 @@ impl BookStyle {
             style.padding = Default::default();
             style.vertical_padding = Default::default();
             style.vertical_margin = Default::default();
+            style.paragraph_edges = if element.tag == "p" {
+                let follows_p = element
+                    .previous_sibling
+                    .is_some_and(|sibling| elements[sibling].tag == "p");
+                self.layout_tweaks.paragraph_edges(follows_p)
+            } else {
+                [false; 2]
+            };
             style.horizontal_margin = Default::default();
             style.float_side = None;
             style.clear = Clear::default();

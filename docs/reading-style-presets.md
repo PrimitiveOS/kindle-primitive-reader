@@ -21,6 +21,43 @@ immediately following another paragraph in the same container. The first
 paragraph and a paragraph after a heading keep their existing indentation.
 [Pinned indentation controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L537-L565)
 
+## Paragraph spacing and browser defaults
+
+**Spacing between paragraphs** contains three mutually exclusive choices.
+Full and half spacing add 1em or 0.5em before a paragraph that directly
+follows another paragraph. No spacing clears the two vertical margins
+of paragraphs. Each choice can apply to the open book or become a default.
+**Generic web browser paragraph style** starts with start-aligned paragraphs,
+zero first-line indent, and 1em top and bottom margins. Explicit publisher
+styles can override those defaults. The spacing choices can override them.
+[Reader menu](screenshots/reader-paragraph-spacing-controls.png) ·
+[Pinned paragraph styles](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L510-L596)
+
+The native replay invokes each stock style callback and measures consecutive
+line origins, the paragraph after a heading, and an authored 2em margin and
+indent. The stock full and half choices add 40px and 20px at a 40px type size.
+Browser style retains the authored 80px gap and indent. Reader tests measure
+the same paragraph gaps directly between line boxes, then reopen a saved
+per-book override at the original location. The geometry covers ordinary
+horizontal Parley blocks. The vertical layout and the remaining publisher
+box modes have separate comparisons.
+[Stock replay](../scripts/koreader-paragraph-spacing-check.lua) ·
+[Shared specimen](../tests/fixtures/reading-paragraph-spacing.xhtml)
+
+Run the stock replay inside the pinned native runtime with absolute paths
+to the XHTML specimen, an empty CRE cache directory, the Noto Sans Regular
+fixture font, and an output directory. Run the two Reader checks with
+`cargo test --locked --features kindle --lib reading_style_paragraph`.
+
+| Mode | Reader | KOReader |
+| --- | --- | --- |
+| No spacing | [Page](screenshots/reader-paragraph-spacing-none.png) | [Page](screenshots/stock-paragraph-spacing-none.png) |
+| Half spacing | [Page](screenshots/reader-paragraph-spacing-half.png) | [Page](screenshots/stock-paragraph-spacing-half.png) |
+| Full spacing | [Page](screenshots/reader-paragraph-spacing-full.png) | [Page](screenshots/stock-paragraph-spacing-full.png) |
+| Browser paragraph style | [Page](screenshots/reader-paragraph-spacing-web.png) | [Page](screenshots/stock-paragraph-spacing-web.png) |
+
+## Monochrome
+
 **Pure black and white** clears publisher background fills and uses black
 for the supported borders, including fitted text boxes and table cells.
 Reader's regular text ink, inline images, and annotations keep their

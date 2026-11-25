@@ -152,6 +152,86 @@ local function width_in_canonical_note(view_, text)
     return boxes[#boxes].x1 - boxes[1].x0, boxes[1].x0
 end
 
+if arg[5] == "inline-image" then
+    controller:onReadSettings(Settings:wrap({}))
+    local option = assert(find_tweak(menu.style_tweaks.sub_item_table, "inpage_footnote_all_inline"))
+    local ffi = require("ffi")
+    ffi.cdef[[void free(void *);]]
+    local image_width, image_height = 56, 36
+    local function draw(view, page)
+        view:gotoPage(page)
+        local frame = BB.new(width, height, BB.TYPE_BB8)
+        view:drawCurrentPage(frame, false, false, false, false)
+        return frame
+    end
+    local function raster(frame, x0, y0)
+        local data = {}
+        for y = y0, y0 + image_height - 1 do
+            for x = x0, x0 + image_width - 1 do
+                data[#data + 1] = string.char(frame:getPixel(x, y):getColor8().a)
+            end
+        end
+        return table.concat(data)
+    end
+    local function measure(phase, same_line)
+        local view = open(assert(controller:getCssText()))
+        local reference, body_y = position(view, "The carpenter read the pencilled instructions")
+        local separator = assert(capture(view, reference, "stock-note-inline-image-" .. phase))
+        local original, intro_y = position(view, "Cabinet diagram legend.")
+        local text, caption_y = position(view, "for shelf depth.")
+        assert(text == original and original > reference)
+        assert(same_line and intro_y == caption_y or not same_line and intro_y < caption_y)
+
+        local frame = draw(view, original)
+        local target = "media-key"
+        local box, png
+        for _, link in ipairs(view:getPageLinks(true)) do
+            if link.section:sub(-#target) == target then
+                assert(#link.segments == 1)
+                box = link.segments[1]
+                assert(box.x1 - box.x0 == image_width)
+                local x = math.floor((box.x0 + box.x1) / 2)
+                local y = math.floor((box.y0 + box.y1) / 2)
+                assert(view:getLinkFromPosition(x, y) == link.section)
+                local data, bytes = view:getImageDataFromPosition(x, y)
+                assert(data and bytes > 24)
+                png = ffi.string(data, bytes)
+                ffi.C.free(data)
+                assert(png:sub(1, 8) == "\137PNG\r\n\26\n")
+            end
+        end
+        assert(box and png)
+        local image = raster(frame, box.x0, box.y0)
+        assert(image:find(string.char(35), 1, true))
+        frame:free()
+        local copy = draw(view, reference)
+        local copy_y
+        for y = separator + 1, height - margin - image_height do
+            if raster(copy, box.x0, y) == image then
+                copy_y = y
+                break
+            end
+        end
+        copy:free()
+        assert(copy_y, "the reference band must preserve the complete image")
+        print(("Image %d×%d x=%d, note y=%d, copy y=%d, PNG=%d bytes"):format(
+            image_width, image_height, box.x0, box.y0, copy_y, #png))
+        if same_line then
+            assert(not capture(view, original, "stock-note-inline-image-original"))
+        end
+        view:close()
+        return body_y, png, image
+    end
+    local old_body, old_png, old_pixels = measure("before", false)
+    assert(not option.checked_func())
+    option.callback()
+    assert(option.checked_func())
+    local body, png, pixels = measure("after", true)
+    assert(body == old_body and png == old_png and pixels == old_pixels)
+    print("Pinned whole-note inline toggle reflows around unchanged linked artwork")
+    return
+end
+
 if arg[5] == "inline-list" or arg[5] == "inline-nested" then
     controller:onReadSettings(Settings:wrap({}))
     local option = assert(find_tweak(menu.style_tweaks.sub_item_table,

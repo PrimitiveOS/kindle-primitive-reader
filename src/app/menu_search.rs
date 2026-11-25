@@ -160,6 +160,7 @@ fn child_menu(action: &Action) -> Option<Screen> {
             | Screen::MetadataSaveSettings
             | Screen::LinkSettings
             | Screen::StyleTweaks
+            | Screen::ParagraphSpacing
             | Screen::FootnoteTweaks
             | Screen::InPageFootnoteSize(_)
             | Screen::TypographyRules

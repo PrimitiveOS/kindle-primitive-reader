@@ -22,12 +22,16 @@ impl FixedReading {
         if !self.allows_page_overlap() {
             return Err("Page overlap is unavailable in this view".into());
         }
+        self.apply_page_overlap(enabled, style);
+        Ok(())
+    }
+
+    pub(crate) fn apply_page_overlap(&mut self, enabled: bool, style: PageOverlapStyle) {
         self.view.page_overlap_enabled = enabled;
         self.view.page_overlap_style = (style != PageOverlapStyle::default()).then_some(style);
         if !enabled {
             self.overlap_cue = None;
         }
-        Ok(())
     }
 
     pub(super) fn present_page_turn(&mut self, page: usize, view: View) -> Result<()> {

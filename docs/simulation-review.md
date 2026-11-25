@@ -2,6 +2,48 @@
 
 ## Current Mac simulator checkpoint
 
+**Fixed-document reflow** now overlaps page turns within the same physical
+page in **Read text** and **Reflow scan**. The cue can be hidden with the
+same movement and bookmark behavior. The pinned K2pdfopt replay exercises
+the exact page-turn route on the vector and raster fixtures.
+[Reflow comparison and screenshots](scroll-page-overlap.md#reflowed-fixed-documents)
+
+**Illustrated inline notes** preserve fitting artwork, source anchors,
+and links in both the footnote band and the original note. The native
+replay and Reader compare the complete chart raster. Standalone artwork
+uses the ordinary note layout.
+[Footnote comparison and screenshots](in-page-footnotes.md#inline-all-footnote-content)
+
+**Paragraph styles** add full, half, and no-spacing presets and a generic
+browser paragraph style. Stock and Reader checks measure the paragraph
+gaps and publisher overrides. The menu test replaces a global default
+with a per-book choice and reopens at the same passage.
+[Spacing comparison and screenshots](reading-style-presets.md#paragraph-spacing-and-browser-defaults)
+
+**Quickstart** is available offline from Reader settings and Documents.
+A fresh profile opens it once from Launcher. The guide leaves the book
+and its position intact when dismissed.
+[Guide comparison and screenshots](quickstart-guide.md)
+
+The full Mac run passed 1,621 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. The standard run skipped
+73 opt-in tests. The 53 focused checks also passed. The Reader simulator
+and pinned KOReader replays reproduced 22 new and five refreshed screenshots.
+The four original EPUB, PDF, AZW3, and MOBI files opened
+through the picker, turned a page, and resumed with unchanged source bytes.
+The original EPUB footnote check retained 65 bands and 63 canonical anchors
+across eight composed chapters.
+
+The locally staged ARMHF executable is stripped and statically linked.
+It contains 39,349,244 bytes with SHA-256
+`6dc55af1c5f37553ffa94b731f3f2a4949ef1d79e67fe4968fae66e88a57beb8`.
+The 31 staged files total 48,953,775 bytes. The project licenses, SQLite
+notices, embedded Launcher icon, and OCR model passed inspection.
+Multi-window DjVu reflow, foreground Kindle testing, and Store publication
+remain pending.
+
+## Menu pager, fixed zoom, and reading styles checkpoint
+
 **Menu paging** goes straight to the first or last page on a held arrow
 in settings lists and Documents. A tap or physical page key moves one
 page. The stock replay verifies the two edge destinations and disabled

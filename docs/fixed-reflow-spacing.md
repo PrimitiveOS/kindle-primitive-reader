@@ -1,6 +1,6 @@
 # Line spacing in fixed-document reflow
 
-Open **Scan → Read text** or **Scan → Reflow scan**, then tap **Spacing** in
+Open **Scan → Read text** or **Scan → Reflow scan**, then tap **Layout** in
 the reading footer. Choose **Small**, **Medium**, or **Large** and tap
 **Apply**. **Cancel** and the back page button close the panel and restore the
 previous view. Reader saves the choice for that document and uses it in both
@@ -8,10 +8,10 @@ reflow views. Medium retains the existing layout for books with no saved choice.
 
 The reflow view keeps the current source passage when changing spacing.
 Reader uses a source text anchor for Read text and a word ordinal on the
-original source page for Reflow scan. It displays the new view page that
-contains that anchor. When starting in Medium, undoing the adjustment
-without a page turn restores the previous view page. The underlying PDF or DjVu page, annotation coordinates,
-and fixed-view position stay in place.
+original source page for Reflow scan. It retains the anchor’s position
+within the viewport. When starting in Medium, undoing the adjustment
+without a page turn restores the previous viewport. The underlying PDF or
+DjVu page, annotation coordinates, and fixed-view position stay in place.
 
 The pinned KOReader MuPDF and k2pdfopt renderers processed authored
 vector-text and raster-only versions of the same PDF. The control uses

@@ -90,6 +90,7 @@ mod profile_panel;
 mod progress_markers;
 mod publisher_render_settings;
 mod quick_display;
+mod quickstart;
 mod read_alarm;
 mod reader_timer;
 mod reading_backup;
@@ -138,8 +139,6 @@ use crate::annotation_export;
 use crate::dictionary::{self, DictionarySources, InstalledDictionary};
 use crate::epub::{Book, Destination};
 use crate::fixed::{PdfError, PdfLinkTarget};
-#[cfg(test)]
-use crate::fixed_session::SMALLER;
 use crate::fixed_session::{FixedJump, FixedReading, PdfSelection};
 use crate::fixed_text::PdfTextRect;
 use crate::generated_contents::{GeneratedContents, OutlineTarget};
@@ -335,6 +334,7 @@ enum Screen {
     ),
     TypographyLanguages(typography_settings::LanguageScope),
     StyleTweaks,
+    ParagraphSpacing,
     FootnoteTweaks,
     StylePreset,
     InPageFootnoteSize(style_tweaks::NoteSizeScope),
@@ -556,6 +556,7 @@ impl Screen {
             Self::FontRendering(eager_typography::Scope::Book) => "Font size rendering",
             Self::FontRendering(eager_typography::Scope::Default) => "Default font size rendering",
             Self::StyleTweaks => "Style tweaks",
+            Self::ParagraphSpacing => "Spacing between paragraphs",
             Self::FootnoteTweaks => "Footnote options",
             Self::StylePreset => "Style tweak",
             Self::InPageFootnoteSize(style_tweaks::NoteSizeScope::Book) => "In-page footnote size",
@@ -654,6 +655,7 @@ enum Action {
     RemoveCollection,
     SetReadingControls(ReadingControls),
     SearchReadingMenus,
+    OpenQuickstart,
     PreviewReadingMenu(usize),
     PageTurnSetting(page_turn_settings::Command),
     ToggleNotificationSource(reading_notifications::Source),
@@ -966,6 +968,7 @@ struct TouchHold {
 
 pub struct Reader {
     library: Library,
+    quickstart: Option<quickstart::Guide>,
     user_hyphenation: std::rc::Rc<crate::user_hyphenation::Rules>,
     user_hyphenation_path: PathBuf,
     hyphenation_edit: Option<user_hyphenation::Draft>,
@@ -1216,6 +1219,7 @@ impl Reader {
             user_hyphenation_path,
             hyphenation_edit: None,
             library,
+            quickstart: None,
             browser,
             archive: book_archive::Archive::load(data.join("archive-folder.json")),
             metadata_archive: metadata_archive::State::load(
@@ -2455,6 +2459,7 @@ impl Reader {
 
     fn update_stats_activity(&mut self, now: Instant) {
         let reading = self.stats_awake
+            && self.quickstart.is_none()
             && self.closing_profile.is_none()
             && self.pending_opening_profiles.is_none()
             && self.end_dialog.is_none()
@@ -2677,6 +2682,7 @@ impl Reader {
         if matches!(
             screen,
             Screen::StyleTweaks
+                | Screen::ParagraphSpacing
                 | Screen::FootnoteTweaks
                 | Screen::StylePreset
                 | Screen::InPageFootnoteSize(_)
@@ -3596,6 +3602,7 @@ impl Reader {
             Screen::TypographyLanguages(scope) => return self.typography_language_items(scope),
             Screen::DocumentDefaults
             | Screen::StyleTweaks
+            | Screen::ParagraphSpacing
             | Screen::FootnoteTweaks
             | Screen::StylePreset
             | Screen::InPageFootnoteSize(_)
@@ -4377,6 +4384,10 @@ impl Reader {
             }
             Action::Show(screen) => self.show(screen),
             Action::SearchReadingMenus => self.begin_menu_search()?,
+            Action::OpenQuickstart => {
+                self.open_quickstart();
+                self.refresh_display = true;
+            }
             Action::PreviewReadingMenu(index) => self.menu_search.preview(index)?,
 
             Action::Jump(target) => self.follow(target)?,
@@ -5652,6 +5663,7 @@ impl Reader {
 
     fn auto_turn_eligible(&self) -> bool {
         self.stats_awake
+            && self.quickstart.is_none()
             && !self.scroll_pan.busy()
             && self.closing_profile.is_none()
             && !self.opening_ask_visible()
@@ -9166,6 +9178,9 @@ impl Reader {
 
 impl App for Reader {
     fn draw(&self, canvas: &mut Canvas) {
+        if self.draw_quickstart(canvas) {
+            return;
+        }
         self.draw_content(canvas);
         if self.screen == Screen::Skim {
             self.draw_skim(canvas);
@@ -9244,6 +9259,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.quickstart_input(input) {
+            return change;
+        }
         self.notifications.handle_input(input);
         self.gestures.multiswipes.clear_contact();
         self.finish_interrupted_scroll();
@@ -9371,6 +9389,9 @@ impl App for Reader {
     }
 
     fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        if self.quickstart.is_some() {
+            return Change::None;
+        }
         self.notifications.dismiss();
         self.recognize_multiswipe(pan)
             .unwrap_or_else(|| self.continuous_touch_pan(pan))
@@ -9501,6 +9522,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.quickstart_input(input) {
+            return change;
+        }
         self.gestures.multiswipes.clear_contact();
         if let Some(change) = self.menu_search_input(input) {
             return change;
@@ -9774,10 +9798,14 @@ impl App for Reader {
                 other => Some(other),
             };
             if let (Some(flow), Some(fixed)) = (&mut self.text_flow, &mut self.fixed) {
-                let spacing = flow.line_spacing();
+                let previous = flow.preferences();
                 let result = flow.input_with_turn(input, turn, &fixed.reading);
-                if result.is_ok() && flow.line_spacing() != spacing {
-                    fixed.reading.set_fixed_reflow_spacing(flow.line_spacing());
+                let current = flow.preferences();
+                if result.is_ok() && current != previous {
+                    fixed.reading.set_fixed_reflow_spacing(current.spacing);
+                    fixed
+                        .reading
+                        .apply_page_overlap(current.overlap_enabled, current.marker);
                     self.record_position();
                 }
                 return self.finish_text_flow_update(result);
@@ -10080,9 +10108,10 @@ impl App for Reader {
                     }
                     Screen::ReadingGuidesAbout => self.show(Screen::ReadingGuides),
                     Screen::StylePreset => self.show(self.style_preset_parent()),
-                    Screen::FootnoteTweaks | Screen::StyleFiles | Screen::StyleClear => {
-                        self.show(Screen::StyleTweaks)
-                    }
+                    Screen::FootnoteTweaks
+                    | Screen::ParagraphSpacing
+                    | Screen::StyleFiles
+                    | Screen::StyleClear => self.show(Screen::StyleTweaks),
                     Screen::StyleReview => self.show(if self.style_view.editor.is_some() {
                         Screen::StyleEditor
                     } else {
@@ -11078,7 +11107,8 @@ pub fn run_reader(
     djvu_rs::render_cache::set_budget(crate::djvu::MAX_RENDER_CACHE_BYTES);
     let data = home.join("data");
     with_storage(|| fs::create_dir_all(&data))?;
-    let mut app = Reader::open(documents, &data.join("library.json"), fonts)?;
+    let library_path = data.join("library.json");
+    let mut app = Reader::open(documents, &library_path, fonts)?;
     let run =
         std::env::var_os("KL_RUN").map_or_else(|| PathBuf::from("/var/tmp/kl"), PathBuf::from);
     let turn_file = std::env::var_os("KL_APP_TURN_FILE").map(PathBuf::from);
@@ -11088,10 +11118,12 @@ pub fn run_reader(
         app.negotiated_opening_profiles =
             primitive_app::viewport::ViewportPublisher::new(&run, offer)?.is_some();
     }
-    if let Some(file) = file
-        && let Err(error) = app.open_path(file)
-    {
-        app.report(error);
+    if let Some(file) = file {
+        if let Err(error) = app.open_path(file) {
+            app.report(error);
+        }
+    } else if let Err(error) = app.show_first_run_quickstart(&library_path) {
+        eprintln!("reader quickstart_seen_failed={error}");
     }
     primitive_app::run(ReaderRuntime(app), home).map_err(Into::into)
 }
@@ -20898,10 +20930,15 @@ mod tests {
             .unwrap();
         let fixed_position = app.current_history_location();
         app.activate(Action::ReflowScan).unwrap();
-        let toolbar = Input::Tap(718.0, PAGE_HEIGHT as f32 + 30.0);
-        let large = Input::Tap(506.0, PAGE_HEIGHT as f32 - 48.0);
-        let cancel = Input::Tap(929.0, PAGE_HEIGHT as f32 - 48.0);
-        let apply = Input::Tap(1129.0, PAGE_HEIGHT as f32 - 48.0);
+        let [toolbar, large, cancel, apply] = app
+            .text_flow
+            .as_ref()
+            .unwrap()
+            .spacing_test_targets()
+            .map(|rect| {
+                let (x, y) = rectangle_center(rect);
+                Input::Tap(x, y)
+            });
         assert_eq!(app.input(toolbar), Change::Partial);
         assert_eq!(app.input(large), Change::Partial);
         assert_eq!(app.input(cancel), Change::Partial);

@@ -136,13 +136,19 @@ chapters = {
   <li id="nested-next">Low bin.</li>
 </ul>
 </aside>""",
-    "inline-image-fallback": """<p id="image-fallback-start">The carpenter read the pencilled instructions<a href="#image-fallback-note" epub:type="noteref"><sup>11</sup></a>.</p>
+    "inline-image": """<p id="media-start">The carpenter read the pencilled instructions<a id="media-ref" href="#media-note" epub:type="noteref"><sup>11</sup></a>.</p>
+<p style="page-break-before:always">The illustration follows on another leaf.</p>
+<aside id="media-note" epub:type="footnote">
+<p id="media-intro">Cabinet diagram legend.</p>
+<p id="media-text">See <a href="#media-key"><img id="media-chart" src="chart.png" width="56" height="36" alt="Shelf diagram"/></a> for shelf depth.</p>
+<p id="media-return"><a href="#media-ref" role="doc-backlink">Back to cabinet.</a></p>
+</aside>
+<p id="media-key">The cabinet diagram was filed with the tally.</p>""",
+    "inline-image-fallback": """<p id="image-fallback-start">The hinge measured a thumb's width<a href="#image-fallback-note" epub:type="noteref"><sup>12</sup></a>.</p>
 <aside id="image-fallback-note" epub:type="footnote">
-<p>Cabinet diagram legend.</p>
-<ul>
-  <li>Shelf edge.<ol><li>Diagrams <img src="chart.png" width="56" height="36" alt="Shelf diagram"/> show the opening.</li></ol></li>
-  <li id="image-fallback-end">A hinge holds the door.</li>
-</ul>
+<p>Measurements in the workshop.</p>
+<p><img src="chart.png" width="108" height="69" alt="Hinge diagram"/></p>
+<p id="image-fallback-end">A hinge holds the door.</p>
 </aside>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'

@@ -29,8 +29,8 @@ inline illustrations stay in body flow. Each artwork area stays on one page,
 its links and opening position keep the original source geometry, and
 ordinary forced page breaks still start a new page.
 Overlapping glyphs within a text band stay together. A note whose boundaries
-overlap adjacent content, an illustration without a source line, nested or
-cross-spine notes, images inside notes, tables, complex publisher breaks,
+overlap adjacent content, artwork on a standalone note line, an illustration
+without a source line, nested or cross-spine notes, tables, complex publisher breaks,
 FictionBook, facing pages, continuous reading and custom flows use the normal
 layout. The reading position uses the same source anchor when the layout changes.
 
@@ -214,10 +214,11 @@ and backlinks keep their targets.
 [Reader after](screenshots/reader-note-inline-after.png) ·
 [Reader original note](screenshots/reader-note-inline-original.png)
 
-Formatting applies to supported horizontal in-page notes. Tables, images,
-ruby, inline boxes, preformatted blocks, and authored page breaks inside
-a note keep their original layout. A note whose own container is a list
-item also keeps its block layout.
+Formatting applies to supported horizontal in-page notes. Inline pictures
+that fit with their source line travel with the text. Standalone pictures,
+tables, ruby, inline boxes, preformatted blocks, and authored page breaks
+inside a note keep their original layout. A note whose own container is a
+list item also keeps its block layout.
 If the chapter cannot fit the joined notes, Reader retries the original
 layout. The publication stays unchanged.
 Reader stores this option with the edition's existing style settings.
@@ -251,13 +252,37 @@ share y=72 in their original order. The body stays at y=32. The native
 replay taps the original item's backlink and checks its reference target.
 The Reader simulator checks search matches, selection across the parent
 paragraphs and child item, and the child's backlink in both locations.
-An illustrated nested item keeps the ordinary layout.
 [Reader nested list before](screenshots/reader-note-inline-nested-before.png) ·
 [Reader nested list after](screenshots/reader-note-inline-nested-after.png) ·
 [Reader original nested list](screenshots/reader-note-inline-nested-original.png) ·
 [KOReader nested list before](screenshots/stock-note-inline-nested-before.png) ·
 [KOReader nested list after](screenshots/stock-note-inline-nested-after.png) ·
 [KOReader original nested list](screenshots/stock-note-inline-nested-original.png)
+
+The pinned `inline-image` replay joins a legend with a paragraph containing
+a linked diagram. Its caption moves from y=112 to the legend's line at
+y=72, with the body unchanged at y=32. The diagram moves from x=81 to x=366.
+The replay verifies all 56 × 36 painted pixels before and after, the same
+pixels in the bottom-band copy, and that tapping the original diagram
+returns the same link and source PNG. Reader's simulator also checks
+the image and its link in both locations, along with the canonical image
+location, source text and word selection. A note with a standalone
+diagram retains its ordinary layout.
+[Reader illustrated note before](screenshots/reader-note-inline-image-before.png) ·
+[Reader illustrated note after](screenshots/reader-note-inline-image-after.png) ·
+[Reader canonical illustration](screenshots/reader-note-inline-image-original.png) ·
+[KOReader illustrated note before](screenshots/stock-note-inline-image-before.png) ·
+[KOReader illustrated note after](screenshots/stock-note-inline-image-after.png) ·
+[KOReader canonical illustration](screenshots/stock-note-inline-image-original.png)
+
+The native reference also paints standalone artwork in the note strip.
+On the separate artwork specimen, both copies measure 216 × 138 pixels
+and match in all 29,808 pixels. Whole-note flattening moves both copies
+inline at 108 × 69 pixels. In both cases, tapping the canonical image
+returns its PNG. The stock strip copy is paint-only. Reader exposes the
+image link in supported inline bands, and standalone strips and flattening
+remain open. [Stock strip rendering](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L2172-L2204) ·
+[Stock main-page hit testing](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L2597-L2666)
 
 ## Replay on macOS
 
@@ -287,8 +312,8 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
   "$reader/tests/fixtures/fonts/NotoSans-Regular.ttf" "$scratch/captures"
 ```
 
-Pass `cosmetic`, `wikipedia`, `inline-all`, `inline-list`, or `inline-nested`
-as the fifth argument to select the corresponding advanced style replay.
+Pass `cosmetic`, `wikipedia`, `inline-all`, `inline-list`, `inline-nested`,
+or `inline-image` as the fifth argument to select an advanced style replay.
 
 Run the combined note flow checks with the same stock runtime and scratch
 paths.

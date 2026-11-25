@@ -4,7 +4,7 @@ use std::fmt;
 use std::ops::Range;
 
 use primitive_app::{HEIGHT, WIDTH};
-use primitive_ui::GrayImage;
+use primitive_ui::{GrayImage, Rect};
 use unicode_bidi::{BidiClass, bidi_class};
 
 use crate::fixed_text::{PdfPageText, PdfTextRect};
@@ -26,7 +26,6 @@ pub(crate) enum ScanReflowError {
     OcrGeometry,
     Direction,
     Limit,
-    Page,
 }
 
 impl fmt::Display for ScanReflowError {
@@ -38,7 +37,6 @@ impl fmt::Display for ScanReflowError {
             Self::OcrGeometry => "The scan needs complete OCR word positions",
             Self::Direction => "Scan reflow supports horizontal left-to-right words",
             Self::Limit => "This scan exceeds Reader's reflow limits",
-            Self::Page => "That page is outside this scan view",
         })
     }
 }
@@ -52,7 +50,8 @@ pub(crate) struct ScanReflow {
     width: u32,
     height: u32,
     placements: Vec<Placement>,
-    pages: Vec<Range<usize>>,
+    strip_clip: Rect,
+    max_word_height: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -108,40 +107,61 @@ impl ScanReflow {
         let viewport = Viewport::new(width, height, text_height)?;
         let mut words = word_crops(text, raster.width, raster.height)?;
         viewport.size_words(&mut words);
-        let (placements, pages) = viewport.wrap(&words, spacing)?;
+        let placements = viewport.wrap(&words, spacing)?;
+        let max_word_height = placements.iter().map(|word| word.height).max().unwrap_or(0);
         Ok(Self {
             raster,
             width,
             height,
             placements,
-            pages,
+            max_word_height,
+            strip_clip: Rect::new(0, viewport.top as i32, width as i32, viewport.height as i32),
         })
     }
 
-    pub(crate) fn page_count(&self) -> usize {
-        self.pages.len()
+    pub(crate) fn scroll_clip(&self) -> Rect {
+        self.strip_clip
     }
 
-    pub(crate) fn page_first_word(&self, page: usize) -> Option<usize> {
-        self.pages.get(page).map(|words| words.start)
+    pub(crate) fn scroll_end(&self) -> u32 {
+        self.placements.last().map_or(0, |last| {
+            (last.y + last.height).saturating_sub(self.strip_clip.h as u32)
+        })
     }
 
-    pub(crate) fn page_for_word(&self, index: usize) -> Option<usize> {
-        (index < self.placements.len())
-            .then(|| self.pages.partition_point(|words| words.end <= index))
+    pub(crate) fn word_at_scroll_top(&self, top: u32) -> Option<usize> {
+        self.scroll_words(top).next()
     }
 
-    pub(crate) fn render(&self, page: usize) -> Result<GrayImage> {
-        let range = self.pages.get(page).ok_or(ScanReflowError::Page)?;
+    pub(crate) fn word_scroll_top(&self, word: usize) -> Option<u32> {
+        self.placements.get(word).map(|placement| placement.y)
+    }
+
+    fn scroll_words(&self, top: u32) -> impl Iterator<Item = usize> + '_ {
+        // Line baselines increase, while word tops within a line can differ.
+        let start = self
+            .placements
+            .partition_point(|word| word.y + word.height <= top);
+        let last_baseline = top + self.strip_clip.h as u32 + self.max_word_height;
+        (start..self.placements.len()).take_while(move |&index| {
+            let word = &self.placements[index];
+            word.y + word.height < last_baseline
+        })
+    }
+
+    pub(crate) fn render_scroll(&self, top: u32) -> GrayImage {
         let mut frame = GrayImage {
             width: self.width,
             height: self.height,
             pixels: vec![255; (self.width * self.height) as usize],
         };
-        for word in &self.placements[range.clone()] {
-            blit_word(&self.raster, &mut frame, word);
+        let clip = self.strip_clip.y as u32..self.strip_clip.bottom() as u32;
+        for index in self.scroll_words(top) {
+            let word = &self.placements[index];
+            let y = i64::from(word.y) - i64::from(top) + i64::from(self.strip_clip.y);
+            blit_word(&self.raster, &mut frame, word, y, clip.clone());
         }
-        Ok(frame)
+        frame
     }
 }
 
@@ -279,16 +299,10 @@ impl Viewport {
         }
     }
 
-    fn wrap(
-        self,
-        words: &[Word],
-        spacing: FixedReflowSpacing,
-    ) -> Result<(Vec<Placement>, Vec<Range<usize>>)> {
+    fn wrap(self, words: &[Word], spacing: FixedReflowSpacing) -> Result<Vec<Placement>> {
         let mut placements = Vec::with_capacity(words.len());
-        let mut pages = Vec::new();
-        let mut page_start = 0;
         let mut line_start = 0;
-        let mut y = self.top;
+        let mut y = 0;
         let word_space = (self.text_height / 5).max(2);
         let line_space = (self.text_height / 3).max(2);
         let paragraph_space = (self.text_height / 2).max(4);
@@ -306,20 +320,11 @@ impl Viewport {
                 line_width += word.width + word_space;
                 line_height = line_height.max(word.height);
             }
-            let paragraph = if words[line_start].paragraph && y != self.top {
-                paragraph_space
-            } else {
-                0
-            };
-            if y + paragraph + line_height > self.top + self.height {
-                pages.push(page_start..placements.len());
-                if pages.len() == MAX_PAGES {
-                    return Err(ScanReflowError::Limit);
-                }
-                page_start = placements.len();
-                y = self.top;
-            } else {
-                y += paragraph;
+            if line_start != 0 && words[line_start].paragraph {
+                y += paragraph_space;
+            }
+            if y + line_height > self.height * MAX_PAGES as u32 {
+                return Err(ScanReflowError::Limit);
             }
             let mut x = self.left;
             for word in &words[line_start..line_end] {
@@ -332,21 +337,32 @@ impl Viewport {
                 });
                 x += word.width + word_space;
             }
-            y += spacing
+            let pitch = spacing
                 .scaled_pitch(line_height + line_space)
                 .max(line_height);
+            y += pitch;
             line_start = line_end;
         }
-        pages.push(page_start..placements.len());
-        Ok((placements, pages))
+        Ok(placements)
     }
 }
 
-fn blit_word(source: &GrayImage, frame: &mut GrayImage, word: &Placement) {
+fn blit_word(
+    source: &GrayImage,
+    frame: &mut GrayImage,
+    word: &Placement,
+    y: i64,
+    clip: Range<u32>,
+) {
+    let first = y.max(i64::from(clip.start));
+    let last = (y + i64::from(word.height)).min(i64::from(clip.end));
+    if first >= last {
+        return;
+    }
     let x_step = (word.crop.width << SAMPLE_BITS) / word.width;
     let y_step = (word.crop.height << SAMPLE_BITS) / word.height;
-    let mut source_y = y_step / 2;
-    for y in word.y..word.y + word.height {
+    let mut source_y = y_step / 2 + y_step * (first - y) as u32;
+    for y in first as u32..last as u32 {
         let source_start =
             (word.crop.top + (source_y >> SAMPLE_BITS)) * source.width + word.crop.left;
         let frame_start = y * frame.width + word.x;
@@ -429,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn wraps_original_gray_pixels_in_ocr_order_across_lines_and_viewport_pages() {
+    fn wraps_original_gray_pixels_in_ocr_order_across_overlapping_viewports() {
         let mut fixture = Fixture::new();
         for index in 0..8 {
             let separator = if index == 0 {
@@ -448,13 +464,11 @@ mod tests {
         }
         fixture.raster.pixels[6 * 100 + 9] = 201;
         let reflow = fixture.finish(64, 48, 10).unwrap();
-        assert_eq!(reflow.page_count(), 2);
-        assert_eq!(reflow.page_first_word(0), Some(0));
-        assert_eq!(reflow.page_first_word(1), Some(6));
-        assert_eq!(reflow.page_for_word(5), Some(0));
-        assert_eq!(reflow.page_for_word(6), Some(1));
-        assert_eq!(reflow.page_for_word(8), None);
-        let first = reflow.render(0).unwrap();
+        assert_eq!(reflow.scroll_end(), 9);
+        assert_eq!(reflow.word_at_scroll_top(0), Some(0));
+        assert_eq!(reflow.word_scroll_top(6), Some(39));
+        assert_eq!(reflow.word_scroll_top(8), None);
+        let first = reflow.render_scroll(0);
         assert_eq!((first.width, first.height), (64, 48));
         assert_eq!(pixel(&first, 4, 4), 32);
         assert_eq!(pixel(&first, 9, 6), 201);
@@ -465,10 +479,12 @@ mod tests {
         assert_eq!(pixel(&first, 4, 30), 96);
         assert_eq!(pixel(&first, 30, 30), 112);
 
-        let second = reflow.render(1).unwrap();
-        assert_eq!(pixel(&second, 4, 4), 128);
-        assert_eq!(pixel(&second, 30, 4), 144);
-        assert!(matches!(reflow.render(2), Err(ScanReflowError::Page)));
+        let second = reflow.render_scroll(reflow.scroll_end());
+        assert_eq!(pixel(&second, 4, 34), 128);
+        assert_eq!(pixel(&second, 30, 34), 144);
+        // Rows at the two content edges clip a partly visible source word.
+        assert_eq!(pixel(&second, 4, 3), 255);
+        assert_eq!(pixel(&second, 4, 4), 32);
     }
 
     #[test]
@@ -507,9 +523,12 @@ mod tests {
             } else {
                 reference = Some(geometry);
             }
-            let frame = reflow.render(0).unwrap();
+            let frame = reflow.render_scroll(0);
             for (index, word) in reflow.placements.iter().enumerate() {
-                assert_eq!(pixel(&frame, word.x, word.y), 40 + index as u8 * 20);
+                assert_eq!(
+                    pixel(&frame, word.x, word.y + reflow.strip_clip.y as u32),
+                    40 + index as u8 * 20
+                );
             }
         }
     }
@@ -520,7 +539,7 @@ mod tests {
         fixture.word("", "First", crop(4, 4), 30);
         fixture.word("\n\n", "Second", crop(4, 20), 110);
         let reflow = fixture.finish(100, 60, 10).unwrap();
-        let frame = reflow.render(0).unwrap();
+        let frame = reflow.render_scroll(0);
         assert_eq!(pixel(&frame, 4, 4), 30);
         assert_eq!(pixel(&frame, 30, 4), 255);
         assert_eq!(pixel(&frame, 4, 17), 255);
@@ -537,7 +556,7 @@ mod tests {
             50,
         );
         let reflow = fixture.finish(64, 48, 24).unwrap();
-        let frame = reflow.render(0).unwrap();
+        let frame = reflow.render_scroll(0);
         assert_eq!(pixel(&frame, 4, 4), 50);
         assert_eq!(pixel(&frame, 59, 4), 50);
         assert_eq!(pixel(&frame, 60, 4), 255);

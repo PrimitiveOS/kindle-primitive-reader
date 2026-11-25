@@ -138,3 +138,92 @@ fn fixed_page_overlap_controls_apply_on_a_hardware_turn_and_restore_per_pdf() {
     );
     assert_eq!(reopened.current_history_location(), current_location);
 }
+
+#[test]
+fn fixed_reflow_overlap_layout_persists_without_moving_source_page_or_bookmark() {
+    let fixture = Fixture::new();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    for (scan, name) in [(false, "vector"), (true, "raster")] {
+        let book = fixture.root.join(format!("{name}.pdf"));
+        std::fs::copy(
+            crate::test_fixture(&format!("scan-reflow/{name}.pdf")),
+            &book,
+        )
+        .unwrap();
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&book).unwrap();
+        app.activate(Action::FixedPage(1)).unwrap();
+        app.activate(Action::ToggleBookmark).unwrap();
+        let fixed = app.fixed.as_mut().unwrap();
+        let id = fixed.id;
+        if scan {
+            let ocr = crate::ocr::parse_tsv(
+                include_bytes!("../../tests/fixtures/scan-reflow/page-2-ocr.tsv"),
+                1350,
+                1800,
+            )
+            .unwrap();
+            fixed.reading.remember_ocr(1, "eng", ocr.text).unwrap();
+        }
+        let position = app.current_history_location();
+        let bookmarks = app.library.state(id).unwrap().bookmarks.len();
+        assert!(bookmarks > 0);
+        app.activate(if scan {
+            Action::ReflowScan
+        } else {
+            Action::ReadFixedText
+        })
+        .unwrap();
+        let [layout, enable, dashed, apply] =
+            app.text_flow.as_ref().unwrap().overlap_test_targets();
+        for button in [layout, enable, dashed, apply] {
+            assert_eq!(
+                app.input(Input::Tap(
+                    (button.x + button.w / 2) as f32,
+                    (button.y + button.h / 2) as f32
+                )),
+                Change::Partial
+            );
+            if button == dashed && !scan {
+                capture_test_screen(&app, &fonts, "READER_REFLOW_OVERLAP_SETTINGS", false);
+            }
+        }
+        let mut changed = app.input(Input::PageForward);
+        if let Some(due) = app.text_flow.as_ref().and_then(TextFlow::deadline) {
+            changed = app.tick(due);
+        }
+        assert_eq!(changed, Change::Partial);
+        assert!(app.text_flow.as_ref().unwrap().pan_offset() > 0);
+        assert_eq!(app.current_history_location(), position);
+        assert_eq!(app.library.state(id).unwrap().bookmarks.len(), bookmarks);
+        capture_test_screen(
+            &app,
+            &fonts,
+            if scan {
+                "READER_REFLOW_OVERLAP_RASTER"
+            } else {
+                "READER_REFLOW_OVERLAP_TEXT"
+            },
+            false,
+        );
+
+        app.save().unwrap();
+        let mut restored = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        restored.open_path(&book).unwrap();
+        let fixed = restored.fixed.as_ref().unwrap();
+        let prefs = fixed.reading.preferences();
+        assert!(prefs.page_overlap_enabled);
+        assert_eq!(
+            prefs.page_overlap_style,
+            Some(crate::PageOverlapStyle::DashedLine)
+        );
+        assert_eq!(fixed.reading.page(), 1);
+        assert_eq!(
+            restored.library.state(fixed.id).unwrap().bookmarks.len(),
+            bookmarks
+        );
+    }
+}

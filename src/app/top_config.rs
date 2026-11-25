@@ -322,6 +322,7 @@ impl Reader {
     pub(super) fn reading_settings_items(&self) -> Vec<Item> {
         let current = self.controls;
         let mut items = vec![
+            Self::quickstart_item(),
             Item::new(
                 "Bookmarks and notes",
                 Action::Show(Screen::BookmarkListSettings),

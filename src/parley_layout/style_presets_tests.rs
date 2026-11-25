@@ -49,6 +49,91 @@ fn capture(probe: &mut Probe, name: &str) {
 }
 
 #[test]
+fn reading_style_paragraph_spacing_respects_siblings_and_authored_web_overrides() {
+    let path = crate::test_fixture("field-notes-epub3.epub");
+    let markup = include_str!("../../tests/fixtures/reading-paragraph-spacing.xhtml");
+    let settings = Settings {
+        width: 617,
+        height: 760,
+        margin: 30,
+        font_size: 40.0,
+        block_margins: crate::BlockMarginMode::Ignore,
+        ..Settings::default()
+    };
+    let book = |style: &user_styles::Snapshot| open(&path, settings, Some(markup.into()), style);
+    let by_id = |probe: &Probe, id| probe.fragment(id).unwrap().block;
+    let between = |probe: &Probe, a, b| {
+        let next = paragraph(probe, by_id(probe, b));
+        let top = next.y
+            + next
+                .layout
+                .get(0)
+                .unwrap()
+                .metrics()
+                .content_block_min_coord;
+        top - paragraph(probe, by_id(probe, a)).text_bottom
+    };
+    let first_x = |probe: &Probe, id| {
+        paragraph(probe, by_id(probe, id))
+            .layout
+            .get(0)
+            .unwrap()
+            .items()
+            .find_map(|item| match item {
+                PositionedLayoutItem::GlyphRun(run) => run.positioned_glyphs().next().map(|g| g.x),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let base = book(&user_styles::Snapshot::default());
+    for (preset, label, expected) in [
+        ("paragraph_no_whitespace", "none", 0.0),
+        ("paragraph_whitespace_half", "half", 20.0),
+        ("paragraph_whitespace", "full", 40.0),
+        ("paragraph_web_browser_style", "web", 40.0),
+    ] {
+        let mut probe = book(&snapshot(preset));
+        let first = between(&probe, "first", "second");
+        let second = between(&probe, "second", "third");
+        let authored = between(&probe, "after-heading", "authored");
+        assert!(
+            (first - expected).abs() < 0.01,
+            "{preset}: first gap {first}"
+        );
+        assert!(
+            (second - expected).abs() < 0.01,
+            "{preset}: second gap {second}"
+        );
+        assert!(
+            (authored - if label == "web" { 80.0 } else { expected }).abs() < 0.01,
+            "{preset}: authored gap {authored}"
+        );
+        if label == "half" || label == "full" {
+            let other_boundary = between(&probe, "heading", "after-heading");
+            assert!((other_boundary - between(&base, "heading", "after-heading")).abs() < 0.01);
+        }
+        assert_eq!(first_x(&probe, "authored"), first_x(&base, "authored"));
+        if label == "web" {
+            assert!(first_x(&probe, "authored") - first_x(&probe, "after-heading") > 75.0);
+        }
+        assert_eq!(probe.coverage(), base.coverage());
+        assert_eq!(
+            probe.matches("A bright signal"),
+            base.matches("A bright signal")
+        );
+        assert_eq!(
+            probe.restore_anchor(&base.fragment("authored").unwrap()),
+            probe.fragment("authored")
+        );
+        assert_eq!(
+            probe.page_for(&probe.fragment("authored").unwrap()),
+            Some(0)
+        );
+        capture(&mut probe, &format!("reader-paragraph-spacing-{label}.png"));
+    }
+}
+
+#[test]
 fn reading_style_cjk_grid_centers_lines_and_rounds_the_existing_signed_indent() {
     for (width, em, percent, expected) in [
         (557, 40.0, 100, Some((18, 520, 40))),

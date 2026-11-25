@@ -580,8 +580,8 @@ mod tests {
                 ..candidate
             };
             reader.stage_viewport(candidate).unwrap();
-            let portrait_spacing = Rect::new(622, 1611, 192, 60);
-            tap(&mut reader, portrait_spacing);
+            let [portrait_layout, ..] = reader.text_flow.as_ref().unwrap().spacing_test_targets();
+            tap(&mut reader, portrait_layout);
             wide.begin();
             assert!(reader.draw_staged_viewport(&mut wide).is_err());
             reader.finish_viewport(candidate, ViewportDecision::Abort);
@@ -602,10 +602,12 @@ mod tests {
             assert_eq!(reader.back.len(), history_len);
             capture(&reader, &mut wide, &format!("landscape-{label}.png"), false);
 
-            let spacing = Rect::new(1038, 1195, 192, 60);
-            press(&reader, &mut wide, spacing, false);
-            tap(&mut reader, spacing);
-            let large = Rect::new(418, 1112, 176, 60);
+            let [layout, large, cancel, _] =
+                reader.text_flow.as_ref().unwrap().spacing_test_targets();
+            assert!(layout.y >= landscape.page_height() as i32);
+            assert!(large.bottom() < landscape.page_height() as i32);
+            press(&reader, &mut wide, layout, false);
+            tap(&mut reader, layout);
             tap(&mut reader, large);
             capture(
                 &reader,
@@ -613,8 +615,8 @@ mod tests {
                 &format!("landscape-{label}-spacing.png"),
                 true,
             );
-            press(&reader, &mut wide, Rect::new(1256, 1112, 178, 60), false);
-            tap(&mut reader, Rect::new(1256, 1112, 178, 60));
+            press(&reader, &mut wide, cancel, false);
+            tap(&mut reader, cancel);
             assert_eq!(primitive_app::frame(&reader, &mut wide, false), staged);
 
             if scan {

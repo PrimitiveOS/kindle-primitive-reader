@@ -7,7 +7,7 @@ Read text keeps its text anchor. Reflow scan keeps the recognized word’s
 ordinal on the original source page. Returning to portrait before turning
 the page restores the original frame.
 
-The footer, spacing panel, scan size buttons, Back, and page-turn areas
+The footer, Layout panel, scan size buttons, Back, and page-turn areas
 follow the live viewport. Reader prepares both the fixed document view and
 the scan text view before accepting a new size. Rejecting the frame, changing
 the open panel during preparation, or losing the source OCR leaves the
@@ -30,7 +30,7 @@ raster version uses saved OCR word boxes produced from its original page
 image. The tests exercise the exact source anchor, 1264 × 1680 and 1680 × 1264
 frames, staged abort and retry, far-right touch and hardware page-button input,
 spacing cancellation, scan size changes, and Back. Set
-`READER_SELECTION_VIEWPORT_CAPTURES` to save the simulator frames. [Read text](screenshots/landscape-read-text.png) · [Read text spacing](screenshots/landscape-read-text-spacing.png) · [Reflow scan](screenshots/landscape-reflow-scan.png) · [Reflow scan spacing](screenshots/landscape-reflow-scan-spacing.png) · [Fixture generator](../scripts/generate-scan-reflow-fixtures.py)
+`READER_SELECTION_VIEWPORT_CAPTURES` to save the simulator frames. [Read text](screenshots/landscape-read-text.png) · [Read text Layout](screenshots/landscape-read-text-spacing.png) · [Reflow scan](screenshots/landscape-reflow-scan.png) · [Reflow scan Layout](screenshots/landscape-reflow-scan-spacing.png) · [Fixture generator](../scripts/generate-scan-reflow-fixtures.py)
 
 `cargo test --locked --lib reading_guides` also verifies the optional guide
 lines in both scan viewport sizes. The lines move relative to the screen

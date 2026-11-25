@@ -103,6 +103,50 @@ pub(crate) struct Snapshot {
 pub(crate) struct LayoutTweaks {
     pub(crate) cjk_tailored: bool,
     pub(crate) monochrome: bool,
+    pub(crate) browser_paragraphs: bool,
+    pub(crate) paragraph_spacing: ParagraphSpacing,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ParagraphSpacing {
+    #[default]
+    Unchanged,
+    Full,
+    Half,
+    None,
+}
+
+impl LayoutTweaks {
+    pub(crate) fn paragraph_rules(self) -> impl Iterator<Item = &'static str> {
+        let browser = self
+            .browser_paragraphs
+            .then_some("p {text-align:start;text-indent:0;margin-top:1em;margin-bottom:1em;}");
+        let spacing = match self.paragraph_spacing {
+            ParagraphSpacing::Unchanged => None,
+            ParagraphSpacing::Full => Some("p + p {margin-top:1em !important;}"),
+            ParagraphSpacing::Half => Some("p + p {margin-top:.5em !important;}"),
+            ParagraphSpacing::None => {
+                Some("p {margin-top:0 !important;margin-bottom:0 !important;}")
+            }
+        };
+        browser.into_iter().chain(spacing)
+    }
+
+    pub(crate) fn paragraph_edges(self, follows_paragraph: bool) -> [bool; 2] {
+        if self.browser_paragraphs || self.paragraph_spacing == ParagraphSpacing::None {
+            [true, true]
+        } else {
+            [
+                follows_paragraph
+                    && matches!(
+                        self.paragraph_spacing,
+                        ParagraphSpacing::Full | ParagraphSpacing::Half
+                    ),
+                false,
+            ]
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -158,7 +202,12 @@ impl Snapshot {
         digest.consume(css.as_bytes());
         if layout != LayoutTweaks::default() {
             digest.consume(b"\0layout-tweaks");
-            digest.consume([u8::from(layout.cjk_tailored), u8::from(layout.monochrome)]);
+            digest.consume([
+                u8::from(layout.cjk_tailored),
+                u8::from(layout.monochrome),
+                u8::from(layout.browser_paragraphs),
+                layout.paragraph_spacing as u8,
+            ]);
         }
         Ok(Self {
             css: css.into(),
@@ -254,6 +303,8 @@ pub(crate) enum Effect {
     Css(&'static str),
     TailorCjk,
     Monochrome,
+    BrowserParagraphs,
+    ParagraphSpacing(ParagraphSpacing),
     InPageEpubFootnotes,
     InPageClassicFootnotes,
     InPageWikipediaFootnotes,
@@ -385,6 +436,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::CombineNonlinearNotes,
     },
     Preset {
+        id: "paragraph_web_browser_style",
+        title: "Generic web browser paragraph style",
+        group: "browser-paragraphs",
+        priority: 0,
+        effect: Effect::BrowserParagraphs,
+    },
+    Preset {
         id: "paragraph-indent-none",
         title: "No paragraph indentation",
         group: "indent",
@@ -418,6 +476,27 @@ pub(crate) const PRESETS: &[Preset] = &[
         group: "cjk-tailored",
         priority: 0,
         effect: Effect::TailorCjk,
+    },
+    Preset {
+        id: "paragraph_whitespace",
+        title: "Spacing between paragraphs",
+        group: "paragraph-spacing",
+        priority: 5,
+        effect: Effect::ParagraphSpacing(ParagraphSpacing::Full),
+    },
+    Preset {
+        id: "paragraph_whitespace_half",
+        title: "Spacing between paragraphs (half)",
+        group: "paragraph-spacing",
+        priority: 5,
+        effect: Effect::ParagraphSpacing(ParagraphSpacing::Half),
+    },
+    Preset {
+        id: "paragraph_no_whitespace",
+        title: "No spacing between paragraphs",
+        group: "paragraph-spacing",
+        priority: 5,
+        effect: Effect::ParagraphSpacing(ParagraphSpacing::None),
     },
     Preset {
         id: "paragraph-align-left",
@@ -625,7 +704,11 @@ impl Data {
         let target = preset(id).ok_or("This style tweak is unavailable")?;
         if !matches!(
             target.effect,
-            Effect::Css(_) | Effect::TailorCjk | Effect::Monochrome
+            Effect::Css(_)
+                | Effect::TailorCjk
+                | Effect::Monochrome
+                | Effect::BrowserParagraphs
+                | Effect::ParagraphSpacing(_)
         ) {
             if enabled {
                 if matches!(target.effect, Effect::ExtendNote(_)) {
@@ -679,6 +762,8 @@ impl Data {
                 }
                 Effect::TailorCjk => layout.cjk_tailored = true,
                 Effect::Monochrome => layout.monochrome = true,
+                Effect::BrowserParagraphs => layout.browser_paragraphs = true,
+                Effect::ParagraphSpacing(spacing) => layout.paragraph_spacing = spacing,
                 Effect::InPageEpubFootnotes => {
                     notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
                     notes.explicit_epub = true;

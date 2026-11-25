@@ -48,20 +48,22 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 326 of 539 in-scope reading-control rows have
-an implemented workflow, 163 are partial, 44 are gaps, and 6 need audit.
+**Pinned control inventory:** 330 of 539 in-scope reading-control rows have
+an implemented workflow, 160 are partial, 44 are gaps, and 5 need audit.
 The 44 gaps cover interface-language choices. The largest groups of partial
 controls are typography and style tweaks. The audited SDL fullscreen row
 belongs to the host window and is unavailable in KOReader’s Kindle menu.
 [Control matrix](koreader-sdl-reference-controls.json)
 
-The Mac replay now covers menu-edge holds, repeated areas in zoomed
-fixed pages, nested text lists in inline notes, and CJK grid, paragraph
-indentation, and black-and-white presets. Fixed text reflow, other rich
-notes, additional paragraph layout options, and hardware verification
-remain open. [Menu pager](menu-pager.md) · [Page overlap](scroll-page-overlap.md) ·
+The current Mac comparison covers repeated areas in embedded-text and
+OCR scan reflow, fitting inline images in notes, paragraph spacing and
+browser-style defaults, and offline Quickstart. Additional rich-note
+layouts, expanded publisher geometry, multi-window DjVu reflow checks,
+and foreground Kindle verification remain open.
+[Page overlap](scroll-page-overlap.md) ·
 [Inline notes](in-page-footnotes.md#inline-all-footnote-content) ·
-[Reading styles](reading-style-presets.md)
+[Reading styles](reading-style-presets.md#paragraph-spacing-and-browser-defaults) ·
+[Quickstart](quickstart-guide.md)
 
 The [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The

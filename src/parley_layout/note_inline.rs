@@ -5,7 +5,7 @@ use crate::{
     Line, Source,
     book_style::Style,
     flow_projection::{Affinity, OwnedProjection},
-    flow_view::ChapterFlow,
+    flow_view::{ChapterFlow, LayoutImage},
     footnotes::in_page::Targets,
     source::StyledText,
 };
@@ -13,10 +13,12 @@ use crate::{
 const MAX_BLOCKS: usize = 64;
 const MAX_BYTES: usize = 32 * 1024;
 
-pub(super) struct Fragment {
+pub(super) struct Fragment<'a> {
     pub(super) element: usize,
     pub(super) end_index: usize,
     pub(super) runs: Vec<StyledText>,
+    // The box uses the joined paragraph's offset and the original image's owner.
+    pub(super) images: Vec<(usize, LayoutImage<'a>)>,
     pub(super) layout: Arc<JoinedNote>,
 }
 
@@ -31,12 +33,12 @@ pub(crate) struct Piece {
     projected: Option<Arc<OwnedProjection>>,
 }
 
-pub(super) fn plan(
-    source: &Source,
+pub(super) fn plan<'a>(
+    source: &'a Source,
     styles: &[Style],
-    flow: &ChapterFlow,
+    flow: &'a ChapterFlow,
     targets: &Targets,
-) -> crate::Result<BTreeMap<usize, Fragment>> {
+) -> crate::Result<BTreeMap<usize, Fragment<'a>>> {
     let owners: Vec<_> = source
         .blocks
         .iter()
@@ -57,13 +59,13 @@ pub(super) fn plan(
     Ok(fragments)
 }
 
-fn join(
-    source: &Source,
+fn join<'a>(
+    source: &'a Source,
     styles: &[Style],
-    flow: &ChapterFlow,
+    flow: &'a ChapterFlow,
     indices: Range<usize>,
     element: usize,
-) -> crate::Result<Option<Fragment>> {
+) -> crate::Result<Option<Fragment<'a>>> {
     let end_index = indices.end;
     if styles[source.blocks[indices.start].element].flow.suppressed {
         return Ok(None);
@@ -73,6 +75,7 @@ fn join(
         pieces: Vec::new(),
     };
     let mut runs = Vec::new();
+    let mut images = Vec::new();
     for block in &source.blocks[indices] {
         let style = &styles[block.element];
         // Descendant list items become inline text. A list item that is
@@ -80,7 +83,6 @@ fn join(
         let list_root = block.list_item.is_some_and(|item| item.element == element);
         if block.table_cell.is_some()
             || list_root
-            || !block.images.is_empty()
             || !block.ruby.is_empty()
             || style.preformatted_spaces
             || style.page_breaks != Default::default()
@@ -90,7 +92,13 @@ fn join(
             return Ok(None);
         }
         let input = flow.layout_block(source, block)?;
-        if style.flow.suppressed || input.text.is_empty() {
+        if style.flow.suppressed {
+            continue;
+        }
+        if input.text.is_empty() {
+            if !input.images.is_empty() {
+                return Ok(None);
+            }
             continue;
         }
         if input.styled_text.iter().any(|run| {
@@ -118,6 +126,10 @@ fn join(
             element: run.element,
             language: run.language,
         }));
+        images.extend(input.images.iter().map(|mut image| {
+            image.offset += offset;
+            (block.key, image)
+        }));
         joined.pieces.push(Piece {
             block: block.key,
             joined: offset..joined.text.len(),
@@ -128,6 +140,7 @@ fn join(
         element,
         end_index,
         runs,
+        images,
         layout: Arc::new(joined),
     }))
 }

@@ -45,6 +45,7 @@ const TEXT: Rect = Rect::new(40, 260, 1184, 480);
 const LINE_HEIGHT: i32 = 48;
 // Use the same wrap in both orientations so that an open draft keeps its line.
 const COLUMNS: usize = 40;
+const PARAGRAPH_SPACING: &str = "paragraph-spacing";
 
 fn note_format(preset: &str) -> Option<DocumentFormat> {
     match preset {
@@ -144,10 +145,15 @@ impl Reader {
     }
 
     pub(super) fn style_preset_parent(&self) -> Screen {
-        if self.style_view.preset.as_deref().is_some_and(advanced_note) {
-            Screen::FootnoteTweaks
-        } else {
-            Screen::StyleTweaks
+        match self
+            .style_view
+            .preset
+            .as_deref()
+            .and_then(user_styles::preset)
+        {
+            Some(preset) if advanced_note(preset.id) => Screen::FootnoteTweaks,
+            Some(preset) if preset.group == PARAGRAPH_SPACING => Screen::ParagraphSpacing,
+            _ => Screen::StyleTweaks,
         }
     }
 
@@ -420,6 +426,26 @@ impl Reader {
                 }
                 let mut note_row = 1;
                 for p in PRESETS {
+                    if p.group == PARAGRAPH_SPACING {
+                        if p.id == "paragraph_whitespace" {
+                            let state = PRESETS
+                                .iter()
+                                .find(|p| p.group == PARAGRAPH_SPACING && data.enabled(id, p.id))
+                                .map_or("Use book spacing", |p| match p.id {
+                                    "paragraph_whitespace" => "Full",
+                                    "paragraph_whitespace_half" => "Half",
+                                    _ => "None",
+                                });
+                            items.push(
+                                Item::new(
+                                    "Spacing between paragraphs",
+                                    Action::Show(Screen::ParagraphSpacing),
+                                )
+                                .detail(state),
+                            );
+                        }
+                        continue;
+                    }
                     if advanced_note(p.id) {
                         continue;
                     }
@@ -479,6 +505,11 @@ impl Reader {
                 items.push(Item::new("Supported reflow styles",Action::Heading).detail("Margins, hiding, floats, arbitrary selectors and vendor hints are not supported."));
                 items
             }
+            Screen::ParagraphSpacing => PRESETS
+                .iter()
+                .filter(|preset| preset.group == PARAGRAPH_SPACING)
+                .map(|preset| preset_item(*preset, data, &b))
+                .collect(),
             Screen::FootnoteTweaks => PRESETS
                 .iter()
                 .copied()
@@ -528,6 +559,12 @@ impl Reader {
                 let current = b.choices.get(p.id).copied();
                 let global = data.global.contains(p.id);
                 let description = match p.id {
+                    "paragraph_web_browser_style" => {
+                        "Use block paragraphs with no default first-line indent"
+                    }
+                    "paragraph_whitespace" => "Add one em between consecutive paragraphs",
+                    "paragraph_whitespace_half" => "Add half an em between consecutive paragraphs",
+                    "paragraph_no_whitespace" => "Remove top and bottom margins from paragraphs",
                     EPUB_FOOTNOTES => "Show marked notes in supported single-page EPUB layouts",
                     CLASSIC_FOOTNOTES => "Use common publisher footnote classes in this EPUB",
                     WIKIPEDIA_FOOTNOTES => "Use reference lists in a saved Wikipedia EPUB",

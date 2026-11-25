@@ -1,4 +1,4 @@
-//! Opt-in model for vertical publisher margins on retained horizontal blocks.
+//! Vertical CSS margins for retained horizontal blocks and paragraph presets.
 use crate::{
     BlockMarginMode, FloatMode, Settings,
     book_style::{ImageLength, Style, WritingMode, borders::Pattern, flow::Display},
@@ -59,6 +59,7 @@ pub(crate) fn collapsible_wrapper(tag: &str) -> bool {
 pub(crate) struct Space {
     pub before: f32,
     pub forced_top: Option<f32>,
+    pub suppress_gap_after: bool,
 }
 
 pub(crate) fn before_blocks(
@@ -68,16 +69,17 @@ pub(crate) fn before_blocks(
     settings: Settings,
 ) -> Option<Vec<Space>> {
     let mode = settings.block_margins;
+    let ignore_publisher = mode == BlockMarginMode::Ignore;
     let width = settings.text_width();
     let font = settings.font_size;
-    if mode == BlockMarginMode::Ignore
-        || !styles.iter().any(|style| {
-            style
-                .vertical_margin
-                .iter()
-                .any(|edge| edge.pixels(width, font) != 0.0)
-        })
-    {
+    if !styles.iter().any(|style| {
+        style.paragraph_edges.contains(&true)
+            || !ignore_publisher
+                && style
+                    .vertical_margin
+                    .iter()
+                    .any(|edge| edge.pixels(width, font) != 0.0)
+    }) {
         return None;
     }
 
@@ -122,7 +124,8 @@ pub(crate) fn before_blocks(
         });
         previous_visible[index] = previous;
         let style = &styles[index];
-        if let (Some(children), Some(parent)) = (&mut child_edges, element.parent)
+        if !ignore_publisher
+            && let (Some(children), Some(parent)) = (&mut child_edges, element.parent)
             && !element.selector_only
             && !style.flow.suppressed
         {
@@ -136,6 +139,7 @@ pub(crate) fn before_blocks(
             || style.flow.suppressed
             || element.selector_only
             || element.anonymous
+            || ignore_publisher && !style.paragraph_edges.contains(&true)
             || matches!(element.tag.as_str(), "html" | "body")
             || !matches!(
                 Display::native(&element.tag),
@@ -151,9 +155,15 @@ pub(crate) fn before_blocks(
         let containing_width = boxes
             .zip(element.parent)
             .map_or(width, |(areas, parent)| areas[parent].width);
-        let [top, bottom] = style
-            .vertical_margin
-            .map(|edge| edge.box_pixels(containing_width, font).clamp(-limit, limit));
+        let [top, bottom] = [0, 1].map(|side| {
+            if ignore_publisher && !style.paragraph_edges[side] {
+                0.0
+            } else {
+                style.vertical_margin[side]
+                    .box_pixels(containing_width, font)
+                    .clamp(-limit, limit)
+            }
+        });
         edges[index] = Some([Margin::new(top), Margin::new(bottom)]);
     }
     if let Some(children) = child_edges {
@@ -182,9 +192,15 @@ pub(crate) fn before_blocks(
         Vec::new()
     };
     let mut gaps = vec![Space::default(); source.blocks.len()];
+    let mut paragraph_starts = vec![false; source.blocks.len()];
     for (index, pair) in edges.iter().enumerate() {
         let Some([top, bottom]) = *pair else { continue };
         let span = spans[index].unwrap();
+        if styles[index].writing_mode == WritingMode::Horizontal {
+            let [top, bottom] = styles[index].paragraph_edges;
+            paragraph_starts[span.first] |= top;
+            gaps[span.last].suppress_gap_after |= bottom;
+        }
         gaps[span.first].before += top.used(signed);
         if let Some(after) = following[span.last] {
             gaps[after].before += bottom.used(signed);
@@ -210,7 +226,8 @@ pub(crate) fn before_blocks(
             }
         }
     }
-    for gap in &mut gaps {
+    for (gap, next) in gaps.iter_mut().zip(following) {
+        gap.suppress_gap_after |= next.is_some_and(|next| paragraph_starts[next]);
         gap.before = gap
             .forced_top
             .unwrap_or_else(|| gap.before.clamp(-limit, limit));
