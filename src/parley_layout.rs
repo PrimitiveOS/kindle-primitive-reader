@@ -51,8 +51,9 @@ const MAX_RUBY_BASE_BYTES: usize = 192;
 // projections retain the canonical layout; device validation remains pending.
 pub(crate) const RAW_LAYOUT_ENABLED: bool = true;
 
-// Kept disabled until virtual search, selection and persistence are wired end to end.
-const RAW_ONLY_RENDER_ENABLED: bool = false;
+// Whitespace-only EPUB candidates use virtual, source-verified raw positions.
+// Unsupported placement or style retains the prior canonical layout.
+const RAW_ONLY_RENDER_ENABLED: bool = true;
 
 fn declared_box_height(style: &Style, width: u32, font: f32) -> Option<f32> {
     let length = match style.image_height? {
@@ -1107,6 +1108,7 @@ impl ParleyChapter {
         let mut floating_table = None;
         let virtual_allowed = RAW_ONLY_RENDER_ENABLED
             && RAW_LAYOUT_ENABLED
+            && book.is_reflowable_epub()
             && !settings.in_page_footnotes
             && source.table_cells.is_empty()
             && float_plan.is_none()
@@ -3486,6 +3488,23 @@ fn virtual_raw_paragraph(
         || !style.flow.painted
         || !y.is_finite()
         || width == 0
+        || style.float_side.is_some()
+        || style.clear != Default::default()
+        || style.padding != [crate::book_style::CssLength::default(); 2]
+        || style.vertical_padding != [crate::book_style::CssLength::default(); 2]
+        || style.vertical_margin != [crate::book_style::CssLength::default(); 2]
+        || style.horizontal_margin.iter().any(|margin| {
+            !matches!(margin,
+            crate::book_style::BoxMargin::Length(length) if *length == Default::default())
+        })
+        || style.page_breaks != Default::default()
+        || style.borders.is_some()
+        || style.image_width.is_some()
+        || style.image_height.is_some()
+        || style.min_width.is_some()
+        || style.min_height.is_some()
+        || style.text_indent.pixels(width, settings.font_size) != 0.0
+        || style.text_indent.hanging
     {
         return None;
     }

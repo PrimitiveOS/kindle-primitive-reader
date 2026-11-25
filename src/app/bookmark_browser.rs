@@ -1,5 +1,6 @@
 //! Browse saved marks across the library without changing an open document.
 mod bulk_marks;
+mod confirmation;
 mod edit_note;
 mod metadata;
 mod metadata_view;
@@ -215,11 +216,13 @@ pub(super) enum Command {
     UseCurrentBook,
     FocusCurrentPage,
     PreviewRemoveCurrentNotes,
+    AskRemoveCurrentNotes,
     ConfirmRemoveCurrentNotes,
     ToggleReviewedNote(usize),
     SetAllReviewedNotes(bool),
     SelectReviewedNotePage,
     PreviewRemoveCurrentMarks,
+    AskRemoveCurrentMarks,
     ConfirmRemoveCurrentMarks,
     ToggleReviewedMark(usize),
     SetAllReviewedMarks(bool),
@@ -478,10 +481,15 @@ pub(super) struct Browser {
     pending_note_removal: Option<PendingNoteRemoval>,
     pending_mark_removal: Option<bulk_marks::Pending>,
     pending_note_edit: Option<edit_note::Pending>,
+    confirmation: Option<confirmation::Confirmation>,
     pub(super) after_password: Option<MarkKey>,
 }
 
 impl Browser {
+    pub(super) fn clear_confirmation(&mut self) {
+        self.confirmation = None;
+    }
+
     pub(super) fn reset_list_anchor(&mut self) {
         self.list_anchor = None;
     }
@@ -538,6 +546,7 @@ impl Default for Browser {
             pending_note_removal: None,
             pending_mark_removal: None,
             pending_note_edit: None,
+            confirmation: None,
             after_password: None,
         }
     }
@@ -739,6 +748,7 @@ impl Reader {
         match action {
             Command::Open => {
                 let browser = &mut self.bookmark_browser;
+                browser.confirmation = None;
                 browser.pending_note_removal = None;
                 browser.pending_mark_removal = None;
                 browser.pending_note_edit = None;
@@ -1000,9 +1010,24 @@ impl Reader {
                 self.notice = None;
                 self.show(Screen::BookmarkBrowser(Page::RemoveNotesConfirm));
             }
+            Command::AskRemoveCurrentNotes => {
+                if self.screen != Screen::BookmarkBrowser(Page::RemoveNotesConfirm)
+                    || !self
+                        .bookmark_browser
+                        .pending_note_removal
+                        .as_ref()
+                        .is_some_and(|p| p.selected_count() > 0)
+                {
+                    return Err("Review the notes before removing them".into());
+                }
+                self.bookmark_browser.confirmation = Some(confirmation::Confirmation::Notes);
+            }
             Command::ConfirmRemoveCurrentNotes => {
                 if self.screen != Screen::BookmarkBrowser(Page::RemoveNotesConfirm) {
                     return Err("Review the notes before removing them".into());
+                }
+                if self.bookmark_browser.confirmation != Some(confirmation::Confirmation::Notes) {
+                    return Err("Confirm removal before deleting notes".into());
                 }
                 let pending = self
                     .bookmark_browser
@@ -1105,7 +1130,24 @@ impl Reader {
                 }
             }
             Command::PreviewRemoveCurrentMarks => bulk_marks::preview(self)?,
-            Command::ConfirmRemoveCurrentMarks => bulk_marks::confirm(self)?,
+            Command::AskRemoveCurrentMarks => {
+                if self.screen != Screen::BookmarkBrowser(Page::RemoveMarksConfirm)
+                    || !self
+                        .bookmark_browser
+                        .pending_mark_removal
+                        .as_ref()
+                        .is_some_and(|p| p.selected_count() > 0)
+                {
+                    return Err("Review the marks before removing them".into());
+                }
+                self.bookmark_browser.confirmation = Some(confirmation::Confirmation::Marks);
+            }
+            Command::ConfirmRemoveCurrentMarks => {
+                if self.bookmark_browser.confirmation != Some(confirmation::Confirmation::Marks) {
+                    return Err("Confirm removal before deleting marks".into());
+                }
+                bulk_marks::confirm(self)?;
+            }
             Command::EditCurrentNote => edit_note::open(self)?,
             Command::ConfirmClearCurrentNote => edit_note::commit(self)?,
             Command::ResumeCurrentNoteEdit => edit_note::resume(self)?,
@@ -1801,7 +1843,7 @@ impl Reader {
                     if pending.selected_count() > 0 {
                         rows.push(item(
                             language.bookmark_text("Delete notes"),
-                            C::ConfirmRemoveCurrentNotes,
+                            C::AskRemoveCurrentNotes,
                         ));
                     }
                 }
@@ -1871,7 +1913,7 @@ impl Reader {
                     if count > 0 {
                         rows.push(item(
                             language.bookmark_text("Delete marks"),
-                            C::ConfirmRemoveCurrentMarks,
+                            C::AskRemoveCurrentMarks,
                         ));
                     }
                 }
@@ -2191,6 +2233,10 @@ impl Reader {
         }
     }
 
+    pub(super) fn draw_bookmark_confirmation(&self, canvas: &mut Canvas) {
+        confirmation::draw(self, canvas);
+    }
+
     fn draw_bookmark_detail(&self, canvas: &mut Canvas) {
         let layout = BrowserLayout(self.navigation_layout());
         let language = self.controls.interface_language;
@@ -2302,6 +2348,9 @@ impl Reader {
     }
 
     pub(super) fn bookmark_browser_input(&mut self, page: Page, input: Input) -> Option<Change> {
+        if let Some(change) = confirmation::input(self, input) {
+            return Some(change);
+        }
         let layout = BrowserLayout(self.navigation_layout());
         if matches!(input, Input::Tap(x, y) if layout.0.back().contains(x, y)) {
             self.back_from_bookmark_browser(page);

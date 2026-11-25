@@ -95,3 +95,15 @@ color; page bookmarks have no highlight color and are excluded when a color is
 selected. Additional provider metadata remains open in the full
 reading-workflow audit. The metadata coverage document identifies the fields
 that each provider currently exposes.
+# Destructive confirmation presentation
+
+Removing selected notes or saved marks first uses the existing current-book
+review and selection screen. The final Delete action opens a floating
+confirmation over that screen, with a visible Cancel button. Clearing a
+single edited note opens the same style of confirmation over the note editor;
+Cancel returns to the unchanged editor. Tapping outside the confirmation or
+pressing Back cancels it. Note removal retains the associated marks; mark
+removal also removes their attached notes. The actual operation still
+revalidates the reviewed target snapshots and rolls back in-memory changes if
+persistence fails. These confirmation layouts and interactions still require
+simulation and Kindle validation.

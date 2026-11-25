@@ -73,8 +73,10 @@ existing completeness guard refuses to publish an incomplete replacement.
 
 [Pinned CRE whitespace formatting](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L2569-L2575)
 
-Whitespace-only `<pre>` blocks are captured as separate bounded source
-candidates without changing canonical block indices, anchors or navigation.
-They use a separate budget of up to 1 MiB per chapter so existing raw-text
-candidates keep their allowance. They are not rendered yet: virtual positions, pagination and selection still
-need end-to-end integration. This stage remains untested.
+Whitespace-only `<pre>` blocks use a separate bounded source collection and
+virtual raw positions, without changing canonical block indices, existing
+anchors or navigation. Their separate budget is up to 1 MiB per chapter.
+The local implementation renders eligible top-level EPUB blocks, with raw page
+anchors, selection and search; blocks in other formats, tables, floating layouts,
+in-page notes or unsupported box styles retain the previous canonical fallback.
+This path remains untested.

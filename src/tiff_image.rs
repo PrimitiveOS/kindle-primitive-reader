@@ -14,6 +14,7 @@ const MAX_SIDE: u32 = 4096;
 const MAX_PIXELS: u32 = 8 * 1024 * 1024;
 const MAX_BYTES: usize = crate::comic::MAX_IMAGE_BYTES as usize;
 const MAX_REVERSED_COMPRESSED_STRIP: usize = 4 * 1024 * 1024;
+const MAX_JPEG_COMPRESSED_STRIP: usize = 4 * 1024 * 1024;
 
 const SHORT: u16 = 3;
 const LONG: u16 = 4;
@@ -166,9 +167,6 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         return Err(TiffError::Strips);
     }
     let strip_count = height.div_ceil(rows_per_strip) as usize;
-    if compression == 7 && strip_count != 1 {
-        return Err(TiffError::Unsupported);
-    }
     let offsets = image
         .numbers(273, SHORT_OR_LONG, strip_count)?
         .ok_or(TiffError::Strips)?;
@@ -518,6 +516,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
 
 /// Decode a self-contained grayscale JPEG strip with matching TIFF dimensions.
 fn unpack_grayscale_jpeg(input: &[u8], width: u32, rows: usize) -> Result<Vec<u8>, TiffError> {
+    // The JPEG adapter copies its input before its own limits are applied.
+    if input.len() > MAX_JPEG_COMPRESSED_STRIP {
+        return Err(TiffError::Limit);
+    }
     let reader = crate::image_reader(input).map_err(|_| TiffError::Strips)?;
     if reader.format() != Some(image::ImageFormat::Jpeg) {
         return Err(TiffError::Strips);

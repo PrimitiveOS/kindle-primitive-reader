@@ -35,15 +35,17 @@ and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.p
 
 ## Self-contained JPEG grayscale scans
 
-A TIFF compression-7 page can use one self-contained, 8-bit unsigned
-BlackIsZero grayscale JPEG strip with no alpha or predictor. Reader rejects
-separate JPEG tables, ICC/profile or nondefault sample/transfer metadata,
-requires the JPEG decoder's L8 output and dimensions to match the TIFF, and
-fully decodes through the existing image reader before applying TIFF
-orientation. The compressed input retains the 16 MiB bound and decoded strip
-plus grayscale output is at most 16 MiB; the JPEG decoder's internal memory
-uses the existing image-reader limit but still needs a separate audit.
-Multi-strip JPEG, shared tables, YCbCr/RGB TIFF JPEG, old compression 6 and
+A TIFF compression-7 page can use self-contained, 8-bit unsigned BlackIsZero
+grayscale JPEG strips with no alpha or predictor. Reader rejects
+separate JPEG tables, the TIFF ICC profile tag and nondefault sample/transfer metadata,
+requires each JPEG decoder's L8 output to match the TIFF width and that strip's
+exact row count, and fully decodes through the existing image reader before applying TIFF
+orientation. The compressed strip is limited to 4 MiB because the JPEG decoder
+makes a separate input copy; the original TIFF file remains limited to 16 MiB.
+Decoded strip plus grayscale output is at most 16 MiB. The decoder's other
+internal allocations still need a separate audit, and ICC profiles embedded
+inside the JPEG stream are not inspected or applied.
+Padded final strips, shared tables, YCbCr/RGB TIFF JPEG, old compression 6 and
 color-managed cases remain unsupported. This candidate has not been compared
 with KOReader or behaviorally tested in the simulator or on Kindle. [Pinned MuPDF JPEG handling](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L400-L413)
 

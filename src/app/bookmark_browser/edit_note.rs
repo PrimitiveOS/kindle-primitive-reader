@@ -118,11 +118,18 @@ fn request_save(reader: &mut Reader) -> Result<()> {
     let removing = desired.is_none() && pending.target.note().is_some();
     pending.desired = Some(desired);
     if removing {
-        reader.show(Screen::BookmarkBrowser(Page::ConfirmClearNote));
+        reader.bookmark_browser.confirmation = Some(super::confirmation::Confirmation::ClearNote);
         Ok(())
     } else {
         commit(reader)
     }
+}
+
+pub(super) fn cancel_confirmation(reader: &mut Reader) {
+    if let Some(pending) = &mut reader.bookmark_browser.pending_note_edit {
+        pending.desired = None;
+    }
+    reader.notice = None;
 }
 
 pub(super) fn resume(reader: &mut Reader) -> Result<()> {
@@ -157,11 +164,13 @@ pub(super) fn commit(reader: &mut Reader) -> Result<()> {
         .as_ref()
         .ok_or("Review the note first")?
         .clone();
-    let expected_screen = if desired.is_none() {
-        Page::ConfirmClearNote
-    } else {
-        Page::EditNote
-    };
+    let expected_screen = Page::EditNote;
+    if desired.is_none()
+        && reader.bookmark_browser.confirmation
+            != Some(super::confirmation::Confirmation::ClearNote)
+    {
+        return Err("Confirm removal before deleting the note".into());
+    }
     if reader.screen != Screen::BookmarkBrowser(expected_screen)
         || reader.open_book_id() != Some(pending.book)
         || reader.bookmark_browser.focus != Some(pending.key)

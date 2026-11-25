@@ -2100,6 +2100,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.bookmark_browser.clear_confirmation();
         self.menu_search.clear_overlays();
         self.embedded_font_report = None;
         self.finish_interrupted_scroll();
@@ -10030,6 +10031,7 @@ impl App for Reader {
         self.draw_reading_notification(canvas);
         self.draw_annotation_exchange_confirmation(canvas);
         self.draw_menu_search_preview(canvas);
+        self.draw_bookmark_confirmation(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
