@@ -1,6 +1,7 @@
 //! Native CBZ, USTAR/GNU-long-name CBT, bounded CBR, and standalone raster
 //! pages. File handles are short-lived so Reader can release its USB lease.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::fs::{self, File};
@@ -79,10 +80,37 @@ pub(crate) fn cbz_info(path: &Path) -> Result<Option<ComicInfo>> {
     if bytes.len() as u64 != size || bytes.len() as u64 > LIMIT {
         return Ok(None);
     }
-    let Ok(xml) = std::str::from_utf8(&bytes) else {
-        return Ok(None);
+    let xml = if let Some(data) = bytes.strip_prefix(&[0xff, 0xfe]) {
+        if data.len() % 2 != 0 {
+            return Ok(None);
+        }
+        let units: Vec<_> = data
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        let Ok(text) = String::from_utf16(&units) else {
+            return Ok(None);
+        };
+        Cow::Owned(text)
+    } else if let Some(data) = bytes.strip_prefix(&[0xfe, 0xff]) {
+        if data.len() % 2 != 0 {
+            return Ok(None);
+        }
+        let units: Vec<_> = data
+            .chunks_exact(2)
+            .map(|b| u16::from_be_bytes([b[0], b[1]]))
+            .collect();
+        let Ok(text) = String::from_utf16(&units) else {
+            return Ok(None);
+        };
+        Cow::Owned(text)
+    } else {
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            return Ok(None);
+        };
+        Cow::Borrowed(text.trim_start_matches('\u{feff}'))
     };
-    let Ok(document) = roxmltree::Document::parse(xml) else {
+    let Ok(document) = roxmltree::Document::parse(&xml) else {
         return Ok(None);
     };
     let root = document.root_element();

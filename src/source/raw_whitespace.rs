@@ -59,6 +59,7 @@ pub(crate) struct WhitespaceGap {
 }
 
 pub(crate) struct Snapshot {
+    block_key: usize,
     raw: String,
     text: Vec<TextSpan>,
     gaps: Vec<WhitespaceGap>,
@@ -96,6 +97,23 @@ pub(crate) struct RawCaret {
     pub(crate) affinity: CaretAffinity,
 }
 
+/// A proposed v2 anchor envelope. It is not connected to persisted state or
+/// rendering; v1 anchors remain unchanged while consumers are being audited.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RawAnchor {
+    pub(crate) canonical: crate::Anchor,
+    pub(crate) caret: RawCaret,
+}
+
+/// Must be supplied from the currently open, verified publication and block.
+pub(crate) struct AnchorContext<'a> {
+    pub(crate) book: u64,
+    pub(crate) chapter: &'a str,
+    pub(crate) revision: u64,
+    pub(crate) block: usize,
+}
+
 pub(crate) struct Bound<'a> {
     snapshot: &'a Snapshot,
     canonical: &'a str,
@@ -127,6 +145,9 @@ impl Bound<'_> {
 
     /// Build an explicit raw caret without losing its position in a gap.
     pub(crate) fn caret_at(&self, raw_offset: usize, affinity: CaretAffinity) -> Option<RawCaret> {
+        if !self.is_grapheme_boundary(raw_offset) {
+            return None;
+        }
         let canonical_offset = match self.raw_to_canonical(raw_offset)? {
             RawBoundary::Exact(offset) => offset,
             RawBoundary::Gap { canonical, .. } => match affinity {
@@ -144,7 +165,9 @@ impl Bound<'_> {
 
     /// Verify the raw fingerprint and canonical relationship before use.
     pub(crate) fn validate_caret(&self, caret: &RawCaret) -> Option<RawBoundary> {
-        if caret.raw_sha256 != self.snapshot.raw_sha256 {
+        if caret.raw_sha256 != self.snapshot.raw_sha256
+            || !self.is_grapheme_boundary(caret.raw_offset)
+        {
             return None;
         }
         let boundary = self.raw_to_canonical(caret.raw_offset)?;
@@ -156,6 +179,53 @@ impl Bound<'_> {
             },
         };
         (caret.canonical_offset == canonical).then_some(boundary)
+    }
+
+    fn is_grapheme_boundary(&self, offset: usize) -> bool {
+        self.snapshot.raw.is_char_boundary(offset)
+            && icu_segmenter::GraphemeClusterSegmenter::new()
+                .segment_str(&self.snapshot.raw)
+                .any(|boundary| boundary == offset)
+    }
+
+    /// Attach a verified raw caret to a matching canonical anchor.
+    pub(crate) fn make_raw_anchor(
+        &self,
+        canonical: crate::Anchor,
+        raw_offset: usize,
+        affinity: CaretAffinity,
+        context: &AnchorContext<'_>,
+    ) -> Option<RawAnchor> {
+        let anchor = RawAnchor {
+            canonical,
+            caret: self.caret_at(raw_offset, affinity)?,
+        };
+        self.validate_raw_anchor(&anchor, context)?;
+        Some(anchor)
+    }
+
+    /// Reject mismatched publication identity, stale raw content and
+    /// unsupported illustration anchors before any future use.
+    pub(crate) fn validate_raw_anchor(
+        &self,
+        anchor: &RawAnchor,
+        context: &AnchorContext<'_>,
+    ) -> Option<RawBoundary> {
+        let canonical = &anchor.canonical;
+        if canonical.book != context.book
+            || canonical.chapter != context.chapter
+            || canonical.revision != context.revision
+            || canonical.block != context.block
+            || context.block != self.snapshot.block_key
+            || canonical.illustration.is_some()
+            || canonical.offset != anchor.caret.canonical_offset
+            || canonical.chapter.is_empty()
+            || canonical.chapter.len() > 4096
+            || canonical.chapter.chars().any(char::is_control)
+        {
+            return None;
+        }
+        self.validate_caret(&anchor.caret)
     }
 
     /// Project a canonical caret to an edge of any collapsed raw gap.
@@ -309,6 +379,7 @@ pub(super) fn capture(
         return None;
     }
     Some(Snapshot {
+        block_key: node.range().start,
         raw: raw.to_owned(),
         text,
         gaps,

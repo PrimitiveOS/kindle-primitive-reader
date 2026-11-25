@@ -350,7 +350,7 @@ fn decode_html(input: &[u8], fallback: &'static Encoding) -> Result<String> {
 
 // Only scan the bounded HTML prefix and only inspect actual meta tags, not
 // text inside comments or script. The archive locale remains the fallback.
-fn html_encoding(input: &[u8]) -> Option<&'static Encoding> {
+pub(crate) fn html_encoding(input: &[u8]) -> Option<&'static Encoding> {
     let prefix = String::from_utf8_lossy(&input[..input.len().min(1024)]);
     let sink = tokenize(&prefix, CharsetSink(RefCell::new((None, false))));
     sink.0.into_inner().0

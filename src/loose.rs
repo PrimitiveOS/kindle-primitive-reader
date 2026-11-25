@@ -343,16 +343,31 @@ fn decode_document(bytes: &[u8], format: Format) -> Result<Cow<'_, str>> {
         }
         return Ok(Cow::Owned(decoded));
     }
+    // Only consult the HTML tokenizer when the old decoding path would fail;
+    // successful documents retain their existing text and saved identities.
+    let html_fallback = || {
+        if format != Format::Html {
+            return None;
+        }
+        let prefix = String::from_utf8_lossy(&bytes[..bytes.len().min(1024)]);
+        if prefix.trim_start().starts_with("<?xml") {
+            return None;
+        }
+        crate::chm::html_encoding(bytes)
+    };
     let (encoding, offset) = if let Some(bom) = Encoding::for_bom(bytes) {
         bom
     } else if let Some(label) = declared_encoding(bytes, format) {
         (
             Encoding::for_label(label.as_bytes())
+                .or_else(html_fallback)
                 .ok_or("The document declares an unknown encoding")?,
             0,
         )
     } else if format == Format::Text && std::str::from_utf8(bytes).is_err() {
         (WINDOWS_1252, 0)
+    } else if format == Format::Html && std::str::from_utf8(bytes).is_err() {
+        (html_fallback().unwrap_or(UTF_8), 0)
     } else {
         (UTF_8, 0)
     };

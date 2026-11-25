@@ -46,6 +46,14 @@ pinned CREngine resolves non-container HTML resources against
 the document directory; Reader applies the narrower boundaries above.
 [KOReader resource resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L995-L1011)
 
+For standalone HTML that would otherwise fail decoding, a bounded scan of the
+first 1,024 bytes also recognizes supported legacy `http-equiv="Content-Type"`
+charset declarations. Existing successful input, BOM and XML-declaration
+precedence are unchanged. The chosen encoding must decode strictly; unknown,
+truncated or conflicting declarations and broader HTML encoding detection may
+still fail. This compatibility path remains unverified on real books, in the
+simulator and on Kindle. [KOReader charset detection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L5877-L5914)
+
 The CSS dependency and import changes have not been built or tested. Containment and symlink
 races, image and stylesheet appearance, missing-file fallback and saved
 position preservation need simulator and device verification before release.

@@ -27,9 +27,15 @@ The mapper is not yet connected to layout, selection or saved anchors.
 
 An internal, serializable raw-caret value now records a raw offset, its
 canonical edge, explicit affinity and the raw text's SHA-256. The bound mapper
-can create and validate this value without snapping gap interiors. It is not
-yet attached to Reader's persisted `Anchor`, and callers will also have to
-verify book, chapter, revision and block identity. Before raw carets are
+can create and validate this value without snapping gap interiors, and reject
+carets inside grapheme clusters. A separate internal raw-anchor envelope pairs
+it with an unchanged canonical `Anchor`; its validator checks the supplied
+book, chapter, revision and block identity, snapshot block key, both content
+fingerprints and the canonical/raw relationship. The envelope is not yet
+attached to persisted state or used by rendering. Internal Probe methods can
+now create and validate transient raw anchors against the currently open
+publication, or project an existing canonical anchor to a raw edge without
+rewriting the saved anchor. Before raw carets are
 persisted, the library and backup format must support version 2, preserve an
 atomic version-1 backup and reject unsupported raw data. The existing version-1
 loader rejects other library/backup versions, which prevents older builds

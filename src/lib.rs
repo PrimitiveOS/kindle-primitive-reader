@@ -2762,6 +2762,89 @@ impl Probe {
             offset,
         }
     }
+
+    /// Create a transient raw caret only for the exact open source and block.
+    /// This is not persisted or used for rendering until v2 state and all
+    /// selection/pagination consumers are ready.
+    #[allow(dead_code)]
+    pub(crate) fn raw_whitespace_anchor(
+        &self,
+        block: usize,
+        raw_offset: usize,
+        affinity: source::raw_whitespace::CaretAffinity,
+    ) -> Option<source::raw_whitespace::RawAnchor> {
+        use source::raw_whitespace::{AnchorContext, RawAnchor};
+        let index = self
+            .source
+            .blocks
+            .binary_search_by_key(&block, |item| item.key)
+            .ok()?;
+        let item = &self.source.blocks[index];
+        let bound = item.raw_whitespace.as_ref()?.bind(&item.text)?;
+        let caret = bound.caret_at(raw_offset, affinity)?;
+        let anchor = RawAnchor {
+            canonical: self.anchor(block, caret.canonical_offset),
+            caret,
+        };
+        bound.validate_raw_anchor(
+            &anchor,
+            &AnchorContext {
+                book: self.book,
+                chapter: &self.chapter,
+                revision: self.source.revision,
+                block,
+            },
+        )?;
+        Some(anchor)
+    }
+
+    /// Validate a transient raw anchor against the exact open source.
+    #[allow(dead_code)]
+    pub(crate) fn validate_raw_whitespace_anchor(
+        &self,
+        anchor: &source::raw_whitespace::RawAnchor,
+    ) -> Option<source::raw_whitespace::RawBoundary> {
+        use source::raw_whitespace::AnchorContext;
+        let block = anchor.canonical.block;
+        let index = self
+            .source
+            .blocks
+            .binary_search_by_key(&block, |item| item.key)
+            .ok()?;
+        let item = &self.source.blocks[index];
+        let bound = item.raw_whitespace.as_ref()?.bind(&item.text)?;
+        bound.validate_raw_anchor(
+            anchor,
+            &AnchorContext {
+                book: self.book,
+                chapter: &self.chapter,
+                revision: self.source.revision,
+                block,
+            },
+        )
+    }
+
+    /// Project an existing canonical anchor without changing the saved value.
+    #[allow(dead_code)]
+    pub(crate) fn raw_whitespace_from_anchor(
+        &self,
+        anchor: &Anchor,
+        affinity: flow_projection::Affinity,
+    ) -> Option<source::raw_whitespace::RawAnchor> {
+        use source::raw_whitespace::CaretAffinity;
+        if anchor.illustration.is_some() {
+            return None;
+        }
+        let (index, offset) = self.project_anchor(anchor)?;
+        let item = &self.source.blocks[index];
+        let bound = item.raw_whitespace.as_ref()?.bind(&item.text)?;
+        let raw_offset = bound.canonical_to_raw(offset, affinity)?;
+        let affinity = match affinity {
+            flow_projection::Affinity::Before => CaretAffinity::Before,
+            flow_projection::Affinity::After => CaretAffinity::After,
+        };
+        self.raw_whitespace_anchor(item.key, raw_offset, affinity)
+    }
 }
 
 fn revision(text: &str) -> u64 {

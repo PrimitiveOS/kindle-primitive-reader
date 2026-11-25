@@ -3023,23 +3023,31 @@ impl Reader {
                     "Annotation exchange",
                     Action::Show(Screen::AnnotationExchange),
                 ));
+                let language = self.controls.interface_language;
+                for item in &mut items {
+                    item.title = language.bookmark_list_settings_text(&item.title).to_owned();
+                    if let Some(detail) = &mut item.detail {
+                        *detail = language.bookmark_list_settings_detail(detail);
+                    }
+                }
                 return items;
             }
             Screen::AnnotationExchange => return self.annotation_exchange_settings(),
             Screen::AnnotationExchangePreview => return self.annotation_exchange_preview_items(),
             Screen::AnnotationListSettings => {
+                let language = self.controls.interface_language;
                 return crate::reading_controls::AnnotationListText::ALL
                     .into_iter()
                     .map(|display| {
                         let item = Item::new(
-                            display.label(),
+                            language.bookmark_list_settings_text(display.label()),
                             Action::SetReadingControls(ReadingControls {
                                 annotation_list_text: display,
                                 ..self.controls
                             }),
                         );
                         if display == self.controls.annotation_list_text {
-                            item.detail("Selected")
+                            item.detail(language.bookmark_list_settings_text("Selected"))
                         } else {
                             item
                         }

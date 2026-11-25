@@ -280,13 +280,14 @@ impl Reader {
     }
 
     pub(in crate::app) fn draw_flexible_marks(&self, canvas: &mut Canvas) -> bool {
+        let language = self.controls.interface_language;
         let Some(view) = &self.flexible_marks else {
             return false;
         };
         let Some(page) = view.pages.get(self.list_page) else {
             canvas.text(
                 view.layout.body(LIST_Y, 110),
-                "No saved marks in this book",
+                language.bookmark_list_settings_text("No saved marks in this book"),
                 BODY,
             );
             return true;
@@ -306,14 +307,26 @@ impl Reader {
         let previous = self.list_page > 0;
         let next = view.has_next(self.list_page);
         if previous {
-            pager_button(canvas, view.layout.previous(), "Previous");
+            pager_button(
+                canvas,
+                view.layout.previous(),
+                language.bookmark_list_settings_text("Previous"),
+            );
         }
         if next {
-            pager_button(canvas, view.layout.next(), "Next");
+            pager_button(
+                canvas,
+                view.layout.next(),
+                language.bookmark_list_settings_text("Next"),
+            );
         }
         let label = self.notice.clone().or_else(|| {
             if view.measuring.is_some() {
-                Some(format!("Page {}", self.list_page + 1))
+                Some(if language.is_english() {
+                    format!("Page {}", self.list_page + 1)
+                } else {
+                    format!("Trang {}", self.list_page + 1)
+                })
             } else if view.pages.len() > 1 {
                 Some(format!("{} / {}", self.list_page + 1, view.pages.len()))
             } else {

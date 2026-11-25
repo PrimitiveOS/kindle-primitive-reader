@@ -345,6 +345,61 @@ const PAGE_ACTION_LABELS: &[(&str, &str)] = &[
     ("Matches", "Kết quả tìm kiếm"),
 ];
 
+// Fixed saved-mark list settings and paging controls; mark text stays untouched.
+const BOOKMARK_LIST_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Sort by page", "Sắp xếp theo trang"),
+    ("Sort by date", "Sắp xếp theo ngày"),
+    ("Document reading order", "Thứ tự đọc tài liệu"),
+    (
+        "Newest and oldest by saved time",
+        "Mới nhất và cũ nhất theo thời điểm lưu",
+    ),
+    ("Selected", "Đã chọn"),
+    ("Reverse sorting", "Đảo thứ tự sắp xếp"),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    ("Show in highlight rows", "Hiện trong hàng tô sáng"),
+    ("Highlighted text", "Văn bản tô sáng"),
+    ("Highlighted text and note", "Văn bản tô sáng và ghi chú"),
+    (
+        "Note if set, otherwise highlighted text",
+        "Ghi chú nếu có, nếu không thì hiện văn bản tô sáng",
+    ),
+    ("Rows per page", "Số hàng mỗi trang"),
+    ("Bookmark font size", "Cỡ chữ dấu trang"),
+    ("Max lines per bookmark", "Số dòng tối đa mỗi dấu trang"),
+    ("Disabled", "Đã tắt"),
+    ("Flexible", "Linh hoạt"),
+    (
+        "Shrink bookmark font size to fit more text",
+        "Thu nhỏ chữ dấu trang để hiện thêm văn bản",
+    ),
+    (
+        "Unavailable with flexible rows",
+        "Không khả dụng với hàng linh hoạt",
+    ),
+    (
+        "Show separator between items",
+        "Hiện đường phân cách giữa các mục",
+    ),
+    ("Show highlight colors", "Hiện màu tô sáng"),
+    (
+        "Also show default highlight color",
+        "Cũng hiện màu tô sáng mặc định",
+    ),
+    (
+        "Show highlight colors first",
+        "Trước tiên hãy bật hiện màu tô sáng",
+    ),
+    ("Annotation exchange", "Trao đổi chú thích"),
+    (
+        "No saved marks in this book",
+        "Không có dấu đã lưu trong sách này",
+    ),
+    ("Previous", "Trước"),
+    ("Next", "Tiếp"),
+];
+
 // Fixed end-of-document action and preference labels only. The destructive
 // confirmation uses its separate shared Sheet and is not localized here.
 const END_DOCUMENT_LABELS: &[(&str, &str)] = &[
@@ -2197,6 +2252,44 @@ impl InterfaceLanguage {
     }
 
     /// Translate only fixed end-of-document UI labels and status text.
+    pub(super) fn bookmark_list_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = BOOKMARK_LIST_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn bookmark_list_settings_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = BOOKMARK_LIST_SETTINGS_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    pub(super) fn bookmark_list_settings_detail(self, detail: &str) -> String {
+        if self == Self::Vietnamese {
+            if let Some(number) = detail
+                .strip_prefix("Automatic (")
+                .and_then(|s| s.strip_suffix(')'))
+            {
+                if !number.is_empty() && number.bytes().all(|digit| digit.is_ascii_digit()) {
+                    return format!("Tự động ({number})");
+                }
+            }
+        }
+        self.bookmark_list_settings_text(detail).to_owned()
+    }
+
     pub(super) fn end_document_text<'a>(self, english: &'a str) -> &'a str {
         if self == Self::Vietnamese {
             if let Some((_, vietnamese)) =

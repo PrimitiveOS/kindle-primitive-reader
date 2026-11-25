@@ -22,8 +22,8 @@ The source chooser returns its results immediately. Metadata extraction runs one
 | RTF, CHM, DjVu, CBT, CBR and images | Their reading adapters currently expose no descriptive fields for these filters. RTF info groups, CHM language properties, DjVu annotation metadata, other comic-archive metadata and image EXIF descriptive fields remain follow-up work. |
 
 The CBZ metadata addition is an unverified implementation candidate. It reads
-only a single UTF-8 root-level `ComicInfo.xml`, capped at 256 KiB and 4,096 XML
-nodes, from an existing bounded ZIP archive. Duplicate, encrypted, malformed or
+only a single UTF-8 or BOM-marked UTF-16 root-level `ComicInfo.xml`, capped at
+256 KiB and 4,096 XML nodes, from an existing bounded ZIP archive. Duplicate, encrypted, malformed or
 unsupported entries are ignored. Archive identity is checked again after the
 read, and existing cached information remains if the source cannot be read.
 This addition has not been behaviorally tested or verified on Kindle.
