@@ -387,7 +387,7 @@ impl<R: Read + Seek> Assets<R> {
             .contents
             .media(path)
             .filter(|mime| mime.starts_with("image/"))?;
-        let bytes = self.zip.read(path, self.remaining.min(MAX_ASSET)).ok()?;
+        let mut bytes = self.zip.read(path, self.remaining.min(MAX_ASSET)).ok()?;
         self.remaining -= bytes.len();
         use image::ImageFormat::{Bmp, Gif, Jpeg, Png, WebP};
         let extension = if mime == "image/svg+xml" && bytes.len() <= crate::svg_image::MAX_SVG_BYTES
@@ -399,7 +399,19 @@ impl<R: Read + Seek> Assets<R> {
                 Gif => "gif",
                 Jpeg => "jpg",
                 Png => "png",
-                WebP => "webp",
+                WebP => {
+                    // Reflow currently paints PNG, not WebP. Keep the same
+                    // generated path/identity while snapshotting a bounded
+                    // grayscale PNG for supported WebP variants.
+                    if let Ok(converted) = crate::comic::ImagePage::webp_as_png(&bytes)
+                        && converted.len() <= MAX_ASSET
+                        && converted.len().saturating_sub(bytes.len()) <= self.remaining
+                    {
+                        self.remaining -= converted.len().saturating_sub(bytes.len());
+                        bytes = converted;
+                    }
+                    "webp"
+                }
                 _ => return None,
             }
         };

@@ -28,7 +28,12 @@ such as one paragraph or table that exceeds its budget reports a size error.
 Other limits include a 16 MiB ZIP, 512 parts, a 2 MiB body XML file, 48 levels
 of nesting, 1 MiB of converted markup per group, at most 2 MiB per image,
 and an 8 MiB image budget. The supported
-media are PNG, JPEG, BMP, first-frame GIF, static SVG and supported WebP.
+media are PNG, JPEG, BMP, first-frame GIF and static SVG. For supported simple
+WebP still images, Reader now snapshots a bounded grayscale PNG in memory under
+the same FB3 resource key so the reflow renderer can display it; the source
+archive, generated XHTML and anchors remain unchanged. Unsupported or
+over-budget WebP keeps the previous fallback and may remain blank. Actual
+rendering, resource usage and Kindle behavior remain unverified.
 Specialized FB3 typography, multimedia, embedded interactive elements, and
 KOReader reading-position import for FB3 remain outside this implementation.
 [Section grouping and links](../src/fb3/body.rs)

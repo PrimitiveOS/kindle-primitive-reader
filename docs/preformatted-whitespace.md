@@ -48,6 +48,14 @@ loader rejects other library/backup versions, which prevents older builds
 from normally opening and rewriting a version-2 state. Startup also recovers
 any pending backup journal before this check, so the eventual migration must
 coordinate its transaction with that recovery and keep the independent backup.
+An inactive transition helper now verifies exact v1 bytes, retains a
+digest-named v1 copy, and uses the existing recovery journal to publish a
+validated v2 candidate. It rechecks the journal's captured old state and the
+retained copy before commit. An interrupted or mismatched retained copy blocks
+the transition; it is not silently replaced. Filesystems that cannot sync
+directories do not provide a guaranteed power-loss durability claim. No v2
+schema is accepted or written by the active Reader yet, and the helper has not
+been behaviorally tested.
 Resume, canonical selection, saved-mark validation and old ODT anchor migration
 also reject transient raw carets instead of silently using their collapsed
 canonical positions. Mark comparisons and custom-contents/flow ordering account

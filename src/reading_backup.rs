@@ -399,6 +399,110 @@ pub(crate) fn transaction<T>(
 ) -> io::Result<T> {
     transaction_observed(state, updates, finish, |_| {})
 }
+
+/// Stage a future raw-anchor schema upgrade only after retaining the exact v1
+/// state independently of the restore journal. This is not called by the
+/// current Reader: its v2 schema and consumers are not enabled yet.
+///
+/// Caller must hold the storage guard and supply the actual v1/v2 semantic
+/// validators. The journal's old slot is checked *after* it is captured and
+/// before commit, so an intervening state change causes rollback rather than
+/// publishing against the wrong backup.
+#[allow(dead_code)]
+pub(crate) fn publish_raw_anchor_v2(
+    state: &Path,
+    expected_v1: &[u8],
+    replacement_v2: &[u8],
+    validate_v1: impl FnOnce(&[u8]) -> io::Result<()>,
+    validate_v2: impl Fn(&[u8]) -> io::Result<()>,
+) -> io::Result<PathBuf> {
+    if expected_v1.len() as u64 > crate::library::MAX_STATE_BYTES
+        || replacement_v2.len() as u64 > crate::library::MAX_STATE_BYTES
+    {
+        return Err(invalid("The reader state exceeds its size limit"));
+    }
+    let old: Value = serde_json::from_slice(expected_v1)?;
+    if !(old.is_array() || old.get("version").and_then(Value::as_u64) == Some(1)) {
+        return Err(invalid("The prior reader state is not version 1"));
+    }
+    let new: Value = serde_json::from_slice(replacement_v2)?;
+    if new.get("version").and_then(Value::as_u64) != Some(2) {
+        return Err(invalid("The replacement reader state is not version 2"));
+    }
+    validate_v1(expected_v1)?;
+    validate_v2(replacement_v2)?;
+    recover(state)?;
+    let root = root(state)?;
+    let destination = target(&root, state, Key::Library, false)?;
+    if read_nofollow(&destination, crate::library::MAX_STATE_BYTES)? != expected_v1 {
+        return Err(invalid("Reader state changed before its v1 backup"));
+    }
+    let hash = ring::digest::digest(&ring::digest::SHA256, expected_v1);
+    let name = format!(
+        ".reader-v1-{}.bak",
+        hash.as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    let backup = root.join(name);
+    if backup == destination {
+        return Err(invalid("The v1 backup collides with the reader state"));
+    }
+    match fs::symlink_metadata(&backup) {
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // A partial file left by interruption is retained and will fail
+            // the exact-content verification on the next attempt.
+            write(&backup, expected_v1)?;
+            sync_directory(&root)?;
+        }
+        Err(error) => return Err(error),
+    }
+    if read_nofollow(&backup, crate::library::MAX_STATE_BYTES)? != expected_v1 {
+        return Err(invalid("The retained v1 backup is incomplete or changed"));
+    }
+    let update = [(Key::Library, replacement_v2.to_vec())];
+    transaction(state, &update, || {
+        let old_slot = root.join(DIRECTORY).join("old-0");
+        if read_nofollow(&old_slot, crate::library::MAX_STATE_BYTES)? != expected_v1
+            || read_nofollow(&backup, crate::library::MAX_STATE_BYTES)? != expected_v1
+        {
+            return Err(invalid(
+                "Reader state or its v1 backup changed during upgrade",
+            ));
+        }
+        let current = read_nofollow(&destination, crate::library::MAX_STATE_BYTES)?;
+        if current != replacement_v2 {
+            return Err(invalid(
+                "The upgraded reader state changed during publication",
+            ));
+        }
+        validate_v2(&current)
+    })?;
+    Ok(backup)
+}
+
+fn read_nofollow(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > limit {
+        return Err(invalid("A reader backup is unavailable or too large"));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(invalid("A reader backup grew beyond its size limit"));
+    }
+    Ok(bytes)
+}
 fn transaction_observed<T>(
     state: &Path,
     updates: &[(Key, Vec<u8>)],

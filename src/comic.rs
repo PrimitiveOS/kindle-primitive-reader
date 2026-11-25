@@ -986,6 +986,21 @@ impl ImagePage {
         Ok(output)
     }
 
+    /// Convert an already bounded supported WebP to the grayscale PNG subset
+    /// used by reflowable FB3 illustrations, without changing their source key.
+    pub(crate) fn webp_as_png(bytes: &[u8]) -> Result<Vec<u8>> {
+        use image::ImageEncoder;
+        let image = Self::decode_webp(bytes)?;
+        let mut output = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut output).write_image(
+            &image.gray,
+            image.width,
+            image.height,
+            image::ExtendedColorType::L8,
+        )?;
+        Ok(output)
+    }
+
     pub(crate) fn decode_gif(bytes: &[u8]) -> Result<Self> {
         let gray = crate::gif_image::gray(bytes)?;
         Self::from_grayscale(gray.width(), gray.height(), gray.into_raw())

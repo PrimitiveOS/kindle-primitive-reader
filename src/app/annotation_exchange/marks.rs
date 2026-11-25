@@ -7,12 +7,28 @@ use crate::library::HighlightPage;
 use exchange::{Mark, PageBox, PageBoxes, Place, Range};
 use std::num::NonZeroU32;
 
+fn has_raw_marks(state: &BookState) -> bool {
+    state.bookmarks.iter().any(|mark| {
+        mark.position
+            .anchor
+            .as_ref()
+            .is_some_and(|anchor| anchor.raw_caret.is_some())
+    }) || state.highlights.iter().any(|mark| {
+        mark.selection.start.raw_caret.is_some() || mark.selection.end.raw_caret.is_some()
+    })
+}
+
 impl Reader {
     pub(super) fn export_transfer_marks(
         &self,
         source: &Path,
         state: &BookState,
     ) -> Result<(Vec<Mark>, usize)> {
+        if has_raw_marks(state) {
+            return Err(
+                "This book has raw whitespace marks that cannot yet be synchronized safely".into(),
+            );
+        }
         with_storage(|| {
             let result = if let Some(fixed) = &self.fixed {
                 let points = state
@@ -81,6 +97,14 @@ impl Reader {
         state: &mut BookState,
         keep_all: bool,
     ) -> Result<Summary> {
+        // Stock XPointer snapshots cannot represent positions inside collapsed
+        // whitespace. In particular, their timestamp cutoff must not delete
+        // such local marks merely because they could not appear remotely.
+        if has_raw_marks(state) {
+            return Err(
+                "This book has raw whitespace marks that cannot yet be synchronized safely".into(),
+            );
+        }
         let mut points = Vec::new();
         let mut ranges = Vec::new();
         let mut fixed_ranges = Vec::new();

@@ -1054,6 +1054,46 @@ const BOTTOM_TYPOGRAPHY_LABELS: &[(&str, &str)] = &[
         "Margins, hiding, floats, arbitrary selectors and vendor hints are not supported.",
         "Không hỗ trợ lề, ẩn nội dung, phần tử nổi, bộ chọn tùy ý và gợi ý của nhà cung cấp.",
     ),
+    (
+        "When notes appear in the page",
+        "Khi chú thích xuất hiện trên trang",
+    ),
+    (
+        "Horizontal reading with marked notes in the same chapter",
+        "Đọc ngang với chú thích được đánh dấu trong cùng chương",
+    ),
+    ("Reader settings still apply", "Cài đặt Reader vẫn áp dụng"),
+    (
+        "Explicit alignment, font override and line spacing remain independent controls.",
+        "Căn lề được chỉ định, ghi đè phông và giãn dòng vẫn là các điều khiển độc lập.",
+    ),
+    ("Use default", "Dùng mặc định"),
+    ("Selected", "Đã chọn"),
+    (
+        "Inherit future all-books changes",
+        "Kế thừa các thay đổi sau này cho mọi sách",
+    ),
+    ("Override the default", "Ghi đè mặc định"),
+    ("Off for this book", "Tắt cho sách này"),
+    ("Stop using on all books", "Ngừng dùng cho mọi sách"),
+    ("Use on all books", "Dùng cho mọi sách"),
+    (
+        "Apply to eligible books that use the default",
+        "Áp dụng cho sách đủ điều kiện đang dùng mặc định",
+    ),
+    (
+        "Existing books inherit unless they override it",
+        "Sách hiện có kế thừa trừ khi ghi đè",
+    ),
+    (
+        "Review a book-specific copy; original file stays unchanged",
+        "Xem lại bản sao riêng cho sách; tệp gốc giữ nguyên",
+    ),
+    ("No CSS files found", "Không tìm thấy tệp CSS"),
+    (
+        "Copy UTF-8 CSS files to reader/data/style-tweaks",
+        "Sao chép tệp CSS UTF-8 vào reader/data/style-tweaks",
+    ),
 ];
 
 // Fixed top Settings descriptions only; user fonts, paths and dynamic notices stay untouched.

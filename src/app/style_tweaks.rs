@@ -774,47 +774,57 @@ impl Reader {
                     _ => "Book choice overrides the live all-books default",
                 };
                 let detail = if note_format(p.id).is_some() {
-                    "Apply to eligible books that use the default"
+                    language.bottom_typography_text("Apply to eligible books that use the default")
                 } else {
-                    "Existing books inherit unless they override it"
+                    language
+                        .bottom_typography_text("Existing books inherit unless they override it")
                 };
                 let status = if note_format(p.id).is_some() || advanced_note(p.id) {
-                    Item::new("When notes appear in the page", Action::Heading)
-                        .detail("Horizontal reading with marked notes in the same chapter")
+                    Item::new(
+                        language.bottom_typography_text("When notes appear in the page"),
+                        Action::Heading,
+                    )
+                    .detail(language.bottom_typography_text(
+                        "Horizontal reading with marked notes in the same chapter",
+                    ))
                 } else {
-                    Item::new("Reader settings still apply", Action::Heading)
-                        .detail("Explicit alignment, font override and line spacing remain independent controls.")
+                    Item::new(language.bottom_typography_text("Reader settings still apply"), Action::Heading)
+                        .detail(language.bottom_typography_text("Explicit alignment, font override and line spacing remain independent controls."))
                 };
                 vec![
                     Item::new(p.title, Action::Heading).detail(description),
-                    action("Use default", Command::Choose(p.id.into(), None)).detail(
-                        if current.is_none() {
-                            "Selected"
-                        } else {
-                            "Inherit future all-books changes"
-                        },
-                    ),
-                    action("On for this book", Command::Choose(p.id.into(), Some(true))).detail(
-                        if current == Some(true) {
-                            "Selected"
-                        } else {
-                            "Override the default"
-                        },
-                    ),
                     action(
-                        "Off for this book",
+                        language.bottom_typography_text("Use default"),
+                        Command::Choose(p.id.into(), None),
+                    )
+                    .detail(if current.is_none() {
+                        language.bottom_typography_text("Selected")
+                    } else {
+                        language.bottom_typography_text("Inherit future all-books changes")
+                    }),
+                    action(
+                        language.bottom_typography_text("On for this book"),
+                        Command::Choose(p.id.into(), Some(true)),
+                    )
+                    .detail(if current == Some(true) {
+                        language.bottom_typography_text("Selected")
+                    } else {
+                        language.bottom_typography_text("Override the default")
+                    }),
+                    action(
+                        language.bottom_typography_text("Off for this book"),
                         Command::Choose(p.id.into(), Some(false)),
                     )
                     .detail(if current == Some(false) {
-                        "Selected"
+                        language.bottom_typography_text("Selected")
                     } else {
-                        "Override the default"
+                        language.bottom_typography_text("Override the default")
                     }),
                     action(
                         if global {
-                            "Stop using on all books"
+                            language.bottom_typography_text("Stop using on all books")
                         } else {
-                            "Use on all books"
+                            language.bottom_typography_text("Use on all books")
                         },
                         Command::Global(p.id.into(), !global),
                     )
@@ -833,13 +843,20 @@ impl Reader {
                             p.file_name().unwrap().to_string_lossy().as_ref(),
                             Command::Import(i),
                         )
-                        .detail("Review a book-specific copy; original file stays unchanged")
+                        .detail(language.bottom_typography_text(
+                            "Review a book-specific copy; original file stays unchanged",
+                        ))
                     })
                     .collect();
                 if items.is_empty() {
                     items.push(
-                        Item::new("No CSS files found", Action::Heading)
-                            .detail("Copy UTF-8 CSS files to reader/data/style-tweaks"),
+                        Item::new(
+                            language.bottom_typography_text("No CSS files found"),
+                            Action::Heading,
+                        )
+                        .detail(language.bottom_typography_text(
+                            "Copy UTF-8 CSS files to reader/data/style-tweaks",
+                        )),
                     );
                 }
                 items
