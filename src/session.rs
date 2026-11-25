@@ -248,11 +248,8 @@ impl SearchLayoutRecipe {
             }
         };
         check()?;
-        let expected = self
-            .foreground_sources
-            .as_ref()
-            .ok_or("Raw search requires a verified foreground layout")?;
-        if self.current_sources.as_ref() != Some(expected) {
+        let expected = self.foreground_sources.as_ref();
+        if self.current_sources.as_ref() != expected {
             return Err(
                 "The book or reading fonts changed; reopen the book before searching".into(),
             );
@@ -277,7 +274,7 @@ impl SearchLayoutRecipe {
         let probe = with_storage(|| {
             check().map_err(io::Error::other)?;
             if screen_pages::ScreenPageSources::read_paths(&config.book, &config.fonts).as_ref()
-                != Some(expected)
+                != expected
             {
                 return Err(io::Error::other(
                     "The book or reading fonts changed before search",
@@ -288,9 +285,9 @@ impl SearchLayoutRecipe {
             let probe = config
                 .layout_chapter_cancellable(book, index, sources, &check)
                 .map_err(io::Error::other)?;
-            if probe.raw_layout_sources.as_ref() != Some(expected)
+            if probe.raw_layout_sources.as_ref() != expected
                 || screen_pages::ScreenPageSources::read_paths(&config.book, &config.fonts).as_ref()
-                    != Some(expected)
+                    != expected
             {
                 return Err(io::Error::other(
                     "The book or reading fonts changed during search",
@@ -502,6 +499,7 @@ impl BookConfig {
             &self.user_hyphenation,
             &user_styles,
             || crate::font_context(&self.fonts),
+            raw_sources.is_some(),
             check_cancelled,
         ) {
             Ok(probe) if !narrow || !probe.requests_vertical => Ok(probe),
@@ -522,6 +520,7 @@ impl BookConfig {
                     &self.user_hyphenation,
                     &user_styles,
                     || crate::font_context(&self.fonts),
+                    raw_sources.is_some(),
                     check_cancelled,
                 )
             }

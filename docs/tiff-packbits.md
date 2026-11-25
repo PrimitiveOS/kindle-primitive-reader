@@ -64,8 +64,12 @@ display, applying WhiteIsZero inversion afterward. At the existing pixel cap,
 decoded strip plus grayscale output uses at most 24 MiB, separate from bounded
 compressed input and the Deflate overflow sentinel. LZW and Deflate strips can
 also use horizontal predictor 2; reconstruction adds unsigned 16-bit samples
-in TIFF byte order and resets at each row. Sixteen-bit alpha, palette and
-non-RGB color modes remain unsupported. Pinned MuPDF has a 16-bit predictor path, but its
+in TIFF byte order and resets at each row. Contiguous 16-bit grayscale can
+also include an explicitly unassociated alpha channel: samples are composited
+over white in 16-bit precision before conversion to 8-bit grayscale. The
+decoded strip and output are capped at 32 MiB; predictor history is kept
+separately per sample. Associated-alpha grayscale, 16-bit palette and non-RGB
+color modes remain unsupported. Pinned MuPDF has a 16-bit predictor path, but its
 sample handling differs and exact pixel parity is unverified. This conversion has not
 been compared with KOReader or behaviorally validated on the simulator or
 Kindle. [Pinned MuPDF byte-order handling](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L1639-L1641)
@@ -127,7 +131,7 @@ reconstructed independently for each 16-bit channel and row. Decoded strip
 plus grayscale output is limited to 32 MiB, with compressed input and the
 Deflate overflow sentinel separately bounded. This conversion is not
 color-managed and has not been compared with KOReader or behaviorally checked
-on the simulator or Kindle. Sixteen-bit alpha and planar RGB remain unsupported.
+on the simulator or Kindle. Sixteen-bit RGB alpha and planar RGB remain unsupported.
 
 ## Process CMYK strips
 

@@ -1313,6 +1313,7 @@ impl Probe {
             user_rules,
             user_styles,
             load_fonts,
+            true,
             &|| Ok(()),
         )
     }
@@ -1326,6 +1327,7 @@ impl Probe {
         user_rules: &user_hyphenation::Rules,
         user_styles: &user_styles::Snapshot,
         load_fonts: impl Fn() -> Result<FontContext>,
+        allow_raw_layout: bool,
         check_cancelled: &dyn Fn() -> Result<()>,
     ) -> Result<Self> {
         let book = opened.as_mut().ok_or("Reading source is unavailable")?;
@@ -1407,6 +1409,13 @@ impl Probe {
                 &Default::default(),
             )?
         };
+        // Unstampable sources retain the established canonical layout so
+        // search and saved positions cannot disagree across chapter reloads.
+        if parley_layout::RAW_LAYOUT_ENABLED && !allow_raw_layout {
+            for block in &mut source.blocks {
+                block.raw_whitespace = None;
+            }
+        }
         source.resolve_hyphenation_languages(main_language, settings.typography.respect_embedded);
         if complete {
             for previous in book.previous_mobi_chapters(&href) {
@@ -1650,6 +1659,7 @@ impl Probe {
                     user_rules,
                     &user_styles.without_inline_footnotes(),
                     load_fonts,
+                    allow_raw_layout,
                     check_cancelled,
                 );
             }
@@ -1709,6 +1719,7 @@ impl Probe {
                 user_rules,
                 &fallback,
                 load_fonts,
+                allow_raw_layout,
                 check_cancelled,
             );
         }

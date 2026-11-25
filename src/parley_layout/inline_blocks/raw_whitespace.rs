@@ -1,7 +1,6 @@
-//! Verified raw whitespace projection for a future preformatted layout.
+//! Bounded, source-verified preformatted layout and raw caret projection.
 //!
-//! This plan is intentionally not activated until pagination and persisted
-//! anchors can retain raw gap positions without changing existing v1 anchors.
+//! Unsupported projections fall back to the established canonical layout.
 #![allow(dead_code)]
 
 use super::super::{LineIndent, PaintBrush, layout_with_images};

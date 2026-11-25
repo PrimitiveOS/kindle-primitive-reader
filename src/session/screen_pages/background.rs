@@ -382,6 +382,7 @@ impl Request {
                 &self.hyphenation,
                 &self.styles,
                 || Ok(fonts.clone()),
+                true,
                 &check,
             )?;
             if probe.is_vertical() {

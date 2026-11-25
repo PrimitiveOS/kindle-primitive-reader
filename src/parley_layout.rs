@@ -47,9 +47,9 @@ const MAX_IMAGE_BOXES: usize = 2_048;
 const MAX_DISTINCT_IMAGE_READS: usize = 512;
 const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
 const MAX_RUBY_BASE_BYTES: usize = 192;
-// Raw layouts remain disabled until source-aware search, restoration,
-// selection and versioned state promotion are integrated end to end.
-pub(crate) const RAW_LAYOUT_ENABLED: bool = false;
+// The bounded source-verified preformatted path is enabled locally. Unsupported
+// projections retain the canonical layout; device validation remains pending.
+pub(crate) const RAW_LAYOUT_ENABLED: bool = true;
 
 fn declared_box_height(style: &Style, width: u32, font: f32) -> Option<f32> {
     let length = match style.image_height? {

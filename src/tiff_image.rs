@@ -115,9 +115,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let predictor = image.scalar(317, SHORT_ONLY, 1)?;
     let orientation = image.scalar(274, SHORT_ONLY, 1)?;
     if !matches!(bits, 1 | 2 | 4 | 8 | 16)
-        || (bits == 16 && !matches!((photometric, samples), (0 | 1, 1) | (2, 3)))
+        || (bits == 16 && !matches!((photometric, samples), (0 | 1, 1 | 2) | (2, 3)))
         || (!matches!(photometric, 0 | 1 | 3) && !matches!(bits, 1 | 8) && !(photometric == 2 && bits == 16))
-        || (samples >= 2 && bits != 8 && !(photometric == 2 && samples == 3 && bits == 16))
+        || (samples >= 2 && bits != 8 && !(bits == 16 && matches!((photometric, samples), (0 | 1, 2) | (2, 3))))
         || bits_values.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != bits))
         || formats.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != 1))
         || !(fill_order == 1 || (bits < 8 && fill_order == 2))
@@ -133,6 +133,12 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     // SubfileType
     {
         return Err(TiffError::Unsupported);
+    }
+    if bits == 16 && samples == 2 && alpha != Some(2) {
+        return Err(TiffError::Unsupported);
+    }
+    if bits == 16 && samples == 2 && u64::from(pixel_count) * 5 > 32 * 1024 * 1024 {
+        return Err(TiffError::Limit);
     }
     if bits == 16 && samples == 3 && u64::from(pixel_count) * 7 > 32 * 1024 * 1024 {
         return Err(TiffError::Limit);
@@ -266,8 +272,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         if predictor == 2 {
             let decoded = unpacked.as_mut().ok_or(TiffError::Unsupported)?;
             if bits == 16 {
-                // The 16-bit path has either one grayscale or three RGB
-                // channels. Differences are per sample, resetting each row.
+                // The 16-bit path has one or two grayscale samples or three
+                // RGB channels. Differences are per sample, resetting each row.
                 for row in decoded.chunks_exact_mut(row_bytes) {
                     let mut previous = [0u16; 3];
                     for (index, sample) in row.chunks_exact_mut(2).enumerate() {
@@ -344,22 +350,32 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         } else if let Some(alpha_kind) = alpha {
             // Composite associated or unassociated alpha over the same white
             // page used by Reader's other transparent-image paths.
-            pixels.extend(strip.chunks_exact(samples as usize).map(|pixel| {
-                let gray = if samples == 2 {
-                    u32::from(pixel[0] ^ invert)
-                } else {
-                    (u32::from(pixel[0]) * 2126
-                        + u32::from(pixel[1]) * 7152
-                        + u32::from(pixel[2]) * 722)
-                        / 10000
-                };
-                let a = u32::from(pixel[samples as usize - 1]);
-                if alpha_kind == 1 {
-                    (gray + 255 - a).min(255) as u8
-                } else {
-                    ((gray * a + 255 * (255 - a) + 127) / 255) as u8
-                }
-            }));
+            if bits == 16 {
+                // This is restricted above to unassociated grayscale + alpha.
+                pixels.extend(strip.chunks_exact(4).map(|pixel| {
+                    let gray = u64::from(image.order.short([pixel[0], pixel[1]]));
+                    let gray = if photometric == 0 { 65535 - gray } else { gray };
+                    let a = u64::from(image.order.short([pixel[2], pixel[3]]));
+                    (((gray * a + 65535 * (65535 - a) + 32767) / 65535) >> 8) as u8
+                }));
+            } else {
+                pixels.extend(strip.chunks_exact(samples as usize).map(|pixel| {
+                    let gray = if samples == 2 {
+                        u32::from(pixel[0] ^ invert)
+                    } else {
+                        (u32::from(pixel[0]) * 2126
+                            + u32::from(pixel[1]) * 7152
+                            + u32::from(pixel[2]) * 722)
+                            / 10000
+                    };
+                    let a = u32::from(pixel[samples as usize - 1]);
+                    if alpha_kind == 1 {
+                        (gray + 255 - a).min(255) as u8
+                    } else {
+                        ((gray * a + 255 * (255 - a) + 127) / 255) as u8
+                    }
+                }));
+            }
         } else if photometric == 5 {
             // Approximate unprofiled device CMYK for a white paper display;
             // exact color-managed conversion requires the source profile.

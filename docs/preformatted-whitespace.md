@@ -1,211 +1,67 @@
-# Preformatted whitespace provenance
+# Preformatted whitespace
 
-Reader currently normalizes EPUB/XHTML text before the CSS cascade. Once
-multiple spaces, tabs or line breaks have been collapsed, existing anchors and
-highlights refer to those normalized bytes. Pinned CRE keeps text available to
-its renderer and applies the computed `white-space` mode while formatting it.
+The local Reader build enables a bounded horizontal layout for simple source
+blocks with `white-space: pre`, `pre-wrap` or `break-spaces`. It preserves
+verified spaces, tabs and line breaks while keeping existing canonical source
+identities. This implementation has not yet been behaviorally tested in the
+simulator or on Kindle and must not be treated as validated or released.
 
-The first implementation stage records an optional in-memory raw snapshot for
-a leaf block containing exactly one direct text node. It independently repeats
-Reader's existing normalization and retains the snapshot only when the result
-matches the canonical block byte-for-byte. Non-whitespace spans map exactly to
-canonical bytes; collapsed, leading and trailing whitespace are recorded as
-explicit ambiguous gaps rather than assigned guessed anchor offsets. Each
-snapshot is limited to 64 KiB and 4096 span/gap records. A chapter has separate
-768 KiB preferred `<pre>` and 256 KiB general metadata budgets, including
-allocated record capacity; a block outside those budgets uses the existing
-path. Markup, multiple text nodes, hidden/excluded content and other complex or
-nonmatching blocks are not captured.
+A snapshot is captured only for a leaf block with one direct text node when its
+normalization matches the canonical block exactly. Each block is limited to
+64 KiB and 4,096 mapping records; chapter metadata budgets are 768 KiB for
+preferred `<pre>` content and 256 KiB for other content. The ordinary layout
+is used for content outside these bounds, unsupported projections, images,
+ruby, generated or styled inline content, transforms, bidi controls, joined
+notes and in-page footnotes. A layout whose source or ordered font stack cannot
+be stamped also uses the canonical path. Folder books retain canonical search.
 
-A bound snapshot verifies the canonical block with SHA-256 before mapping.
-Canonical carets map to gap edges using explicit before/after affinity; raw
-carets on exact text or whitespace edges map back exactly. An interior raw
-whitespace caret is returned as an explicit gap with its raw offset rather
-than being silently snapped to a normalized position. Invalid UTF-8
-boundaries, mismatched canonical text or conflicting mappings fail closed.
-The mapper is not yet connected to the active reading layout or selection.
+Raw carets carry the canonical anchor, exact raw byte position, affinity and
+source fingerprint. Mappings are checked against the open source and grapheme
+boundaries. Canonical anchors resolve into raw-rendered text only when both
+boundary affinities prove the same raw position; ambiguous or stale positions
+fail closed. Raw pagination retains blank lines, and selection, copying,
+search and resume use the verified raw positions. Unsupported foreign-note
+projections and unresolvable selections are rejected. Cross-section quote
+validation may reopen chapters and has not been performance tested.
 
-An internal, serializable raw-caret value now records a raw offset, its
-canonical edge, explicit affinity and the raw text's SHA-256. The bound mapper
-can create and validate this value without snapping gap interiors, and reject
-carets inside grapheme clusters. A separate internal raw-anchor envelope pairs
-it with an unchanged canonical `Anchor`; its validator checks the supplied
-book, chapter, revision and block identity, snapshot block key, both content
-fingerprints and the canonical/raw relationship. The envelope is not yet
-attached to persisted state or used by rendering. Internal Probe methods can
-now create and validate transient raw anchors against the currently open
-publication, or project an existing canonical anchor to a raw edge without
-rewriting the saved anchor. A transient selection consumer can validate two
-raw anchors in the same captured block and return their exact raw substring;
-cross-block and invalid selections fail closed. It is not connected to the UI
-or active rendering. The canonical `Anchor` type has an optional raw caret slot;
-ordinary serialization rejects populated slots, ordinary deserialization rejects
-the field. The checked v2 library codec handles them separately. Legacy anchors
-serialize as before. The existing version-1 loader in older builds rejects other
-library/backup versions, which prevents those builds
-from normally opening and rewriting a version-2 state. Startup also recovers
-any pending backup journal before loading. A staged promotion verifies that the
-v1 file still matches the exact bytes last loaded or successfully saved, retains a
-digest-named v1 copy, and uses the existing recovery journal to publish a
-validated v2 candidate. It rechecks the journal's captured old state and the
-retained copy before commit. An interrupted or mismatched retained copy blocks
-the transition; it is not silently replaced. Promotion also rejects duplicate
-keys, legacy shapes, fields that would not round-trip, and states that v1
-sanitization would change. The original file remains in place on rejection.
-Filesystems that cannot sync
-directories do not provide a guaranteed power-loss durability claim. Promotion is triggered only by a raw-bearing save; raw layouts remain disabled and this path has not been behaviorally tested.
-A v2 decoder rejects duplicate JSON keys and raw fields
-outside the known resume, bookmark, highlight, custom-contents and hidden-flow
-anchors. It bounds file size and raw-caret count, checks each caret's structural
-relationship to its canonical anchor, and keeps missing books without guessing
-their source data. The canonical JSON portion must round-trip exactly through
-Reader's state types, so unsupported fields or normalizations are rejected. An
-encoder clones the state, detaches and validates raw carets, serializes
-the canonical part, reinserts them at the approved paths and runs the decoder on
-the result. A separate check can validate a raw caret against an open book's
-source fingerprint and grapheme mapping. Reader can load a validated v2 library
-without legacy sanitization and save it through the checked encoder and Kindle recovery journal. V2 libraries can preview and apply a conservative additive
-merge from verified v1 or v2 backups; conflicting positions, marks, metadata,
-contents or flow settings reject the entire merge instead of silently choosing
-one. The multi-component restore verifies the captured disk baseline before
-commit. Restoring a v2 backup into a v1 library uses the same strict conflict checks; it first retains the exact verified v1 state, journals any required pre-restore save against the loaded baseline, and rechecks both the journal capture and retained backup before commit. These checks coordinate Reader writes; they cannot provide an atomic compare-and-swap against an unrelated process writing the same file concurrently. A missing baseline for an existing file, or a v1 state that cannot be represented without loss, is rejected. Raw resumes and history
-locations are rejected before fixed or reflow page fallback. Operations using
-an unjournaled generic save are rejected for v2, and a pending journal requires
-Reader to reopen before saving its in-memory state. While raw rendering is
-disabled, Reader refuses to open books containing any raw positions or marks
-instead of exposing incomplete legacy editing paths. Raw rendering, app-level
-raw restoration remains incomplete.
-Archive moves of a v2 or raw-bearing library use the journaled save. If a save
-fails and recovery is pending or cannot be inspected, Reader retains both the
-source and staged archive copy; cleanup is deferred until recovery determines
-which path the state references. This failure path has not been tested yet.
-The decoder also validates book identities, retained collection
-membership, position lists and mark limits without invoking v1 sanitization or
-checking whether each book file is present. Raw-bearing books use a strict single-book v2 metadata sidecar, while books
-without raw positions retain the existing v1 sidecar format. V2 sidecar recovery
-checks the edition identity, size and path and rejects unrelated library data;
-older versions cannot read that sidecar. The new path remains untested.
-App-level resume, saved-mark validation and old ODT anchor migration reject raw
-carets instead of silently using their collapsed canonical positions. Session
-restoration can resolve one only when the newly shaped source and raw page
-actually match. Mark comparisons and custom-contents/flow ordering account
-for raw endpoints, but active reading cannot yet create or restore them.
+Search workers rebuild the chapter layout under the storage lease and compare
+its book/font stamps and raw source with the foreground layout. Prepared layouts
+carry their verified stamps. Changed inputs or a missing required source mapping
+reject the search; layouts that consistently lack stamps use canonical text.
+The stamps are not an atomic compare-and-swap against non-cooperating external
+writers.
 
-A preformatted horizontal layout plan can now build a separate raw text view
-for a verified simple block with an explicit `pre`, `pre-wrap` or
-`break-spaces` mode. Every canonical byte must map in order to an identical raw
-byte; additional whitespace is synthetic, and a collapsed space with no raw
-space makes the plan fail closed. Images, ruby, inline markup, generated text,
-directional controls, text transforms and other projections are currently
-excluded. The plan is not activated: blank-line pagination, raw-aware selection
-geometry and durable raw anchor storage must be integrated before it can safely
-affect reading.
+Raw-bearing state is saved in version 2. Before promoting an existing v1
+library, Reader verifies the last loaded disk baseline, rejects data that would
+be normalized or lost, retains an exact digest-named v1 backup, and publishes
+the checked v2 state through the recovery journal. The journal verifies both its
+captured old state and retained backup before commit. If a fresh installation has
+no state file, the journal must prove the old slot was absent; no backup is
+invented. Restore and preliminary saves apply the same checks. Pending recovery
+blocks saving stale in-memory state. Older Reader versions reject v2 state.
+Filesystems without directory sync do not provide a power-loss durability
+claim; unrelated external writers are outside the supported lease model.
 
-The detached plan can shape its raw text with Parley and create bounded,
-grapheme-validated raw carets for contiguous line ranges, including lines
-whose content is whitespace. It is tied to the source block's lifetime and
-rechecks the raw snapshot and computed mode before shaping. A detached
-selection-geometry consumer validates both raw anchors and the exact raw
-quote before accepting bounded rectangles. Detached pagination can return a
-verified raw anchor for the first line intersecting a paragraph-local page
-range, including whitespace-only lines, and map an anchor back to a line using
-its explicit boundary affinity. These are not installed into Reader's page model
-or UI; durable state and the full integration remain open. A detached hit-test
-can also resolve a shaped cluster to a verified raw grapheme caret, including
-positions within restored whitespace. Empty areas without a cluster are rejected.
-The chapter builder has a hard-disabled raw-layout branch that would transfer
-verified source bindings and raw line boundaries into the page model. Page
-lookup can map those lines to and from raw anchors with explicit affinity,
-including blank lines; trailing blank-line extent is not trimmed. Raw layout
-falls back when in-page notes are enabled. The branch remains disabled while resume, search and
-state promotion are incomplete; active rendering still uses the legacy layout.
-Literal, regular-expression and nearby search can consume a verified map of
-the raw blocks actually accepted by a shaped chapter. The map checks book,
-chapter, source revision, effective stylesheet configuration, line metadata
-and raw fingerprints against the worker's source. Raw results carry exact
-grapheme-checked endpoints; a raw nearby-search boundary without a verified
-layout fails closed. The UI workers have a staged Send-safe layout recipe that
-reconstructs a chapter in the worker, checks cancellation around source reads
-and during layout, and supplies the map. Its full layout inputs are included
-in search-result invalidation. This path is inactive while the raw layout gate
-is off; search fails rather than guessing if a required map is missing.
-Reader's selection value can carry a verified raw quote and raw endpoints,
-including through the reading-session quote API. Within one section it can
-also assemble cross-block quotes and geometry when endpoint layouts are
-verified, including mixed raw and ordinary endpoints in different blocks,
-using each intermediate block's installed projection. Cross-section raw
-selections can assemble source-verified chapter fragments; saved geometry
-revalidates the full quote before drawing its local fragment. This may require
-reloading other sections and has not been performance-tested. Chapters with
-joined notes and unsupported renderer projections still fail closed. Mixed endpoints in
-one block are accepted only when both directional projections prove the same
-raw position; ambiguous whitespace is rejected. The active renderer has not
-yet installed raw layouts.
-Selections whose ordinary endpoints surround a raw paragraph also route through
-the raw projection, so intervening whitespace is not silently normalized.
-Word extension uses source-verified ordering, and dictionary context follows
-each displayed block's projection. Unsupported foreign-note and cross-section
-raw ranges with unsupported note projections remain fail-closed.
+V2 library decoding rejects duplicate fields, unknown raw-caret placements,
+invalid positions and lossy normalizations, and retains missing books. Backup
+merges are conservative: conflicts reject the merge instead of dropping marks
+or settings. Metadata sidecars and dated archives use strict single-book v2
+records when needed; ordinary records retain v1 formatting. A dated archive
+upgrade retains a digest-named v1 copy and rejects lossy upgrades. Older Reader
+versions cannot read v2 sidecars or archives. Archive moves retain both source
+and staged copies when journal recovery is uncertain.
 
-This stage does **not** change rendering, copying, selection, source revisions,
-existing anchors or saved state. It does not yet implement preformatted EPUB
-rendering. Later stages need a bounded style-aware layout projection and a
-backward-compatible way to represent positions inside raw whitespace. They
-must handle whitespace-only lines, selection/copy, old highlights and resumes,
-CSS changes and ambiguity without inventing a canonical location. Any
-unsupported or unverifiable projection must continue to use the current
-layout. This provenance has not yet been built or behaviorally tested.
+The saved-mark browser verifies raw locations or the complete saved quotation
+before direct note editing and reviewed bulk changes. Page overview can show
+cross-chapter raw highlight cues after verifying the whole quote; work is capped
+at four highlights of up to eight chapters per draw, so other cues are omitted.
+For split ODT and large-text books, current-section raw anchors are kept only
+after the legacy section check; raw anchors requiring translation from an old
+unsplit source remain unsupported.
+
+Stock XPointer annotations cannot represent positions inside raw whitespace.
+Import preserves local raw marks, reports them as unavailable and disables
+remote deletion cutoffs. Export reports omitted raw marks as unavailable; the
+existing completeness guard refuses to publish an incomplete replacement.
 
 [Pinned CRE whitespace formatting](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L2569-L2575)
-
-Raw-aware search additionally requires the foreground chapter and worker to
-observe the same book and ordered font-stack file stamps before and after
-shaping. A missing or changed stamp rejects that search; prepared layouts that
-have not supplied a verified stamp also fail closed. These stamps follow the
-existing single-writer/storage-lease model and are not cryptographic protection
-against arbitrary external file replacement. This path remains untested and the
-raw layout gate remains disabled.
-
-For raw saved marks, direct note editing and reviewed bulk note/mark removal
-verify the source location or complete saved quotation both at review and again
-before changing state. Stale or unresolvable locations are rejected. This path
-is staged and has not been behaviorally tested.
-
-Page overview can show raw highlight cues spanning chapters after validating
-the complete saved quotation and deriving a chapter-local fragment. To bound
-layout work, it checks at most four such highlights covering at most eight chapters
-each per overview draw; other cues are omitted. This remains untested.
-
-Stock XPointer annotation import preserves raw local marks and reports them as
-unavailable; it disables remote deletion cutoffs and never matches an incoming
-canonical mark to a raw mark. Raw marks are omitted from export and reported
-unavailable, so the existing complete-snapshot guard does not publish an
-incomplete replacement. This behavior remains untested.
-
-For split ODT and large text documents, a raw anchor already in a current
-section survives the legacy migration check unchanged; opening the page still
-validates its source fingerprint. Raw anchors that would require translation
-from an older unsplit section remain rejected. This path remains untested.
-
-Canonical links and saved positions into a raw-rendered block resolve through
-the verified raw line model only when both boundary affinities identify the same
-raw offset. Ambiguous collapsed boundaries are rejected instead of silently
-choosing a different line. This path remains untested.
-
-Dated metadata archives can encode raw-bearing books as individually validated
-v2 library records. Existing v1 archives retain their format until a v2 record
-is needed. Before upgrading, Reader rejects v1 fields or normalization that
-would lose data and retains an exact digest-named v1 backup; replacement uses the
-existing archive lock and an atomic, directory-synced rename. Older Reader
-versions cannot open v2 archives. These paths remain untested, and the archive
-lock coordinates cooperating writers rather than arbitrary external processes.
-
-On a fresh installation with no library file, the first raw-bearing state can
-be created through the recovery journal only if its captured old slot proves
-that no prior file existed. A newly appeared file causes rollback rather than
-overwrite; no v1 backup exists in this case. This path remains untested.
-
-A v2 backup can likewise be restored into a fresh installation without a
-previous library file: both any preliminary v1 save and the restore journal
-verify the absent captured slot. An existing or newly appeared library is never
-assumed absent. This path remains untested.

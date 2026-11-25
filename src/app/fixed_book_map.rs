@@ -16,7 +16,21 @@ const HELP_PANEL: Rect = Rect::new(160, 420, 944, 900);
 const HELP_DONE: Rect = Rect::new(868, 443, 197, 100);
 
 fn help_button(layout: NavigationLayout) -> Rect {
-    Rect::new((layout.width - 260) / 2, layout.height - 118, 260, 100)
+    layout.horizontal(Rect::new(
+        layout.width / 2 + 48,
+        layout.height - 118,
+        240,
+        100,
+    ))
+}
+
+fn return_to_book_button(layout: NavigationLayout) -> Rect {
+    layout.horizontal(Rect::new(
+        layout.width / 2 - 312,
+        layout.height - 118,
+        300,
+        100,
+    ))
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -444,6 +458,12 @@ impl Reader {
             canvas.button(layout.next(), language.book_map_text("Next"), false, false);
         }
         canvas.button(
+            return_to_book_button(layout),
+            language.book_map_text("Return to book"),
+            false,
+            false,
+        );
+        canvas.button(
             help_button(layout),
             language.book_map_text("Help"),
             false,
@@ -477,6 +497,7 @@ impl Reader {
             "Filled numbered badges are previous locations; outlines are next locations.",
             "Triangle: reading page. Small outline: browser focus. Shading: hidden pages.",
             "In a crowded slot, a note icon can replace a highlight icon.",
+            "Return to book closes nested maps without moving the reading page.",
         ]
         .into_iter()
         .enumerate()
@@ -503,6 +524,10 @@ impl Reader {
                 return Some(Change::Partial);
             }
             return Some(Change::None);
+        }
+        if matches!(input, Input::Tap(x, y) if return_to_book_button(layout).contains(x, y)) {
+            self.show(Screen::Fixed);
+            return Some(Change::Full);
         }
         if matches!(input, Input::Tap(x, y) if help_button(layout).contains(x, y)) {
             self.fixed_map_help = true;

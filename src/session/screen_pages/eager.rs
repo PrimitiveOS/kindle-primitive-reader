@@ -150,6 +150,7 @@ impl Prepared {
             .map(|(index, chapter)| {
                 let mut probe = chapter.into_probe();
                 probe.screen_page_sources = Some(self.sources.clone());
+                probe.raw_layout_sources = Some(self.sources.clone());
                 config.screen_pages.observe(config, &probe, index);
                 Some(probe)
             })
@@ -256,6 +257,7 @@ impl Request {
                 &self.hyphenation,
                 &self.styles,
                 || Ok(fonts.clone()),
+                true,
                 &check,
             )?;
             pages += probe.page_count();

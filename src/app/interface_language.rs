@@ -3705,6 +3705,7 @@ impl InterfaceLanguage {
         match english {
             "Book map" => "Sơ đồ sách",
             "Book map help" => "Trợ giúp sơ đồ sách",
+            "Return to book" => "Về trang đọc",
             "Help" => "Trợ giúp",
             "Done" => "Xong",
             "Tap a group to zoom. Tap one page to preview or read it." => {
@@ -3727,6 +3728,9 @@ impl InterfaceLanguage {
             }
             "In a crowded slot, a note icon can replace a highlight icon." => {
                 "Khi ô chật, biểu tượng ghi chú có thể thay biểu tượng tô sáng."
+            }
+            "Return to book closes nested maps without moving the reading page." => {
+                "Về trang đọc đóng các sơ đồ lồng nhau mà không đổi trang đang đọc."
             }
             "Back" => "Quay lại",
             "Pages" => "Trang",
