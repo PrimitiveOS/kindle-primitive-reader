@@ -5,6 +5,7 @@ The listed licences apply to their own components. PrimitiveOS Tools is used
 under its PolyForm Noncommercial 1.0.0 option. The individual source archives
 below provide the source of each MPL-2.0 component used in this package.
 For the compiled US and British English patterns and TUGboat exceptions, see ENGLISH-HYPHENATION.txt.
+For the compiled Spanish, Italian, and Portuguese patterns, see HYPHENATION-ES-IT-PT.txt.
 
 ab_glyph_rasterizer 0.1.10 (Apache-2.0)
 https://static.crates.io/crates/ab_glyph_rasterizer/ab_glyph_rasterizer-0.1.10.crate

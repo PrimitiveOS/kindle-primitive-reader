@@ -81,3 +81,120 @@ fn hyphenation_options_choose_fitting_authored_breaks_without_suppressing_fallba
         assert!(candidate.page_for(&same_passage).is_some());
     }
 }
+
+#[test]
+fn multilingual_hyphenation_renders_and_selects_the_original_word() {
+    let path = crate::test_fixture("multilingual-hyphenation.xhtml");
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let settings = Settings {
+        width: 570,
+        height: 864,
+        margin: 16,
+        font_size: 24.0,
+        ..Settings::default()
+    };
+    let open = |settings| Probe::open(&path, Engine::Parley, &fonts, settings, 0).unwrap();
+    let mut dictionary = open(settings);
+    let mut limited = open(Settings {
+        hyphenation_limits: Some(HyphenationLimits { left: 4, right: 4 }),
+        ..settings
+    });
+    let mut off = open(Settings {
+        disable_soft_hyphens: true,
+        automatic_hyphenation: false,
+        ..settings
+    });
+    let Renderer::Parley(renderer) = &dictionary.renderer else {
+        unreachable!()
+    };
+    let mut split_words = Vec::new();
+    for word in [
+        "información",
+        "lingüística",
+        "murciélago",
+        "straordinario",
+        "elettroencefalogramma",
+        "acqua",
+        "informação",
+        "linguística",
+        "extraordinário",
+        "saúde",
+    ] {
+        let start = dictionary.matches(word).remove(0);
+        let end = crate::Anchor {
+            offset: start.offset + word.len(),
+            ..start.clone()
+        };
+        let paragraph = renderer
+            .paragraphs
+            .iter()
+            .find(|paragraph| paragraph.key == start.block)
+            .unwrap();
+        let split = paragraph.layout.lines().any(|line| {
+            let at = line.text_range().end;
+            start.offset < at && at < end.offset
+        });
+        if split {
+            split_words.push(word);
+        }
+        for (probe, hyphenation_off) in [(&dictionary, false), (&limited, false), (&off, true)] {
+            assert_eq!(probe.coverage(), dictionary.coverage());
+            assert_eq!(probe.matches(word)[0], start);
+            assert_eq!(probe.restore_anchor(&start).unwrap(), start);
+            let selection = probe.select_range(&start, &end).unwrap();
+            assert_eq!(selection.text, word);
+            let page = probe.page_for(&start).unwrap();
+            let parts = probe.selection_rects(page, &selection);
+            assert!(!parts.is_empty());
+            if hyphenation_off {
+                assert!(parts.iter().all(|rect| rect.y == parts[0].y));
+            }
+            for rect in parts {
+                let hit = probe
+                    .word_at(
+                        page,
+                        (rect.x + rect.width / 2) as f32,
+                        (rect.y + rect.height / 2) as f32,
+                    )
+                    .unwrap();
+                assert_eq!(hit, selection);
+            }
+        }
+    }
+    assert!(
+        split_words
+            .iter()
+            .any(|word| matches!(*word, "información" | "lingüística" | "murciélago"))
+            && split_words
+                .iter()
+                .any(|word| matches!(*word, "straordinario" | "elettroencefalogramma" | "acqua"))
+            && split_words
+                .iter()
+                .any(|word| matches!(*word, "informação" | "linguística" | "extraordinário")),
+        "{split_words:?}"
+    );
+    assert_eq!(dictionary.coverage().0, dictionary.coverage().1);
+    let automatic_frame = dictionary.capture(0).unwrap();
+    let limited_frame = limited.capture(0).unwrap();
+    let off_frame = off.capture(0).unwrap();
+    assert!(automatic_frame != off_frame);
+    assert!(automatic_frame != limited_frame);
+    #[cfg(feature = "kindle")]
+    if let Some(folder) = std::env::var_os("READER_MULTILINGUAL_HYPHENATION_CAPTURE") {
+        let folder = std::path::PathBuf::from(folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        for (suffix, pixels) in [
+            ("", automatic_frame),
+            ("-limits", limited_frame),
+            ("-off", off_frame),
+        ] {
+            primitive_app::write_png(
+                &folder.join(format!("reader-multilingual-hyphenation{suffix}.png")),
+                settings.width,
+                settings.height,
+                &pixels,
+            )
+            .unwrap();
+        }
+    }
+}

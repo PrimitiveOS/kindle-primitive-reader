@@ -145,3 +145,48 @@ fn hyphenation_limits_are_a_two_value_draft_and_fail_atomically() {
     assert_eq!(reopened.screen, Screen::HyphenationOptions);
     assert_eq!(settings(&reopened).hyphenation_limits, None);
 }
+
+#[test]
+fn multilingual_hyphenation_settings_use_the_book_language_defaults() {
+    use crate::app::typography_settings::{CatalogLanguage, LanguageScope};
+
+    let f = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut reader = Reader::open(&f.root, &f.state, fonts.clone()).unwrap();
+    reader.open_path(&f.book).unwrap();
+    let mut canvas = adopt(&mut reader, ReadingViewport::PORTRAIT, 1);
+    let origin = reader.current_history_location();
+    let spanish = CatalogLanguage::try_from(String::from("es")).unwrap();
+    reader
+        .choose_typography_language(LanguageScope::Book, Some(spanish))
+        .unwrap();
+    reader.show(Screen::TypographyRules);
+    tap_contents_item(&mut reader, "Hyphenation");
+    let items = reader.hyphenation_items();
+    assert!(
+        items
+            .iter()
+            .any(|item| item.title == "Hyphenation dictionary"
+                && item.detail.as_deref() == Some("Selected · Spanish"))
+    );
+    assert!(items.iter().any(|item| item.title == "Hyphenation limits"
+        && item.detail.as_deref() == Some("Language defaults · 2 / 2")));
+    capture(
+        &reader,
+        &mut canvas,
+        "multilingual-hyphenation-settings.png",
+        false,
+    );
+    assert_eq!(reader.current_history_location(), origin);
+    reader.save().unwrap();
+    let mut reopened = Reader::open(&f.root, &f.state, fonts).unwrap();
+    reopened.open_path(&f.book).unwrap();
+    assert_eq!(reopened.current_history_location(), origin);
+    assert!(
+        reopened
+            .hyphenation_items()
+            .iter()
+            .any(|item| item.title == "Hyphenation dictionary"
+                && item.detail.as_deref() == Some("Selected · Spanish"))
+    );
+}

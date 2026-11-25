@@ -4,6 +4,7 @@ In the lower Text panel, **Automatic** uses the book’s language and publisher
 CSS. **Authored** uses discretionary soft hyphens supplied in the text. **Off**
 disables both. Reader saves this choice per book and in typography profiles.
 An existing saved book that disabled hyphenation still opens with it off.
+[Spanish, Italian, and Portuguese dictionaries](multilingual-hyphenation.md)
 
 ![Two Reader captures of the same narrow English page. The left column keeps whole words. The right column breaks words at dictionary boundaries.](screenshots/english-hyphenation.png)
 
@@ -42,7 +43,7 @@ Reader inherits language from EPUB package metadata or MOBI/KF8 EXTH record
 524 when a reading section omits it. A nearer XHTML `lang` or `xml:lang`
 takes precedence. Automatic applies to generic, US and British English,
 including explicit Latin script. Other English regions,
-unknown languages and explicit empty tags retain authored opportunities.
+unsupported languages and explicit empty tags retain authored opportunities.
 Publisher `hyphens: none`, `manual` and `auto` inherit across inline markup.
 A word with an explicit soft hyphen uses its publisher’s breaks.
 

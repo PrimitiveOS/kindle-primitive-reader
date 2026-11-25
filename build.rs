@@ -8,14 +8,14 @@ use std::{
 
 #[derive(Default)]
 struct Node {
-    edges: BTreeMap<u8, usize>,
+    edges: BTreeMap<char, usize>,
     weights: Vec<u8>,
 }
 
 fn tex_source(path: &str) -> String {
     println!("cargo:rerun-if-changed={path}");
     fs::read_to_string(path)
-        .expect("English hyphenation source")
+        .unwrap_or_else(|error| panic!("Read hyphenation source {path}: {error}"))
         .lines()
         .map(|line| line.split('%').next().unwrap())
         .collect::<Vec<_>>()
@@ -62,6 +62,23 @@ fn base_rules(tex: &str) -> Vec<String> {
         .map(str::to_owned)
         .collect();
     add_exceptions(&mut rules, tex, false, "5");
+    rules
+}
+
+fn stock_word_rules(tex: &str) -> Vec<String> {
+    let mut rules = group(tex, "\\patterns{")
+        .split_whitespace()
+        .filter(|entry| {
+            entry.chars().any(|ch| ch.is_ascii_digit())
+                && entry
+                    .chars()
+                    .all(|ch| ch.is_alphabetic() || ch.is_ascii_digit() || ch == '.')
+        })
+        .map(str::to_owned)
+        .collect();
+    if tex.contains("\\hyphenation{") {
+        add_exceptions(&mut rules, tex, false, "5");
+    }
     rules
 }
 
@@ -127,7 +144,15 @@ fn main() {
         "BRITISH",
         &out_dir.join("british_english_rules.txt"),
     ));
-    fs::write(out_dir.join("english_patterns.rs"), output).unwrap();
+    for (tag, name) in [("es", "SPANISH"), ("it", "ITALIAN"), ("pt", "PORTUGUESE")] {
+        let tex = tex_source(&format!("assets/hyphenation/hyph-{tag}.tex"));
+        output.push_str(&compile(
+            stock_word_rules(&tex),
+            name,
+            &out_dir.join(format!("{tag}_rules.txt")),
+        ));
+    }
+    fs::write(out_dir.join("hyphenation_patterns.rs"), output).unwrap();
 }
 
 fn compile(mut rules: Vec<String>, name: &str, normalized: &Path) -> String {
@@ -140,11 +165,11 @@ fn compile(mut rules: Vec<String>, name: &str, normalized: &Path) -> String {
     for pattern in rules {
         let mut at = 0;
         let mut weights = vec![0];
-        for ch in pattern.bytes() {
+        for ch in pattern.chars() {
             if ch.is_ascii_digit() {
-                *weights.last_mut().unwrap() = ch - b'0';
+                *weights.last_mut().unwrap() = ch as u8 - b'0';
             } else {
-                assert!(ch.is_ascii_lowercase() || ch == b'.');
+                assert!(ch.is_lowercase() || ch == '.');
                 let next = nodes.len();
                 let index = *nodes[at].edges.entry(ch).or_insert(next);
                 if index == next {

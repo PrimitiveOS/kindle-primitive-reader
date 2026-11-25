@@ -4,12 +4,14 @@ use crate::{
     book_style::{Hyphens, Style},
     source::{Block, StyledText},
 };
+use icu_normalizer::ComposingNormalizer;
+use icu_segmenter::GraphemeClusterSegmenter;
 use parley::{Language, LineBreak, WordBreak};
 use serde::{Deserialize, Serialize};
 
 mod algorithmic;
 
-include!(concat!(env!("OUT_DIR"), "/english_patterns.rs"));
+include!(concat!(env!("OUT_DIR"), "/hyphenation_patterns.rs"));
 const MAX_WORD: usize = 64;
 const MAX_BREAKS: usize = 4096;
 
@@ -31,40 +33,68 @@ pub(crate) const ALGORITHMIC_LIMITS: HyphenationLimits = HyphenationLimits { lef
 
 struct Patterns {
     nodes: &'static [(u16, u8, u16, u8)],
-    edges: &'static [(u8, u16)],
+    edges: &'static [(char, u16)],
     weights: &'static [u8],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum English {
+pub(crate) enum Dictionary {
     American,
     British,
+    Spanish,
+    Italian,
+    Portuguese,
 }
 
-impl English {
+impl Dictionary {
+    pub(crate) fn for_language(lang: Option<Language>) -> Option<Self> {
+        let lang = lang?;
+        if !matches!(lang.script(), None | Some("Latn")) {
+            return None;
+        }
+        match (lang.language(), lang.region()) {
+            ("en", None | Some("US")) => Some(Self::American),
+            ("en", Some("GB")) => Some(Self::British),
+            ("es", _) => Some(Self::Spanish),
+            ("it", _) => Some(Self::Italian),
+            ("pt", None | Some("PT")) => Some(Self::Portuguese),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::American => "English (US)",
+            Self::British => "English (UK)",
+            Self::Spanish => "Spanish",
+            Self::Italian => "Italian",
+            Self::Portuguese => "Portuguese (Portugal)",
+        }
+    }
+
+    pub(crate) fn limits(self) -> HyphenationLimits {
+        match self {
+            Self::Spanish | Self::Italian => HyphenationLimits { left: 2, right: 2 },
+            Self::American | Self::British | Self::Portuguese => ENGLISH_LIMITS,
+        }
+    }
+
     fn patterns(self) -> &'static Patterns {
         match self {
             Self::American => &AMERICAN,
             Self::British => &BRITISH,
+            Self::Spanish => &SPANISH,
+            Self::Italian => &ITALIAN,
+            Self::Portuguese => &PORTUGUESE,
         }
     }
 }
 
-fn dictionary(style: &Style, lang: Option<Language>) -> Option<English> {
-    let lang = lang?;
-    if style.hyphens != Hyphens::Auto
-        || style.word_break == WordBreak::BreakAll
-        || style.line_break == Some(LineBreak::Anywhere)
-        || lang.language() != "en"
-        || !matches!(lang.script(), None | Some("Latn"))
-    {
-        return None;
-    }
-    match lang.region() {
-        None | Some("US") => Some(English::American),
-        Some("GB") => Some(English::British),
-        _ => None,
-    }
+fn dictionary(style: &Style, lang: Option<Language>) -> Option<Dictionary> {
+    allows_user_rules(style)
+        .then(|| Dictionary::for_language(lang))
+        .flatten()
 }
 
 pub(crate) fn opportunities(block: &Block, styles: &[Style], settings: Settings) -> Vec<usize> {
@@ -92,11 +122,6 @@ pub(crate) fn opportunities_text(
     {
         return breaks;
     }
-    let limits = settings.hyphenation_limits.unwrap_or(if algorithmic {
-        ALGORITHMIC_LIMITS
-    } else {
-        ENGLISH_LIMITS
-    });
     for range in crate::selection::word_ranges(text) {
         let word = &text[range.clone()];
         let first = styled.partition_point(|span| span.bytes.end <= range.start);
@@ -115,11 +140,15 @@ pub(crate) fn opportunities_text(
             if allows_user_rules(&styles[head.element])
                 && spans.all(|span| allows_user_rules(&styles[span.element]))
             {
+                let limits = settings.hyphenation_limits.unwrap_or(ALGORITHMIC_LIMITS);
                 algorithmic::breaks(word, limits, emit);
             }
         } else if let Some(locale) = dictionary(&styles[head.element], head.language)
             && spans.all(|span| dictionary(&styles[span.element], span.language) == Some(locale))
         {
+            let limits = settings
+                .hyphenation_limits
+                .unwrap_or_else(|| locale.limits());
             word_breaks_with_limits(locale, word, limits, emit);
         }
         if breaks.len() == MAX_BREAKS {
@@ -241,34 +270,85 @@ pub(crate) fn with_user_rules_text(
     result
 }
 
-fn word_breaks(locale: English, word: &str, emit: impl FnMut(usize)) {
-    word_breaks_with_limits(locale, word, ENGLISH_LIMITS, emit);
+fn word_breaks(locale: Dictionary, word: &str, emit: impl FnMut(usize)) {
+    word_breaks_with_limits(locale, word, locale.limits(), emit);
 }
 
 fn word_breaks_with_limits(
-    locale: English,
+    locale: Dictionary,
     word: &str,
     limits: HyphenationLimits,
     mut emit: impl FnMut(usize),
 ) {
+    if !limits.valid() || word.len() > MAX_WORD * 5 {
+        return;
+    }
     let patterns = locale.patterns();
-    let mut letters = [b'.'; MAX_WORD + 2];
+    if matches!(
+        locale,
+        Dictionary::Spanish | Dictionary::Italian | Dictionary::Portuguese
+    ) {
+        // CRE treats apostrophes as word boundaries for these pattern files.
+        // ICU can keep the two sides together for selection and search.
+        let mut offset = 0;
+        for part in word.split_inclusive(['\'', '\u{2019}']) {
+            let text = part.trim_end_matches(['\'', '\u{2019}']);
+            pattern_breaks(patterns, text, limits, |at| emit(offset + at));
+            offset += part.len();
+        }
+    } else if word
+        .chars()
+        .all(|ch| ch.is_ascii_alphabetic() || ch == '\u{ad}')
+    {
+        pattern_breaks(patterns, word, limits, emit);
+    }
+}
+
+fn pattern_breaks(
+    patterns: &Patterns,
+    word: &str,
+    limits: HyphenationLimits,
+    mut emit: impl FnMut(usize),
+) {
+    let mut letters = ['.'; MAX_WORD + 2];
     let mut offsets = [0; MAX_WORD + 1];
     let mut n = 0;
-    for (at, character) in word.char_indices() {
-        if character == '\u{ad}' {
-            continue;
-        }
-        if n == MAX_WORD || !character.is_ascii_alphabetic() {
+    if word.is_ascii() {
+        if word.len() > MAX_WORD || !word.bytes().all(|byte| byte.is_ascii_alphabetic()) {
             return;
         }
-        n += 1;
-        letters[n] = character.to_ascii_lowercase() as u8;
-        offsets[n] = at + 1;
+        for (at, byte) in word.bytes().enumerate() {
+            n += 1;
+            letters[n] = char::from(byte.to_ascii_lowercase());
+            offsets[n] = at + 1;
+        }
+    } else {
+        let nfc = ComposingNormalizer::new_nfc();
+        let mut start = 0;
+        for end in GraphemeClusterSegmenter::new().segment_str(word).skip(1) {
+            let cluster = &word[start..end];
+            start = end;
+            if cluster == "\u{ad}" {
+                continue;
+            }
+            let composed = nfc.normalize(cluster);
+            let mut chars = composed.chars();
+            let Some(character) = chars.next().filter(|ch| ch.is_alphabetic()) else {
+                return;
+            };
+            let mut lower = character.to_lowercase();
+            let letter = lower.next().expect("a lowercase mapping");
+            if n == MAX_WORD || chars.next().is_some() || lower.next().is_some() {
+                return;
+            }
+            n += 1;
+            letters[n] = letter;
+            offsets[n] = end;
+        }
     }
     let left = usize::from(limits.left);
     let right = usize::from(limits.right);
-    if !limits.valid() || n < left + right {
+    if n < left + right {
         return;
     }
     let mut scores = [0u8; MAX_WORD + 3];
@@ -305,6 +385,117 @@ mod tests {
     use crate::{book_style::BookStyle, source::Source};
 
     #[test]
+    fn multilingual_hyphenation_rules_match_the_pinned_dictionaries() {
+        // Fingerprints of sorted stock rules, with CRE word-edge spaces normalized to dots.
+        for (rules, count, digest) in [
+            (
+                include_str!(concat!(env!("OUT_DIR"), "/es_rules.txt")),
+                4692,
+                "4c28ce4ab4490eb7a0c9049ee9a04186",
+            ),
+            (
+                include_str!(concat!(env!("OUT_DIR"), "/it_rules.txt")),
+                326,
+                "5f6ed27de5d159dfdf60d9aa47826a34",
+            ),
+            (
+                include_str!(concat!(env!("OUT_DIR"), "/pt_rules.txt")),
+                308,
+                "9bfdcde055dc8d8625a5e1a790e94067",
+            ),
+        ] {
+            assert_eq!(rules.lines().count(), count);
+            assert_eq!(format!("{:x}", md5::compute(rules)), digest);
+        }
+    }
+
+    #[test]
+    fn multilingual_hyphenation_matches_native_word_boundaries_and_per_language_limits() {
+        let global = HyphenationLimits { left: 4, right: 4 };
+        let breaks = |dictionary, word: &str, limits| {
+            let mut offsets = Vec::new();
+            word_breaks_with_limits(dictionary, word, limits, |at| {
+                assert!(word.is_char_boundary(at));
+                offsets.push(word[..at].chars().count());
+            });
+            offsets
+        };
+        for (tag, word, ordinary, limited) in [
+            ("es-ES", "información", &[2, 5, 7][..], &[5, 7][..]),
+            ("es-ES", "lingüística", &[3, 7, 9], &[7]),
+            ("es-MX", "murciélago", &[3, 6, 8], &[6]),
+            ("it-IT", "straordinario", &[6, 8, 10], &[6, 8]),
+            (
+                "it-IT",
+                "elettroencefalogramma",
+                &[4, 9, 11, 13, 15, 19],
+                &[4, 9, 11, 13, 15],
+            ),
+            ("it", "acqua", &[2], &[]),
+            ("pt-PT", "informação", &[2, 5, 7], &[5]),
+            ("pt", "linguística", &[3, 7], &[7]),
+            ("pt-PT", "extraordinário", &[2, 5, 7, 9, 11], &[5, 7, 9]),
+            ("pt-PT", "saúde", &[], &[]),
+        ] {
+            let dictionary = Dictionary::for_language(Language::parse(tag).ok()).unwrap();
+            assert_eq!(
+                breaks(dictionary, word, dictionary.limits()),
+                ordinary,
+                "{tag} {word}"
+            );
+            assert_eq!(breaks(dictionary, word, global), limited, "{tag} {word}");
+        }
+    }
+
+    #[test]
+    fn multilingual_hyphenation_keeps_original_utf8_offsets_and_respects_embedded_languages() {
+        let source = Source::parse(
+            "<html lang='es'><body><p>murcie\u{301}lago <span lang='it'>l’<b>ital</b>iano</span> \
+             <span lang='pt-PT'>infor<b>ma</b>ção</span> \
+             <span lang='pt-BR'>informação</span> \
+             <span style='hyphens:manual'>murciélago</span> \
+             <span xml:lang='es-Cyrl'>murciélago</span></p></body></html>",
+        )
+        .unwrap();
+        let mut book =
+            crate::epub::Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let chapter = book.chapters[0].href.clone();
+        let mut fonts =
+            crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+        let styles =
+            BookStyle::load(&mut book, &chapter, &source, &mut fonts).compute(&source.elements);
+        let block = &source.blocks[0];
+        let text = &block.text;
+        let parts = [
+            (
+                "murcie\u{301}lago",
+                &["mur", "murcie\u{301}", "murcie\u{301}la"][..],
+            ),
+            ("l’italiano", &["l’ita", "l’italia"]),
+            ("informação", &["in", "infor", "informa"]),
+        ];
+        let mut expected = Vec::new();
+        let mut from = 0;
+        for (word, prefixes) in parts {
+            let at = text[from..].find(word).unwrap() + from;
+            expected.extend(prefixes.iter().map(|prefix| at + prefix.len()));
+            from = at + word.len();
+        }
+        assert_eq!(opportunities(block, &styles, Settings::default()), expected);
+        assert!(
+            opportunities(
+                block,
+                &styles,
+                Settings {
+                    automatic_hyphenation: false,
+                    ..Settings::default()
+                },
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
     fn patterns_minima_and_exceptions_keep_original_offsets() {
         for (word, expected) in [
             ("hyphenation", &[2, 6, 7][..]),
@@ -318,11 +509,11 @@ mod tests {
             ("QWERTY", &[][..]),
         ] {
             let mut actual = Vec::new();
-            word_breaks(English::American, word, |b| actual.push(b));
+            word_breaks(Dictionary::American, word, |b| actual.push(b));
             assert_eq!(actual, expected);
         }
         for word in ["short", "documentation", "transformation"] {
-            word_breaks(English::American, word, |b| {
+            word_breaks(Dictionary::American, word, |b| {
                 assert!(b >= 2 && word.len() - b >= 3)
             });
         }
@@ -335,7 +526,7 @@ mod tests {
         // Independent digests from CREngine b32a88ff, normalized by the QA verifier.
         for (locale, rules, count, digest, sources, corrections, expected_matrix) in [
             (
-                English::American,
+                Dictionary::American,
                 include_str!(concat!(env!("OUT_DIR"), "/english_rules.txt")),
                 6708,
                 "bfff372769d4ec4231d27c19f7ef0c99",
@@ -347,7 +538,7 @@ mod tests {
                 "55189508e7be87958f02af1cc6457f5e",
             ),
             (
-                English::British,
+                Dictionary::British,
                 include_str!(concat!(env!("OUT_DIR"), "/british_english_rules.txt")),
                 8535,
                 "56aaf1a95bc02a467aaaec694459f770",
@@ -412,7 +603,7 @@ mod tests {
     #[test]
     fn bounds_untrusted_words_and_paragraphs() {
         for word in ["", "a", "éclair", &"hyphenation".repeat(6)] {
-            word_breaks(English::American, word, |_| {
+            word_breaks(Dictionary::American, word, |_| {
                 panic!("Unexpected opportunity")
             });
         }

@@ -1,6 +1,7 @@
 //! Stock-style hyphenation choices and a transactional draft for global limits.
+use crate::TypographyLocale;
 use crate::app::{Action, Item, Reader, Result, Screen};
-use crate::hyphenation::{ALGORITHMIC_LIMITS, ENGLISH_LIMITS};
+use crate::hyphenation::{ALGORITHMIC_LIMITS, Dictionary, ENGLISH_LIMITS};
 use crate::{HyphenationLimits, HyphenationMode, Settings};
 use primitive_ui::RowAccessory;
 
@@ -56,10 +57,16 @@ impl Reader {
         };
         let mode = settings.hyphenation_mode();
         let enabled = mode != HyphenationMode::Off;
+        let language = self
+            .active
+            .as_ref()
+            .and_then(|book| book.reading.probe.main_language)
+            .map(TypographyLocale::shaping_language);
+        let dictionary = Dictionary::for_language(language);
         let defaults = if settings.algorithmic_hyphenation {
             ALGORITHMIC_LIMITS
         } else {
-            ENGLISH_LIMITS
+            dictionary.map_or(ENGLISH_LIMITS, Dictionary::limits)
         };
         let limits = settings.hyphenation_limits.unwrap_or(defaults);
         let draft = LimitsDraft { limits, defaults };
@@ -103,7 +110,15 @@ impl Reader {
                 title,
                 optional(Action::Hyphenation(Command::Method(method))),
             );
-            if mode == method {
+            if method == HyphenationMode::Automatic {
+                let name =
+                    dictionary.map_or("No dictionary for the main language", Dictionary::label);
+                if mode == method {
+                    item.detail(format!("Selected · {name}"))
+                } else {
+                    item.detail(name)
+                }
+            } else if mode == method {
                 item.detail("Selected")
             } else {
                 item

@@ -12,6 +12,7 @@ Launcher. [Launcher artwork terms](https://github.com/PrimitiveOS/kindle-primiti
 
 - [SRELL](SRELL.txt) covers the ECMAScript engine used in reflow search. The ARMHF binary uses the same LLVM [libc++](ocr/libcxx-LICENSE), [libc++abi](ocr/libcxxabi-LICENSE) and [libunwind](ocr/libunwind-LICENSE) runtimes already distributed with OCR.
 - [American and British English hyphenation patterns](ENGLISH-HYPHENATION.txt) cover the dictionaries compiled into native reflow.
+- [Spanish, Italian, and Portuguese hyphenation patterns](HYPHENATION-ES-IT-PT.txt) record the upstream versions, checksums, and terms for those dictionaries.
 - [PDF assets](pdf/README.md) covers embedded fonts, character maps, and colour
   profiles supplied by the Hayro PDF libraries.
 - The KOReader statistics importer links the SQLite 3.50.2 amalgamation
