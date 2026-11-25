@@ -444,6 +444,25 @@ fn parse_east_asian_variant(input: &mut Parser<'_>) -> CssResult<VariantEastAsia
     Ok(VariantEastAsian(bits))
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum VariantPosition {
+    #[default]
+    Normal,
+    Super,
+    Sub,
+}
+
+impl VariantPosition {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "normal" => Some(Self::Normal),
+            "super" => Some(Self::Super),
+            "sub" => Some(Self::Sub),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Style {
     pub display: Display,
@@ -473,6 +492,8 @@ pub(crate) struct Style {
     pub(crate) variant_caps: VariantCaps,
     pub(crate) variant_numeric: VariantNumeric,
     pub(crate) variant_east_asian: VariantEastAsian,
+    pub(crate) variant_position: VariantPosition,
+    pub(crate) variant_historical: bool,
     /// Whether a ruby annotation has its own computed font-size declaration.
     pub(crate) ruby_size_explicit: bool,
     pub(crate) direction: parley::BaseDirection,
@@ -546,6 +567,8 @@ impl Default for Style {
             variant_caps: VariantCaps::Normal,
             variant_numeric: VariantNumeric::default(),
             variant_east_asian: VariantEastAsian::default(),
+            variant_position: VariantPosition::Normal,
+            variant_historical: false,
             ruby_size_explicit: false,
             direction: parley::BaseDirection::Auto,
             line_height: None,
@@ -1248,6 +1271,8 @@ impl BookStyle {
                     Property::VariantCaps(caps) => style.variant_caps = *caps,
                     Property::VariantNumeric(numeric) => style.variant_numeric = *numeric,
                     Property::VariantEastAsian(value) => style.variant_east_asian = *value,
+                    Property::VariantPosition(value) => style.variant_position = *value,
+                    Property::VariantHistorical(value) => style.variant_historical = *value,
                     Property::Direction(direction) => style.direction = *direction,
                     Property::LineBreak(breaking, loose) => {
                         style.line_break = *breaking;
@@ -2008,7 +2033,15 @@ struct Declaration {
 fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
     let mut result = Vec::new();
     for decl in RuleBodyParser::new(input, &mut Properties).flatten() {
-        if let Property::VariantShorthand(ligatures, caps, numeric, east_asian) = decl.property {
+        if let Property::VariantShorthand(
+            ligatures,
+            caps,
+            numeric,
+            east_asian,
+            position,
+            historical,
+        ) = decl.property
+        {
             result.push(Declaration {
                 property: Property::CommonLigatures(ligatures),
                 important: decl.important,
@@ -2023,6 +2056,14 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
             });
             result.push(Declaration {
                 property: Property::VariantEastAsian(east_asian),
+                important: decl.important,
+            });
+            result.push(Declaration {
+                property: Property::VariantPosition(position),
+                important: decl.important,
+            });
+            result.push(Declaration {
+                property: Property::VariantHistorical(historical),
                 important: decl.important,
             });
         } else if let Property::ResetMany(keys, reset) = decl.property {
@@ -2069,7 +2110,9 @@ const LETTER_SPACING: usize = 57;
 const VARIANT_CAPS: usize = 58;
 const VARIANT_NUMERIC: usize = 59;
 const VARIANT_EAST_ASIAN: usize = 60;
-const CASCADE_PROPERTY_COUNT: usize = 61;
+const VARIANT_POSITION: usize = 61;
+const VARIANT_HISTORICAL: usize = 62;
+const CASCADE_PROPERTY_COUNT: usize = 63;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2134,6 +2177,8 @@ fn choose<'a>(
             Property::VariantCaps(_) => VARIANT_CAPS,
             Property::VariantNumeric(_) => VARIANT_NUMERIC,
             Property::VariantEastAsian(_) => VARIANT_EAST_ASIAN,
+            Property::VariantPosition(_) => VARIANT_POSITION,
+            Property::VariantHistorical(_) => VARIANT_HISTORICAL,
             Property::Direction(_) => DIRECTION,
             Property::LetterSpacing(_) => LETTER_SPACING,
             Property::LineBreak(_, _) => 7,
@@ -2252,7 +2297,16 @@ enum Property {
     VariantCaps(VariantCaps),
     VariantNumeric(VariantNumeric),
     VariantEastAsian(VariantEastAsian),
-    VariantShorthand(bool, VariantCaps, VariantNumeric, VariantEastAsian),
+    VariantPosition(VariantPosition),
+    VariantHistorical(bool),
+    VariantShorthand(
+        bool,
+        VariantCaps,
+        VariantNumeric,
+        VariantEastAsian,
+        VariantPosition,
+        bool,
+    ),
     Direction(parley::BaseDirection),
     LetterSpacing(CssLength),
     LineBreak(Option<LineBreak>, bool),
@@ -2595,6 +2649,8 @@ impl<'i> DeclarationParser<'i> for Properties {
                             caps,
                             VariantNumeric::default(),
                             VariantEastAsian::default(),
+                            VariantPosition::Normal,
+                            false,
                         )
                     } else if let Some(numeric) = VariantNumeric::bit(value.as_str()) {
                         Property::VariantShorthand(
@@ -2602,6 +2658,8 @@ impl<'i> DeclarationParser<'i> for Properties {
                             VariantCaps::Normal,
                             VariantNumeric(numeric),
                             VariantEastAsian::default(),
+                            VariantPosition::Normal,
+                            false,
                         )
                     } else if let Some(east_asian) = VariantEastAsian::bit(value.as_str()) {
                         Property::VariantShorthand(
@@ -2609,6 +2667,17 @@ impl<'i> DeclarationParser<'i> for Properties {
                             VariantCaps::Normal,
                             VariantNumeric::default(),
                             VariantEastAsian(east_asian),
+                            VariantPosition::Normal,
+                            false,
+                        )
+                    } else if let Some(position) = VariantPosition::parse(value.as_str()) {
+                        Property::VariantShorthand(
+                            true,
+                            VariantCaps::Normal,
+                            VariantNumeric::default(),
+                            VariantEastAsian::default(),
+                            position,
+                            false,
                         )
                     } else {
                         match value.as_str() {
@@ -2617,12 +2686,24 @@ impl<'i> DeclarationParser<'i> for Properties {
                                 VariantCaps::Normal,
                                 VariantNumeric::default(),
                                 VariantEastAsian::default(),
+                                VariantPosition::Normal,
+                                false,
                             ),
                             "no-common-ligatures" => Property::VariantShorthand(
                                 false,
                                 VariantCaps::Normal,
                                 VariantNumeric::default(),
                                 VariantEastAsian::default(),
+                                VariantPosition::Normal,
+                                false,
+                            ),
+                            "historical-forms" => Property::VariantShorthand(
+                                true,
+                                VariantCaps::Normal,
+                                VariantNumeric::default(),
+                                VariantEastAsian::default(),
+                                VariantPosition::Normal,
+                                true,
                             ),
                             _ => return Err(ParseError::unexpected_token()),
                         }
@@ -2639,6 +2720,20 @@ impl<'i> DeclarationParser<'i> for Properties {
                 "font-variant-east-asian" => {
                     Property::VariantEastAsian(parse_east_asian_variant(input)?)
                 }
+                "font-variant-position" => {
+                    let value = input.expect_ident()?.to_ascii_lowercase();
+                    Property::VariantPosition(
+                        VariantPosition::parse(value.as_str())
+                            .ok_or_else(ParseError::unexpected_token)?,
+                    )
+                }
+                "font-variant-alternates" => Property::VariantHistorical(
+                    match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "normal" => false,
+                        "historical-forms" => true,
+                        _ => return Err(ParseError::unexpected_token()),
+                    },
+                ),
                 "font-variant-ligatures" | "-webkit-font-variant-ligatures" => {
                     let value = input.expect_ident()?.to_ascii_lowercase();
                     let enabled = match value.as_str() {

@@ -1258,6 +1258,7 @@ impl Reader {
         user_hyphenation.serbian_cyrillic = user_hyphenation::load_serbian_cyrillic(data);
         user_hyphenation.czech = user_hyphenation::load_czech(data);
         user_hyphenation.romanian = user_hyphenation::load_romanian(data);
+        user_hyphenation.latvian = user_hyphenation::load_latvian(data);
         let user_hyphenation = user_hyphenation.into();
         Ok(Self {
             user_hyphenation,

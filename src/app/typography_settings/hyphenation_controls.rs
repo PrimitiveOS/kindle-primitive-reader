@@ -78,13 +78,16 @@ impl Reader {
         let romanian = self.active.as_ref().is_some_and(|book| {
             crate::hyphenation::is_romanian_language(book.reading.probe.main_language)
         });
+        let latvian = self.active.as_ref().is_some_and(|book| {
+            crate::hyphenation::is_latvian_language(book.reading.probe.main_language)
+        });
         let defaults = if settings.algorithmic_hyphenation {
             ALGORITHMIC_LIMITS
         } else if armenian {
             crate::HyphenationLimits { left: 1, right: 2 }
         } else if zulu {
             crate::HyphenationLimits { left: 2, right: 1 }
-        } else if serbian || romanian {
+        } else if serbian || romanian || latvian {
             crate::HyphenationLimits { left: 2, right: 2 }
         } else {
             dictionary.map_or(ENGLISH_LIMITS, Dictionary::limits)
@@ -182,6 +185,18 @@ impl Reader {
                             "Romanian pattern file invalid"
                         }
                     }
+                } else if latvian {
+                    match &self.user_hyphenation.latvian {
+                        crate::user_hyphenation::OptionalPatterns::Loaded(_) => {
+                            "Latvian patterns loaded"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Missing => {
+                            "Latvian pattern file missing"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Invalid => {
+                            "Latvian pattern file invalid"
+                        }
+                    }
                 } else {
                     dictionary.map_or("No dictionary for the main language", Dictionary::label)
                 };
@@ -237,6 +252,12 @@ impl Reader {
             items.push(
                 Item::new("Romanian pattern file", Action::Heading)
                     .detail("Copy hyph-ro.tex to reader/data/hyphenation, then reopen Reader"),
+            );
+        }
+        if latvian {
+            items.push(
+                Item::new("Latvian pattern file", Action::Heading)
+                    .detail("Copy hyph-lv.tex to reader/data/hyphenation, then reopen Reader"),
             );
         }
         let defaults = self

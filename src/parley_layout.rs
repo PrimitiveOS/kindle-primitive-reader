@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use crate::book_style::{
     CssLength, ImageLength, Style, TextDecoration, VariantCaps, VariantEastAsian, VariantNumeric,
+    VariantPosition,
 };
 use crate::comic::ImagePage;
 use crate::epub::Book;
@@ -180,6 +181,8 @@ fn shaping_with_variants(
     caps: VariantCaps,
     numeric: VariantNumeric,
     east_asian: VariantEastAsian,
+    position: VariantPosition,
+    historical: bool,
 ) -> Vec<FontFeature> {
     let mut features = shaping_features(mode, common_ligatures).to_vec();
     let tags: &[&[u8; 4]] = match caps {
@@ -227,6 +230,14 @@ fn shaping_with_variants(
         if east_asian.0 & flag != 0 {
             features.push(FontFeature::new(Tag::new(tag), 1));
         }
+    }
+    match position {
+        VariantPosition::Normal => {}
+        VariantPosition::Super => features.push(FontFeature::new(Tag::new(b"sups"), 1)),
+        VariantPosition::Sub => features.push(FontFeature::new(Tag::new(b"subs"), 1)),
+    }
+    if historical {
+        features.push(FontFeature::new(Tag::new(b"hist"), 1));
     }
     features
 }
@@ -3164,6 +3175,8 @@ fn make_annotation(
         || style.variant_caps != VariantCaps::Normal
         || style.variant_numeric != VariantNumeric::default()
         || style.variant_east_asian != VariantEastAsian::default()
+        || style.variant_position != VariantPosition::Normal
+        || style.variant_historical
     {
         let features = shaping_with_variants(
             settings.effective_font_kerning_mode(),
@@ -3171,6 +3184,8 @@ fn make_annotation(
             style.variant_caps,
             style.variant_numeric,
             style.variant_east_asian,
+            style.variant_position,
+            style.variant_historical,
         );
         builder.push_default(StyleProperty::FontFeatures(features.as_slice().into()));
     }
@@ -3344,6 +3359,8 @@ fn shape_paragraph(
         || style.variant_caps != VariantCaps::Normal
         || style.variant_numeric != VariantNumeric::default()
         || style.variant_east_asian != VariantEastAsian::default()
+        || style.variant_position != VariantPosition::Normal
+        || style.variant_historical
     {
         let features = shaping_with_variants(
             settings.effective_font_kerning_mode(),
@@ -3351,6 +3368,8 @@ fn shape_paragraph(
             style.variant_caps,
             style.variant_numeric,
             style.variant_east_asian,
+            style.variant_position,
+            style.variant_historical,
         );
         builder.push_default(StyleProperty::FontFeatures(features.as_slice().into()));
     }
@@ -3591,6 +3610,8 @@ fn shape_paragraph(
             || run.variant_caps != base.variant_caps
             || run.variant_numeric != base.variant_numeric
             || run.variant_east_asian != base.variant_east_asian
+            || run.variant_position != base.variant_position
+            || run.variant_historical != base.variant_historical
         {
             let features = shaping_with_variants(
                 settings.effective_font_kerning_mode(),
@@ -3598,6 +3619,8 @@ fn shape_paragraph(
                 run.variant_caps,
                 run.variant_numeric,
                 run.variant_east_asian,
+                run.variant_position,
+                run.variant_historical,
             );
             builder.push(
                 StyleProperty::FontFeatures(features.as_slice().into()),

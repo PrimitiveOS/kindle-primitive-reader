@@ -33,19 +33,30 @@ impl Reader {
     }
 
     pub(super) fn publisher_render_default_items(&self) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let current = self
             .controls
             .publisher_render_mode_default
             .unwrap_or_default();
-        let mut items = vec![
-            Item::new("For new horizontal EPUBs", Action::Heading)
-                .detail("Complex layouts may use Reader’s established layout"),
-        ];
+        let mut items =
+            vec![
+                Item::new(
+                    language.typography_settings_text("For new horizontal EPUBs"),
+                    Action::Heading,
+                )
+                .detail(language.typography_settings_text(
+                    "Complex layouts may use Reader’s established layout",
+                )),
+            ];
         items.extend(PublisherRenderMode::CHOICES.map(|mode| {
             let detail = if mode == current {
-                format!("Selected · {}", mode.description())
+                format!(
+                    "{} · {}",
+                    language.typography_settings_text("Selected"),
+                    language.typography_settings_text(mode.description())
+                )
             } else {
-                mode.description().into()
+                language.typography_settings_text(mode.description()).into()
             };
             Item::new(mode.label(), Action::SetPublisherRenderDefault(mode)).detail(detail)
         }));

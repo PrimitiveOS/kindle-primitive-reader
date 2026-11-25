@@ -93,6 +93,7 @@ impl Reader {
     }
 
     pub(super) fn font_rendering_items(&self, scope: Scope) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let selected = match scope {
             Scope::Book => self.selected_font_rendering(),
             Scope::Default => Some(self.controls.font_size_rendering),
@@ -100,34 +101,40 @@ impl Reader {
         let mut items = Vec::new();
         if scope == Scope::Book {
             items.push(
-                Item::new("Use default", Action::FontRendering(scope, None)).detail(
-                    if selected.is_none() {
-                        "Selected"
-                    } else {
-                        self.controls.font_size_rendering.label()
-                    },
-                ),
+                Item::new(
+                    language.typography_settings_text("Use default"),
+                    Action::FontRendering(scope, None),
+                )
+                .detail(if selected.is_none() {
+                    language.typography_settings_text("Selected")
+                } else {
+                    language.typography_settings_text(self.controls.font_size_rendering.label())
+                }),
             );
         }
         for mode in [Mode::Chapter, Mode::WholeBook] {
             items.push(
-                Item::new(mode.label(), Action::FontRendering(scope, Some(mode))).detail(
-                    if Some(mode) == selected {
-                        "Selected"
-                    } else {
-                        match mode {
-                            Mode::Chapter => "Read the edited chapter while the page index builds",
-                            Mode::WholeBook => {
-                                "Keep the old page until all supported chapters are ready"
-                            }
-                        }
-                    },
-                ),
+                Item::new(
+                    language.typography_settings_text(mode.label()),
+                    Action::FontRendering(scope, Some(mode)),
+                )
+                .detail(if Some(mode) == selected {
+                    language.typography_settings_text("Selected")
+                } else {
+                    match mode {
+                        Mode::Chapter => language.typography_settings_text(
+                            "Read the edited chapter while the page index builds",
+                        ),
+                        Mode::WholeBook => language.typography_settings_text(
+                            "Keep the old page until all supported chapters are ready",
+                        ),
+                    }
+                }),
             );
         }
         if scope == Scope::Book {
             items.push(Item::new(
-                "Default for EPUBs",
+                language.typography_settings_text("Default for EPUBs"),
                 Action::Show(Screen::FontRendering(Scope::Default)),
             ));
             if !self
@@ -136,12 +143,20 @@ impl Reader {
                 .is_some_and(|book| supported(&book.reading))
             {
                 items.push(
-                    Item::new("Chapter first for this layout", Action::Heading)
-                        .detail("Whole book first needs a bounded horizontal text EPUB"),
+                    Item::new(
+                        language.typography_settings_text("Chapter first for this layout"),
+                        Action::Heading,
+                    )
+                    .detail(language.typography_settings_text(
+                        "Whole book first needs a bounded horizontal text EPUB",
+                    )),
                 );
             }
             if self.eager_typography.pending() {
-                items.push(Item::new("Cancel preparation", Action::CancelEagerFont));
+                items.push(Item::new(
+                    language.typography_settings_text("Cancel preparation"),
+                    Action::CancelEagerFont,
+                ));
             }
         }
         items

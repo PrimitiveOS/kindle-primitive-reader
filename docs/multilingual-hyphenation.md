@@ -507,3 +507,27 @@ identifies copyright 1995–1996 Adrian Rezus and specifies no license. This
 link records provenance, not permission to use or redistribute the file.
 Rights and distribution review remain unresolved; keeping a file separate
 from Reader does not establish legal compliance.
+
+
+### Optional Latvian patterns
+
+Reader does not include Latvian hyphenation pattern data. If you have a
+permitted `hyph-lv.tex` file, create `reader/data/hyphenation/`, copy it there,
+and close and reopen Reader. In a Latvian book, Text › Hyphenation reports
+whether the file was loaded, missing or invalid. Missing or invalid patterns
+leave Latvian automatic hyphenation unavailable; the book remains readable.
+Reader reads the file locally as inert data and does not download or execute it.
+
+The loader accepts one `\patterns{...}` group, `%` comments, lowercase
+Latin-script letters, ASCII digits and optional word-edge dots. It rejects
+files over 256 KiB, more than 16,384 rules, tries above 32,768 nodes, symlinks,
+malformed syntax and unsupported characters. Reader uses 2 / 2 minima and
+emits only original UTF-8 grapheme boundaries. The documented upstream file's
+11,583 pattern strings match pinned KOReader's Latvian pattern set, but
+behavior, memory consumption and real-book comparisons remain unverified.
+Reopen Reader after replacing the file.
+
+The [upstream Latvian source](https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-lv.tex)
+identifies LGPL 2.1 or GPL 2-or-later terms. Obtaining or redistributing the
+optional file has separate licensing obligations; keeping it separate from
+Reader does not establish legal compliance. Distribution review remains open.

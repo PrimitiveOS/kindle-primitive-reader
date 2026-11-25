@@ -551,6 +551,88 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Annotation-transfer settings only; folder paths and import previews stay untouched.
+const ANNOTATION_EXCHANGE_LABELS: &[(&str, &str)] = &[
+    (
+        "Export annotations on book closing",
+        "Xuất chú thích khi đóng sách",
+    ),
+    (
+        "Save a local KOReader transfer when the book closes",
+        "Lưu bản chuyển KOReader trên máy khi đóng sách",
+    ),
+    (
+        "Keep all annotations on import",
+        "Giữ mọi chú thích khi nhập",
+    ),
+    (
+        "Keep older local marks missing from the transfer",
+        "Giữ các đánh dấu cũ trên máy không có trong bản chuyển",
+    ),
+    ("Export / import folder", "Thư mục xuất / nhập"),
+    ("Book metadata folder", "Thư mục siêu dữ liệu sách"),
+    ("Use book metadata folder", "Dùng thư mục siêu dữ liệu sách"),
+    (
+        "The book’s adjacent .sdr folder",
+        "Thư mục .sdr cạnh tệp sách",
+    ),
+    ("Import annotation transfer", "Nhập bản chuyển chú thích"),
+    (
+        "Review changes to bookmarks, highlights and notes",
+        "Xem lại thay đổi đối với dấu trang, phần tô sáng và ghi chú",
+    ),
+    ("Export annotation transfer", "Xuất bản chuyển chú thích"),
+    (
+        "Save a KOReader .annotations.lua file for this book",
+        "Lưu tệp KOReader .annotations.lua cho sách này",
+    ),
+];
+
+// Fixed typography settings labels; publisher mode names remain unchanged.
+const TYPOGRAPHY_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Use default", "Dùng mặc định"),
+    ("Selected", "Đã chọn"),
+    ("Chapter first", "Chương trước"),
+    ("Whole book first", "Toàn bộ sách trước"),
+    (
+        "Read the edited chapter while the page index builds",
+        "Đọc chương đã chỉnh trong khi tạo chỉ mục trang",
+    ),
+    (
+        "Keep the old page until all supported chapters are ready",
+        "Giữ trang cũ đến khi mọi chương được hỗ trợ đã sẵn sàng",
+    ),
+    ("Default for EPUBs", "Mặc định cho EPUB"),
+    (
+        "Chapter first for this layout",
+        "Dùng chương trước cho bố cục này",
+    ),
+    (
+        "Whole book first needs a bounded horizontal text EPUB",
+        "Toàn bộ sách trước cần EPUB văn bản ngang có kích thước giới hạn",
+    ),
+    ("Cancel preparation", "Hủy chuẩn bị"),
+    ("For new horizontal EPUBs", "Cho EPUB ngang mới"),
+    (
+        "Complex layouts may use Reader’s established layout",
+        "Bố cục phức tạp có thể dùng bố cục hiện có của Reader",
+    ),
+    ("Reader’s established layout", "Bố cục hiện có của Reader"),
+    (
+        "Separate margins and empty breaks",
+        "Lề tách biệt và ngắt trống",
+    ),
+    ("Joined margins and inline boxes", "Lề gộp và hộp nội dòng"),
+    (
+        "Float wrapping and text-sized boxes",
+        "Bao quanh phần tử nổi và hộp theo cỡ chữ",
+    ),
+    (
+        "Publisher sizes and signed margins",
+        "Kích thước của nhà xuất bản và lề có dấu",
+    ),
+];
+
 // Fixed scrolling submenu labels; the chosen method and delay remain unchanged.
 const SCROLLING_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Classic scrolling", "Cuộn cổ điển"),
@@ -2101,6 +2183,54 @@ impl InterfaceLanguage {
     pub(super) fn reading_guide_english<'a>(self, label: &'a str) -> &'a str {
         if self == Self::Vietnamese {
             if let Some((english, _)) = READING_GUIDE_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    pub(super) fn annotation_exchange_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = ANNOTATION_EXCHANGE_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn annotation_exchange_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = ANNOTATION_EXCHANGE_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    pub(super) fn typography_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = TYPOGRAPHY_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn typography_settings_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = TYPOGRAPHY_SETTINGS_LABELS
                 .iter()
                 .find(|(_, value)| *value == label)
             {

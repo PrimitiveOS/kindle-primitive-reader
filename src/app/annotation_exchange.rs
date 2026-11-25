@@ -135,22 +135,30 @@ fn transfer_digest(bytes: &[u8]) -> String {
 
 impl Reader {
     pub(super) fn annotation_exchange_settings(&self) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let mut rows = vec![
             Item::new(
-                "Export annotations on book closing",
+                language.annotation_exchange_text("Export annotations on book closing"),
                 Action::AnnotationExchange(Command::ToggleOnClose),
             )
-            .detail("Save a local KOReader transfer when the book closes"),
+            .detail(
+                language.annotation_exchange_text(
+                    "Save a local KOReader transfer when the book closes",
+                ),
+            ),
             Item::new(
-                "Keep all annotations on import",
+                language.annotation_exchange_text("Keep all annotations on import"),
                 Action::AnnotationExchange(Command::ToggleKeepAll),
             )
-            .detail("Keep older local marks missing from the transfer"),
+            .detail(
+                language
+                    .annotation_exchange_text("Keep older local marks missing from the transfer"),
+            ),
         ];
         let folder = self.annotation_exchange.settings.folder.as_deref();
         rows.push(
             Item::new(
-                "Export / import folder",
+                language.annotation_exchange_text("Export / import folder"),
                 Action::ExportSettings(
                     export_settings::Origin::Exchange,
                     export_settings::Command::Browse(
@@ -159,31 +167,41 @@ impl Reader {
                 ),
             )
             .detail(folder.map_or_else(
-                || "Book metadata folder".into(),
+                || {
+                    language
+                        .annotation_exchange_text("Book metadata folder")
+                        .into()
+                },
                 export_settings::folder_label,
             )),
         );
         if folder.is_some() {
             rows.push(
                 Item::new(
-                    "Use book metadata folder",
+                    language.annotation_exchange_text("Use book metadata folder"),
                     Action::AnnotationExchange(Command::DefaultFolder),
                 )
-                .detail("The book’s adjacent .sdr folder"),
+                .detail(language.annotation_exchange_text("The book’s adjacent .sdr folder")),
             );
         }
         if self.supports_annotation_exchange() {
             rows.extend([
                 Item::new(
-                    "Import annotation transfer",
+                    language.annotation_exchange_text("Import annotation transfer"),
                     Action::AnnotationExchange(Command::Preview),
                 )
-                .detail("Review changes to bookmarks, highlights and notes"),
+                .detail(
+                    language.annotation_exchange_text(
+                        "Review changes to bookmarks, highlights and notes",
+                    ),
+                ),
                 Item::new(
-                    "Export annotation transfer",
+                    language.annotation_exchange_text("Export annotation transfer"),
                     Action::AnnotationExchange(Command::Export),
                 )
-                .detail("Save a KOReader .annotations.lua file for this book"),
+                .detail(language.annotation_exchange_text(
+                    "Save a KOReader .annotations.lua file for this book",
+                )),
             ]);
         }
         rows

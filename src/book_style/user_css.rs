@@ -47,6 +47,8 @@ impl Reset {
                         | VARIANT_CAPS
                         | VARIANT_NUMERIC
                         | VARIANT_EAST_ASIAN
+                        | VARIANT_POSITION
+                        | VARIANT_HISTORICAL
                 )
     }
 }
@@ -80,10 +82,14 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
             VARIANT_CAPS,
             VARIANT_NUMERIC,
             VARIANT_EAST_ASIAN,
+            VARIANT_POSITION,
+            VARIANT_HISTORICAL,
         ],
         "font-variant-caps" => vec![VARIANT_CAPS],
         "font-variant-numeric" => vec![VARIANT_NUMERIC],
         "font-variant-east-asian" => vec![VARIANT_EAST_ASIAN],
+        "font-variant-position" => vec![VARIANT_POSITION],
+        "font-variant-alternates" => vec![VARIANT_HISTORICAL],
         "font-variant-ligatures" | "-webkit-font-variant-ligatures" => vec![COMMON_LIGATURES],
         "line-break" => vec![7],
         "word-break" => vec![8],
@@ -143,6 +149,8 @@ pub(super) fn apply_reset(
         VARIANT_CAPS => style.variant_caps = value.variant_caps,
         VARIANT_NUMERIC => style.variant_numeric = value.variant_numeric,
         VARIANT_EAST_ASIAN => style.variant_east_asian = value.variant_east_asian,
+        VARIANT_POSITION => style.variant_position = value.variant_position,
+        VARIANT_HISTORICAL => style.variant_historical = value.variant_historical,
         LETTER_SPACING => style.letter_spacing = value.letter_spacing,
         DIRECTION => {
             style.direction = if reset.parent(DIRECTION) {
@@ -350,7 +358,7 @@ impl<'i> AtRuleParser<'i> for StrictSheet {
 }
 fn expand(decl: Declaration, out: &mut Vec<Declaration>) {
     match decl.property {
-        Property::VariantShorthand(ligatures, caps, numeric, east_asian) => {
+        Property::VariantShorthand(ligatures, caps, numeric, east_asian, position, historical) => {
             out.push(Declaration {
                 property: Property::CommonLigatures(ligatures),
                 important: decl.important,
@@ -365,6 +373,14 @@ fn expand(decl: Declaration, out: &mut Vec<Declaration>) {
             });
             out.push(Declaration {
                 property: Property::VariantEastAsian(east_asian),
+                important: decl.important,
+            });
+            out.push(Declaration {
+                property: Property::VariantPosition(position),
+                important: decl.important,
+            });
+            out.push(Declaration {
+                property: Property::VariantHistorical(historical),
                 important: decl.important,
             });
         }

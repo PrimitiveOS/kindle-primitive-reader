@@ -24,6 +24,7 @@ enum Alphabet {
     SerbianCyrillic,
     Czech,
     Romanian,
+    Latvian,
 }
 
 #[derive(Default)]
@@ -47,6 +48,10 @@ impl OwnedPatterns {
 
     pub(crate) fn parse_romanian(bytes: &[u8]) -> Option<Self> {
         Self::parse_tex(bytes, Alphabet::Romanian)
+    }
+
+    pub(crate) fn parse_latvian(bytes: &[u8]) -> Option<Self> {
+        Self::parse_tex(bytes, Alphabet::Latvian)
     }
 
     fn parse_tex(bytes: &[u8], alphabet: Alphabet) -> Option<Self> {
@@ -173,11 +178,16 @@ impl OwnedPatterns {
 
     fn parse_rules<'a>(rules: impl Iterator<Item = &'a str>, alphabet: Alphabet) -> Option<Self> {
         let scripts = CodePointMapData::<Script>::new();
+        let (max_rules, max_nodes) = if matches!(alphabet, Alphabet::Latvian) {
+            (16_384, 32_768)
+        } else {
+            (MAX_RULES, MAX_NODES)
+        };
         let mut nodes = vec![Node::default()];
         let mut count = 0usize;
         for pattern in rules {
             count += 1;
-            if count > MAX_RULES || pattern.len() > MAX_PATTERN_BYTES {
+            if count > max_rules || pattern.len() > MAX_PATTERN_BYTES {
                 return None;
             }
             let mut at = 0usize;
@@ -201,9 +211,10 @@ impl OwnedPatterns {
                     Alphabet::Armenian => {
                         ('\u{0561}'..='\u{0587}').contains(&ch) && ch.is_lowercase()
                     }
-                    Alphabet::SerbianLatin | Alphabet::Czech | Alphabet::Romanian => {
-                        ch.is_lowercase() && scripts.get(ch) == Script::Latin
-                    }
+                    Alphabet::SerbianLatin
+                    | Alphabet::Czech
+                    | Alphabet::Romanian
+                    | Alphabet::Latvian => ch.is_lowercase() && scripts.get(ch) == Script::Latin,
                     Alphabet::SerbianCyrillic => {
                         ch.is_lowercase() && scripts.get(ch) == Script::Cyrillic
                     }
@@ -215,7 +226,7 @@ impl OwnedPatterns {
                 let next = nodes.len();
                 let index = *nodes.get_mut(at)?.edges.entry(ch).or_insert(next);
                 if index == next {
-                    if nodes.len() >= MAX_NODES {
+                    if nodes.len() >= max_nodes {
                         return None;
                     }
                     nodes.push(Node::default());
