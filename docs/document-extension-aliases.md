@@ -14,6 +14,11 @@ and image paths use the selected member's directory and stay inside the
 archive. Other HTML chapters and KOReader's general mixed-archive member
 selection remain unsupported. [Compressed text](text-zip-reading.md)
 
+The candidate also recognizes plain `.zip` with exactly one supported
+reflowable document, subject to separate archive limits and ambiguity checks.
+PDF, EPUB and office documents nested in plain ZIP remain unsupported.
+[Generic ZIP candidate](generic-zip-reading.md)
+
 An `.xml` file with an XHTML `html` root uses the standalone XHTML reader; one
 with a FictionBook root uses the FB2 adapter, including its namespace and
 structure checks. Other XML is shown as literal source text so that markup and

@@ -244,6 +244,33 @@ impl Plan {
 }
 
 impl Prepared {
+    /// Transfer one line's verified raw boundaries into the chapter page model.
+    /// The caller must retain the same source block and use the same line
+    /// index; this does not install the detached layout into the renderer.
+    pub(in crate::parley_layout) fn page_line(
+        &self,
+        block: &Block,
+        index: usize,
+    ) -> Option<crate::RawLinePosition> {
+        if !self.binding.matches(block) {
+            return None;
+        }
+        let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+        if self.text.text.as_str() != bound.raw() || self.layout.text_len() != bound.raw().len() {
+            return None;
+        }
+        let line = self.lines.get(index)?;
+        bound.validate_caret(&line.start)?;
+        bound.validate_caret(&line.end)?;
+        if line.start.raw_offset != line.bytes.start || line.end.raw_offset != line.bytes.end {
+            return None;
+        }
+        Some(crate::RawLinePosition {
+            start: line.start.clone(),
+            end: line.end.clone(),
+        })
+    }
+
     /// Resolve a point in paragraph-local layout coordinates without snapping
     /// extra whitespace back to its collapsed canonical position. Empty space
     /// without a shaped cluster does not produce a caret.

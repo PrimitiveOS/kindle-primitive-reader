@@ -102,6 +102,10 @@ its explicit boundary affinity. These are not installed into Reader's page model
 or UI; durable state and the full integration remain open. A detached hit-test
 can also resolve a shaped cluster to a verified raw grapheme caret, including
 positions within restored whitespace. Empty areas without a cluster are rejected.
+The chapter page model can also hold verified raw line boundaries and resolve
+a raw page anchor back to a line with its explicit affinity. All active
+renderers still leave this field empty; installing it, coordinating ordinary
+and raw lines on the same page, and integrating resume remain future work.
 
 This stage does **not** change rendering, copying, selection, source revisions,
 existing anchors or saved state. It does not yet implement preformatted EPUB

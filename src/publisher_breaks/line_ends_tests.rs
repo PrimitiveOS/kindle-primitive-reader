@@ -20,6 +20,7 @@ fn protects_each_end_of_a_paragraph_and_relaxes_impossible_keeps() {
             bytes: 0..1,
             spans: None,
             additional_sources: None,
+            raw_whitespace: None,
             top: n as f32 * 10.,
             bottom: n as f32 * 10. + 8.,
             page_extension: [0.0; 2],

@@ -803,12 +803,21 @@ struct Line {
     /// `bytes` remains the envelope for pagination endpoints only.
     spans: Option<std::sync::Arc<[Range<usize>]>>,
     additional_sources: Option<Box<[(usize, Range<usize>)]>>,
+    /// Optional verified raw positions for a future preformatted line.
+    /// Ordinary lines and all active renderers currently leave this empty.
+    raw_whitespace: Option<RawLinePosition>,
     top: f32,
     bottom: f32,
     // Attached paint at the first and last line of a fitted paragraph.
     // Text geometry and canonical offsets continue to use top and bottom.
     page_extension: [f32; 2],
     missing_glyphs: usize,
+}
+
+#[derive(Clone)]
+struct RawLinePosition {
+    start: RawCaret,
+    end: RawCaret,
 }
 
 impl Line {
@@ -2639,6 +2648,98 @@ impl Probe {
                 }
                 anchor
             })
+    }
+
+    /// Detached raw-page lookup for a future installed raw layout. This is
+    /// intentionally not used by normal pagination while raw reading is gated.
+    #[allow(dead_code)]
+    pub(crate) fn raw_anchor_in(&self, range: Range<f32>) -> Option<Anchor> {
+        if !range.start.is_finite() || !range.end.is_finite() || range.start >= range.end {
+            return None;
+        }
+        let line = self.lines.iter().find(|line| {
+            line.raw_whitespace.is_some() && line.bottom > range.start && line.top < range.end
+        })?;
+        let location = line.raw_whitespace.as_ref()?;
+        if !line.top.is_finite()
+            || !line.bottom.is_finite()
+            || line.top > line.bottom
+            || location.start.raw_offset > location.end.raw_offset
+            || location.start.raw_sha256 != location.end.raw_sha256
+        {
+            return None;
+        }
+        let mut end_anchor = self.anchor(line.block, location.end.canonical_offset);
+        end_anchor.raw_caret = None;
+        self.validate_raw_whitespace_anchor(&source::raw_whitespace::RawAnchor {
+            canonical: end_anchor,
+            caret: location.end.clone(),
+        })?;
+        let caret = location.start.clone();
+        let mut anchor = self.anchor(line.block, caret.canonical_offset);
+        let raw = source::raw_whitespace::RawAnchor {
+            canonical: anchor.clone(),
+            caret: caret.clone(),
+        };
+        self.validate_raw_whitespace_anchor(&raw)?;
+        anchor.raw_caret = Some(caret);
+        Some(anchor)
+    }
+
+    /// Find a raw caret's line with explicit affinity at shared line edges.
+    /// A mismatched source or ambiguous page model is rejected.
+    #[allow(dead_code)]
+    pub(crate) fn raw_anchor_top(&self, anchor: &Anchor) -> Option<f32> {
+        use source::raw_whitespace::{CaretAffinity, RawAnchor};
+        let caret = anchor.raw_caret.as_ref()?;
+        let mut canonical = anchor.clone();
+        canonical.raw_caret = None;
+        self.validate_raw_whitespace_anchor(&RawAnchor {
+            canonical: canonical.clone(),
+            caret: caret.clone(),
+        })?;
+        let mut before = None;
+        let mut after = None;
+        for line in self.lines.iter().filter(|line| line.block == anchor.block) {
+            let Some(raw) = &line.raw_whitespace else {
+                continue;
+            };
+            if raw.start.raw_sha256 != caret.raw_sha256
+                || raw.end.raw_sha256 != caret.raw_sha256
+                || raw.start.raw_offset > raw.end.raw_offset
+                || caret.raw_offset < raw.start.raw_offset
+                || caret.raw_offset > raw.end.raw_offset
+                || !line.top.is_finite()
+            {
+                continue;
+            }
+            for edge in [&raw.start, &raw.end] {
+                let mut edge_anchor = canonical.clone();
+                edge_anchor.offset = edge.canonical_offset;
+                self.validate_raw_whitespace_anchor(&RawAnchor {
+                    canonical: edge_anchor,
+                    caret: edge.clone(),
+                })?;
+            }
+            if raw.start.raw_offset < caret.raw_offset && caret.raw_offset < raw.end.raw_offset {
+                if before.is_some() || after.is_some() {
+                    return None;
+                }
+                before = Some(line.top);
+                after = Some(line.top);
+            } else {
+                if raw.end.raw_offset == caret.raw_offset && before.replace(line.top).is_some() {
+                    return None;
+                }
+                if raw.start.raw_offset == caret.raw_offset && after.replace(line.top).is_some() {
+                    return None;
+                }
+            }
+        }
+        match caret.affinity {
+            CaretAffinity::Before => before.or(after),
+            CaretAffinity::After => after.or(before),
+        }
     }
 
     #[cfg(feature = "kindle")]

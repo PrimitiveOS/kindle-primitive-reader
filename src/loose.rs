@@ -13,7 +13,6 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 
 mod css_resources;
-#[allow(dead_code)] // Wired to the Library archive format in the integration checkpoint.
 mod generic_zip;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD_PAD_INDIFFERENT};
@@ -57,6 +56,7 @@ pub(crate) enum Format {
     Text,
     Html,
     Htmlz,
+    Archive,
     Docx,
     Docm,
     Odt,
@@ -109,7 +109,7 @@ impl Format {
                 } else if has_extension(stem, "html") || has_extension(stem, "htm") {
                     Some(Self::Htmlz)
                 } else {
-                    None
+                    Some(Self::Archive)
                 }
             }
             _ => None,
@@ -173,6 +173,7 @@ impl Document {
         let limit = match format {
             Format::Fb2 => MAX_FB2_INPUT,
             Format::Htmlz => MAX_HTMLZ_INPUT,
+            Format::Archive => MAX_HTMLZ_INPUT,
             Format::Docx | Format::Docm => crate::docx::MAX_INPUT,
             Format::Odt => crate::odt::MAX_INPUT,
             Format::Rtf => crate::rtf::MAX_INPUT,
@@ -189,6 +190,12 @@ impl Document {
         }
         let file = File::open(path)?;
         let fallback_title = fallback_title(path);
+        if format == Format::Archive {
+            let (document, actual_format) =
+                generic_zip::open(file, metadata.len(), fallback_title)?;
+            *effective_format = actual_format;
+            return Ok(document);
+        }
         if format == Format::Htmlz {
             return read_htmlz(file, metadata.len(), fallback_title);
         }
@@ -277,6 +284,7 @@ impl Document {
             }
             Format::Fb2 => fb2_document(input, fallback_title),
             Format::Htmlz
+            | Format::Archive
             | Format::Docx
             | Format::Docm
             | Format::Odt

@@ -923,7 +923,11 @@ impl ActiveBook {
     /// Use the parsed content type for reading controls, while retaining the
     /// path-derived entry format for library identity and storage operations.
     fn reading_format(&self) -> DocumentFormat {
-        if self.entry.format == DocumentFormat::Html && self.reading.probe.fictionbook {
+        if matches!(
+            self.entry.format,
+            DocumentFormat::Html | DocumentFormat::Archive
+        ) && self.reading.probe.fictionbook
+        {
             DocumentFormat::Fb2
         } else {
             self.entry.format
@@ -1591,12 +1595,13 @@ impl Reader {
             // Only inspect XML separately when the two defaults differ: the
             // library identity must stay path-based and normal openings should
             // not pay for a second parse.
-            let xml_fictionbook = unseen
-                && entry.format == DocumentFormat::Html
-                && entry
-                    .path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("xml"))
+            let content_fictionbook = unseen
+                && (entry.format == DocumentFormat::Archive
+                    || (entry.format == DocumentFormat::Html
+                        && entry
+                            .path
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("xml"))))
                 && self.controls.fictionbook_stylesheet_default
                     != self.controls.base_stylesheet_default
                 && with_storage(|| {
@@ -1605,7 +1610,7 @@ impl Reader {
                         .map_err(io::Error::other)
                 })
                 .unwrap_or(false);
-            initial_preferences.base_stylesheet = if xml_fictionbook
+            initial_preferences.base_stylesheet = if content_fictionbook
                 || matches!(entry.format, DocumentFormat::Fb2 | DocumentFormat::Fb3)
             {
                 self.controls.fictionbook_stylesheet_default

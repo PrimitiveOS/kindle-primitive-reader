@@ -188,6 +188,7 @@ pub(super) enum Command {
     Go(Page),
     Use(Source),
     UseCurrentBook,
+    FocusCurrentPage,
     ToggleDefault(Source),
     OpenFolder(PathBuf, bool),
     ToggleBook(u64),
@@ -659,6 +660,58 @@ impl Reader {
                         .interface_language
                         .bookmark_text("Current book")
                         .to_owned();
+                }
+            }
+            Command::FocusCurrentPage => {
+                // Use only filtered, already displayed rows of the active fixed
+                // document. Sorting the result list must not affect the target.
+                let target = (|| {
+                    if self.bookmark_browser.origin != Screen::Fixed {
+                        return None;
+                    }
+                    let book = self.fixed.as_ref()?;
+                    let current = self.current_position()?.page;
+                    let state = self.library.state(book.id)?;
+                    self.bookmark_browser
+                        .rows
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(ordinal, row)| {
+                            let RowKey::Mark(key) = row else {
+                                return None;
+                            };
+                            if key.book != book.id {
+                                return None;
+                            }
+                            let page = match key.locator {
+                                Locator::Bookmark(index) => {
+                                    state.bookmarks.get(index)?.position.page
+                                }
+                                Locator::Fixed(index) => state.pdf_highlights.get(index)?.page,
+                                Locator::Reflow(_) => return None,
+                            };
+                            (page < book.reading.count()).then_some((ordinal, page))
+                        })
+                        .min_by_key(|&(ordinal, page)| {
+                            if page >= current {
+                                (false, page - current, ordinal)
+                            } else {
+                                (true, current - page, ordinal)
+                            }
+                        })
+                        .map(|(ordinal, _)| ordinal)
+                })();
+                self.show(Screen::BookmarkBrowser(Page::Results));
+                if let Some(ordinal) = target {
+                    let page = ordinal / self.list_geometry().rows;
+                    self.set_bookmark_list_anchor(page, ordinal);
+                } else {
+                    self.notice = Some(
+                        self.controls
+                            .interface_language
+                            .bookmark_text("No matching marks in the current book")
+                            .to_owned(),
+                    );
                 }
             }
             Command::ToggleDefault(source) => {
@@ -1157,6 +1210,9 @@ impl Reader {
                     selection_row("Date added", C::SortByDate(true), browser.sort_by_date),
                     item("All types", C::SetKind(None)).detail(kind),
                 ];
+                if browser.origin == Screen::Fixed && self.fixed.is_some() {
+                    rows.insert(0, item("Show current page in results", C::FocusCurrentPage));
+                }
                 rows.extend(
                     [Kind::Bookmark, Kind::Highlight, Kind::Note]
                         .into_iter()

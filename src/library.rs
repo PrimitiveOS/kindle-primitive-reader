@@ -74,6 +74,7 @@ pub enum DocumentFormat {
     Text,
     Html,
     Htmlz,
+    Archive,
     Docx,
     Odt,
     Chm,
@@ -106,6 +107,7 @@ impl DocumentFormat {
                 Format::Text => Self::Text,
                 Format::Html => Self::Html,
                 Format::Htmlz => Self::Htmlz,
+                Format::Archive => Self::Archive,
                 Format::Docx | Format::Docm => Self::Docx,
                 Format::Odt => Self::Odt,
                 Format::Chm => Self::Chm,
@@ -172,6 +174,7 @@ impl DocumentFormat {
             Self::Text => crate::loose::MAX_TEXT_INPUT as u64,
             Self::Html | Self::Markdown => MAX_INPUT as u64,
             Self::Htmlz => MAX_HTMLZ_INPUT as u64,
+            Self::Archive => MAX_HTMLZ_INPUT as u64,
             Self::Docx => crate::docx::MAX_INPUT as u64,
             Self::Odt => crate::odt::MAX_INPUT as u64,
             Self::Chm => crate::chm::MAX_CHM_BYTES,
@@ -199,6 +202,7 @@ impl DocumentFormat {
             Self::Text => b"reader-txt\0",
             Self::Html => b"reader-html\0",
             Self::Htmlz => b"reader-htmlz\0",
+            Self::Archive => b"reader-generic-zip-v1\0",
             Self::Docx => b"reader-docx\0",
             Self::Odt => b"reader-odt\0",
             Self::Chm => b"reader-chm\0",
@@ -1991,6 +1995,7 @@ impl Library {
                 | DocumentFormat::Text
                 | DocumentFormat::Html
                 | DocumentFormat::Htmlz
+                | DocumentFormat::Archive
                 | DocumentFormat::Docx
                 | DocumentFormat::Odt
                 | DocumentFormat::Chm

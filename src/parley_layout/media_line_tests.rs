@@ -118,6 +118,7 @@ fn media_caret_fix_does_not_accept_invalid_text_utf8_or_out_of_range_source_boun
             bytes: bytes.clone(),
             spans: None,
             additional_sources: None,
+            raw_whitespace: None,
             top: 0.,
             bottom: 20.,
             page_extension: [0.0; 2],

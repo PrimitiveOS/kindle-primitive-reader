@@ -479,6 +479,7 @@ mod tests {
                 bytes: 0..1,
                 spans: None,
                 additional_sources: None,
+                raw_whitespace: None,
                 top: i as f32 * 20.,
                 bottom: i as f32 * 20. + 18.,
                 page_extension: [0.0; 2],

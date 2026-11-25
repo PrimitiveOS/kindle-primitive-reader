@@ -19,7 +19,8 @@ members, preferring default HTML. Reader deliberately requires exactly one
 supported document and does not yet open PDF, EPUB or office documents nested
 in generic ZIP. [KOReader registration](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L1510) · [CREngine selection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L4501-L4553)
 
-**Integration pending:** the adapter is not yet connected to Reader's Library
-format/identity or its open path. The paired Files handoff must not be deployed
-alone. Source identity, ambiguity, malformed archives, actual Files handoff,
-simulator and Kindle behavior have not been verified.
+Reader's candidate Library integration identifies a generic ZIP from its
+original archive bytes under a distinct ZIP tag and uses the selected member's
+actual reading format. Files has a paired handoff change; neither update should
+be deployed alone. Source identity, ambiguity, malformed archives, actual
+Files handoff, simulator and Kindle behavior have not been verified.
