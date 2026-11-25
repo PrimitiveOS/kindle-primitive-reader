@@ -70,6 +70,10 @@ pub struct AnalysisOptions<'a> {
     /// may acquire a soft wrap opportunity. Invalid lists are ignored.
     pub relaxed_nonbreaking: &'a [usize],
 
+    /// Sorted UTF-8 boundaries where soft wrap opportunities are suppressed.
+    /// Invalid lists are ignored; mandatory breaks are unaffected.
+    pub suppressed_soft_breaks: &'a [usize],
+
     /// Line breaking configuration for ranges of the source text.
     ///
     /// Ranges must be sorted and non-overlapping, and must start and end on character boundaries of

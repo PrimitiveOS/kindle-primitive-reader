@@ -8,6 +8,7 @@ mod inline_blocks;
 #[cfg(test)]
 mod inline_blocks_tests;
 mod note_inline;
+mod short_words;
 #[cfg(test)]
 mod special_glyph_tests;
 #[cfg(test)]
@@ -3576,9 +3577,17 @@ fn shape_paragraph(
     relaxed_nonbreaking.dedup();
     let visual_text = bounded_transformed(block, styles);
     let layout_text = visual_text.as_deref().unwrap_or(block.text);
+    // Transformations may change byte positions, so only pass boundaries when
+    // the layout is using the unchanged visible source text.
+    let suppressed_soft_breaks = if visual_text.is_none() {
+        short_words::suppressed(block, styles)
+    } else {
+        Vec::new()
+    };
     let mut builder = context.ranged_builder(fonts, layout_text, 1.0, true);
     builder.set_bidi_controls(&block.bidi_controls);
     builder.set_relaxed_nonbreaking(&relaxed_nonbreaking);
+    builder.set_suppressed_soft_breaks(&suppressed_soft_breaks);
     let font_weights = style.font_weights.clone();
     let weight_spacing = move |font: &parley::FontData, requested: f32, size: f32| {
         crate::font_synthesis::strength(font, requested, size, &font_weights)

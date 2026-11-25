@@ -109,12 +109,19 @@ impl FolderPicker {
 
 impl Reader {
     pub(super) fn archive_items(&self) -> Vec<Item> {
+        let language = self.controls.interface_language;
         if self.screen == Screen::BookArchive {
             return vec![
-                Item::new("Move current book", Action::BookArchive(Command::Move))
-                    .detail(folder_title(&self.archive.folder)),
-                Item::new("Archive folder", Action::BookArchive(Command::ChooseFolder))
-                    .detail("Choose a folder in Documents"),
+                Item::new(
+                    language.book_archive_text("Move current book"),
+                    Action::BookArchive(Command::Move),
+                )
+                .detail(folder_title(&self.archive.folder)),
+                Item::new(
+                    language.book_archive_text("Archive folder"),
+                    Action::BookArchive(Command::ChooseFolder),
+                )
+                .detail(language.book_archive_text("Choose a folder in Documents")),
             ];
         }
         let Some(picker) = &self.archive.picker else {
@@ -198,6 +205,7 @@ impl Reader {
 
     pub(super) fn draw_archive_confirmation(&self, canvas: &mut Canvas) {
         if let Some(plan) = &self.archive.plan {
+            let language = self.controls.interface_language;
             let filename = plan
                 .source
                 .path
@@ -208,15 +216,23 @@ impl Reader {
             let destination =
                 folder_title(plan.destination.parent().unwrap_or_else(|| Path::new("")));
             let filename = crate::library::display_filename(&filename);
-            let sheet = Sheet::centered(VIEW, "Move this book?", "", "Move book");
+            let sheet = Sheet::centered(
+                VIEW,
+                language.book_archive_text("Move this book?"),
+                "",
+                language.book_archive_text("Move book"),
+            );
             sheet.draw(canvas, None);
             let cancel = sheet.button(SheetAction::Cancel);
+            if !language.is_english() {
+                canvas.button(cancel, language.book_archive_text("Cancel"), false, false);
+            }
             let width = sheet.button(SheetAction::Confirm).right() - cancel.x;
             let height = canvas.px(36);
             let rows = [
                 filename,
-                format!("From {source}"),
-                format!("To {destination}"),
+                format!("{} {source}", language.book_archive_text("From")),
+                format!("{} {destination}", language.book_archive_text("To")),
             ];
             let top = cancel.y - 3 * height - canvas.px(12);
             for (index, label) in rows.iter().enumerate() {

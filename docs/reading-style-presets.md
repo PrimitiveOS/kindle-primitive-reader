@@ -199,6 +199,16 @@ boundaries, Reader keeps its ordinary line rules. Characters, copying,
 selections and saved positions remain unchanged. The visual result has not yet
 been built or tested. [KOReader setting](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L354-L363) · [CRE character treatment](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp#L799-L805)
 
+The horizontal reader also suppresses ordinary soft wraps after certain
+one-letter Polish, Czech, Slovak and Russian words, following a conservative
+subset of KOReader's language-specific line rules. It applies when one
+ordinary space separates the word from a following letter and their language
+matches, without changing the text or source positions. Explicit anywhere and
+break-all rules, preserved spaces and mandatory breaks retain precedence.
+Transformed text, multi-space cases, other renderers and more than 4096
+boundaries keep their ordinary line rules. Real-book behavior, simulation and
+Kindle comparison remain unverified. [Pinned CRE rules](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp#L552-L635)
+
 **Sans-serif font for ruby** requests Noto Sans CJK SC, falling back to a
 sans-serif family when unavailable, and applies regular weight. **Larger ruby
 text size** sets ruby annotations to 50% of their parent size. Horizontal

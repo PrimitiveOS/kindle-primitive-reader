@@ -640,6 +640,17 @@ pub(crate) fn analyze_text(
     } else {
         &[]
     };
+    let suppressed = options.suppressed_soft_breaks;
+    let suppressed = if suppressed.len() <= 4096
+        && suppressed.windows(2).all(|pair| pair[0] < pair[1])
+        && suppressed
+            .iter()
+            .all(|&offset| offset > 0 && offset < text.len() && text.is_char_boundary(offset))
+    {
+        suppressed
+    } else {
+        &[]
+    };
     // CRE's private loose mode analyzes NBSP as a space and U+2011 as
     // U+2010. A shadow copy lets ICU make contextual decisions without
     // replacing source text or changing any saved byte positions. Until
@@ -815,6 +826,12 @@ pub(crate) fn analyze_text(
                 if let Some(forced) = forced {
                     opportunity = forced;
                 }
+            }
+            if !is_break_anywhere
+                && !after_break_space
+                && suppressed.binary_search(&byte_pos).is_ok()
+            {
+                opportunity = false;
             }
             opportunity
         };

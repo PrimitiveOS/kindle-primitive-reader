@@ -551,6 +551,36 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed book-archive controls; filenames and source/destination paths stay untouched.
+const BOOK_ARCHIVE_LABELS: &[(&str, &str)] = &[
+    ("Move current book", "Di chuyển sách hiện tại"),
+    ("Archive folder", "Thư mục lưu trữ"),
+    (
+        "Choose a folder in Documents",
+        "Chọn một thư mục trong Documents",
+    ),
+    ("Move this book?", "Di chuyển sách này?"),
+    ("Move book", "Di chuyển sách"),
+    ("Cancel", "Hủy"),
+    ("From", "Từ"),
+    ("To", "Đến"),
+];
+
+// Fixed book-shortcut controls; user names, paths and identities stay untouched.
+const BOOK_SHORTCUT_LABELS: &[(&str, &str)] = &[
+    ("New shortcut", "Lối tắt mới"),
+    ("Folder action", "Hành động với thư mục"),
+    ("Browse folder", "Duyệt thư mục"),
+    ("Open last-read book", "Mở sách đọc gần nhất"),
+    ("Unavailable", "Không khả dụng"),
+    ("Book", "Sách"),
+    ("Folder", "Thư mục"),
+    ("Add this folder", "Thêm thư mục này"),
+    ("Up one folder", "Lên một thư mục"),
+    ("Selected", "Đã chọn"),
+    ("Include subfolders", "Bao gồm thư mục con"),
+];
+
 // Fixed footnote font editor text; font values and ranges stay untouched.
 const FOOTNOTE_FONT_LABELS: &[(&str, &str)] = &[
     ("Relative", "Tương đối"),
@@ -2815,6 +2845,28 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn book_archive_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                BOOK_ARCHIVE_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn book_shortcut_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                BOOK_SHORTCUT_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn footnote_font_text<'a>(self, english: &'a str) -> &'a str {

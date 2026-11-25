@@ -268,17 +268,23 @@ impl Reader {
     }
 
     pub(super) fn book_shortcut_items(&self, page: Page) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let shortcuts = &self.book_shortcuts;
-        let action = |title, command| Item::new(title, Action::BookShortcut(command));
+        let action = |title: &str, command| {
+            Item::new(
+                language.book_shortcut_text(title),
+                Action::BookShortcut(command),
+            )
+        };
         match page {
             Page::List => {
                 let mut rows = vec![
                     action("New shortcut", Command::Choose),
                     Item::new(
-                        "Folder action",
+                        language.book_shortcut_text("Folder action"),
                         Action::Show(Screen::BookShortcuts(Page::FolderAction)),
                     )
-                    .detail(shortcuts.saved.folder_action.title()),
+                    .detail(language.book_shortcut_text(shortcuts.saved.folder_action.title())),
                 ];
                 rows.extend(shortcuts.saved.shortcuts.iter().map(|entry| {
                     let kind = if shortcuts.unavailable.contains(&entry.id) {
@@ -298,7 +304,7 @@ impl Reader {
                         entry.name(),
                         Action::BookShortcut(Command::Launch(entry.id)),
                     )
-                    .detail(format!("{kind} · {folder}"))
+                    .detail(format!("{} · {folder}", language.book_shortcut_text(kind)))
                 }));
                 rows
             }
@@ -327,7 +333,10 @@ impl Reader {
                         }
                         _ => return None,
                     };
-                    Some(Item::new(&entry.name, Action::BookShortcut(command)).detail(kind))
+                    Some(
+                        Item::new(&entry.name, Action::BookShortcut(command))
+                            .detail(language.book_shortcut_text(kind)),
+                    )
                 }));
                 rows
             }
@@ -339,7 +348,7 @@ impl Reader {
                         let row =
                             action(folder_action.title(), Command::FolderAction(folder_action));
                         if folder_action == selected {
-                            row.detail("Selected")
+                            row.detail(language.book_shortcut_text("Selected"))
                         } else {
                             row
                         }

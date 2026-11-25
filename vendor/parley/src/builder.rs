@@ -42,6 +42,7 @@ pub(crate) struct BuilderOptions<'a> {
     base_direction: BaseDirection,
     bidi_controls: &'a [(usize, char)],
     relaxed_nonbreaking: &'a [usize],
+    suppressed_soft_breaks: &'a [usize],
     line_break_override: Option<&'a LineBreakOverrideFn>,
     automatic_hyphens: &'a [usize],
     trusted_soft_hyphen_words: &'a [Range<usize>],
@@ -59,6 +60,7 @@ impl BuilderOptions<'_> {
             base_direction: BaseDirection::Auto,
             bidi_controls: &[],
             relaxed_nonbreaking: &[],
+            suppressed_soft_breaks: &[],
             line_break_override: None,
             soft_hyphen_policy: None,
             automatic_hyphens: &[],
@@ -125,6 +127,12 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
     /// relaxation without altering the text or its selection offsets.
     pub fn set_relaxed_nonbreaking(&mut self, boundaries: &'b [usize]) {
         self.options.relaxed_nonbreaking = boundaries;
+    }
+
+    /// Suppress selected soft wraps at source UTF-8 boundaries without
+    /// changing the text. Mandatory breaks are never suppressed.
+    pub fn set_suppressed_soft_breaks(&mut self, boundaries: &'b [usize]) {
+        self.options.suppressed_soft_breaks = boundaries;
     }
 
     /// Set the callback which will be called as a first provider of line breaking decisions.
@@ -449,6 +457,7 @@ fn build_into_layout<B: Brush>(
         options.line_break_override,
         options.bidi_controls,
         options.relaxed_nonbreaking,
+        options.suppressed_soft_breaks,
     );
 
     layout.data.clear();
