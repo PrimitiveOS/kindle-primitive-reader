@@ -164,6 +164,9 @@ impl ChapterFlow {
                             bytes: run.layout.clone(),
                             element: run.element,
                             language,
+                            preserve_whitespace: block.styled_text.iter().any(|original| {
+                                original.element == run.element && original.preserve_whitespace
+                            }),
                         }
                     })
                     .collect(),

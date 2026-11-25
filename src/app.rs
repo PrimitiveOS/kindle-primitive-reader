@@ -66,6 +66,7 @@ mod go_to_page;
 mod hidden_flows;
 mod highlight_palette;
 mod illustration;
+pub(crate) mod interface_language;
 mod library_export;
 mod library_view;
 mod link_taps;
@@ -231,6 +232,7 @@ enum Screen {
     CollectionName,
     RemoveCollection,
     ReadingControls,
+    InterfaceLanguage,
     ReadingNotifications,
     PastNotifications,
     NavigationSettings,
@@ -423,6 +425,7 @@ impl Screen {
             Self::CollectionName => "Collection name",
             Self::RemoveCollection => "Remove collection?",
             Self::ReadingControls => "Reading controls",
+            Self::InterfaceLanguage => "Interface language",
             Self::ReadingNotifications => "Notifications",
             Self::PastNotifications => "Past notifications",
             Self::NavigationSettings => "Navigation settings",
@@ -3292,6 +3295,35 @@ impl Reader {
                                 position.page + 1
                             ))
                     }
+                })
+                .collect();
+        }
+        if screen == Screen::InterfaceLanguage {
+            use interface_language::InterfaceLanguage;
+            return [InterfaceLanguage::English, InterfaceLanguage::Vietnamese]
+                .into_iter()
+                .map(|language| {
+                    let (name, description) = match language {
+                        InterfaceLanguage::English => ("English", "Complete interface"),
+                        InterfaceLanguage::Vietnamese => (
+                            "Tiếng Việt (partial)",
+                            "Reading bars only; other controls remain in English",
+                        ),
+                    };
+                    let selected = language == self.controls.interface_language;
+                    let detail = if selected {
+                        format!("Selected · {description}")
+                    } else {
+                        description.to_owned()
+                    };
+                    Item::new(
+                        name,
+                        Action::SetReadingControls(ReadingControls {
+                            interface_language: language,
+                            ..self.controls
+                        }),
+                    )
+                    .detail(detail)
                 })
                 .collect();
         }
@@ -8443,6 +8475,9 @@ impl Reader {
             }
             (Screen::BookList, Some(BookList::Status(status))) => status.label(),
             (Screen::BookList, Some(BookList::Collection(name))) => name,
+            (Screen::InterfaceLanguage, _) => {
+                self.controls.interface_language.text("Interface language")
+            }
             _ => self.screen.title(),
         };
         let scoped_title;
@@ -10237,6 +10272,7 @@ impl App for Reader {
                         self.show(Screen::Gestures);
                     }
                     Screen::Scrolling => self.show(Screen::Gestures),
+                    Screen::InterfaceLanguage => self.show(Screen::ReadingControls),
                     Screen::ReadingNotifications => self.show(Screen::ReadingControls),
                     Screen::PastNotifications => {
                         self.show(Screen::ReadingNotifications);

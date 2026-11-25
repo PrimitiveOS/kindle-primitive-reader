@@ -434,6 +434,7 @@ impl Reader {
             ..Bars::default()
         };
         let large = self.controls.large_toolbar;
+        let language = self.controls.interface_language;
         let fixed = self.fixed.as_ref().map(|document| &document.reading);
         let has_scan = self.supports_scan_panel();
 
@@ -462,14 +463,14 @@ impl Reader {
             ] {
                 let selected =
                     matches!(target, Target::Toggle(panel) if self.reading_panel == Some(panel));
-                bars.shortcut(rect, label, target, selected);
+                bars.shortcut(rect, language.text(label), target, selected);
             }
             let tabs = Rect::new(0, height, width, if large { 112 } else { 104 });
             bars.top.push(tabs);
             for (index, group) in TopGroup::ALL.into_iter().enumerate() {
                 bars.shortcut(
                     cell(tabs, index, TopGroup::ALL.len()),
-                    group.label(),
+                    language.text(group.label()),
                     Target::TopSection(group),
                     self.top_group == Some(group),
                 );
@@ -526,13 +527,18 @@ impl Reader {
             for (index, tab) in tabs.into_iter().enumerate() {
                 if let Some((label, target)) = tab {
                     let selected = matches!(target, Target::Toggle(panel) if self.reading_panel.map(BarPanel::tab) == Some(panel));
-                    bars.shortcut(cell(bottom, index, columns), label, target, selected);
+                    bars.shortcut(
+                        cell(bottom, index, columns),
+                        language.text(label),
+                        target,
+                        selected,
+                    );
                 }
             }
             if !self.reading_top {
                 bars.shortcut(
                     cell(bottom, document_tabs, columns),
-                    "Exit",
+                    language.text("Exit"),
                     Target::Exit,
                     false,
                 );

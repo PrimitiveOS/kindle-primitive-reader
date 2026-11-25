@@ -102,7 +102,7 @@ impl DocumentFormat {
                 Format::Text => Self::Text,
                 Format::Html => Self::Html,
                 Format::Htmlz => Self::Htmlz,
-                Format::Docx => Self::Docx,
+                Format::Docx | Format::Docm => Self::Docx,
                 Format::Odt => Self::Odt,
                 Format::Chm => Self::Chm,
                 Format::Markdown => Self::Markdown,

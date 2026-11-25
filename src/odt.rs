@@ -380,13 +380,14 @@ impl Convert {
             if n == 0 || n > 4096 {
                 return Err("OpenDocument whitespace exceeds limits".into());
             }
+            self.push("<span data-primitive-odt-space=\"1\">")?;
             for _ in 0..n {
-                self.push("&#160;")?;
+                self.push(" ")?;
             }
-            return Ok(());
+            return self.push("</span>");
         }
         if ns == TEXT && tag == "tab" {
-            return self.push("&#160;&#160;&#160;&#160;");
+            return self.push("<span data-primitive-odt-space=\"1\">\t</span>");
         }
         if ns == TEXT && tag == "line-break" {
             return self.push("<br/>");
@@ -549,3 +550,6 @@ impl Convert {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

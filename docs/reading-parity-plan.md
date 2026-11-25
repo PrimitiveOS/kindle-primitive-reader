@@ -81,18 +81,27 @@ behavior limits. These additions are unverified: the implementation pass is
 still in progress, and broad testing, simulation, device acceptance and release
 remain deferred.
 
+The current source additionally contains a restricted DOCM reading adapter,
+ODT-specific ordinary-space preservation, and an explicitly partial Vietnamese
+interface choice. The Reader's Mac library and binaries pass a build-only
+check after these changes. Other interface languages, full Vietnamese coverage,
+and the format-specific limits remain open. The related Files source handoff
+is also being updated; none of this constitutes behavioral or device acceptance.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 335 of 539 in-scope reading-control rows have
+**Last verified baseline for the pinned control inventory:** 335 of 539 in-scope reading-control rows have
 an implemented workflow, 155 are partial, 44 are gaps, and 5 need audit.
 The 44 gaps cover interface-language choices. The largest groups of partial
 controls are typography and style tweaks. The audited SDL fullscreen row
 belongs to the host window and is unavailable in KOReader’s Kindle menu.
-[Control matrix](koreader-sdl-reference-controls.json)
+[Control matrix](koreader-sdl-reference-controls.json). These historical row
+counts are not a completion percentage and do not include the unverified
+implementation batches described above.
 
 The current Mac comparison covers bounded cross-part FB3 notes and asynchronous
 quote preparation for larger EPUBs. The replays verify links, selections,
@@ -102,9 +111,10 @@ complex layouts remain in their original link flow. Eligible local EPUB ZIPs
 prepare the exact quote prefix asynchronously and preserve the current anchor
 when repainting. ZIPs above 8 MiB use bounded, storage-leased reads rather
 than a full archive copy. Archives and prefixes beyond the documented worker
-budgets retain the foreground fallback. WOFF 2, broader cross-part FB3 note
-bands, generated block boxes, richer joined tables, additional initial layouts and more dictionaries
-remain open. Foreground Kindle verification is pending.
+budgets retain the foreground fallback. The later implementation batches add
+candidate WOFF 2, cross-part FB3 notes and dictionaries, but their broad
+verification remains open, alongside generated block boxes, richer joined
+tables and additional initial layouts. Foreground Kindle verification is pending.
 [FB3 reading](fb3-reading.md) · [Cross-part notes](fb3-cross-part-notes.md) · [WOFF 1 fonts](embedded-font-families.md#woff-1-publisher-fonts) · [Quote marks](quote-marks.md) ·
 [Joined note comparison](in-page-footnotes.md#generated-text-in-flattened-notes)
 

@@ -3192,6 +3192,19 @@ fn shape_paragraph(
     builder.push_default(StyleProperty::FontWeight(weight(style)));
     builder.push_default(StyleProperty::FontStyle(style.font_style));
     builder.push_default(StyleProperty::Locale(language));
+    // These ranges come only from the ODT adapter's explicit whitespace
+    // elements; use source spaces/tabs and retain break opportunities.
+    for run in block
+        .styled_text
+        .iter()
+        .filter(|run| run.preserve_whitespace)
+    {
+        builder.push(
+            StyleProperty::WhiteSpaceCollapse(parley::WhiteSpaceCollapse::BreakSpaces),
+            run.bytes.clone(),
+        );
+    }
+
     let line_break_for = |style: &Style, language| {
         style
             .line_break

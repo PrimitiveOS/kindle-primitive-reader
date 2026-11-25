@@ -140,6 +140,7 @@ struct Extraction {
     ruby: bool,
     origins: bool,
     ignore_embedded_language: bool,
+    preserve_odt_whitespace: bool,
 }
 
 impl Default for Extraction {
@@ -148,6 +149,7 @@ impl Default for Extraction {
             ruby: true,
             origins: false,
             ignore_embedded_language: false,
+            preserve_odt_whitespace: false,
         }
     }
 }
@@ -176,6 +178,7 @@ pub(crate) struct StyledText {
     pub bytes: Range<usize>,
     pub element: usize,
     pub language: Option<Language>,
+    pub(crate) preserve_whitespace: bool,
 }
 
 pub(crate) enum Stylesheet {
@@ -241,6 +244,16 @@ fn emit(text: &mut String, spaces: &mut bool, c: char) -> Option<Range<usize>> {
     }
     text.push(c);
     *spaces = false;
+    Some(start..text.len())
+}
+
+fn emit_preserved(text: &mut String, spaces: &mut bool, c: char) -> Option<Range<usize>> {
+    let start = text.len();
+    if *spaces && !text.is_empty() && !text.ends_with('\n') {
+        text.push(' ');
+    }
+    *spaces = false;
+    text.push(c);
     Some(start..text.len())
 }
 
@@ -483,6 +496,37 @@ impl Source {
         respect_embedded: bool,
         kindle_elements: &BTreeSet<usize>,
     ) -> Result<Self> {
+        Self::parse_with_typography_flags(
+            xhtml,
+            publication_language,
+            respect_embedded,
+            kindle_elements,
+            false,
+        )
+    }
+
+    pub(crate) fn parse_odt_with_typography(
+        xhtml: &str,
+        publication_language: Option<Language>,
+        respect_embedded: bool,
+        kindle_elements: &BTreeSet<usize>,
+    ) -> Result<Self> {
+        Self::parse_with_typography_flags(
+            xhtml,
+            publication_language,
+            respect_embedded,
+            kindle_elements,
+            true,
+        )
+    }
+
+    fn parse_with_typography_flags(
+        xhtml: &str,
+        publication_language: Option<Language>,
+        respect_embedded: bool,
+        kindle_elements: &BTreeSet<usize>,
+        preserve_odt_whitespace: bool,
+    ) -> Result<Self> {
         let input = ring::digest::digest(&ring::digest::SHA256, xhtml.as_bytes());
         let mut fingerprint = [0; 32];
         fingerprint.copy_from_slice(input.as_ref());
@@ -493,6 +537,7 @@ impl Source {
                 publication_language,
                 respect_embedded,
                 kindle_elements,
+                preserve_odt_whitespace,
             )?
         } else {
             Self::parse_document(
@@ -503,6 +548,7 @@ impl Source {
                 kindle_elements,
                 Extraction {
                     ignore_embedded_language: !respect_embedded,
+                    preserve_odt_whitespace,
                     ..Extraction::default()
                 },
             )?
@@ -855,6 +901,13 @@ impl Source {
                     images[index].space_after = content.starts_with(char::is_whitespace);
                 }
                 let start = text.len();
+                // Only the ODT adapter can opt into this private marker. Other
+                // XHTML and EPUB documents retain their established collapsing.
+                let preserve_whitespace = extraction.preserve_odt_whitespace
+                    && descendant.parent().is_some_and(|parent| {
+                        parent.has_tag_name("span")
+                            && parent.attribute("data-primitive-odt-space") == Some("1")
+                    });
                 let flow_element = descendant
                     .parent()
                     .and_then(|parent| element_ids.get(&parent.id()).copied())
@@ -868,14 +921,27 @@ impl Source {
                     for c in content.chars() {
                         let old = emit(&mut legacy.text, &mut legacy.spaces, c);
                         let before = text.len();
-                        let current = emit(&mut text, &mut spaces, c);
-                        flow_origins.character(
-                            c,
-                            flow_element,
-                            before,
-                            text.len(),
-                            &mut flow_budget,
-                        );
+                        let current = if preserve_whitespace {
+                            emit_preserved(&mut text, &mut spaces, c)
+                        } else {
+                            emit(&mut text, &mut spaces, c)
+                        };
+                        if preserve_whitespace {
+                            flow_origins.literal_character(
+                                c,
+                                flow_element,
+                                text.len(),
+                                &mut flow_budget,
+                            );
+                        } else {
+                            flow_origins.character(
+                                c,
+                                flow_element,
+                                before,
+                                text.len(),
+                                &mut flow_budget,
+                            );
+                        }
                         if let (Some(old), Some(current)) = (old, current) {
                             let length = old.len().min(current.len());
                             legacy
@@ -894,14 +960,24 @@ impl Source {
                 } else {
                     content.chars().for_each(|c| {
                         let before = text.len();
-                        emit(&mut text, &mut spaces, c);
-                        flow_origins.character(
-                            c,
-                            flow_element,
-                            before,
-                            text.len(),
-                            &mut flow_budget,
-                        );
+                        if preserve_whitespace {
+                            emit_preserved(&mut text, &mut spaces, c);
+                            flow_origins.literal_character(
+                                c,
+                                flow_element,
+                                text.len(),
+                                &mut flow_budget,
+                            );
+                        } else {
+                            emit(&mut text, &mut spaces, c);
+                            flow_origins.character(
+                                c,
+                                flow_element,
+                                before,
+                                text.len(),
+                                &mut flow_budget,
+                            );
+                        }
                     });
                 }
                 if start < text.len() {
@@ -911,6 +987,7 @@ impl Source {
                         .ok_or("The chapter's text has no style element")?;
                     if let Some(previous) = styled_text.last_mut()
                         && previous.element == element
+                        && previous.preserve_whitespace == preserve_whitespace
                         && previous.bytes.end == start
                     {
                         previous.bytes.end = text.len();
@@ -919,6 +996,7 @@ impl Source {
                             bytes: start..text.len(),
                             element,
                             language: languages[element],
+                            preserve_whitespace,
                         });
                     }
                     #[cfg(test)]

@@ -1,0 +1,9 @@
+# Reader interface language
+
+Reader offers **English** and **Tiếng Việt (partial)** under Reading controls → Interface language, also available from the reading view's Settings group. English is the default. The choice is saved in Reader's reading controls, separately from each book's language, typography, lookup, text, and stored position. Missing or unknown locale choices fall back to English. Switching the setting does not reopen or repaginate a document.
+
+The Vietnamese option currently translates the reading top and bottom bar shortcuts and group headings, plus the picker title. It explicitly says “partial” and identifies the untranslated areas; the rest of the interface, including menu items, dialogs, accessibility text and messages, remains English. Book content and user-supplied names are never translated. The translations are authored for Reader, not copied from KOReader's catalog.
+
+KOReader's [language list and language-change behavior](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/language.lua#L1) are the reference. This first increment does **not** close its Vietnamese locale parity: complete Vietnamese coverage, its other interface locales, plural/number/date handling, right-to-left mirroring, font fallback, and small-screen text-fit review remain open. The frozen screenshot control inventory records its original observations and is not a current completion claim.
+
+The UI uses the existing shared list, icons, and reading bars; no new gesture or screen geometry is introduced. Validate language persistence, fallback from unknown values, navigation/exit, glyph coverage, text fit, dark mode, and portrait/landscape before release. No device, screenshot, or behavioral validation was performed for this increment.

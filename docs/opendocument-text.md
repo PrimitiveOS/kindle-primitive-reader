@@ -23,3 +23,12 @@ image formats and encrypted ODF packages need further work. No behavioral,
 compatibility, screenshot, performance or Kindle tests have been run for this
 change. Preserve this distinction until tested against real LibreOffice and
 other ODT documents and compared with KOReader.
+
+
+ODT `text:s` and `text:tab` elements now retain actual ordinary spaces and
+horizontal tabs in the source text rather than substituting no-break spaces.
+Those explicit spans use Parley's break-spaces layout; selection and search
+use the preserved source characters. Tab-stop geometry is not yet equivalent
+to a full ODF layout engine. The preservation mode is only enabled for ODT;
+ordinary EPUB and HTML whitespace extraction keeps its existing behavior.
+Authored source, numeric-reference and styled-flow checks have not yet run.

@@ -52,6 +52,7 @@ pub(crate) enum Format {
     Html,
     Htmlz,
     Docx,
+    Docm,
     Odt,
     Chm,
     Markdown,
@@ -70,6 +71,7 @@ impl Format {
             "htm" | "html" | "xht" | "xhtml" | "xml" => Some(Self::Html),
             "htmlz" => Some(Self::Htmlz),
             "docx" => Some(Self::Docx),
+            "docm" => Some(Self::Docm),
             "odt" => Some(Self::Odt),
             "chm" => Some(Self::Chm),
             "md" | "markdown" => Some(Self::Markdown),
@@ -146,7 +148,7 @@ impl Document {
         let limit = match format {
             Format::Fb2 => MAX_FB2_INPUT,
             Format::Htmlz => MAX_HTMLZ_INPUT,
-            Format::Docx => crate::docx::MAX_INPUT,
+            Format::Docx | Format::Docm => crate::docx::MAX_INPUT,
             Format::Odt => crate::odt::MAX_INPUT,
             Format::Rtf => crate::rtf::MAX_INPUT,
             Format::Tcr => crate::tcr::MAX_INPUT,
@@ -166,6 +168,9 @@ impl Document {
         }
         if format == Format::Docx {
             return crate::docx::open(BufReader::new(file), metadata.len(), fallback_title);
+        }
+        if format == Format::Docm {
+            return crate::docx::open_docm(BufReader::new(file), metadata.len(), fallback_title);
         }
         if format == Format::Odt {
             return crate::odt::open(BufReader::new(file), metadata.len(), fallback_title);
@@ -226,6 +231,7 @@ impl Document {
             Format::Fb2 => fb2_document(input, fallback_title),
             Format::Htmlz
             | Format::Docx
+            | Format::Docm
             | Format::Odt
             | Format::Fb3
             | Format::Chm

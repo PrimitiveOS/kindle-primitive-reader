@@ -168,6 +168,7 @@ fn join<'a>(
                 bytes: 0..joined.text.len(),
                 element,
                 language: block.language,
+                preserve_whitespace: false,
             });
             inside_marker = true;
         }
@@ -228,6 +229,7 @@ fn join<'a>(
             bytes: offset + run.bytes.start..offset + run.bytes.end,
             element: run.element,
             language: run.language,
+            preserve_whitespace: run.preserve_whitespace,
         }));
         images.extend(input.images.iter().map(|mut image| {
             if let Some(part) = &decorated {

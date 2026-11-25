@@ -324,6 +324,14 @@ impl Reader {
         let mut items = vec![
             Self::quickstart_item(),
             Item::new(
+                "Interface language",
+                Action::Show(Screen::InterfaceLanguage),
+            )
+            .detail(match current.interface_language {
+                super::interface_language::InterfaceLanguage::English => "English",
+                super::interface_language::InterfaceLanguage::Vietnamese => "Tiếng Việt (partial)",
+            }),
+            Item::new(
                 "Bookmarks and notes",
                 Action::Show(Screen::BookmarkListSettings),
             )

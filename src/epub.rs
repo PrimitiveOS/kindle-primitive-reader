@@ -1128,12 +1128,27 @@ impl Book {
             .filter_map(|destination| destination.fragment.as_deref())
             .filter_map(crate::kf8::publisher_contents::element_index)
             .collect();
-        let mut source = crate::source::Source::parse_with_typography(
-            xhtml,
-            language,
-            respect_embedded,
-            &ordinals,
-        )?;
+        let mut source = if matches!(
+            self.content,
+            Content::Loose {
+                format: loose::Format::Odt,
+                ..
+            }
+        ) {
+            crate::source::Source::parse_odt_with_typography(
+                xhtml,
+                language,
+                respect_embedded,
+                &ordinals,
+            )?
+        } else {
+            crate::source::Source::parse_with_typography(
+                xhtml,
+                language,
+                respect_embedded,
+                &ordinals,
+            )?
+        };
         if let Content::Loose {
             mobi_shadow: Some(shadow),
             ..

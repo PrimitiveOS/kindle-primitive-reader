@@ -632,3 +632,27 @@ fn original_hidden_footnotes_retain_canonical_targets_and_independent_popup_text
     // The namespace selector's cascade itself is deliberately not claimed here:
     // this foundation receives effective masks, not arbitrary CSS selectors.
 }
+
+#[test]
+fn odt_literal_spaces_and_tabs_survive_styled_flow_projection() {
+    let xml = "<html><body><p>A<span data-primitive-odt-space='1'>   </span><span id='cut'>hidden</span><span data-primitive-odt-space='1'>\t</span>B</p></body></html>";
+    let source = Source::parse_odt_with_typography(xml, None, true, &Default::default()).unwrap();
+    let block = &source.blocks[0];
+    assert_eq!(block.text, "A   hidden\tB");
+    let projection = Projection::new(block, &masks(&source, &["cut"], &[], &[])).unwrap();
+    assert_eq!(projection.text(), "A   \tB");
+    for offset in [0, 1, 2, 3, 4] {
+        assert_eq!(
+            projection.project_offset(offset, Affinity::After),
+            Some(offset)
+        );
+    }
+    let plain = Source::parse(xml).unwrap();
+    assert_eq!(plain.blocks[0].text, "A hidden B");
+    assert!(
+        !plain.blocks[0]
+            .styled_text
+            .iter()
+            .any(|run| run.preserve_whitespace)
+    );
+}

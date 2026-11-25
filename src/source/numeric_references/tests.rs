@@ -11,6 +11,7 @@ fn historical(xml: &str, ruby: bool) -> Source {
             ruby,
             origins: true,
             ignore_embedded_language: false,
+            preserve_odt_whitespace: false,
         },
     )
     .unwrap()
@@ -354,4 +355,15 @@ fn unsupported_nested_ruby_retains_its_text_and_historical_boundaries() {
         source.project_offset(current, old.revision, before.text.len()),
         Some(current.text.len())
     );
+}
+
+#[test]
+fn odt_whitespace_preservation_survives_numeric_reference_history() {
+    let xml =
+        "<html><body><p>A<span data-primitive-odt-space='1'>  </span>&#145;B</p></body></html>";
+    let source = Source::parse_odt_with_typography(xml, None, true, &BTreeSet::new()).unwrap();
+    assert_eq!(source.blocks[0].text, "A  ‘B");
+    assert!(source.blocks[0].styled_text.iter().any(|run| run.preserve_whitespace && &source.blocks[0].text[run.bytes.clone()] == "  "));
+    let ordinary = Source::parse(xml).unwrap();
+    assert_eq!(ordinary.blocks[0].text, "A ‘B");
 }

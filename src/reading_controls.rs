@@ -20,6 +20,9 @@ pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct ReadingControls {
+    /// Reader chrome language; independent from publication and dictionary languages.
+    #[serde(skip_serializing_if = "crate::app::interface_language::InterfaceLanguage::is_english")]
+    pub interface_language: crate::app::interface_language::InterfaceLanguage,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notification_sources: Option<u8>,
     #[serde(skip_serializing_if = "crate::app::eager_typography::Mode::is_default")]

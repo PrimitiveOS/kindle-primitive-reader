@@ -226,6 +226,22 @@ impl Origins {
         }
     }
 
+    pub(crate) fn literal_character(
+        &mut self,
+        c: char,
+        element: usize,
+        after: usize,
+        budget: &mut Budget,
+    ) {
+        self.push(
+            Event::Text {
+                bytes: after - c.len_utf8()..after,
+                element,
+            },
+            budget,
+        );
+    }
+
     pub(crate) fn hard_break(&mut self, at: usize, element: usize, budget: &mut Budget) {
         self.owner(element, budget);
         self.push(Event::Break { at, element }, budget);

@@ -146,7 +146,8 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::ReadAlarm | Action::Show(Screen::OnlineHistory) | Action::ReadingHistory(_) => {
             CLOCK
         }
-        Action::Show(Screen::TranslationSettings) | Action::TranslatePage => TEXT,
+        Action::Show(Screen::TranslationSettings | Screen::InterfaceLanguage)
+        | Action::TranslatePage => TEXT,
         Action::SaveBookData
         | Action::ExportBackup
         | Action::PreviewBackup

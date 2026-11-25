@@ -45,13 +45,31 @@ const CORE_NS: &str = "http://schemas.openxmlformats.org/package/2006/metadata/c
 const DC_NS: &str = "http://purl.org/dc/elements/1.1/";
 const MAIN_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
+const MACRO_MAIN_TYPE: &str = "application/vnd.ms-word.document.macroEnabled.main+xml";
+const RELS_TYPE: &str = "application/vnd.openxmlformats-package.relationships+xml";
+const STYLES_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml";
+const CORE_TYPE: &str = "application/vnd.openxmlformats-package.core-properties+xml";
 const PACKAGE_RELS: &str = "_rels/.rels";
 const CONTENT_TYPES: &str = "[content_types].xml";
 
-pub(crate) fn open(
+pub(crate) fn open(input: impl Read + Seek, len: u64, fallback_title: &str) -> Result<Document> {
+    open_word(input, len, fallback_title, false)
+}
+
+pub(crate) fn open_docm(
+    input: impl Read + Seek,
+    len: u64,
+    fallback_title: &str,
+) -> Result<Document> {
+    open_word(input, len, fallback_title, true)
+}
+
+fn open_word(
     mut input: impl Read + Seek,
     len: u64,
     fallback_title: &str,
+    docm: bool,
 ) -> Result<Document> {
     if len > MAX_INPUT as u64 {
         return Err("The Word document exceeds the 16 MiB input limit".into());
@@ -65,35 +83,80 @@ pub(crate) fn open(
     if archive.len() != count {
         return Err("The Word document contains ambiguous or duplicate ZIP entries".into());
     }
-    let parts = index_parts(&mut archive)?;
+    let parts = index_parts(&mut archive, docm)?;
     let types = read_xml_part(&mut archive, &parts, CONTENT_TYPES, MAX_OTHER_XML)?;
-    let types = content_types(&types)?;
-    let mut relations = read_relationships(&mut archive, &parts)?;
+    let types = content_types(&types, docm)?;
+    let mut relations = if docm {
+        require_type(&types, PACKAGE_RELS, RELS_TYPE)?;
+        let text = read_xml_part(&mut archive, &parts, PACKAGE_RELS, MAX_OTHER_XML)?;
+        BTreeMap::from([(
+            PACKAGE_RELS.to_owned(),
+            parse_relationships(&text, "package", true, true)?,
+        )])
+    } else {
+        read_relationships(&mut archive, &parts)?
+    };
     let package = relations
         .remove(PACKAGE_RELS)
         .ok_or("The Word document has no package relationships")?;
     let main_path = package
         .main
         .ok_or("The Word document has no main document part")?;
-    if !types
-        .for_part(&main_path)
-        .is_some_and(|content| content.eq_ignore_ascii_case(MAIN_TYPE))
-    {
-        return Err("The package does not declare a macro-free Word document main part".into());
+    if !types.for_part(&main_path).is_some_and(|content| {
+        content.eq_ignore_ascii_case(if docm { MACRO_MAIN_TYPE } else { MAIN_TYPE })
+    }) {
+        return Err(if docm {
+            "The package does not declare a macro-enabled Word document main part"
+        } else {
+            "The package does not declare a macro-free Word document main part"
+        }
+        .into());
+    }
+    let rels_path = relationships_name(&main_path);
+    let main_relations = if docm && parts.contains_key(&rels_path) {
+        reject_blocked(&package.blocked, &rels_path)?;
+        require_type(&types, &rels_path, RELS_TYPE)?;
+        let text = read_xml_part(&mut archive, &parts, &rels_path, MAX_OTHER_XML)?;
+        parse_relationships(&text, &main_path, false, true)?
+    } else {
+        relations.remove(&rels_path).unwrap_or_default()
+    };
+    let mut blocked = package.blocked;
+    blocked.extend(main_relations.blocked.iter().cloned());
+    if docm {
+        reject_blocked(&blocked, &main_path)?;
+        reject_blocked(&blocked, &rels_path)?;
+        reject_blocked(&blocked, PACKAGE_RELS)?;
+        reject_blocked(&blocked, CONTENT_TYPES)?;
     }
     let main = read_xml_part(&mut archive, &parts, &main_path, MAX_MAIN_XML)?;
-    let main_relations = relations
-        .remove(&relationships_name(&main_path))
-        .unwrap_or_default();
     let styles = match main_relations.styles {
-        Some(path) => read_styles(&read_xml_part(&mut archive, &parts, &path, MAX_OTHER_XML)?)?,
+        Some(path) => {
+            if docm {
+                reject_blocked(&blocked, &path)?;
+                require_type(&types, &path, STYLES_TYPE)?;
+            }
+            read_styles(&read_xml_part(&mut archive, &parts, &path, MAX_OTHER_XML)?)?
+        }
         None => BTreeMap::new(),
     };
     let (title, author, metadata) = match package.core {
-        Some(path) => read_metadata(&read_xml_part(&mut archive, &parts, &path, MAX_OTHER_XML)?)?,
+        Some(path) => {
+            if docm {
+                reject_blocked(&blocked, &path)?;
+                require_type(&types, &path, CORE_TYPE)?;
+            }
+            read_metadata(&read_xml_part(&mut archive, &parts, &path, MAX_OTHER_XML)?)?
+        }
         None => (None, None, Default::default()),
     };
-    let (images, resources) = read_images(&mut archive, &parts, &main, &main_relations.images)?;
+    let (images, resources) = read_images(
+        &mut archive,
+        &parts,
+        &main,
+        &main_relations.images,
+        docm.then_some((&types, &blocked)),
+    )?;
     let output = convert_main_with_images(&main, &styles, images)?;
     Ok(Document {
         fb2_note_sections: Default::default(),
@@ -108,8 +171,12 @@ pub(crate) fn open(
     })
 }
 
-fn index_parts<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<BTreeMap<String, usize>> {
+fn index_parts<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    docm: bool,
+) -> Result<BTreeMap<String, usize>> {
     let mut parts = BTreeMap::new();
+    let mut seen = BTreeSet::new();
     for index in 0..archive.len() {
         let entry = archive.by_index_raw(index)?;
         let raw = std::str::from_utf8(entry.name_raw())?;
@@ -119,6 +186,9 @@ fn index_parts<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<BTreeMap<S
         }
         if entry.is_dir() {
             continue;
+        }
+        if !seen.insert(name.clone()) {
+            return Err("The Word document contains duplicate package part names".into());
         }
         let script = name
             .rsplit_once('.')
@@ -131,11 +201,12 @@ fn index_parts<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<BTreeMap<S
                 )
             })
         {
+            if docm {
+                continue;
+            }
             return Err("The Word document contains macros or embedded executable content".into());
         }
-        if parts.insert(name, index).is_some() {
-            return Err("The Word document contains duplicate package part names".into());
-        }
+        parts.insert(name, index);
     }
     Ok(parts)
 }
@@ -206,6 +277,7 @@ fn read_images<R: Read + Seek>(
     parts: &BTreeMap<String, usize>,
     main: &str,
     relationships: &BTreeMap<String, String>,
+    docm_policy: Option<(&ContentTypes, &BTreeSet<String>)>,
 ) -> Result<(BTreeMap<String, String>, BTreeMap<String, Vec<u8>>)> {
     let xml = xml(main)?;
     let mut images = BTreeMap::new();
@@ -226,6 +298,18 @@ fn read_images<R: Read + Seek>(
             Some("jpg" | "jpeg") => "jpg",
             _ => continue,
         };
+        if let Some((types, blocked)) = docm_policy {
+            reject_blocked(blocked, path)?;
+            require_type(
+                types,
+                path,
+                if extension == "png" {
+                    "image/png"
+                } else {
+                    "image/jpeg"
+                },
+            )?;
+        }
         if images.len() >= MAX_IMAGES {
             return Err("The Word document contains too many images".into());
         }
@@ -304,7 +388,17 @@ impl ContentTypes {
     }
 }
 
-fn content_types(text: &str) -> Result<ContentTypes> {
+fn require_type(types: &ContentTypes, path: &str, expected: &str) -> Result<()> {
+    if !types
+        .for_part(path)
+        .is_some_and(|value| value.eq_ignore_ascii_case(expected))
+    {
+        return Err("A Word package part has an unexpected content type".into());
+    }
+    Ok(())
+}
+
+fn content_types(text: &str, docm: bool) -> Result<ContentTypes> {
     let document = xml(text)?;
     let root = document.root_element();
     if !root.has_tag_name((TYPES_NS, "Types")) {
@@ -316,17 +410,18 @@ fn content_types(text: &str) -> Result<ContentTypes> {
             .attribute("ContentType")
             .ok_or("A Word package part has no content type")?;
         let lowercase = content.to_ascii_lowercase();
-        if [
-            "macroenabled",
-            "vbaproject",
-            "vbadata",
-            "activex",
-            "oleobject",
-            "javascript",
-            "ecmascript",
-        ]
-        .iter()
-        .any(|term| lowercase.contains(term))
+        if !docm
+            && [
+                "macroenabled",
+                "vbaproject",
+                "vbadata",
+                "activex",
+                "oleobject",
+                "javascript",
+                "ecmascript",
+            ]
+            .iter()
+            .any(|term| lowercase.contains(term))
         {
             return Err(
                 "The Word document contains macros, scripts or embedded executable content".into(),
@@ -373,6 +468,14 @@ struct Relationships {
     core: Option<String>,
     styles: Option<String>,
     images: BTreeMap<String, String>,
+    blocked: BTreeSet<String>,
+}
+
+fn reject_blocked(blocked: &BTreeSet<String>, path: &str) -> Result<()> {
+    if blocked.contains(path) {
+        return Err("A Word content part is also referenced as active or embedded content".into());
+    }
+    Ok(())
 }
 
 fn relationships_name(source: &str) -> String {
@@ -412,13 +515,18 @@ fn read_relationships<R: Read + Seek>(
         remaining -= text.len();
         relationships.insert(
             path.clone(),
-            parse_relationships(&text, &source, path == PACKAGE_RELS)?,
+            parse_relationships(&text, &source, path == PACKAGE_RELS, false)?,
         );
     }
     Ok(relationships)
 }
 
-fn parse_relationships(text: &str, source: &str, package: bool) -> Result<Relationships> {
+fn parse_relationships(
+    text: &str,
+    source: &str,
+    package: bool,
+    docm: bool,
+) -> Result<Relationships> {
     let document = xml(text)?;
     let root = document.root_element();
     if !root.has_tag_name((RELS_NS, "Relationships")) {
@@ -457,19 +565,44 @@ fn parse_relationships(text: &str, source: &str, package: bool) -> Result<Relati
                 | "oleobject"
                 | "afchunk"
                 | "subdocument"
-        ) {
+        ) || (docm && role == "vbaprojectsignature")
+        {
+            if docm {
+                match entry.attribute("TargetMode").unwrap_or("Internal") {
+                    "Internal" => {
+                        let target = entry
+                            .attribute("Target")
+                            .ok_or("A Word relationship has no target")?;
+                        found.blocked.insert(target_part(source, target)?);
+                    }
+                    "External" => {}
+                    _ => return Err("The Word package relationship mode is invalid".into()),
+                }
+                continue;
+            }
             return Err("The Word document contains macros, alternate documents or embedded executable content".into());
         }
         let target = entry
             .attribute("Target")
             .ok_or("A Word relationship has no target")?;
         match entry.attribute("TargetMode").unwrap_or("Internal") {
+            "External" if docm => continue,
             "External" if office == Some("hyperlink") && !package => continue,
             "External" => {
                 return Err("The Word document refers to an external package resource".into());
             }
             "Internal" => {}
             _ => return Err("The Word package relationship mode is invalid".into()),
+        }
+        if docm
+            && !matches!(
+                (package, office, kind),
+                (true, Some("officeDocument"), _)
+                    | (true, _, CORE_REL)
+                    | (false, Some("styles" | "image"), _)
+            )
+        {
+            continue;
         }
         let path = target_part(source, target)?;
         if !package && office == Some("image") {
