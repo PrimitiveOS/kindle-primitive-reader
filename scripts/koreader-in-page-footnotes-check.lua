@@ -15,7 +15,8 @@ local narrow_ruby = arg[5] == "inline-ruby-narrow"
 local body_table = arg[5] == "body-table"
 local rtl_note = arg[5] == "rtl-note"
 local width, height, margin = narrow_ruby and 310 or 720, body_table and 520 or 480, 32
-local fb2 = arg[5] == "fb2"
+local fb3_note = arg[5] == "fb3"
+local fb2 = arg[5] == "fb2" or fb3_note
 local classic = arg[5] == "classic"
 local wikipedia = arg[5] == "wikipedia" or arg[5] == "inline-root-wiki"
 local tweak_id = fb2 and "footnote-inpage_fb2"
@@ -910,6 +911,62 @@ if classic then
     local _, x_after, label_after, body_after = render_classic("fixed")
     assert(x_after < x_before and label_after > label_before and body_before == body_after)
     print("Stock classic note aliases, continuation modes and four text fixes verified")
+    return
+end
+
+if fb3_note then
+    controller:onReadSettings(Settings:wrap({}))
+    local menu_items = menu.style_tweaks.sub_item_table
+    local regular = assert(find_tweak(menu_items, "fb2_footnotes_regular_font_size"))
+    local comments = assert(find_tweak(menu_items, "footnote-inpage_fb2_comments"))
+    local epub = assert(find_tweak(menu_items, "footnote-inpage_epub"))
+    local prose, note, backlink = "At dawn Mara checks the", "The spring tide peaks", "Return to soundings"
+    local pointers = {}
+    local function inspect(view, phrase)
+        local page, y = position(view, phrase)
+        local hit = view:findAllText(phrase, false, false, 8, true, 0, 255)[1]
+        assert(not pointers[phrase] or hit.start == pointers[phrase], phrase)
+        pointers[phrase] = hit.start
+        return page, y, hit
+    end
+    local function render(name, band)
+        local view = open(assert(controller:getCssText()))
+        assert(view:getDocumentFormat():find("FB3", 1, true))
+        local reference, y = inspect(view, prose)
+        local canonical = inspect(view, note)
+        local link_page, _, link = inspect(view, backlink)
+        assert(reference < canonical and link_page == canonical)
+        assert((capture(view, reference, "stock-fb3-note-" .. name) ~= nil) == band)
+        if name == "on" then
+            assert(not capture(view, canonical, "stock-fb3-note-original"))
+        end
+        view:gotoPage(canonical)
+        local word = assert(view:getWordBoxesFromPositions(link.start, link["end"], true)[1])
+        local href = view:getLinkFromPosition(word.x0 + 4, math.floor((word.y0 + word.y1) / 2))
+        assert(href == "#morning", href)
+        local note_width = width_in_canonical_note(view, "midnight")
+        view:close()
+        return note_width, y
+    end
+    assert(row.checked_func())
+    local small, y = render("on", true)
+    regular.callback()
+    assert(regular.checked_func())
+    local full, regular_y = render("regular", true)
+    assert(small / full > 0.70 and small / full < 0.80 and regular_y == y)
+    regular.callback()
+    row.callback()
+    assert(not regular.checked_func() and not row.checked_func())
+    local ordinary, ordinary_y = render("off", false)
+    assert(ordinary == full and ordinary_y == y)
+    comments.callback()
+    assert(comments.checked_func() and not row.checked_func())
+    assert(render("comments-only", false) == full)
+    comments.callback()
+    epub.callback()
+    assert(epub.checked_func() and not row.checked_func())
+    assert(render("epub-only", false) == full)
+    print(string.format("Pinned FB3 width at 75%%=%dpx, regular=%dpx, body y=%d", small, full, y))
     return
 end
 

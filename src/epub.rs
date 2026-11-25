@@ -1,5 +1,5 @@
 //! A bounded, local subset of the EPUB 2 and 3 package format.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Seek, SeekFrom};
 use std::path::Path;
@@ -111,6 +111,7 @@ enum Content {
         resources: BTreeMap<String, Vec<u8>>,
         fonts: Option<kf8::fonts::FontSource>,
         fb2_note_sections: BTreeMap<String, loose::Fb2NoteKind>,
+        incomplete_fb3_notes: BTreeSet<String>,
     },
     Chm(Box<Chm>),
 }
@@ -503,7 +504,9 @@ impl Book {
             && archive.zip.decompressed_size().is_some_and(|bytes| bytes <= 4 * 1024 * 1024)
             && archive.zip.file_names().all(|name| {
                 name.rsplit_once('.').is_none_or(|(_, extension)| {
-                    !extension.eq_ignore_ascii_case("ttf") && !extension.eq_ignore_ascii_case("otf")
+                    !extension.eq_ignore_ascii_case("ttf")
+                        && !extension.eq_ignore_ascii_case("otf")
+                        && !extension.eq_ignore_ascii_case("woff")
                 })
             }))
     }
@@ -512,7 +515,9 @@ impl Book {
     pub(crate) fn may_have_embedded_fonts(&self) -> bool {
         let has_font_extension = |path: &str| {
             path.rsplit_once('.').is_some_and(|(_, extension)| {
-                extension.eq_ignore_ascii_case("ttf") || extension.eq_ignore_ascii_case("otf")
+                extension.eq_ignore_ascii_case("ttf")
+                    || extension.eq_ignore_ascii_case("otf")
+                    || extension.eq_ignore_ascii_case("woff")
             })
         };
         match &self.content {
@@ -634,6 +639,7 @@ impl Book {
                 prior_mobi: BTreeMap::new(),
                 resources: document.resources,
                 fb2_note_sections: document.fb2_note_sections,
+                incomplete_fb3_notes: BTreeSet::new(),
                 fonts: None,
             },
         }
@@ -657,9 +663,15 @@ impl Book {
         book.revision = imported.revision;
         book.language = language;
         book.cover = imported.cover;
-        let Content::Loose { xhtml, .. } = &mut book.content else {
+        let Content::Loose {
+            xhtml,
+            incomplete_fb3_notes,
+            ..
+        } = &mut book.content
+        else {
             unreachable!()
         };
+        *incomplete_fb3_notes = imported.incomplete_note_ids;
         for (href, body) in imported.rest {
             let label = book
                 .toc
@@ -813,6 +825,7 @@ impl Book {
                 prior_mobi,
                 resources: publication.resources,
                 fb2_note_sections: Default::default(),
+                incomplete_fb3_notes: BTreeSet::new(),
                 fonts: (!publication.font_records.is_empty()).then_some(kf8::fonts::FontSource {
                     input: font_input,
                     records: publication.font_records,
@@ -859,6 +872,17 @@ impl Book {
 
     pub(crate) fn is_reflowable_epub(&self) -> bool {
         matches!(self.content, Content::Archive { .. }) && !self.is_fixed_layout()
+    }
+
+    pub(crate) fn incomplete_fb3_notes(&self) -> Option<&BTreeSet<String>> {
+        match &self.content {
+            Content::Loose {
+                format: loose::Format::Fb3,
+                incomplete_fb3_notes,
+                ..
+            } => Some(incomplete_fb3_notes),
+            _ => None,
+        }
     }
 
     pub(crate) fn automatic_stylesheet(&self) -> crate::BaseStylesheet {

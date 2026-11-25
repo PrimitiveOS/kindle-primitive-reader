@@ -63,6 +63,55 @@ fn fb3_large_books_keep_contents_and_local_note_links_across_section_groups() {
 }
 
 #[test]
+#[cfg(feature = "kindle")]
+fn fb3_split_note_stays_linked_and_is_not_copied_incompletely() {
+    use crate::footnotes::in_page::Targets;
+    use crate::user_styles::{Data, FB2_FOOTNOTES};
+
+    let paragraph = "<p>A long note keeps every recorded sounding and observation intact for later reading.</p>";
+    let source = format!(
+        "<fb3-body xmlns=\"{FB3_BODY_NS}\"><section id=\"origin\"><p>Read the <note href=\"long-note\">long note</note>.</p></section><notes><notebody id=\"long-note\"><p>Opening sounding.</p>{}<p>Final sounding.</p></notebody></notes></fb3-body>",
+        paragraph.repeat(5_200),
+    );
+    let tree = parse_xml(&source).unwrap();
+    let converted = body::convert(
+        tree.root_element(),
+        "Survey",
+        None,
+        None,
+        &BTreeMap::new(),
+        |_| None,
+    )
+    .unwrap();
+    assert!(converted.chapters.len() >= 2);
+    assert_eq!(
+        converted.incomplete_note_ids,
+        BTreeSet::from(["long-note".to_owned()])
+    );
+    let (path, first) = &converted.chapters[0];
+    assert_eq!(path, crate::loose::CHAPTER_PATH);
+    assert!(first.contains("href=\"#long-note\" epub:type=\"noteref\""));
+    // The out-of-band marker must not change XHTML or existing source anchors.
+    assert!(first.contains("<aside id=\"long-note\" epub:type=\"footnote\">"));
+    assert!(!first.contains("primitiveos-split"));
+    assert!(first.contains("Opening sounding."));
+    assert!(
+        converted
+            .chapters
+            .last()
+            .unwrap()
+            .1
+            .contains("Final sounding.")
+    );
+    let extracted = crate::Source::parse(first).unwrap();
+    let mut styles = Data::default();
+    styles.choose(1, FB2_FOOTNOTES, Some(true)).unwrap();
+    let styles = styles.snapshot(1).unwrap();
+    assert!(Targets::fb3(path, &extracted, &styles, &BTreeSet::new()).is_some());
+    assert!(Targets::fb3(path, &extracted, &styles, &converted.incomplete_note_ids).is_none());
+}
+
+#[test]
 fn fb3_legacy_readable_markup_keeps_exact_grouping_and_source() {
     // Each section exceeds half the newer raw-markup planning budget, while
     // their combined converted XHTML still fits the previous output limit.

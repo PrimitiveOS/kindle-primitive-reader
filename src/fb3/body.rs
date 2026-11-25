@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use roxmltree::Node;
@@ -19,6 +19,7 @@ const MAX_ID: usize = 256;
 pub(super) struct Converted {
     pub(super) chapters: Vec<(String, String)>,
     pub(super) toc: Vec<TocEntry>,
+    pub(super) incomplete_note_ids: BTreeSet<String>,
 }
 
 pub(super) fn convert(
@@ -60,6 +61,22 @@ fn convert_groups<'a, 'i>(
     images: &BTreeMap<String, String>,
     asset: impl FnMut(&str) -> Option<String>,
 ) -> Result<Converted> {
+    // Keep this out of converted XHTML: changing markup would invalidate saved
+    // Source revisions for FB3s that were already split by an earlier build.
+    let incomplete_note_ids = groups
+        .iter()
+        .flatten()
+        .filter_map(|piece| match *piece {
+            Piece::Open {
+                node,
+                continued: true,
+                ..
+            } if node.tag_name().name() == "notebody" && retained(node) => {
+                identifier(node).map(str::to_owned)
+            }
+            _ => None,
+        })
+        .collect();
     let mut ids = BTreeMap::new();
     for (chapter, pieces) in groups.iter().enumerate() {
         let mut register = |node| {
@@ -145,6 +162,7 @@ fn convert_groups<'a, 'i>(
     Ok(Converted {
         chapters,
         toc: body.toc,
+        incomplete_note_ids,
     })
 }
 

@@ -55,16 +55,16 @@ controls are typography and style tweaks. The audited SDL fullscreen row
 belongs to the host window and is unavailable in KOReader’s Kindle menu.
 [Control matrix](koreader-sdl-reference-controls.json)
 
-The current Mac comparison covers FB3 section continuations, generated
-quotation marks across EPUB spines, and generated text in joined notes. The
-replays verify links, selections, and saved positions. FB3 continuations keep
-complete blocks within the existing resource budgets; a single oversized
-indivisible block is still rejected. Direct EPUB jumps use a bounded foreground
-scan, so a cold jump can temporarily use default quote depth. Exact asynchronous
-preparation remains open. Generated block boxes, richer joined tables,
-FB3 in-page note controls, additional initial layouts, and more dictionaries
+The current Mac comparison covers FB3 in-page notes, embedded WOFF 1 fonts,
+and asynchronous quote preparation for deep EPUB jumps. The replays verify
+links, selections, saved positions and bounded fallback. FB3 notes spanning
+converted parts remain in their original link flow. Eligible local EPUB ZIPs
+prepare the exact quote prefix asynchronously and preserve the current anchor
+when repainting. Larger archives and prefixes beyond the worker budgets retain
+the foreground fallback. WOFF 2, cross-part FB3 note bands, generated block
+boxes, richer joined tables, additional initial layouts and more dictionaries
 remain open. Foreground Kindle verification is pending.
-[FB3 reading](fb3-reading.md) · [Quote marks](quote-marks.md) ·
+[FB3 reading](fb3-reading.md) · [WOFF 1 fonts](embedded-font-families.md#woff-1-publisher-fonts) · [Quote marks](quote-marks.md) ·
 [Joined note comparison](in-page-footnotes.md#generated-text-in-flattened-notes)
 
 The [statistics reset comparison](reading-statistics.md#reset-statistics) updates

@@ -8,7 +8,7 @@ use super::{Action, Item, Reader, Screen, position};
 use crate::fixed_session::FixedReading;
 use crate::generated_contents::OutlineTarget;
 use crate::library::Bookmark;
-use crate::session::Reading;
+use crate::session::{ChapterLayout, Reading};
 use crate::{Anchor, Probe, Result};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -270,7 +270,7 @@ fn reflow_page(
     headings: impl Iterator<Item = ContentsEntry>,
     custom: &[Bookmark],
     direction: Direction,
-) -> Option<(usize, usize, Option<Probe>)> {
+) -> Option<(usize, usize, Option<ChapterLayout>)> {
     let current = reading.chapter;
     // The start of a heading already visible on the second page of a spread
     // does not count as the next chapter. Previous starts from the first page.
@@ -333,12 +333,15 @@ fn reflow_page(
         }
         let loaded = if chapter == current {
             None
-        } else if let Ok(probe) = reading.config.chapter(chapter) {
+        } else if let Ok(probe) = reading.config.chapter_layout(chapter) {
             Some(probe)
         } else {
             continue;
         };
-        let probe = loaded.as_ref().unwrap_or(&reading.probe);
+        let probe = loaded
+            .as_ref()
+            .map(|candidate| &candidate.probe)
+            .unwrap_or(&reading.probe);
         let flows = reading.custom_flow_map_for_chapter(chapter, probe.page_count());
         let page = direction.closest(
             targets

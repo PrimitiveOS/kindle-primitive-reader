@@ -13,7 +13,10 @@
       "notice_sha256": "86c5e9c9382cdcc5948704fdfe60f2aa164a719746931219a42736ecd9cefbd3",
       "included_in": [
         "field-notes-epub3.epub",
-        "publisher-faces.epub"
+        "publisher-faces.epub",
+        "publisher-woff-ttf.epub",
+        "publisher-woff-woff.epub",
+        "publisher-woff-fallback.epub"
       ],
       "archive_notice": "META-INF/OFL-Silkscreen.txt"
     },
@@ -201,6 +204,39 @@
         "spine_count": 1,
         "font_families": 2,
         "face_styles": 4
+      }
+    },
+    {
+      "file": "publisher-woff-ttf.epub",
+      "sha256": "0f3c00aa79c866b9b9fff97d32896ab9c555f845dbc3cbe1948a76de9ca82aa2",
+      "size_bytes": 39712,
+      "expected": {
+        "opens": true,
+        "spine_count": 1,
+        "font_families": 1,
+        "font_source": "ttf"
+      }
+    },
+    {
+      "file": "publisher-woff-woff.epub",
+      "sha256": "cb61943704e17913ff3f0d204b2edb5a524e9007fd93ae9759524cabbbb5bbfa",
+      "size_bytes": 19142,
+      "expected": {
+        "opens": true,
+        "spine_count": 1,
+        "font_families": 1,
+        "font_source": "woff"
+      }
+    },
+    {
+      "file": "publisher-woff-fallback.epub",
+      "sha256": "0ebf2f772c2d83809f8a2e8c70071c37705297994b685eef227b9b6c0a57e977",
+      "size_bytes": 40022,
+      "expected": {
+        "opens": true,
+        "spine_count": 1,
+        "font_families": 1,
+        "font_source": "fallback"
       }
     },
     {

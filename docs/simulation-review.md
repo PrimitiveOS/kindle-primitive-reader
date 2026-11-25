@@ -2,17 +2,21 @@
 
 ## Current Mac simulator checkpoint
 
-**FB3 documents** open through the file picker with their contents, local
-illustrations, and linked notes. Three upstream examples retain their source
-bytes through page turns and resume. Oversized nested sections continue at
-complete block boundaries while preserving headings and cross-section links.
+**FB3 documents** support in-page notes and FictionBook note-size controls
+for notes within the same converted part. Split notes stay in their original
+link flow. Three upstream examples retain their source bytes through page
+turns and resume.
 [FB3 comparison and screenshots](fb3-reading.md)
 
-**Generated quotation marks** follow the publisher's nested before/after
-rules and supported language pairs across EPUB spines, including direct
-jumps beyond the earlier prefix limit when their prefix fits the foreground
-budget. Deep cold jumps can temporarily use default depth.
-Search and saved positions retain the original text.
+**Embedded WOFF 1 fonts** load from local EPUBs within bounded resource and
+decoded-size limits. Matched TTF and WOFF fixtures paint the same face, and a
+damaged WOFF falls through to a later eligible source.
+[Font comparison and screenshots](embedded-font-families.md#woff-1-publisher-fonts)
+
+**Generated quotation marks** can be prepared asynchronously after a deep
+EPUB jump. The corrected page keeps its source anchor and waits for active
+gestures, selections or dialogs. Archive, prefix and time limits retain a
+foreground fallback for unsupported cases.
 [Quotation comparison and screenshots](quote-marks.md)
 
 **Joined in-page notes** preserve generated punctuation and source links,
@@ -20,10 +24,11 @@ including a chart and ruby annotation on the same line. The mixed image and
 ruby check also covers the original note page.
 [Note comparison and screenshots](in-page-footnotes.md#generated-text-in-flattened-notes)
 
-The full Mac suite passed 1,699 library tests, one Kindle entry test,
+The full Mac suite passed 1,730 library tests, one Kindle entry test,
 14 EPUB package tests, and four layout tests. It skipped 74 opt-in cases.
-Focused joined-note and ruby checks passed. Reader and pinned KOReader
-captured the long FB3 continuation, cross-spine quotes and joined notes.
+Focused quote lifecycle, WOFF and FB3 note checks passed. Reader and pinned
+KOReader captures cover the note band and font switch. Reader captures also
+show the FB3 settings and quote-repair notices.
 
 Three original FB3 samples opened through the picker, turned pages and
 resumed with identical source bytes. The original EPUB, PDF, AZW3 and MOBI
@@ -31,9 +36,9 @@ checks also passed. The separate original EPUB note check composed notes
 and preserved canonical anchors across selected chapters.
 
 The staged ARMHF executable is stripped and statically linked. It contains
-40,004,228 bytes with SHA-256
-`32a17d0cf55e73047f43ddb68157408396764e0990f551e3264be1abe078d4a4`.
-The 33 staged files total 49,612,854 bytes. Project and dictionary licenses,
+40,057,540 bytes with SHA-256
+`cddc076e78fdab771856df1461617a7982b2a72873d7636a164814d735db57fc`.
+The 33 staged files total 49,666,166 bytes. Project and dictionary licenses,
 SQLite notices, the Launcher icon and the OCR model passed inspection.
 Foreground Kindle testing and Store publication remain pending.
 

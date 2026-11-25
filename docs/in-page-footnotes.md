@@ -31,8 +31,10 @@ ordinary forced page breaks still start a new page.
 Overlapping glyphs within a text band stay together. A note whose boundaries
 overlap adjacent content, an illustration without a source line, nested or
 cross-spine notes, grids that cannot fit on one page, complex publisher breaks,
-FictionBook, facing pages, continuous reading and custom flows use the normal
-layout. The reading position uses the same source anchor when the layout changes.
+facing pages, continuous reading and custom flows use the normal layout. The
+reading position uses the same source anchor when the layout changes.
+[FictionBook 2 notes](fb2-footnotes.md#in-page-footnotes-and-endnotes) ·
+[FictionBook 3 notes](fb3-reading.md#in-page-footnotes)
 
 The Mac workflow exercises the visible controls, book defaults and overrides,
 reopen, master switch, and facing and continuous layout fallback. The pinned

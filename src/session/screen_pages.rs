@@ -194,6 +194,26 @@ impl ScreenPages {
         })
     }
 
+    /// A provisional target must still be the same source and edition, but
+    /// its page count can change when quote depth is prepared.
+    pub(super) fn validates_provisional_target(
+        &self,
+        config: &BookConfig,
+        probe: &Probe,
+        target: Target,
+    ) -> bool {
+        let slot = self.0.borrow();
+        slot.as_ref().is_some_and(|generation| {
+            generation.matches(config, probe)
+                && generation
+                    .spine
+                    .get(target.chapter)
+                    .is_some_and(|entry| entry.href == probe.chapter)
+                && target.sample.source_revision == probe.source.revision
+                && probe.page_count() > 0
+        })
+    }
+
     pub(super) fn reset(&self) {
         *self.0.borrow_mut() = None;
     }

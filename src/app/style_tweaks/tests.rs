@@ -1334,6 +1334,62 @@ fn fb2_in_page_footnotes_use_independent_book_styles_and_resume() {
 }
 
 #[test]
+fn fb3_in_page_footnotes_menu_shares_defaults_and_preserves_resume() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Harbor Survey.fb3");
+    fs::copy(crate::test_fixture("harbor-survey.fb3"), &path).unwrap();
+    let source = fs::read(&path).unwrap();
+    let mut app = open(&fixture);
+    app.open_path(&path).unwrap();
+    let position = app.current_history_location();
+    let id = app.open_book_id().unwrap();
+    assert!(!has_note_band(&app));
+    let rows = app.style_items(Screen::StyleTweaks);
+    let listed = |title| rows.iter().any(|row| row.title == title);
+    assert!(listed("In-page FB3 footnotes"));
+    assert!(listed("Keep regular FB3 note size"));
+    assert!(listed("More footnote options"));
+    assert!(!listed("In-page FB2 endnotes"));
+    assert!(!listed("In-page EPUB footnotes"));
+    assert!(
+        app.style_items(Screen::FootnoteTweaks)
+            .iter()
+            .any(|row| row.title == "Inline all footnote content")
+    );
+
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "In-page FB3 footnotes");
+    tap_contents_item(&mut app, "Use on all books");
+    assert!(has_note_band(&app));
+    assert!(app.style_store.data.global.contains(FB2_FOOTNOTES));
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "Keep regular FB3 note size");
+    tap_contents_item(&mut app, "On for this book");
+    assert!(app.style_store.data.enabled(id, FB2_REGULAR_NOTE_SIZE));
+    assert_eq!(app.current_history_location(), position);
+    let mut canvas = crate::app::selection_viewport_tests::canvas(&app, ReadingViewport::PORTRAIT);
+    app.show(Screen::StyleTweaks);
+    capture_viewport(&app, &mut canvas, "in-page-fb3-style.png", false);
+    capture_viewport(&app, &mut canvas, "in-page-fb3-style-dark.png", true);
+    app.show(Screen::Book);
+    app.save().unwrap();
+    drop(app);
+
+    let mut reopened = open(&fixture);
+    reopened.open_path(&path).unwrap();
+    assert!(has_note_band(&reopened));
+    assert_eq!(reopened.current_history_location(), position);
+    reopened.show(Screen::StyleTweaks);
+    tap_contents_item(&mut reopened, "In-page FB3 footnotes");
+    tap_contents_item(&mut reopened, "Off for this book");
+    assert!(reopened.style_store.data.global.contains(FB2_FOOTNOTES));
+    assert!(!reopened.style_store.data.enabled(id, FB2_FOOTNOTES));
+    assert!(!has_note_band(&reopened));
+    assert_eq!(reopened.current_history_location(), position);
+    assert_eq!(fs::read(&path).unwrap(), source);
+}
+
+#[test]
 fn in_page_footnote_size_uses_saved_book_and_default_choices() {
     let fixture = Fixture::new();
     let path = footnote_book(&fixture, "Size choices.epub");

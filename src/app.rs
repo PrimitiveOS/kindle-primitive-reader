@@ -91,6 +91,7 @@ mod progress_markers;
 mod publisher_render_settings;
 mod quick_display;
 mod quickstart;
+mod quote_repair;
 mod read_alarm;
 mod reader_timer;
 mod reading_backup;
@@ -1121,6 +1122,7 @@ pub struct Reader {
     nearby: nearby_search::Nearby,
     screen_page_jump: Option<go_to_page::PendingJump>,
     screen_page_worker: crate::session::screen_pages::background::Worker,
+    quote_repair: quote_repair::State,
     eager_typography: eager_typography::State,
     find_match_case: bool,
     find_ignore_accents: bool,
@@ -1374,6 +1376,7 @@ impl Reader {
             nearby: nearby_search::Nearby::default(),
             screen_page_jump: None,
             screen_page_worker: Default::default(),
+            quote_repair: Default::default(),
             eager_typography: Default::default(),
             find_match_case: false,
             find_ignore_accents: false,
@@ -1492,6 +1495,7 @@ impl Reader {
         self.closing_profile = None;
         self.opening_execution = None;
         self.screen_page_worker.cancel();
+        self.quote_repair.cancel();
         self.close_fixed_search_fit()?;
         self.logical_recovery = None;
         self.footer_initial_position = None;
@@ -8941,7 +8945,7 @@ impl Reader {
 }
 
 impl Reader {
-    fn touch_selection_enabled(&self) -> bool {
+    fn reading_overlays_clear(&self) -> bool {
         matches!(self.screen, Screen::Book | Screen::Fixed)
             && self.logical_recovery.is_none()
             && self.end_dialog.is_none()
@@ -8953,9 +8957,12 @@ impl Reader {
             && self.top_group.is_none()
             && !self.reading_top
             && !self.reading_bottom
-            && !self.touch_locked
             && !self.read_alarm.modal()
             && self.ocr.is_none()
+    }
+
+    fn touch_selection_enabled(&self) -> bool {
+        self.reading_overlays_clear() && !self.touch_locked
     }
 
     fn touch_hold_input(&mut self, input: Input) -> Option<Change> {
@@ -9543,6 +9550,11 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        match input {
+            Input::Sleep => self.quote_repair.sleep(),
+            Input::Wake => self.quote_repair.wake(),
+            _ => {}
+        }
         if let Some(change) = self.quickstart_input(input) {
             return change;
         }
@@ -10342,6 +10354,7 @@ impl App for Reader {
         page.into_iter()
             .chain(fixed_page)
             .chain(self.screen_page_worker.deadline(screen_pages))
+            .chain(self.quote_repair_deadline())
             .chain(self.notifications.deadline())
             .chain(self.eager_font_deadline())
             .chain(self.embedded_font_report_deadline())
@@ -10404,6 +10417,9 @@ impl App for Reader {
             return change;
         }
         if let Some(change) = self.eager_font_tick(now) {
+            return change;
+        }
+        if let Some(change) = self.quote_repair_tick(now) {
             return change;
         }
         if let Some(change) = self.opening_execution_tick(now) {
@@ -10624,6 +10640,7 @@ impl App for Reader {
         self.embedded_font_report = None;
         self.eager_typography.cancel();
         self.screen_page_worker.cancel();
+        self.quote_repair.cancel();
         self.save_library()?;
         let now = Instant::now();
         self.stats.checkpoint(&self.stats_path, now, true)?;
@@ -10663,6 +10680,7 @@ impl App for Reader {
         self.opening_execution = None;
         self.install_opening_profile_plan(None);
         self.screen_page_worker.cancel();
+        self.quote_repair.cancel();
         self.cancel_screen_page_jump();
         self.document_defaults.reload();
 

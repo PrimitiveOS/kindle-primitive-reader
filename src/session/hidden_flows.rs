@@ -452,7 +452,7 @@ impl Reading {
         } else {
             (target - weights[chapter] as f64) / weight as f64
         };
-        let probe = self.config.chapter(chapter)?;
+        let probe = self.config.chapter_layout(chapter)?;
         let map = self.custom_flows.map(chapter, probe.page_count());
         let visible = map.count_in(0, 0..probe.page_count());
         let index = ((visible.saturating_sub(1)) as f64 * within).round() as usize;
@@ -501,7 +501,7 @@ impl Reading {
             .filter(|&ch| ch < self.probe.chapter_count())
         {
             chapter = next;
-            let probe = self.config.chapter(chapter)?;
+            let probe = self.config.chapter_layout(chapter)?;
             let map = self.custom_flows.map(chapter, probe.page_count());
             let first = if direction < 0 {
                 probe.page_count() - 1
@@ -563,7 +563,7 @@ impl Reading {
             .filter(|&ch| ch < self.probe.chapter_count())
         {
             chapter = next;
-            let mut probe = self.config.chapter(chapter)?;
+            let mut probe = self.config.chapter_layout(chapter)?;
             let map = self.custom_flows.map(chapter, probe.page_count());
             let first = if direction < 0 {
                 probe.page_count() - 1

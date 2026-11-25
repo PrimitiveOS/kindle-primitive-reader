@@ -35,7 +35,7 @@ impl Drop for Fixture {
     }
 }
 
-fn epub(seed: &str, chapters: usize, padding: usize) -> Vec<u8> {
+pub(crate) fn epub(seed: &str, chapters: usize, padding: usize) -> Vec<u8> {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let mut member = |name: &str, text: &str| {
         writer
@@ -85,7 +85,7 @@ fn epub(seed: &str, chapters: usize, padding: usize) -> Vec<u8> {
     writer.finish().unwrap().into_inner()
 }
 
-fn config(path: &Path) -> BookConfig {
+pub(super) fn config(path: &Path) -> BookConfig {
     BookConfig {
         viewport: ReadingViewport::PORTRAIT,
         user_styles: Default::default(),

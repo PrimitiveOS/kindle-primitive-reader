@@ -33,6 +33,52 @@ Specialized FB3 typography, multimedia, embedded interactive elements, and
 KOReader reading-position import for FB3 remain outside this implementation.
 [Section grouping and links](../src/fb3/body.rs)
 
+## In-page footnotes
+
+Open **Style tweaks › In-page FB3 footnotes** while reading an FB3 book.
+The book choice and all-books default use Reader’s existing FictionBook
+footnote setting. Fresh Reader settings leave it off. **Keep regular FB3
+note size** changes the 75% band text to the reading size. The original note
+keeps its document position. Backlinks, selection and saved locations in the
+band use the same text as the original.
+
+Band layout applies to supported single-page horizontal reading and links to
+notes within the same converted part. Notes in later parts, and notes whose
+content spans converted parts, remain reachable through their original links
+without being copied incompletely into a band. Existing page, note and
+reference limits apply.
+Facing pages, continuous reading and unsupported note layouts keep the ordinary
+reading flow. [Reader pagination](../src/footnotes/in_page.rs) ·
+[FictionBook 2 controls](fb2-footnotes.md#in-page-footnotes-and-endnotes)
+
+KOReader converts FB3 `<notes>` to a FictionBook `notes` body and `notebody`
+to `section`. Its `fb2-document` selector matches both FictionBook formats.
+The EPUB setting and separate FB2 comments setting leave the FB3 fixture in
+the ordinary flow. KOReader enables FictionBook footnotes in a fresh profile.
+At 720 × 480, the note separator appears at y=411 at 75% and y=360 at regular
+size. The word `midnight` measures 78 px and 104 px in the original note.
+The reference stays on page 2 and the original text and backlink stay on
+page 13 with identical source pointers. [Pinned FB3 conversion](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/fb3fmt.cpp#L165-L223) ·
+[Pinned format selector](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L3484-L3497) ·
+[Pinned note settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L851-L918)
+
+[KOReader 75% note](screenshots/stock-fb3-note-on.png) ·
+[KOReader regular size](screenshots/stock-fb3-note-regular.png) ·
+[KOReader original note](screenshots/stock-fb3-note-original.png)
+
+[Reader note off](screenshots/reader-fb3-note-off.png) ·
+[Reader 75% note](screenshots/reader-fb3-note-on.png) ·
+[Reader regular size](screenshots/reader-fb3-note-regular.png) ·
+[Reader original note](screenshots/reader-fb3-note-original.png) ·
+[Reader settings](screenshots/in-page-fb3-style.png) ·
+[Reader settings in dark mode](screenshots/in-page-fb3-style-dark.png)
+
+For the native comparison, use the [in-page replay](in-page-footnotes.md#replay-on-macos)
+with `tests/fixtures/harbor-survey.fb3` as the first argument and `fb3` as the
+fifth. Run `cargo test --locked --features kindle --lib fb3_in_page_footnotes`
+with `READER_IN_PAGE_FOOTNOTE_CAPTURES` and `READER_SELECTION_VIEWPORT_CAPTURES`
+pointing to existing directories to capture Reader’s note and settings frames.
+
 ## Desktop comparison
 
 The pinned KOReader rendered the format author's unchanged Anatomy sample,

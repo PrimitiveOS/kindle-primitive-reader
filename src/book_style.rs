@@ -624,7 +624,8 @@ impl BookStyle {
                     {
                         continue;
                     }
-                    let Ok(bytes) = book.resource(&path) else {
+                    let Ok(bytes) = book.resource_limited(&path, MAX_SHEET_BYTES.min(remaining))
+                    else {
                         continue;
                     };
                     if let Ok(text) = std::str::from_utf8(&bytes) {
@@ -1373,7 +1374,9 @@ impl FontPath {
         let path = Book::resolve(base, url).ok()?;
         path.rsplit_once('.')
             .is_some_and(|(_, ext)| {
-                ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf")
+                ext.eq_ignore_ascii_case("ttf")
+                    || ext.eq_ignore_ascii_case("otf")
+                    || ext.eq_ignore_ascii_case("woff")
             })
             .then_some(Self::Local(path))
     }
@@ -1451,6 +1454,11 @@ impl FontAssets {
         }
         .ok()
         .and_then(|bytes| {
+            let bytes = if bytes.starts_with(b"wOFF") {
+                crate::woff::decode(&bytes, limit).ok()?
+            } else {
+                bytes
+            };
             if !(bytes.starts_with(b"\0\x01\0\0") || bytes.starts_with(b"OTTO")) {
                 return None;
             }
@@ -2643,7 +2651,7 @@ fn font_url<'i>(input: &mut Parser<'i>) -> CssResult<String> {
     {
         input.parse_nested_block(|format| {
             let format_name = format.expect_ident_or_string()?.to_ascii_lowercase();
-            if !matches!(format_name.as_str(), "truetype" | "opentype") {
+            if !matches!(format_name.as_str(), "truetype" | "opentype" | "woff") {
                 return Err(ParseError::unexpected_token());
             }
             Ok(())
@@ -2687,6 +2695,56 @@ fn background<'i>(input: &mut Parser<'i>) -> CssResult<Option<u8>> {
 mod tests {
     use super::*;
     use crate::source::Source;
+
+    #[cfg(feature = "kindle")]
+    #[test]
+    fn linked_css_oversized_and_over_budget_sheets_do_not_hide_later_valid_rules() {
+        use std::io::{Cursor, Read, Write};
+        let original = std::fs::read(crate::test_fixture("quote-spine-long.epub")).unwrap();
+        let mut input = zip::ZipArchive::new(Cursor::new(original)).unwrap();
+        let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        for index in 0..input.len() {
+            let mut entry = input.by_index(index).unwrap();
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).unwrap();
+            output.start_file(entry.name(), options).unwrap();
+            output.write_all(&bytes).unwrap();
+        }
+        let padded = |selector: &str, padding| {
+            format!(
+                ".{selector} {{ font-weight: 700; }} /*{}*/",
+                "x".repeat(padding)
+            )
+        };
+        for (name, text) in [
+            ("oversized.css", padded("oversized", MAX_SHEET_BYTES)),
+            ("first.css", padded("first", 90 * 1024)),
+            ("second.css", padded("second", 90 * 1024)),
+            ("over-budget.css", padded("overbudget", 90 * 1024)),
+            ("last.css", ".last { font-weight: 700; }".to_owned()),
+        ] {
+            output.start_file(name, options).unwrap();
+            output.write_all(text.as_bytes()).unwrap();
+        }
+        let mut book = Book::open_snapshot(output.finish().unwrap().into_inner().into()).unwrap();
+        let source = Source::parse(r#"<html><head><link rel="stylesheet" href="oversized.css"/><link rel="stylesheet" href="first.css"/><link rel="stylesheet" href="second.css"/><link rel="stylesheet" href="over-budget.css"/><link rel="stylesheet" href="last.css"/></head><body><p class="oversized">a</p><p class="first">b</p><p class="second">c</p><p class="overbudget">d</p><p class="last">e</p></body></html>"#).unwrap();
+        let (styled, _) = BookStyle::load_sheets(&mut book, "chapter-00.xhtml", &source);
+        let styles = styled.compute(&source.elements);
+        let weight = |class: &str| {
+            let index = source
+                .elements
+                .iter()
+                .position(|element| element.classes == class)
+                .unwrap();
+            styles[index].font_weight
+        };
+        assert_eq!(weight("oversized"), FontWeight::NORMAL);
+        assert_eq!(weight("first"), FontWeight::BOLD);
+        assert_eq!(weight("second"), FontWeight::BOLD);
+        assert_eq!(weight("overbudget"), FontWeight::NORMAL);
+        assert_eq!(weight("last"), FontWeight::BOLD);
+    }
 
     fn computed(xhtml: &str) -> (Source, Vec<Style>) {
         let source = Source::parse(xhtml).unwrap();

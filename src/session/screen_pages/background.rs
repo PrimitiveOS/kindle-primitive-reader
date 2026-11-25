@@ -25,7 +25,7 @@ const TYPOGRAPHY_DELAY: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(150);
 const CHAPTER_YIELD: Duration = Duration::from_millis(20);
 const STORAGE_CHUNK: usize = 128 * 1024;
-pub(super) const ARCHIVE_LIMIT: u64 = 8 * 1024 * 1024;
+pub(crate) const ARCHIVE_LIMIT: u64 = 8 * 1024 * 1024;
 pub(super) const FONT_LIMIT: u64 = 16 * 1024 * 1024;
 pub(super) const FONT_COUNT_LIMIT: usize = 64;
 const SPINE_LIMIT: usize = 192;
@@ -192,7 +192,8 @@ pub(crate) fn wants_background(reading: &Reading) -> bool {
     let Some(sources) = &probe.screen_page_sources else {
         return false;
     };
-    if probe.is_vertical()
+    if reading.quote_marker().is_some()
+        || probe.is_vertical()
         || config.scroll
         || config.facing_pages
         || config.hidden_flows.enabled
@@ -229,6 +230,9 @@ pub(crate) fn wants_background(reading: &Reading) -> bool {
 /// Check the layout and owner before considering a worker result. The result
 /// stays out of the cache while the background task is in progress.
 fn current_generation(reading: &Reading, id: &Rc<()>) -> bool {
+    if reading.quote_marker().is_some() {
+        return false;
+    }
     let slot = reading.config.screen_pages.0.borrow();
     slot.as_ref().is_some_and(|generation| {
         Rc::ptr_eq(&generation.id, id)
@@ -417,7 +421,7 @@ fn changed_file() -> io::Error {
     )
 }
 
-pub(super) fn check_cancelled(cancelled: &AtomicBool) -> io::Result<()> {
+pub(crate) fn check_cancelled(cancelled: &AtomicBool) -> io::Result<()> {
     if cancelled.load(Ordering::Relaxed) {
         Err(io::Error::new(
             io::ErrorKind::Interrupted,
@@ -429,7 +433,7 @@ pub(super) fn check_cancelled(cancelled: &AtomicBool) -> io::Result<()> {
 }
 
 /// A read lease never keeps a file handle across chunks, storage export, or layout.
-pub(super) fn read_snapshot(
+pub(crate) fn read_snapshot(
     path: &Path,
     stamp: &FileStamp,
     cancelled: &AtomicBool,

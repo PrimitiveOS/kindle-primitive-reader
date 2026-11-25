@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 mod css_flow_tests;
 mod hidden_flows;
 pub(crate) mod page_overlap;
-mod quote_prefixes;
+pub(crate) mod quote_prefixes;
 pub(crate) mod screen_pages;
 #[cfg(test)]
 mod viewport_tests;
@@ -307,10 +307,19 @@ impl BookConfig {
         Ok(probe)
     }
 
-    fn reading_chapter(&self, index: usize) -> Result<Probe> {
+    pub(crate) fn chapter_layout(&self, index: usize) -> Result<ChapterLayout> {
+        let probe = self.chapter(index)?;
+        let marker = self.quote_prefixes.marker(probe.book, index);
+        Ok(ChapterLayout { probe, marker })
+    }
+
+    fn reading_chapter(&self, index: usize) -> Result<ChapterLayout> {
         match self.eager_layouts.take(self, index) {
-            Ok(Some(probe)) => Ok(probe),
-            Ok(None) => self.chapter(index),
+            Ok(Some(probe)) => Ok(ChapterLayout {
+                probe,
+                marker: None,
+            }),
+            Ok(None) => self.chapter_layout(index),
             Err(error) => {
                 self.screen_pages.reset();
                 Err(error)
@@ -411,11 +420,33 @@ impl BookConfig {
     }
 }
 
+/// A candidate keeps the quote status produced by its own final layout.
+/// Preview candidates cannot replace the marker of the committed Reading.
+pub(crate) struct ChapterLayout {
+    pub(crate) probe: Probe,
+    marker: Option<quote_prefixes::Marker>,
+}
+
+impl std::ops::Deref for ChapterLayout {
+    type Target = Probe;
+
+    fn deref(&self) -> &Self::Target {
+        &self.probe
+    }
+}
+
+impl std::ops::DerefMut for ChapterLayout {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.probe
+    }
+}
+
 pub(crate) struct Reading {
     pub(crate) config: BookConfig,
     pub(crate) chapter: usize,
     pub(crate) probe: Probe,
     pub(crate) page: usize,
+    quote_marker: Option<quote_prefixes::Marker>,
     scroll_top: Option<f32>,
     focus_anchor: Option<Anchor>,
     frame: GrayImage,
@@ -429,6 +460,10 @@ pub(crate) struct Reading {
 }
 
 impl Reading {
+    pub(crate) fn quote_marker(&self) -> Option<&quote_prefixes::Marker> {
+        self.quote_marker.as_ref()
+    }
+
     pub(crate) fn is_continuous(&self) -> bool {
         self.scroll_top.is_some()
     }
@@ -504,7 +539,10 @@ impl Reading {
         scroll_history_top: Option<f32>,
     ) -> Result<Self> {
         let start = Instant::now();
-        let mut probe = config.reading_chapter(chapter)?;
+        let ChapterLayout {
+            mut probe,
+            mut marker,
+        } = config.reading_chapter(chapter)?;
         let typography = &mut config.settings.typography;
         if typography.fallback.is_some() {
             // Once opened, each chapter and subsequent reflow use the book's
@@ -512,6 +550,9 @@ impl Reading {
             typography.main = probe.main_language;
             typography.fallback = None;
             probe.settings.typography = *typography;
+            if let Some(marker) = &mut marker {
+                marker.need.settings.typography = *typography;
+            }
         }
         let custom_flows = hidden_flows::Resolved::new(&config, &probe, chapter)?;
         if config.hidden_flows.enabled || custom_flows.has_automatic_notes() {
@@ -572,6 +613,7 @@ impl Reading {
             chapter,
             probe,
             page,
+            quote_marker: marker,
             scroll_top,
             focus_anchor: anchor.cloned(),
             frame,
@@ -583,10 +625,12 @@ impl Reading {
             flow_weights: Vec::new(),
             custom_flows,
         };
-        session
-            .config
-            .screen_pages
-            .observe(&session.config, &session.probe, chapter);
+        if session.quote_marker.is_none() {
+            session
+                .config
+                .screen_pages
+                .observe(&session.config, &session.probe, chapter);
+        }
         session.refresh_flow_weights();
         session.schedule_prefetch();
         Ok(session)
@@ -689,6 +733,9 @@ impl Reading {
     }
 
     pub(crate) fn jump_to_screen_ordinal(&mut self, ordinal: usize) -> Result<()> {
+        if self.quote_marker.is_some() {
+            return Err("The current chapter layout is still being prepared".into());
+        }
         let sources = with_storage(|| Ok(screen_pages::ScreenPageSources::read(&self.config)))?;
         if sources.is_none() || sources != self.probe.screen_page_sources {
             self.config.screen_pages.reset();
@@ -707,19 +754,35 @@ impl Reading {
         } else {
             Some(self.config.reading_chapter(target.chapter)?)
         };
-        let probe = candidate.as_ref().unwrap_or(&self.probe);
-        if !self
-            .config
-            .screen_pages
-            .validates_target(&self.config, probe, target)
-        {
+        let provisional = candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.marker.is_some());
+        let probe = candidate
+            .as_ref()
+            .map(|candidate| &candidate.probe)
+            .unwrap_or(&self.probe);
+        let valid = if provisional {
+            self.config
+                .screen_pages
+                .validates_provisional_target(&self.config, probe, target)
+        } else {
+            self.config
+                .screen_pages
+                .validates_target(&self.config, probe, target)
+        };
+        if !valid {
             self.config.screen_pages.reset();
             return Err("The book layout changed. Open Go to page and try again.".into());
         }
-        self.go_to_laid_out_page(target.chapter, target.page, candidate)
+        let page = target.page.min(probe.page_count().saturating_sub(1));
+        self.go_to_laid_out_page(target.chapter, page, candidate)
     }
 
     pub(crate) fn has_exact_local_screen_pages(&self) -> bool {
+        self.quote_marker.is_none() && self.has_local_screen_pages()
+    }
+
+    pub(crate) fn has_local_screen_pages(&self) -> bool {
         !self.config.scroll
             && !self.config.facing_pages
             && !self.probe.is_vertical()
@@ -727,6 +790,9 @@ impl Reading {
     }
 
     pub(crate) fn whole_book_screen_pages(&self) -> Option<(usize, usize)> {
+        if self.quote_marker.is_some() {
+            return None;
+        }
         self.config
             .screen_pages
             .position(&self.config, &self.probe, self.chapter, self.page)
@@ -736,6 +802,9 @@ impl Reading {
         &self,
         allow_depth: impl Fn(usize) -> bool,
     ) -> Option<(Vec<usize>, usize)> {
+        if self.quote_marker.is_some() {
+            return None;
+        }
         self.config.screen_pages.publisher_markers(
             &self.config,
             &self.probe,
@@ -750,6 +819,9 @@ impl Reading {
         entries: &[crate::generated_contents::OutlineEntry],
         allow_depth: impl Fn(usize) -> bool,
     ) -> Option<screen_pages::AlternativeLocations> {
+        if self.quote_marker.is_some() {
+            return None;
+        }
         self.config.screen_pages.alternative_locations(
             &self.config,
             &self.probe,
@@ -968,6 +1040,9 @@ impl Reading {
             };
             self.config.settings = settings;
             self.config.eager_layouts = Default::default();
+            if let Some(marker) = &mut self.quote_marker {
+                marker.need.settings = self.probe.settings;
+            }
             self.frame = frame;
             self.adjacent.clear();
             self.schedule_prefetch();
@@ -986,6 +1061,9 @@ impl Reading {
             self.probe.settings.invert_night_images = settings.invert_night_images;
             self.config.settings.link_vertical_margins = settings.link_vertical_margins;
             self.probe.settings.link_vertical_margins = settings.link_vertical_margins;
+            if let Some(marker) = &mut self.quote_marker {
+                marker.need.settings = self.probe.settings;
+            }
             return Ok(());
         }
         let anchor = self.anchor();
@@ -1495,10 +1573,11 @@ impl Reading {
 
     fn land_at_chapter_edge(
         &mut self,
-        mut probe: Probe,
+        candidate: ChapterLayout,
         chapter: usize,
         direction: isize,
     ) -> Result<()> {
+        let ChapterLayout { mut probe, marker } = candidate;
         let page = if direction < 0 {
             first_frame_page(&self.config, &probe, probe.page_count() - 1)
         } else {
@@ -1513,12 +1592,17 @@ impl Reading {
         });
         let page = top.map_or(page, |top| probe.page_at(top));
         self.frame = capture(&self.config, &mut probe, chapter, page, top)?;
-        self.config
-            .screen_pages
-            .observe(&self.config, &probe, chapter);
+        if marker.is_none() {
+            self.config
+                .screen_pages
+                .observe(&self.config, &probe, chapter);
+        }
         let previous = std::mem::replace(&mut self.probe, probe);
-        self.config.eager_layouts.put(self.chapter, previous);
+        if self.quote_marker.is_none() {
+            self.config.eager_layouts.put(self.chapter, previous);
+        }
         self.chapter = chapter;
+        self.quote_marker = marker;
         self.page = page;
         self.scroll_top = top;
         self.adjacent.clear();
@@ -1565,7 +1649,8 @@ impl Reading {
                 .config
                 .layout_chapter(book, chapter, sources)
                 .map_err(io::Error::other)?;
-            Ok((chapter, in_chapter, probe))
+            let marker = self.config.quote_prefixes.marker(probe.book, chapter);
+            Ok((chapter, in_chapter, ChapterLayout { probe, marker }))
         });
         if candidate.is_err() {
             self.config.screen_pages.reset();
@@ -1581,7 +1666,7 @@ impl Reading {
 
     fn use_chapter(
         &mut self,
-        candidate: Probe,
+        candidate: ChapterLayout,
         chapter: usize,
         anchor: Option<&Anchor>,
         fallback_page: usize,
@@ -1593,7 +1678,7 @@ impl Reading {
         &mut self,
         chapter: usize,
         page: usize,
-        probe: Option<Probe>,
+        probe: Option<ChapterLayout>,
     ) -> Result<()> {
         self.use_chapter_location(probe, chapter, None, page, true)?;
         self.end_attempt = false;
@@ -1602,7 +1687,7 @@ impl Reading {
 
     fn use_chapter_location(
         &mut self,
-        mut candidate: Option<Probe>,
+        mut candidate: Option<ChapterLayout>,
         chapter: usize,
         anchor: Option<&Anchor>,
         fallback_page: usize,
@@ -1611,9 +1696,13 @@ impl Reading {
         if self.uses_page_flows()
             && let Some(candidate) = &mut candidate
         {
-            candidate.flow_pages = Some(self.custom_flows.map(chapter, candidate.page_count()));
+            let pages = candidate.page_count();
+            candidate.probe.flow_pages = Some(self.custom_flows.map(chapter, pages));
         }
-        let probe = candidate.as_mut().unwrap_or(&mut self.probe);
+        let probe = candidate
+            .as_mut()
+            .map(|candidate| &mut candidate.probe)
+            .unwrap_or(&mut self.probe);
         let focused_page = anchor.and_then(|anchor| probe.page_for(anchor));
         let page = focused_page.unwrap_or(fallback_page);
         let top = (self.config.scroll && !probe.is_vertical()).then(|| {
@@ -1630,11 +1719,19 @@ impl Reading {
         });
         let frame = capture(&self.config, probe, chapter, page, top)?;
         if let Some(candidate) = candidate {
-            self.config
-                .screen_pages
-                .observe(&self.config, &candidate, chapter);
+            let ChapterLayout {
+                probe: candidate,
+                marker,
+            } = candidate;
+            if marker.is_none() {
+                self.config
+                    .screen_pages
+                    .observe(&self.config, &candidate, chapter);
+            }
             let previous = std::mem::replace(&mut self.probe, candidate);
-            if self.chapter != chapter {
+            let previous_was_exact = self.quote_marker.is_none();
+            self.quote_marker = marker;
+            if self.chapter != chapter && previous_was_exact {
                 self.config.eager_layouts.put(self.chapter, previous);
             }
         }
@@ -2212,6 +2309,13 @@ impl App for Reading {
     fn storage_returned(&mut self) -> io::Result<()> {
         self.config.eager_layouts = Default::default();
         self.config.quote_prefixes.clear();
+        if self
+            .quote_marker
+            .as_ref()
+            .is_some_and(|marker| !self.config.quote_prefixes.rearm(&self.config.book, marker))
+        {
+            self.quote_marker = None;
+        }
         self.config.screen_pages.reset();
         self.config.screen_pages.clear_typography();
         self.turns = PageTurns::new(Instant::now());

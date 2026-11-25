@@ -19,6 +19,19 @@ Reader uses the active font stack, dimensions, styles, hyphenation and viewport 
 
 Editing the input, leaving the form, sleeping, changing the layout or returning from USB discards the pending jump. Unavailable counts leave the editor open with alternatives. Whole-document ordinals are currently available for regular, single-page, horizontal EPUB layout. Scroll, spreads, vertical text, special package layouts, hidden flows and books beyond the worker limits can still use `chapter:page`, percentage or labels where supported. Ordinary reading retains its existing pagination policy until a whole-document jump or the optional header requests a count. [Cache and worker](../src/session/screen_pages.rs) · [Background verification](../src/session/screen_pages/background.rs)
 
+If an indexed destination still needs quote-depth preparation, Reader verifies
+its source and opens the closest available page with an approximate-page
+notice. It preserves the current passage when exact preparation completes;
+because it does not re-resolve the requested document ordinal, a final notice
+still marks the opened page as approximate until the next navigation. If
+preparation is unavailable, the notice says the page may differ. Relative
+jumps within the current chapter remain available while its layout is
+provisional. Whole-document numbers remain unavailable until that layout is
+exact. [Quote preparation limits](quote-marks.md)
+
+[Approximate page notice](screenshots/quote-repair-completed-narrow.png) ·
+[Unavailable preparation notice](screenshots/quote-repair-unavailable-narrow.png)
+
 ## Stock comparison
 
 Pinned KOReader dispatches plain numbers to absolute page jumps, signed values to relative jumps, and percentage through its own button. The rolling engine adds a signed amount to the current rendered page. The paging engine walks the next or previous pages and stops at the boundary. KOReader's published-page mode sends the entered text to its page-label lookup. Its `[x]y` form selects an ordinal in flow `y`, with flow 0 as the main flow. Reader preserves its existing `label ` prefix and direct PDF label lookup, and uses its original percentage formulas. KOReader floors fixed percentages against physical page count. Reader rounds a fractional distance between the first and last physical page. [Pinned ReaderGoto](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readergoto.lua#L139) · [Fixed paging](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerpaging.lua#L1166) · [Rolling pagination](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerrolling.lua#L749)

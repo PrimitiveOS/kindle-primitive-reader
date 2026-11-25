@@ -426,6 +426,29 @@ impl Targets {
         Self::build(chapter, source, &roots, &BTreeSet::new(), styles)
     }
 
+    pub(crate) fn fb3(
+        chapter: &str,
+        source: &Source,
+        styles: &Snapshot,
+        incomplete_note_ids: &BTreeSet<String>,
+    ) -> Option<Self> {
+        // The FB3 importer preserves its notes as typed asides. CRE imports
+        // these into FictionBook's notes body and applies the footnote preset.
+        let scale = styles.fb2_note_scale(Fb2NoteKind::Footnote)?;
+        let mut roots = BTreeMap::new();
+        for (index, element) in source.elements.iter().enumerate() {
+            if element.tag == "aside"
+                && element.type_attribute.as_deref() == Some("footnote")
+                && let Some(id) = &element.id
+                && !incomplete_note_ids.contains(id)
+                && source.fragment_owner(id) == Some(index)
+            {
+                roots.insert(index, NoteSize::Fb2(scale));
+            }
+        }
+        Self::build(chapter, source, &roots, &BTreeSet::new(), styles)
+    }
+
     fn build(
         chapter: &str,
         source: &Source,
@@ -2197,6 +2220,160 @@ mod tests {
         assert!((0.70..0.80).contains(&(widths[0].0 as f32 / widths[3].0 as f32)));
         assert!((0.80..0.90).contains(&(widths[1].1 as f32 / widths[3].1 as f32)));
         assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn fb3_in_page_footnotes_use_fictionbook_size_and_keep_original_anchors() {
+        use crate::user_styles::{
+            Data, EPUB_FOOTNOTES, FB2_ENDNOTES, FB2_FOOTNOTES, FB2_REGULAR_NOTE_SIZE,
+        };
+
+        let path = test_fixture("harbor-survey.fb3");
+        let bytes = std::fs::read(&path).unwrap();
+        let render = |presets: &[&str]| {
+            let mut data = Data::default();
+            for id in presets {
+                data.choose(1, id, Some(true)).unwrap();
+            }
+            Probe::layout_opened_book(
+                &mut Some(Book::open(&path).unwrap()),
+                Engine::Parley,
+                settings(false),
+                0,
+                None,
+                &Default::default(),
+                &data.snapshot(1).unwrap(),
+                || crate::font_context(&[test_fixture("fonts/NotoSans-Regular.ttf")]),
+            )
+            .unwrap()
+        };
+        let selection = |probe: &Probe, phrase: &str| {
+            let start = probe.matches(phrase).pop().unwrap();
+            let end = probe.anchor(start.block, start.offset + phrase.len());
+            probe.select_range(&start, &end).unwrap()
+        };
+        let mut ordinary = render(&[]);
+        let reference = selection(&ordinary, "tide note");
+        let target = ordinary.fragment("tide-note").unwrap();
+        let text = selection(&ordinary, "midnight");
+        let backlink = selection(&ordinary, "Return to soundings");
+        let page = ordinary.page_for(&reference.start).unwrap();
+        let canonical = ordinary.page_for(&target).unwrap();
+        assert!(canonical > page);
+        assert!(ordinary.in_page_notes.is_none());
+        let baseline = capture(&mut ordinary, page, "reader-fb3-note-off.png");
+        for styles in [[EPUB_FOOTNOTES], [FB2_ENDNOTES], [FB2_REGULAR_NOTE_SIZE]] {
+            let mut unrelated = render(&styles);
+            assert!(unrelated.in_page_notes.is_none());
+            assert_eq!(unrelated.capture(page).unwrap(), baseline);
+        }
+        let mut widths = Vec::new();
+        for (name, styles) in [
+            ("on", &[FB2_FOOTNOTES][..]),
+            ("regular", &[FB2_FOOTNOTES, FB2_REGULAR_NOTE_SIZE][..]),
+        ] {
+            let mut probe = render(styles);
+            let page = probe.page_for(&reference.start).unwrap();
+            let canonical = probe.page_for(&target).unwrap();
+            assert!(canonical > page);
+            assert!(
+                probe.in_page_notes.as_ref().unwrap()[page]
+                    .separator
+                    .is_some()
+            );
+            assert!(
+                probe.in_page_notes.as_ref().unwrap()[canonical]
+                    .separator
+                    .is_none()
+            );
+            assert_eq!(probe.restore_anchor(&target), Some(target.clone()));
+            assert_eq!(probe.fragment("tide-note"), Some(target.clone()));
+            assert_eq!(selection(&probe, "midnight"), text);
+            assert_eq!(selection(&probe, "Return to soundings"), backlink);
+            let reference_rect = probe.selection_rects(page, &reference)[0];
+            assert_eq!(
+                probe
+                    .link_at(
+                        page,
+                        (reference_rect.x + 5) as f32,
+                        (reference_rect.y + reference_rect.height / 2) as f32
+                    )
+                    .unwrap()
+                    .fragment
+                    .as_deref(),
+                Some("tide-note")
+            );
+            for current in [page, canonical] {
+                let link = probe.selection_rects(current, &backlink)[0];
+                assert_eq!(
+                    probe
+                        .link_at(
+                            current,
+                            (link.x + 5) as f32,
+                            (link.y + link.height / 2) as f32
+                        )
+                        .unwrap()
+                        .fragment
+                        .as_deref(),
+                    Some("morning")
+                );
+            }
+            widths.push(probe.selection_rects(canonical, &text)[0].width);
+            capture(&mut probe, page, &format!("reader-fb3-note-{name}.png"));
+            if name == "on" {
+                capture(&mut probe, canonical, "reader-fb3-note-original.png");
+            }
+        }
+        assert!(
+            (0.70..0.80).contains(&(widths[0] as f32 / widths[1] as f32)),
+            "{widths:?}"
+        );
+        assert_eq!(
+            widths[1],
+            ordinary.selection_rects(canonical, &text)[0].width
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn fb3_in_page_footnotes_leave_cross_part_links_in_their_original_flow() {
+        use crate::user_styles::{Data, FB2_FOOTNOTES};
+
+        let mut book = Some(Book::open(&test_fixture("harbor-continuation.fb3")).unwrap());
+        let mut data = Data::default();
+        data.choose(1, FB2_FOOTNOTES, Some(true)).unwrap();
+        let mut render = |part| {
+            Probe::layout_opened_book(
+                &mut book,
+                Engine::Parley,
+                settings(false),
+                part,
+                None,
+                &Default::default(),
+                &data.snapshot(1).unwrap(),
+                || crate::font_context(&[test_fixture("fonts/NotoSans-Regular.ttf")]),
+            )
+            .unwrap()
+        };
+        let first = render(0);
+        assert!(first.in_page_notes.is_none());
+        let link = first
+            .source
+            .blocks
+            .iter()
+            .flat_map(|block| &block.links)
+            .find(|link| link.href.ends_with("#later-note"))
+            .unwrap();
+        let target = Book::resolve_link(&first.chapter, &link.href).unwrap();
+        assert_eq!(target.path, "fb3-section-2.xhtml");
+        assert_eq!(target.fragment.as_deref(), Some("later-note"));
+        let second = render(1);
+        assert!(second.in_page_notes.is_none());
+        let note = second
+            .fragment(target.fragment.as_deref().unwrap())
+            .unwrap();
+        assert!(second.page_for(&note).is_some());
+        assert_eq!(second.restore_anchor(&note), Some(note));
     }
 
     #[test]

@@ -117,7 +117,7 @@ impl Reader {
     fn jump_reflow_screen_page(&mut self, jump: PageJump) -> Result<()> {
         let active = self.active.as_mut().ok_or("No open book")?;
         let reading = &mut active.reading;
-        if reading.has_exact_local_screen_pages()
+        if reading.has_local_screen_pages()
             && let PageJump::Relative(delta) = jump
             && let Some(page) = reading.page.checked_add_signed(delta)
             && page < reading.probe.page_count()
@@ -159,7 +159,11 @@ impl Reader {
         }
         let before = position(reading);
         reading.jump_to_screen_ordinal(page)?;
+        let provisional = reading.quote_marker().is_some();
         self.finish_reflow_jump(before);
+        if provisional {
+            self.notice = Some(super::quote_repair::APPROXIMATE_PAGE_NOTICE.into());
+        }
         Ok(())
     }
 

@@ -69,6 +69,31 @@ fn note_format(preset: &str) -> Option<DocumentFormat> {
     }
 }
 
+fn supports_note_format(preset: &str, format: DocumentFormat) -> bool {
+    note_format(preset).map_or(
+        matches!(
+            format,
+            DocumentFormat::Epub | DocumentFormat::Fb2 | DocumentFormat::Fb3
+        ),
+        |required| {
+            format == required
+                || (format == DocumentFormat::Fb3
+                    && matches!(preset, FB2_FOOTNOTES | FB2_REGULAR_NOTE_SIZE))
+        },
+    )
+}
+
+fn book_preset(mut preset: user_styles::Preset, format: DocumentFormat) -> user_styles::Preset {
+    if format == DocumentFormat::Fb3 {
+        preset.title = match preset.id {
+            FB2_FOOTNOTES => "In-page FB3 footnotes",
+            FB2_REGULAR_NOTE_SIZE => "Keep regular FB3 note size",
+            _ => preset.title,
+        };
+    }
+    preset
+}
+
 fn advanced_note(preset: &str) -> bool {
     matches!(
         preset,
@@ -150,13 +175,8 @@ impl Reader {
             return true;
         }
         self.active.as_ref().is_some_and(|book| {
-            format.map_or(
-                matches!(
-                    book.entry.format,
-                    DocumentFormat::Epub | DocumentFormat::Fb2
-                ),
-                |required| book.entry.format == required,
-            ) && self.style_store.data.book(book.id).enabled
+            supports_note_format(name, book.entry.format)
+                && self.style_store.data.book(book.id).enabled
         })
     }
 
@@ -397,11 +417,12 @@ impl Reader {
         self.show(Screen::StyleReview);
     }
     pub(super) fn style_items(&self, screen: Screen) -> Vec<Item> {
-        let Ok(id) = self.style_book() else {
+        let Some(book) = &self.active else {
             return vec![Item::new("Open a reflowable book first", Action::Heading)];
         };
         let data = &self.style_store.data;
-        let b = data.book(id);
+        let b = data.book(book.id);
+        let format = book.entry.format;
         let action = |title: &str, command: Command| Item::new(title, Action::Style(command));
         match screen {
             Screen::StyleTweaks => {
@@ -459,7 +480,9 @@ impl Reader {
                         if p.id == "paragraph_whitespace" {
                             let state = PRESETS
                                 .iter()
-                                .find(|p| p.group == PARAGRAPH_SPACING && data.enabled(id, p.id))
+                                .find(|p| {
+                                    p.group == PARAGRAPH_SPACING && data.enabled(book.id, p.id)
+                                })
                                 .map_or("Use book spacing", |p| match p.id {
                                     "paragraph_whitespace" => "Full",
                                     "paragraph_whitespace_half" => "Half",
@@ -508,15 +531,11 @@ impl Reader {
                     if advanced_note(p.id) {
                         continue;
                     }
-                    let format = note_format(p.id);
-                    if let Some(format) = format
-                        && self
-                            .active
-                            .as_ref()
-                            .is_none_or(|book| book.entry.format != format)
-                    {
+                    let is_note = note_format(p.id).is_some();
+                    if is_note && !supports_note_format(p.id, format) {
                         continue;
                     }
+                    let p = book_preset(*p, format);
                     if !self.style_preset_available(p.id) {
                         items.insert(
                             note_row,
@@ -526,8 +545,8 @@ impl Reader {
                         note_row += 1;
                         continue;
                     }
-                    let row = preset_item(*p, data, &b);
-                    if format.is_some() {
+                    let row = preset_item(p, data, &b);
+                    if is_note {
                         items.insert(note_row, row);
                         note_row += 1;
                     } else {
@@ -545,14 +564,7 @@ impl Reader {
                         note_row += 1;
                     }
                 }
-                if b.enabled
-                    && self.active.as_ref().is_some_and(|book| {
-                        matches!(
-                            book.entry.format,
-                            DocumentFormat::Epub | DocumentFormat::Fb2
-                        )
-                    })
-                {
+                if b.enabled && supports_note_format(INLINE_ALL_FOOTNOTE_CONTENT, format) {
                     items.insert(
                         note_row,
                         Item::new(
@@ -637,6 +649,7 @@ impl Reader {
                     .preset
                     .as_deref()
                     .and_then(user_styles::preset)
+                    .map(|preset| book_preset(preset, format))
                 else {
                     return Vec::new();
                 };

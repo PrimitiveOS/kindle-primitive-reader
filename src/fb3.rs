@@ -4,7 +4,7 @@ mod section_plan;
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek};
 
 use encoding_rs::Encoding;
@@ -40,6 +40,7 @@ pub(crate) struct Imported {
     pub(crate) rest: Vec<(String, String)>,
     pub(crate) revision: u64,
     pub(crate) cover: Option<BookCover>,
+    pub(crate) incomplete_note_ids: BTreeSet<String>,
 }
 
 pub(crate) fn open(input: impl Read + Seek, len: u64, fallback: &str) -> Result<Imported> {
@@ -144,6 +145,7 @@ pub(crate) fn open(input: impl Read + Seek, len: u64, fallback: &str) -> Result<
         rest: chapters.collect(),
         revision: crate::revision(&body_xml),
         cover,
+        incomplete_note_ids: output.incomplete_note_ids,
     })
 }
 

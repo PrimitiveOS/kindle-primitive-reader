@@ -89,7 +89,34 @@ KOReader's installed FreeType independently inspected 87 firmware font files and
 
 ## Limits
 
-Reader loads sfnt TrueType and OpenType fonts from local EPUB resources, including the standardized IDPF embedding method. Each file is capped at 2 MiB, with six local resource reads, 64 face rules and 8 MiB total per chapter. Repeated paths share the same underlying font bytes. Files over budget, unavailable formats, and corrupt sources fall through to available faces. WOFF, variable descriptor ranges and CSS unicode-range subsetting remain separate work.
+Reader loads sfnt TrueType, OpenType and WOFF 1 fonts from local EPUB resources, including the standardized IDPF embedding method for supported sfnt resources. Each source and reconstructed font is capped at 2 MiB, with six local resource reads, 64 face rules and 8 MiB of retained font data per chapter. Repeated paths share the same underlying font bytes. Files over budget, unavailable formats, and corrupt sources fall through to available faces. WOFF 2, variable descriptor ranges and CSS unicode-range subsetting remain separate work.
+
+## WOFF 1 publisher fonts
+
+Reader accepts a local WOFF 1 face in an `@font-face` URL, including `format("woff")`, and reconstructs its sfnt tables in memory before normal font registration. Both compressed resource and expanded data must fit the font budget. The reader checks table bounds, overlapping ranges, stream completion and declared output lengths. If a source is invalid, an eligible later `src` URL can still supply the face. WOFF 2 is not supported. [Decoder](../src/woff.rs) · [Font loader](../src/book_style.rs)
+
+The three generated EPUB controls contain identical text and use the same pinned Silkscreen face, either as TTF, WOFF 1, or a deliberately damaged WOFF followed by a TTF fallback. They carry the original font's OFL notice. On the pinned KOReader Mac runtime, the text measured 320 pixels with embedded fonts off and 460 pixels with them on, for both the TTF and WOFF publications. The source EPUB hashes remained unchanged. This is a native Mac comparison; physical Kindle verification remains pending. [Font provenance](../tests/fixtures/manifest.json) · [Reader on](screenshots/woff-reader-on.png) · [Reader off](screenshots/woff-reader-off.png) · [Reader controls](screenshots/woff-reader-controls.png) · [KOReader on](screenshots/woff-stock-on.png) · [KOReader off](screenshots/woff-stock-off.png) · [Native replay](../scripts/koreader-woff-check.lua) · [WOFF 1 specification](https://www.w3.org/TR/WOFF/)
+
+Regenerate and check the authored fixtures with `python3 scripts/generate-fixtures.py --check`. Run `cargo test --locked --features kindle --lib woff` for bounded reconstruction, discovery, CSS fallback, controls and selection checks. Set `READER_SELECTION_VIEWPORT_CAPTURES` to an existing directory for Reader captures. The native replay uses a temporary profile and removes it afterward:
+
+```sh
+reader="$PWD"
+reference="$reader/build/parity-review/koreader-macos-reference"
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/reader-woff.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+mkdir "$scratch/cache" "$scratch/profile"
+(
+  cd "$reference/runtime/koreader"
+  env TMPDIR="$scratch" KO_DYLD_PREFIX="$reference/build/staging" \
+    KO_HOME="$scratch/profile" SDL_VIDEODRIVER=dummy \
+    EMULATE_READER_W=650 EMULATE_READER_H=900 EMULATE_READER_DPI=96 \
+    EMULATE_READER_BB_TYPE=BB8 EMULATE_BW_SCREEN=1 \
+    ./luajit "$reader/scripts/koreader-woff-check.lua" "$scratch/cache" \
+    "$reader/tests/fixtures/fonts/NotoSans-Regular.ttf" "$scratch" \
+    "$reader/tests/fixtures/publisher-woff-ttf.epub" \
+    "$reader/tests/fixtures/publisher-woff-woff.epub"
+)
+```
 
 For the IDPF method, Reader requires a font MIME type in the OPF manifest, the matching font URI with the IDPF method in the container metadata, and the identifier named by that package. Only the bounded font-reading path applies the transformation. Reading raw archive members, including chapter text, retains their original bytes. Unknown algorithms, ambiguous mappings and absent identifiers leave the resource untouched. The existing ring dependency supplies the specification’s SHA-1 digest of the public identifier. [W3C EPUB 3.3 font obfuscation](https://www.w3.org/TR/epub-33/#sec-font-obfuscation) · [CREngine’s font container](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/epubfmt.cpp#L807)
 

@@ -117,6 +117,7 @@ mod user_hyphenation;
 mod user_styles;
 mod vertical_layout;
 mod vertical_padding;
+mod woff;
 
 use std::error::Error;
 use std::fs;
@@ -1359,6 +1360,10 @@ impl Probe {
                     settings,
                     user_styles,
                 )
+            } else if user_styles.has_in_page_fb2_notes()
+                && let Some(incomplete) = book.incomplete_fb3_notes()
+            {
+                footnotes::in_page::Targets::fb3(&href, &source, user_styles, incomplete)
             } else if user_styles.has_in_page_fb2_notes()
                 && let Some(sections) = book.fb2_note_sections(&href)
             {

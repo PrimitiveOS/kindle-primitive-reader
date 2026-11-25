@@ -196,6 +196,105 @@ fn embedded_fonts_inventory_distinguishes_inline_declarations_missing_assets_and
 }
 
 #[test]
+fn embedded_fonts_woff_discovery_uses_bounded_chapter_layout() {
+    let mut book = Book::open(&crate::test_fixture("publisher-woff-woff.epub")).unwrap();
+    assert!(book.may_have_embedded_fonts());
+    assert!(!book.supports_eager_typography());
+    assert!(BookStyle::publication_has_embedded_fonts(&mut book, 0));
+    assert!(BookStyle::chapter_has_embedded_fonts(&mut book, 0));
+    let catalog = BookStyle::embedded_font_catalog(&mut book, 0);
+    assert!(catalog.iter().any(|name| name.as_ref() == "Voyage"));
+}
+
+#[test]
+fn embedded_fonts_woff_matches_ttf_and_bad_woff_falls_back() {
+    use crate::{Engine, Probe, Settings};
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut frames = Vec::new();
+    for kind in ["ttf", "woff", "fallback"] {
+        let path = crate::test_fixture(&format!("publisher-woff-{kind}.epub"));
+        let before = fs::read(&path).unwrap();
+        let open = |embedded_fonts| {
+            Probe::open(
+                &path,
+                Engine::Parley,
+                &fonts,
+                Settings {
+                    embedded_fonts,
+                    ..Settings::default()
+                },
+                0,
+            )
+            .unwrap()
+        };
+        let mut on = open(true);
+        let mut off = open(false);
+        assert!(!on.embedded_font_usage.is_empty());
+        assert!(off.embedded_font_usage.is_empty());
+        let start = on.matches("Harbor lettering").remove(0);
+        let mut end = start.clone();
+        end.offset += "Harbor lettering".len();
+        let selection = on.select_range(&start, &end).unwrap();
+        assert_eq!(selection.text, "Harbor lettering");
+        let page = on.page_for(&start).unwrap();
+        assert!(!on.selection_rects(page, &selection).is_empty());
+        assert_eq!(off.restore_anchor(&start), Some(start.clone()));
+        let on_pixels = on.capture(page).unwrap();
+        let off_pixels = off.capture(off.page_for(&start).unwrap()).unwrap();
+        assert_ne!(on_pixels, off_pixels);
+        if kind == "woff"
+            && let Some(directory) = std::env::var_os("READER_SELECTION_VIEWPORT_CAPTURES")
+        {
+            for (name, pixels) in [
+                ("woff-reader-on.png", &on_pixels),
+                ("woff-reader-off.png", &off_pixels),
+            ] {
+                primitive_app::write_png(
+                    &Path::new(&directory).join(name),
+                    on.settings.width,
+                    on.settings.height,
+                    pixels,
+                )
+                .unwrap();
+            }
+        }
+        assert_eq!(fs::read(&path).unwrap(), before);
+        frames.push(on_pixels);
+    }
+    assert_eq!(frames[0], frames[1]);
+    assert_eq!(frames[0], frames[2]);
+}
+
+#[test]
+fn embedded_fonts_woff_control_preserves_location_and_saved_preference() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("WOFF specimen.epub");
+    fs::copy(crate::test_fixture("publisher-woff-woff.epub"), &path).unwrap();
+    let original = fs::read(&path).unwrap();
+    let mut app = reader(&fixture);
+    app.open_path(&path).unwrap();
+    let anchor = app.current_history_location();
+    let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
+    open_rendering(&mut app);
+    let off = app.reading_button_in_row("Embedded fonts", "Off");
+    tap(&mut app, off);
+    assert!(!font_setting(&app));
+    assert_eq!(app.current_history_location(), anchor);
+    capture(&app, &mut canvas, "woff-reader-controls.png", false);
+    app.save().unwrap();
+    let mut reopened = reader(&fixture);
+    reopened.open_path(&path).unwrap();
+    assert!(!font_setting(&reopened));
+    assert_eq!(reopened.current_history_location(), anchor);
+    open_rendering(&mut reopened);
+    let on = reopened.reading_button_in_row("Embedded fonts", "On");
+    tap(&mut reopened, on);
+    assert!(font_setting(&reopened));
+    assert_eq!(reopened.current_history_location(), anchor);
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
 fn embedded_fonts_toggle_keeps_installed_families_and_other_publisher_styles() {
     use crate::{Engine, Probe, Settings};
     let fixture = Fixture::new();

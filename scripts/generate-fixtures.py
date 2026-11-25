@@ -263,6 +263,56 @@ body {{font-family: Press, serif;}}
     return entries
 
 
+def woff1(font):
+    """Make a deterministic WOFF 1 face from the existing, licensed sfnt."""
+    tables = []
+    count = struct.unpack_from(">H", font, 4)[0]
+    offset = 44 + 20 * count
+    for index in range(count):
+        tag, checksum, source, length = struct.unpack_from(">4sIII", font, 12 + index * 16)
+        content = font[source:source + length]
+        compressed = zlib.compress(content, 9)
+        data = compressed if len(compressed) < length else content
+        tables.append((tag, offset, len(data), length, checksum, data))
+        offset += (len(data) + 3) & ~3
+    assert [table[0] for table in tables] == sorted(table[0] for table in tables)
+    expanded = 12 + 16 * count + sum((table[3] + 3) & ~3 for table in tables)
+    output = bytearray(struct.pack(">4sIIHHIHHIIIII", b"wOFF", int.from_bytes(font[:4], "big"),
+                                   offset, count, 0, expanded, 1, 0, 0, 0, 0, 0, 0))
+    for tag, position, compressed, original, checksum, _ in tables:
+        output.extend(struct.pack(">4sIIII", tag, position, compressed, original, checksum))
+    for _, position, _, _, _, data in tables:
+        assert len(output) == position
+        output.extend(data)
+        output.extend(b"\0" * (-len(output) % 4))
+    assert len(output) == offset
+    return bytes(output)
+
+
+def publisher_woff(kind):
+    title = "Harbor lettering"
+    font = font_asset(FONT, FONT_SHA256)
+    woff_name = "EPUB/fonts/Silkscreen-Regular.woff"
+    if kind == "ttf":
+        sources = 'url("../fonts/Silkscreen-Regular.ttf") format("truetype")'
+        resources = [(FONT_PATH, "font/ttf", font)]
+    elif kind == "woff":
+        sources = 'url("../fonts/Silkscreen-Regular.woff") format("woff")'
+        resources = [(woff_name, "font/woff", woff1(font))]
+    else:
+        assert kind == "fallback"
+        sources = ('url("../fonts/Silkscreen-Regular.woff") format("woff"), '
+                   'url("../fonts/Silkscreen-Regular.ttf") format("truetype")')
+        resources = [(woff_name, "font/woff", b"wOFF\0invalid font"), (FONT_PATH, "font/ttf", font)]
+    css = f'@font-face {{font-family: Voyage; src: {sources};}}\n.embedded {{font-family: Voyage, sans-serif;}}'
+    body = '<p id="embedded" class="embedded">Harbor lettering</p><p id="ordinary">Ordinary type</p>'
+    entries = publication(title, f"publisher-woff-{kind}", 3,
+        [(SHORE_PATH, title, xhtml(title, body, True, "../styles/reader.css"))],
+        [(CSS_PATH, "text/css", css), *resources])
+    entries[FONT_NOTICE_PATH] = font_asset(FONT_NOTICE, FONT_NOTICE_SHA256)
+    return entries
+
+
 def english_hyphenation():
     title = "Line breaks"
     body = """<p>Look for hyphenation in this paragraph. An international expedition depends on careful communication and patient observation.</p>
@@ -508,6 +558,9 @@ def outputs():
         ("publisher-faces.epub", archive(publisher_faces()), {
             "opens": True, "spine_count": 1, "font_families": 2, "face_styles": 4,
         }),
+        *((f"publisher-woff-{kind}.epub", archive(publisher_woff(kind)), {
+            "opens": True, "spine_count": 1, "font_families": 1, "font_source": kind,
+        }) for kind in ("ttf", "woff", "fallback")),
         ("english-hyphenation.epub", archive(english_hyphenation()), {
             "opens": True, "spine_count": 1, "package_language": "en",
             "xhtml_language": None, "authored_soft_hyphens": 0,
@@ -559,7 +612,8 @@ def outputs():
             "name": "Silkscreen Regular", "license": "OFL-1.1", "source": FONT_SOURCE,
             "source_file": f"fonts/{FONT}", "sha256": FONT_SHA256,
             "notice_file": f"fonts/{FONT_NOTICE}", "notice_sha256": FONT_NOTICE_SHA256,
-            "included_in": ["field-notes-epub3.epub", "publisher-faces.epub"], "archive_notice": FONT_NOTICE_PATH,
+            "included_in": ["field-notes-epub3.epub", "publisher-faces.epub", "publisher-woff-ttf.epub",
+                            "publisher-woff-woff.epub", "publisher-woff-fallback.epub"], "archive_notice": FONT_NOTICE_PATH,
         }, {
             "name": "Noto Sans Regular", "license": "OFL-1.1",
             "source": "https://github.com/PrimitiveOS/kindle-primitive-launcher/blob/799cd5348d0a82673ea4fc36664ffc084146f238/assets/fonts/NotoSans-Regular.ttf",

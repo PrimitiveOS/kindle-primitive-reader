@@ -40,20 +40,27 @@ deadline, and a single predecessor larger than the byte budget cannot
 advance the scan.
 
 A cold jump beyond this budget uses default quote depth for that page.
-The session remembers the last fully checked boundary and resumes from it
-on a later chapter layout. The page refreshes its quote depth the next time
-it is laid out. Exact asynchronous preparation remains open. Once the
-prefix is complete, later layouts use exact depth. If an earlier item
-cannot be read or parsed, Reader uses default quote depth without saving
-a partial result from that failed scan.
+For a local EPUB ZIP, Reader then prepares the exact prefix in the background
+and repaints the current passage when it can preserve its anchor. Preparation
+begins after the first frame and uses a verified snapshot of at most 8 MiB.
+It permits at most 512 preceding spine entries and 16 MiB of decoded preceding
+XHTML; repeated references count each time. A five-second deadline is checked
+between entries, so an in-progress chapter can finish after that deadline.
+Linked stylesheets are read only within their existing per-sheet and remaining
+CSS budgets. Reader checks the file identity,
+edition, active chapter and effective style before accepting the result.
+Repaint waits while a selection, modal, scroll gesture or page turn is active.
+Sleep, USB export, book changes and layout changes cancel stale work. On USB
+return, Reader retries only if the original file identity still matches.
 
-The planned asynchronous path can reuse the storage-safe snapshot and
-cancellation pattern in the [page-count worker](../src/session/screen_pages/background.rs).
-It must verify the edition, file identity, chapter and effective style before
-accepting a result, then defer an anchor-preserving repaint while a selection,
-modal or page turn is active. EPUBs above the current snapshot limit need a
-separate bounded, storage-leased member reader; they retain the foreground
-fallback until that path is implemented and tested.
+If the archive or prefix exceeds these limits, or a preceding item cannot be
+read or parsed, the current page keeps the bounded foreground result. Reader
+does not repeatedly retry the same failed preparation; a changed reading
+marker or a lifecycle reset can request it again. Extracted EPUB folders
+also keep the foreground path.
+Larger archives need a bounded, storage-leased member reader for exact
+background preparation. [Quote worker](../src/session/quote_prefixes/worker.rs) ·
+[Repaint and lifecycle](../src/app/quote_repair.rs)
 
 Whole-book preparation and background page counting reuse quote state
 inside their immutable EPUB snapshot. Each style profile keeps two

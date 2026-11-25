@@ -19,6 +19,9 @@ const LEGACY_PREFIX_BYTES: usize = 512 * 1024;
 const FOREGROUND_CHAPTERS: usize = 24;
 const FOREGROUND_BYTES: usize = 768 * 1024;
 const FOREGROUND_TIME: Duration = Duration::from_millis(120);
+const WORKER_PREFIX_CHAPTERS: usize = 512;
+const WORKER_PREFIX_BYTES: usize = 16 * 1024 * 1024;
+const WORKER_PREFIX_TIME: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
 thread_local! {
@@ -64,9 +67,14 @@ impl Token {
 #[derive(Clone, Default)]
 pub(crate) struct Depths(HashSet<Box<str>>);
 
-pub(crate) struct Checkpoints(Vec<(Profile, Vec<Checkpoint>)>, bool);
+pub(crate) struct Checkpoints(
+    Vec<(Profile, Vec<Checkpoint>)>,
+    bool,
+    Option<ExactPrefix>,
+    Option<QuoteNeed>,
+);
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 struct Profile {
     settings: Settings,
     user: user_styles::Snapshot,
@@ -84,13 +92,45 @@ struct Incoming {
     reusable: bool,
 }
 
+/// An exact incoming depth for one target chapter and style profile.
+/// Depths may be narrowed to the target's languages, so the result must not
+/// be treated as a reusable prefix for another chapter unless `reusable`.
+pub(crate) struct ExactPrefix {
+    profile: Profile,
+    chapter: usize,
+    depths: Depths,
+    reusable: bool,
+}
+
+/// The effective profile and chapter whose foreground prefix was incomplete.
+#[derive(Clone, PartialEq)]
+pub(crate) struct QuoteNeed {
+    pub(crate) chapter: usize,
+    pub(crate) settings: Settings,
+    pub(crate) styles: user_styles::Snapshot,
+    pub(crate) shaping_language: Option<parley::Language>,
+    pub(crate) main_language: String,
+}
+
 impl Checkpoints {
     pub(crate) fn snapshot() -> Self {
-        Self(Vec::new(), false)
+        Self(Vec::new(), false, None, None)
     }
 
     pub(crate) fn foreground() -> Self {
-        Self(Vec::new(), true)
+        Self(Vec::new(), true, None, None)
+    }
+
+    pub(crate) fn install_exact(&mut self, exact: ExactPrefix) {
+        self.2 = Some(exact);
+    }
+
+    pub(crate) fn need(&self) -> Option<QuoteNeed> {
+        self.3.clone()
+    }
+
+    pub(crate) fn set_need(&mut self, need: QuoteNeed) {
+        self.3 = Some(need);
     }
 
     #[cfg(test)]
@@ -168,8 +208,9 @@ pub(crate) fn render(
     plan: Plan<'_>,
     check_cancelled: &dyn Fn() -> Result<()>,
 ) -> Result<()> {
+    let has_plan = !plan.is_empty();
     let incoming = if let Some(chapter) = chapter {
-        if plan.is_empty() {
+        if !has_plan {
             book.quote_prefixes
                 .as_ref()
                 .filter(|cache| cache.1)
@@ -201,6 +242,18 @@ pub(crate) fn render(
     } else {
         None
     };
+    if let Some(cache) = book.quote_prefixes.as_mut().filter(|cache| cache.1) {
+        cache.3 = match (chapter, has_plan, incoming.is_none()) {
+            (Some(chapter), true, true) => Some(QuoteNeed {
+                chapter,
+                settings,
+                styles: user.clone(),
+                shaping_language,
+                main_language: main.into(),
+            }),
+            _ => None,
+        };
+    }
     let reusable = incoming.as_ref().is_some_and(|depth| depth.reusable);
     let mut depths = incoming.map_or_else(Depths::default, |incoming| incoming.depths);
     plan.resolve(
@@ -247,6 +300,7 @@ fn prefix(
         current,
         check_cancelled,
         &|| since.elapsed() >= FOREGROUND_TIME,
+        false,
     )
 }
 
@@ -260,6 +314,7 @@ fn scan_prefix(
     current: &[Element],
     check_cancelled: &dyn Fn() -> Result<()>,
     deadline_reached: &dyn Fn() -> bool,
+    worker_budget: bool,
 ) -> Result<Option<Incoming>> {
     if chapter == 0 || !book.is_reflowable_epub() {
         return Ok(Some(Incoming {
@@ -273,17 +328,34 @@ fn scan_prefix(
         shaping_language,
         main: main.into(),
     };
+    if let Some(exact) = book
+        .quote_prefixes
+        .as_ref()
+        .and_then(|cache| cache.2.as_ref())
+        .filter(|exact| exact.chapter == chapter && exact.profile == profile)
+    {
+        return Ok(Some(Incoming {
+            depths: exact.depths.clone(),
+            reusable: exact.reusable,
+        }));
+    }
     let (start, mut depths) = book
         .quote_prefixes
         .as_ref()
         .map_or_else(Default::default, |cache| cache.before(&profile, chapter));
     let foreground = book.quote_prefixes.as_ref().is_none_or(|cache| cache.1);
     let within_legacy_chapters = chapter <= LEGACY_PREFIX_CHAPTERS;
-    let mut bytes = 0;
+    let mut bytes = 0_usize;
     let mut end = start;
     let mut wanted = None;
     for index in start..chapter {
         check_cancelled()?;
+        if worker_budget && deadline_reached() {
+            return Err("The EPUB quote prefix exceeded its preparation time limit".into());
+        }
+        if worker_budget && index - start >= WORKER_PREFIX_CHAPTERS {
+            return Err("The EPUB quote prefix exceeds the chapter limit".into());
+        }
         // The earlier foreground path supported this finite prefix even on
         // slow hardware. Apply the deadline only outside that window.
         if foreground
@@ -296,7 +368,12 @@ fn scan_prefix(
             check_cancelled()?;
             return Ok(None);
         };
-        bytes += xhtml.len();
+        bytes = bytes
+            .checked_add(xhtml.len())
+            .ok_or("The EPUB quote prefix is too large")?;
+        if worker_budget && bytes > WORKER_PREFIX_BYTES {
+            return Err("The EPUB quote prefix exceeds the decoded text limit".into());
+        }
         if foreground
             && (bytes > FOREGROUND_BYTES
                 || (within_legacy_chapters && bytes > LEGACY_PREFIX_BYTES && deadline_reached()))
@@ -335,6 +412,66 @@ fn scan_prefix(
         depths,
         reusable: wanted.is_none(),
     }))
+}
+
+/// Prepare the exact incoming depth from an immutable snapshot. The caller
+/// owns and validates the publication stamp before installing this result.
+pub(crate) fn prepare_exact(
+    book: &mut Book,
+    chapter: usize,
+    settings: Settings,
+    user: &user_styles::Snapshot,
+    shaping_language: Option<parley::Language>,
+    main: &str,
+    check_cancelled: &dyn Fn() -> Result<()>,
+) -> Result<ExactPrefix> {
+    let started = Instant::now();
+    if !book.is_reflowable_epub() || book.quote_prefixes.as_ref().is_none_or(|cache| cache.1) {
+        return Err("Exact quote preparation requires an EPUB snapshot".into());
+    }
+    if chapter > WORKER_PREFIX_CHAPTERS {
+        return Err("The EPUB quote prefix exceeds the chapter limit".into());
+    }
+    check_cancelled()?;
+    let href = book
+        .chapters
+        .get(chapter)
+        .ok_or("That EPUB chapter is unavailable")?
+        .href
+        .clone();
+    let xhtml = book.chapter(chapter)?;
+    check_cancelled()?;
+    let source = book.chapter_source_with_language(
+        &href,
+        &xhtml,
+        shaping_language,
+        settings.typography.respect_embedded,
+    )?;
+    let incoming = scan_prefix(
+        book,
+        chapter,
+        settings,
+        user,
+        shaping_language,
+        main,
+        &source.elements,
+        check_cancelled,
+        &|| started.elapsed() >= WORKER_PREFIX_TIME,
+        true,
+    )?
+    .ok_or("The EPUB quote prefix could not be prepared")?;
+    check_cancelled()?;
+    Ok(ExactPrefix {
+        profile: Profile {
+            settings,
+            user: user.clone(),
+            shaping_language,
+            main: main.into(),
+        },
+        chapter,
+        depths: incoming.depths,
+        reusable: incoming.reusable,
+    })
 }
 
 fn advance_chapter(

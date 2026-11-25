@@ -14,6 +14,10 @@ Oasis reference size, logical units map to two physical pixels. The old
 `Chapter x of y - Page m of n` caption above the horizontal track with vertical
 chapter ticks.
 
+When a temporary notice uses a larger caption font, its clipping area grows
+enough to show the full text. The ordinary chapter caption, progress track
+and Exit geometry keep their configured layout.
+
 Large height or margin values can cover lines at the bottom of the document,
 matching KOReader's documented height trade-off. Reader clips the document
 frame at the expanded footer edge and paints the footer background before

@@ -1679,12 +1679,21 @@ impl Reader {
             .reading_viewport()
             .caption(slot_width as i32, font_size);
         let center_y = rect.y + rect.h / 2;
-        rect.h = i32::from(
+        let fitted_height = rect.h;
+        let configured_height = i32::from(
             self.controls
                 .footer_container_height
                 .unwrap_or(14)
                 .clamp(7, 98),
         ) * 2;
+        // A transient notice must remain readable even when the saved status
+        // container is shorter than the selected caption font. Ordinary
+        // chapter text and the progress track keep the configured geometry.
+        rect.h = if self.notice.is_some() {
+            configured_height.max(fitted_height)
+        } else {
+            configured_height
+        };
         rect.y = center_y - rect.h / 2 - self.footer_bottom_margin_shift();
         let width = content_width.clamp(0, rect.w);
         let remaining = rect.w - width;

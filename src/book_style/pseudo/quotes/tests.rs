@@ -399,6 +399,7 @@ fn quote_marks_slow_foreground_keeps_the_legacy_prefix_window() {
             &[],
             &|| Ok(()),
             &|| true,
+            false,
         )
         .unwrap();
         (incoming, take_historical_items())
@@ -573,4 +574,110 @@ fn quote_marks_prune_large_language_sets_without_losing_requested_depths() {
         );
         assert!(book.quote_prefixes.as_ref().unwrap().0.is_empty());
     }
+}
+
+#[cfg(feature = "kindle")]
+#[test]
+fn quote_worker_pruned_prefix_is_exact_only_for_its_target_and_profile() {
+    let mut many = r#"<html><head><link rel="stylesheet" href="seed.css" /></head><body><p><span class="seed">English seed</span>"#.to_owned();
+    for index in 0..=MAX_CACHED_LANGUAGES {
+        many.push_str(&format!(
+            r#"<span class="seed" xml:lang="en-x-l{index}">Other seed</span>"#
+        ));
+    }
+    many.push_str("</p></body></html>");
+    let settings = style_settings(BaseStylesheet::Traditional, None, true);
+    let user = user_styles::Snapshot::default();
+    let mut snapshot = snapshot_with_member("chapter-00.xhtml", many.as_bytes());
+    let exact = prepare_exact(&mut snapshot, 20, settings, &user, None, "en", &|| Ok(())).unwrap();
+    assert!(!exact.reusable);
+    assert!(exact.depths.0.contains("en"));
+
+    let mut foreground = snapshot_with_member("chapter-00.xhtml", many.as_bytes());
+    foreground.quote_prefixes = Some(Box::new(Checkpoints::foreground()));
+    foreground
+        .quote_prefixes
+        .as_mut()
+        .unwrap()
+        .install_exact(exact);
+    take_historical_items();
+    let incoming = scan_prefix(
+        &mut foreground,
+        20,
+        settings,
+        &user,
+        None,
+        "en",
+        &[],
+        &|| Ok(()),
+        &|| true,
+        false,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(incoming.depths.0.contains("en"));
+    assert!(!incoming.reusable);
+    assert_eq!(take_historical_items(), 0);
+    let other = scan_prefix(
+        &mut foreground,
+        19,
+        settings,
+        &user,
+        None,
+        "en",
+        &[],
+        &|| Ok(()),
+        &|| true,
+        false,
+    )
+    .unwrap();
+    assert!(other.is_none());
+    let other_profile = scan_prefix(
+        &mut foreground,
+        20,
+        settings,
+        &user,
+        None,
+        "fr",
+        &[],
+        &|| Ok(()),
+        &|| true,
+        false,
+    )
+    .unwrap();
+    assert!(other_profile.is_none());
+}
+
+#[cfg(feature = "kindle")]
+#[test]
+fn quote_worker_deadline_bounds_repeated_large_linked_stylesheets() {
+    let css = format!(
+        ".seed::before {{ content: open-quote; }} /*{}*/",
+        "x".repeat(90 * 1024)
+    );
+    let mut book = snapshot_with_member("seed.css", css.as_bytes());
+    let calls = std::cell::Cell::new(0);
+    take_historical_items();
+    let result = scan_prefix(
+        &mut book,
+        20,
+        style_settings(BaseStylesheet::Traditional, None, true),
+        &user_styles::Snapshot::default(),
+        None,
+        "en",
+        &[],
+        &|| Ok(()),
+        &|| {
+            calls.set(calls.get() + 1);
+            calls.get() >= 3
+        },
+        true,
+    );
+    let error = match result {
+        Ok(_) => panic!("repeated stylesheet work must stop at the worker deadline"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("preparation time limit"));
+    assert_eq!(take_historical_items(), 2);
+    assert!(book.quote_prefixes.as_ref().unwrap().0.is_empty());
 }

@@ -39,6 +39,17 @@ struct Layouts {
 }
 
 impl Cached {
+    #[cfg(test)]
+    pub(crate) fn empty_for_test(config: &BookConfig, chapters: usize) -> Self {
+        let sources =
+            with_storage(|| Ok(ScreenPageSources::read_paths(&config.book, &config.fonts)))
+                .unwrap()
+                .unwrap();
+        Self(Rc::new(RefCell::new(Some(Layouts {
+            sources,
+            chapters: std::iter::repeat_with(|| None).take(chapters).collect(),
+        }))))
+    }
     pub(in crate::session) fn take(
         &self,
         config: &BookConfig,
