@@ -25,6 +25,7 @@ enum Alphabet {
     Czech,
     Romanian,
     Latvian,
+    French,
 }
 
 #[derive(Default)]
@@ -87,6 +88,72 @@ impl OwnedPatterns {
             return None;
         }
         Self::parse_rules(lines.filter(|line| *line != "'1"), Alphabet::Zulu)
+    }
+
+    /// Accept a bounded KOReader pattern XML file as inert data. XML comments
+    /// contain disabled rules and are ignored by the parser.
+    pub(crate) fn parse_french(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() as u64 > MAX_FILE_BYTES {
+            return None;
+        }
+        let input = std::str::from_utf8(bytes).ok()?;
+        if input.contains("<!DOCTYPE") {
+            return None;
+        }
+        let options = roxmltree::ParsingOptions {
+            allow_dtd: false,
+            nodes_limit: 16_384,
+            ..Default::default()
+        };
+        let doc = roxmltree::Document::parse_with_options(input, options).ok()?;
+        let root = doc.root_element();
+        if root.tag_name().name() != "HyphenationDescription" {
+            return None;
+        }
+        let mut rules = Vec::new();
+        for node in root.children() {
+            if node.is_comment() || node.is_pi() {
+                continue;
+            }
+            if node.is_text() {
+                if !node.text()?.trim().is_empty() {
+                    return None;
+                }
+                continue;
+            }
+            if !node.is_element()
+                || node.tag_name().name() != "pattern"
+                || node.attributes().len() != 0
+            {
+                return None;
+            }
+            if rules.len() >= MAX_RULES {
+                return None;
+            }
+            let mut children = node.children();
+            let text = children.next()?;
+            if !text.is_text() || children.next().is_some() {
+                return None;
+            }
+            let entry = text.text()?;
+            if entry.len() > MAX_PATTERN_BYTES || entry.starts_with("  ") || entry.ends_with("  ") {
+                return None;
+            }
+            let core = entry.trim_matches(' ');
+            if core.is_empty() || core.chars().any(char::is_whitespace) {
+                return None;
+            }
+            let mut rule = String::new();
+            if entry.starts_with(' ') {
+                rule.push('.');
+            }
+            rule.push_str(core);
+            if entry.ends_with(' ') {
+                rule.push('.');
+            }
+            rules.push(rule);
+        }
+        Self::parse_rules(rules.iter().map(String::as_str), Alphabet::French)
     }
 
     /// Czech TeX contains weighted patterns and explicit word exceptions.
@@ -214,7 +281,8 @@ impl OwnedPatterns {
                     Alphabet::SerbianLatin
                     | Alphabet::Czech
                     | Alphabet::Romanian
-                    | Alphabet::Latvian => ch.is_lowercase() && scripts.get(ch) == Script::Latin,
+                    | Alphabet::Latvian
+                    | Alphabet::French => ch.is_lowercase() && scripts.get(ch) == Script::Latin,
                     Alphabet::SerbianCyrillic => {
                         ch.is_lowercase() && scripts.get(ch) == Script::Cyrillic
                     }

@@ -116,6 +116,7 @@ impl Reader {
         first: usize,
         limit: usize,
     ) -> (usize, Vec<Item>) {
+        let language = self.controls.interface_language;
         let view = &self.history_view.ranges;
         let show = |title: String, page| {
             Item::new(
@@ -131,7 +132,7 @@ impl Reader {
         };
         let no_rows = || {
             window(vec![Item::new(
-                "No reading sessions in this report",
+                language.history_report_text("No reading sessions in this report"),
                 Action::Heading,
             )])
         };
@@ -182,12 +183,18 @@ impl Reader {
             Page::Books(_) if view.books.is_empty() => no_rows(),
             Page::Books(group) => {
                 let heading = match group {
-                    BookGroup::All => Item::new("Total time spent reading", Action::Heading)
-                        .detail(short_time(
-                            view.books.iter().map(|(_, totals)| totals.seconds).sum(),
-                        )),
-                    BookGroup::Day { day, .. } => Item::new(day.label(), Action::Heading)
-                        .detail("Hold a book to reset its reading time for this day"),
+                    BookGroup::All => Item::new(
+                        language.history_report_text("Total time spent reading"),
+                        Action::Heading,
+                    )
+                    .detail(short_time(
+                        view.books.iter().map(|(_, totals)| totals.seconds).sum(),
+                    )),
+                    BookGroup::Day { day, .. } => Item::new(day.label(), Action::Heading).detail(
+                        language.history_report_text(
+                            "Hold a book to reset its reading time for this day",
+                        ),
+                    ),
                 };
                 let rows = view.books.iter().map(|&(book, totals)| {
                     show(self.history_title(book), Page::Book(group, book)).detail(counts(totals))
@@ -209,18 +216,27 @@ impl Reader {
                     .map(|&(_, totals)| totals)
                     .unwrap_or_default();
                 let scope = match group {
-                    BookGroup::All => "All recorded sessions".into(),
+                    BookGroup::All => language.history_report_text("All recorded sessions").into(),
                     BookGroup::Day { day, .. } => day.label(),
                 };
                 let mut rows = vec![
                     Item::new(self.history_title(book), Action::Heading).detail(scope),
-                    Item::new("Recorded reading time", Action::Heading)
-                        .detail(short_time(totals.seconds)),
-                    Item::new("Distinct reading screens", Action::Heading)
-                        .detail(totals.screens.to_string()),
+                    Item::new(
+                        language.history_report_text("Recorded reading time"),
+                        Action::Heading,
+                    )
+                    .detail(short_time(totals.seconds)),
+                    Item::new(
+                        language.history_report_text("Distinct reading screens"),
+                        Action::Heading,
+                    )
+                    .detail(totals.screens.to_string()),
                 ];
                 if self.library.state(book).is_some() {
-                    rows.push(Item::new("Continue reading", Action::OpenTracked(book)));
+                    rows.push(Item::new(
+                        language.history_report_text("Continue reading"),
+                        Action::OpenTracked(book),
+                    ));
                 }
                 window(rows)
             }

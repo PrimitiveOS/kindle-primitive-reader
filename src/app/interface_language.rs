@@ -551,6 +551,72 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed statistics report controls; book titles and recorded values stay untouched.
+const HISTORY_REPORT_LABELS: &[(&str, &str)] = &[
+    ("Book filter", "Lọc theo sách"),
+    ("All books", "Tất cả sách"),
+    ("Books by week", "Sách theo tuần"),
+    ("Books by month", "Sách theo tháng"),
+    ("Last week", "Tuần qua"),
+    ("Last month by day", "Tháng qua theo ngày"),
+    ("Last year by day", "Năm qua theo ngày"),
+    ("Last year by week", "Năm qua theo tuần"),
+    ("All stats by month", "Mọi thống kê theo tháng"),
+    (
+        "No dated reading sessions yet",
+        "Chưa có phiên đọc ghi ngày",
+    ),
+    (
+        "Hold a book to reset its time in this period",
+        "Nhấn giữ sách để đặt lại thời gian của sách trong kỳ này",
+    ),
+    ("Recorded reading time", "Thời gian đọc đã ghi"),
+    ("Distinct reading screens", "Số màn hình đọc khác nhau"),
+    ("Continue reading", "Tiếp tục đọc"),
+    (
+        "No reading sessions in this report",
+        "Không có phiên đọc trong báo cáo này",
+    ),
+    ("Total time spent reading", "Tổng thời gian đọc"),
+    (
+        "Hold a book to reset its reading time for this day",
+        "Nhấn giữ sách để đặt lại thời gian đọc của sách trong ngày này",
+    ),
+    ("All recorded sessions", "Mọi phiên đã ghi"),
+];
+
+// Fixed statistics summary controls only; book titles and recorded values stay untouched.
+const HISTORY_SUMMARY_LABELS: &[(&str, &str)] = &[
+    ("All books", "Tất cả sách"),
+    ("Choose books", "Chọn sách"),
+    ("Recorded reading time", "Thời gian đọc đã ghi"),
+    ("Distinct reading screens", "Số màn hình đọc khác nhau"),
+    (
+        "Page time, capped per screen",
+        "Thời gian trang, giới hạn theo màn hình",
+    ),
+    (
+        "Earlier screen time · undated",
+        "Thời gian màn hình trước đây · không có ngày",
+    ),
+    (
+        "Uncertain clock · undated",
+        "Đồng hồ không chắc chắn · không có ngày",
+    ),
+    ("Daily history", "Lịch sử theo ngày"),
+    ("Time range", "Khoảng thời gian"),
+    ("Reading progress", "Tiến độ đọc"),
+    ("Calendar", "Lịch"),
+    ("Today's timeline", "Dòng thời gian hôm nay"),
+    ("Statistics settings", "Cài đặt thống kê"),
+    ("Import KOReader statistics", "Nhập thống kê KOReader"),
+    ("Continue reading", "Tiếp tục đọc"),
+    (
+        "Resume this book's saved position",
+        "Tiếp tục từ vị trí đã lưu của sách này",
+    ),
+];
+
 // Fixed reading-statistics settings; recorded data and destructive reset prompts stay untouched.
 const HISTORY_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Reading statistics", "Thống kê đọc"),
@@ -2256,6 +2322,30 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn history_report_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = HISTORY_REPORT_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn history_summary_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = HISTORY_SUMMARY_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn history_settings_text<'a>(self, english: &'a str) -> &'a str {

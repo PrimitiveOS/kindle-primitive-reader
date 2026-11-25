@@ -374,6 +374,15 @@ impl VariantNumeric {
             _ => return None,
         })
     }
+
+    fn group(bit: u8) -> u8 {
+        match bit {
+            1 | 2 => 0b0000_0011,
+            4 | 8 => 0b0000_1100,
+            64 | 128 => 0b1100_0000,
+            _ => bit,
+        }
+    }
 }
 
 fn parse_numeric_variant(input: &mut Parser<'_>) -> CssResult<VariantNumeric> {
@@ -386,12 +395,7 @@ fn parse_numeric_variant(input: &mut Parser<'_>) -> CssResult<VariantNumeric> {
     while !input.is_exhausted() {
         let value = input.expect_ident()?.to_ascii_lowercase();
         let bit = VariantNumeric::bit(&value).ok_or_else(ParseError::unexpected_token)?;
-        let group = match bit {
-            1 | 2 => 0b0000_0011,
-            4 | 8 => 0b0000_1100,
-            64 | 128 => 0b1100_0000,
-            _ => bit,
-        };
+        let group = VariantNumeric::group(bit);
         if bits & group != 0 {
             return Err(ParseError::unexpected_token());
         }
@@ -417,6 +421,16 @@ impl VariantEastAsian {
             _ => return None,
         })
     }
+
+    fn group(bit: u8) -> u8 {
+        if bit <= 16 {
+            0b0001_1111
+        } else if bit <= 64 {
+            0b0110_0000
+        } else {
+            bit
+        }
+    }
 }
 
 fn parse_east_asian_variant(input: &mut Parser<'_>) -> CssResult<VariantEastAsian> {
@@ -429,13 +443,7 @@ fn parse_east_asian_variant(input: &mut Parser<'_>) -> CssResult<VariantEastAsia
     while !input.is_exhausted() {
         let value = input.expect_ident()?.to_ascii_lowercase();
         let bit = VariantEastAsian::bit(&value).ok_or_else(ParseError::unexpected_token)?;
-        let group = if bit <= 16 {
-            0b0001_1111
-        } else if bit <= 64 {
-            0b0110_0000
-        } else {
-            bit
-        };
+        let group = VariantEastAsian::group(bit);
         if bits & group != 0 {
             return Err(ParseError::unexpected_token());
         }
@@ -2721,7 +2729,6 @@ impl<'i> DeclarationParser<'i> for Properties {
                     Property::Slant(style)
                 }
                 "font-variant" => {
-                    let value = input.expect_ident()?.to_ascii_lowercase();
                     let mut common = None;
                     let mut extra = LigatureExtras::default();
                     let mut caps = VariantCaps::Normal;
@@ -2729,25 +2736,63 @@ impl<'i> DeclarationParser<'i> for Properties {
                     let mut east_asian = VariantEastAsian::default();
                     let mut position = VariantPosition::Normal;
                     let mut historical = false;
-                    if let Some(value) = VariantCaps::parse(value.as_str()) {
-                        caps = value;
-                    } else if let Some(value) = VariantNumeric::bit(value.as_str()) {
-                        numeric = VariantNumeric(value);
-                    } else if let Some(value) = VariantEastAsian::bit(value.as_str()) {
-                        east_asian = VariantEastAsian(value);
-                    } else if let Some(value) = VariantPosition::parse(value.as_str()) {
-                        position = value;
-                    } else if value == "historical-forms" {
-                        historical = true;
-                    } else if value == "none" {
-                        common = Some(false);
-                        extra = LigatureExtras {
-                            contextual: Some(false),
-                            discretionary: Some(false),
-                            historical: Some(false),
-                        };
-                    } else if !ligature_keyword(value.as_str(), &mut common, &mut extra) {
-                        return Err(ParseError::unexpected_token());
+                    let mut seen_caps = false;
+                    let mut seen_position = false;
+                    let mut count = 0;
+                    loop {
+                        let value = input.expect_ident()?.to_ascii_lowercase();
+                        count += 1;
+                        if count > 16 {
+                            return Err(ParseError::unexpected_token());
+                        }
+                        if value == "normal" || value == "none" {
+                            if count != 1 {
+                                return Err(ParseError::unexpected_token());
+                            }
+                            input.expect_exhausted()?;
+                            if value == "none" {
+                                common = Some(false);
+                                extra = LigatureExtras {
+                                    contextual: Some(false),
+                                    discretionary: Some(false),
+                                    historical: Some(false),
+                                };
+                            }
+                            break;
+                        }
+                        if let Some(value) = VariantCaps::parse(value.as_str()) {
+                            if seen_caps {
+                                return Err(ParseError::unexpected_token());
+                            }
+                            seen_caps = true;
+                            caps = value;
+                        } else if let Some(bit) = VariantNumeric::bit(value.as_str()) {
+                            if numeric.0 & VariantNumeric::group(bit) != 0 {
+                                return Err(ParseError::unexpected_token());
+                            }
+                            numeric.0 |= bit;
+                        } else if let Some(bit) = VariantEastAsian::bit(value.as_str()) {
+                            if east_asian.0 & VariantEastAsian::group(bit) != 0 {
+                                return Err(ParseError::unexpected_token());
+                            }
+                            east_asian.0 |= bit;
+                        } else if let Some(value) = VariantPosition::parse(value.as_str()) {
+                            if seen_position {
+                                return Err(ParseError::unexpected_token());
+                            }
+                            seen_position = true;
+                            position = value;
+                        } else if value == "historical-forms" {
+                            if historical {
+                                return Err(ParseError::unexpected_token());
+                            }
+                            historical = true;
+                        } else if !ligature_keyword(value.as_str(), &mut common, &mut extra) {
+                            return Err(ParseError::unexpected_token());
+                        }
+                        if input.is_exhausted() {
+                            break;
+                        }
                     }
                     Property::VariantShorthand(
                         common.unwrap_or(true),

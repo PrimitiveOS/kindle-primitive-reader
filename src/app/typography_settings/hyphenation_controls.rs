@@ -197,6 +197,18 @@ impl Reader {
                             "Latvian pattern file invalid"
                         }
                     }
+                } else if dictionary == Some(Dictionary::French) {
+                    match &self.user_hyphenation.french {
+                        crate::user_hyphenation::OptionalPatterns::Loaded(_) => {
+                            "French override loaded"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Missing => {
+                            "French built-in · override missing"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Invalid => {
+                            "French built-in · override invalid"
+                        }
+                    }
                 } else {
                     dictionary.map_or("No dictionary for the main language", Dictionary::label)
                 };
@@ -258,6 +270,12 @@ impl Reader {
             items.push(
                 Item::new("Latvian pattern file", Action::Heading)
                     .detail("Copy hyph-lv.tex to reader/data/hyphenation, then reopen Reader"),
+            );
+        }
+        if dictionary == Some(Dictionary::French) {
+            items.push(
+                Item::new("French pattern override", Action::Heading)
+                    .detail("Copy french.pattern to reader/data/hyphenation, then reopen Reader"),
             );
         }
         let defaults = self

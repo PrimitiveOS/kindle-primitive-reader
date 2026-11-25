@@ -532,3 +532,31 @@ The [upstream Latvian source](https://github.com/hyphenation/tex-hyphen/blob/568
 identifies LGPL 2.1 or GPL 2-or-later terms. Obtaining or redistributing the
 optional file has separate licensing obligations; keeping it separate from
 Reader does not establish legal compliance. Distribution review remains open.
+
+
+### Optional French pattern override
+
+Reader includes a French fallback dictionary. If you have permission to use a
+KOReader-format French pattern file, create `reader/data/hyphenation/`, copy
+it there as `french.pattern`, and close and reopen Reader. In a French book,
+Text › Hyphenation reports whether the override is loaded, missing or invalid.
+A valid file replaces the built-in French rules; a missing or invalid file
+leaves the built-in dictionary active. Reader reads the file locally as inert
+data and does not download or execute it.
+
+The bounded parser accepts a `HyphenationDescription` XML root containing
+weighted lowercase Latin `<pattern>` elements and optional comments. Comments
+are ignored, word-edge spaces become boundary markers, and document type
+declarations are disabled. Files over 256 KiB, more than 4,096 patterns, more
+than 16,384 XML nodes, tries above 8,192 nodes, symlinks, unsupported elements
+and malformed rules are rejected. Reader applies 2 / 1 minima and emits only
+original UTF-8 grapheme boundaries. The pinned KOReader file has 1,748 active
+rules and fits these bounds; exact behavior, real-book comparisons and memory
+use remain unverified. Reopen Reader after replacing the file.
+
+The [pinned KOReader French file](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/French.pattern)
+describes adaptations from several sources without establishing a complete
+license for those adaptations. Its link records provenance, not permission to
+use or redistribute it. Obtain any optional file only with the necessary
+permission. Source-rights and distribution review remain unresolved; keeping
+a file separate from Reader does not establish legal compliance.

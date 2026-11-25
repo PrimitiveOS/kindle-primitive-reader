@@ -91,7 +91,8 @@ been verified. [Pinned KOReader definitions](https://github.com/koreader/koreade
 
 **Disable common ligatures** uses KOReader's non-important user rule, so a
 supported explicit publisher declaration can override it. The `font-variant`
-shorthand accepts single ligature keywords and `none`. The
+shorthand accepts compatible combinations of supported variant keywords, or
+`normal` or `none` alone. The
 `font-variant-ligatures` longhand and its WebKit alias also accept compatible
 combinations of common, contextual, discretionary and historical ligature
 choices and their `no-` forms; repeated or conflicting choices are rejected.
@@ -99,19 +100,19 @@ Horizontal text and ruby request corresponding OpenType features without
 disabling required ligatures. Existing Fast and Good kerning policies remain
 in force, including their disabled common and contextual features. Fonts
 without the requested optional features use their ordinary glyphs.
-Multi-keyword `font-variant` shorthand, pseudo-element-specific overrides, and
+Pseudo-element-specific overrides and
 vertical or Blitz rendering are not covered by this implementation. The
 source text and saved anchors are unchanged. This behavior has not yet been
 built or tested. [Pinned KOReader tweak](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L364-L371)
 
 Horizontal text and ruby accept CSS `font-variant-caps` and the corresponding
-single-keyword `font-variant` shorthand for small caps, all small caps, petite
+`font-variant` shorthand choices for small caps, all small caps, petite
 caps, all petite caps, unicase and titling caps. Normal inheritance, cascade
 and reset rules apply. Reader requests the matching OpenType features while
 retaining the selected kerning and common-ligature policy. A font without the
 requested feature uses its ordinary glyphs; Reader does not synthesize small
-caps. Multi-keyword shorthand combinations, pseudo-element-specific variant
-declarations, list markers, vertical text and Blitz rendering remain outside
+caps. Pseudo-element-specific variant declarations, list markers, vertical text
+and Blitz rendering remain outside
 this subset. The original text, copying, selection and saved anchors are not
 rewritten. This behavior has not yet been built or tested.
 [Pinned CRE variant parsing](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L3957-L4015)
@@ -119,34 +120,34 @@ rewritten. This behavior has not yet been built or tested.
 CSS `font-variant-numeric` can request lining or oldstyle figures,
 proportional or tabular figures, slashed zero, ordinals, and diagonal or
 stacked fractions. Compatible choices can be combined in this longhand;
-conflicting or repeated choices are rejected. The single-keyword
+conflicting or repeated choices are rejected. The
 `font-variant` shorthand also accepts these numeric choices. Horizontal text
 and ruby request the corresponding OpenType features while preserving caps,
 kerning and ligature settings. Fast and Good kerning modes continue to disable
 the `frac` feature, so diagonal fractions do not override those modes. Missing
-font features are not synthesized. Multi-keyword shorthand combinations,
-pseudo-element declarations, list markers, vertical text and Blitz remain
+font features are not synthesized. Pseudo-element declarations, list markers,
+vertical text and Blitz remain
 unsupported. Source text and saved anchors remain unchanged; this behavior
 has not yet been built or tested. [Pinned CRE numeric variants](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L4005-L4015)
 
 CSS `font-variant-east-asian` can request the JIS 1978, 1983 or 2004 glyph
 forms, simplified or traditional forms, full or proportional widths, and ruby
 glyphs. Compatible choices can be combined in this longhand; conflicting and
-repeated choices are rejected. The single-keyword `font-variant` shorthand
+repeated choices are rejected. The `font-variant` shorthand
 also accepts these choices. Horizontal text and ruby request the corresponding
 OpenType features alongside existing caps, numeric, kerning and ligature
-settings. Missing font features are not synthesized. JIS 1990, multi-keyword
-shorthand combinations, pseudo-element declarations, list markers, vertical
+settings. Missing font features are not synthesized. JIS 1990,
+pseudo-element declarations, list markers, vertical
 text and Blitz remain unsupported. Source text and saved anchors remain
 unchanged; this behavior has not yet been built or tested. [Pinned CRE East Asian variants](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L4015-L4021)
 
 CSS `font-variant-position` can request superscript or subscript glyphs, and
-`font-variant-alternates` can request historical forms. The single-keyword
+`font-variant-alternates` can request historical forms. The
 `font-variant` shorthand also accepts these choices. Horizontal text and ruby
 request the corresponding OpenType features alongside existing shaping
 settings. Fonts without these features do not receive synthesized position or
-historical glyphs. Other alternates, multi-keyword shorthand combinations,
-pseudo-element declarations, list markers, vertical text and Blitz remain
+historical glyphs. Other alternates, pseudo-element declarations, list markers,
+vertical text and Blitz remain
 unsupported. This does not rewrite source text or saved anchors; behavior has
 not yet been built or tested. [Pinned CRE variants](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L3988-L4004)
 

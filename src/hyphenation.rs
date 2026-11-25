@@ -153,7 +153,7 @@ impl Dictionary {
             ("fi", _) => Some(Self::Finnish),
             ("da", _) => Some(Self::Danish),
             ("nl", _) => Some(Self::Dutch),
-            ("fr", _) => Some(Self::French),
+            ("fr" | "fra" | "fre", _) => Some(Self::French),
             ("de", _) => Some(Self::German),
             ("gl", _) => Some(Self::Galician),
             ("ga", _) => Some(Self::Irish),
@@ -346,6 +346,16 @@ pub(crate) fn opportunities_text(
     styles: &[Style],
     settings: Settings,
 ) -> Vec<usize> {
+    opportunities_text_with_override(text, styled, styles, settings, None)
+}
+
+fn opportunities_text_with_override(
+    text: &str,
+    styled: &[StyledText],
+    styles: &[Style],
+    settings: Settings,
+    rules: Option<&crate::user_hyphenation::Rules>,
+) -> Vec<usize> {
     let mut breaks = Vec::new();
     let algorithmic = settings.algorithmic_hyphenation;
     if !settings.automatic_hyphenation
@@ -391,7 +401,14 @@ pub(crate) fn opportunities_text(
             let limits = settings
                 .hyphenation_limits
                 .unwrap_or_else(|| locale.limits());
-            word_breaks_with_limits(locale, word, limits, emit);
+            if locale == Dictionary::French
+                && let Some(crate::user_hyphenation::OptionalPatterns::Loaded(patterns)) =
+                    rules.map(|rules| &rules.french)
+            {
+                optional_pattern_word(patterns.view(), word, limits, emit);
+            } else {
+                word_breaks_with_limits(locale, word, limits, emit);
+            }
         }
         if breaks.len() == MAX_BREAKS {
             break;
@@ -593,6 +610,16 @@ pub(crate) fn suggestion(
             false,
             |at| breaks.push(at),
         );
+    } else if dictionary(&Style::default(), crate::TypographyLocale::parse(language))
+        == Some(Dictionary::French)
+        && let crate::user_hyphenation::OptionalPatterns::Loaded(patterns) = &rules.french
+    {
+        optional_pattern_word(
+            patterns.view(),
+            word,
+            HyphenationLimits { left: 2, right: 1 },
+            |at| breaks.push(at),
+        );
     } else if let Some(locale) =
         dictionary(&Style::default(), crate::TypographyLocale::parse(language))
     {
@@ -690,7 +717,7 @@ pub(crate) fn with_user_rules_text(
     settings: Settings,
     rules: &crate::user_hyphenation::Rules,
 ) -> crate::user_hyphenation::Opportunities {
-    let breaks = opportunities_text(text, styled, styles, settings);
+    let breaks = opportunities_text_with_override(text, styled, styles, settings, Some(rules));
     let mut result = crate::user_hyphenation::Opportunities {
         breaks,
         custom_words: Vec::new(),
@@ -958,6 +985,25 @@ fn word_breaks_with_limits(
                 |at| emit(offset + at),
             );
         }
+        offset += part.len();
+    }
+}
+
+fn optional_pattern_word(
+    patterns: PatternView<'_>,
+    word: &str,
+    limits: HyphenationLimits,
+    mut emit: impl FnMut(usize),
+) {
+    if !limits.valid() || word.len() > MAX_WORD * 5 {
+        return;
+    }
+    let mut offset = 0;
+    for part in word.split_inclusive(['\'', '\u{2019}']) {
+        let text = part.trim_end_matches(['\'', '\u{2019}']);
+        pattern_breaks(patterns, None, text, limits, false, false, |at| {
+            emit(offset + at)
+        });
         offset += part.len();
     }
 }

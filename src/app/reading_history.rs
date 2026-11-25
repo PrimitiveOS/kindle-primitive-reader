@@ -407,20 +407,31 @@ impl Reader {
         let mut rows = Vec::new();
         match page {
             Page::Summary => {
+                let language = self.controls.interface_language;
                 let summary = history.summary(book, None);
                 rows.push(
                     Item::new(
-                        book.map_or_else(|| "All books".into(), |id| self.history_title(id)),
+                        book.map_or_else(
+                            || language.history_summary_text("All books").into(),
+                            |id| self.history_title(id),
+                        ),
                         Action::ReadingHistory(Command::Show(Page::Books)),
                     )
-                    .detail("Choose books"),
+                    .detail(language.history_summary_text("Choose books")),
                 );
                 rows.push(
-                    Item::new("Recorded reading time", Action::Heading)
-                        .detail(short_time(summary.seconds)),
+                    Item::new(
+                        language.history_summary_text("Recorded reading time"),
+                        Action::Heading,
+                    )
+                    .detail(short_time(summary.seconds)),
                 );
                 rows.push(
-                    Item::new("Distinct reading screens", Action::Heading).detail(format!(
+                    Item::new(
+                        language.history_summary_text("Distinct reading screens"),
+                        Action::Heading,
+                    )
+                    .detail(format!(
                         "{} · {} {}",
                         summary.screens,
                         summary.books,
@@ -428,8 +439,11 @@ impl Reader {
                     )),
                 );
                 rows.push(
-                    Item::new("Page time, capped per screen", Action::Heading)
-                        .detail(short_time(summary.capped_seconds)),
+                    Item::new(
+                        language.history_summary_text("Page time, capped per screen"),
+                        Action::Heading,
+                    )
+                    .detail(short_time(summary.capped_seconds)),
                 );
                 let undated = history
                     .visits()
@@ -438,26 +452,41 @@ impl Reader {
                     .map(|v| u64::from(v.seconds))
                     .sum();
                 rows.push(
-                    Item::new("Earlier screen time · undated", Action::Heading)
-                        .detail(short_time(history.prior(book))),
+                    Item::new(
+                        language.history_summary_text("Earlier screen time · undated"),
+                        Action::Heading,
+                    )
+                    .detail(short_time(history.prior(book))),
                 );
                 if undated > 0 {
                     rows.push(
-                        Item::new("Uncertain clock · undated", Action::Heading)
-                            .detail(short_time(undated)),
+                        Item::new(
+                            language.history_summary_text("Uncertain clock · undated"),
+                            Action::Heading,
+                        )
+                        .detail(short_time(undated)),
                     );
                 }
                 rows.extend([
-                    show("Daily history", Page::Daily),
-                    show("Time range", Page::TimeRange),
-                    show("Reading progress", Page::Progress),
-                    show("Calendar", Page::Calendar),
-                    Item::new("Today's timeline", Action::ReadingHistory(Command::Today)),
-                    show("Statistics settings", Page::Options),
+                    show(language.history_summary_text("Daily history"), Page::Daily),
+                    show(language.history_summary_text("Time range"), Page::TimeRange),
+                    show(
+                        language.history_summary_text("Reading progress"),
+                        Page::Progress,
+                    ),
+                    show(language.history_summary_text("Calendar"), Page::Calendar),
+                    Item::new(
+                        language.history_summary_text("Today's timeline"),
+                        Action::ReadingHistory(Command::Today),
+                    ),
+                    show(
+                        language.history_summary_text("Statistics settings"),
+                        Page::Options,
+                    ),
                 ]);
                 if self.koreader_statistics_book().is_some() {
                     rows.push(Item::new(
-                        "Import KOReader statistics",
+                        language.history_summary_text("Import KOReader statistics"),
                         Action::ReadingHistory(Command::BeginKoReaderImport),
                     ));
                 }
@@ -491,7 +520,9 @@ impl Reader {
             }
             Page::Books => {
                 rows.push(Item::new(
-                    "All books",
+                    self.controls
+                        .interface_language
+                        .history_summary_text("All books"),
                     Action::ReadingHistory(Command::Filter(None)),
                 ));
                 let mut books: Vec<_> = history
@@ -521,8 +552,17 @@ impl Reader {
                 }));
                 if self.library.state(id).is_some() {
                     rows.push(
-                        Item::new("Continue reading", Action::OpenTracked(id))
-                            .detail("Resume this book's saved position"),
+                        Item::new(
+                            self.controls
+                                .interface_language
+                                .history_summary_text("Continue reading"),
+                            Action::OpenTracked(id),
+                        )
+                        .detail(
+                            self.controls
+                                .interface_language
+                                .history_summary_text("Resume this book's saved position"),
+                        ),
                     );
                 }
             }

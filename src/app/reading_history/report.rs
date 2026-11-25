@@ -67,6 +67,7 @@ impl Reader {
         first: usize,
         limit: usize,
     ) -> Option<(usize, Vec<Item>)> {
+        let language = self.controls.interface_language;
         let show = |title, page| Item::new(title, Action::ReadingHistory(Command::Show(page)));
         let view = &self.history_view.report;
         let items = match page {
@@ -75,21 +76,28 @@ impl Reader {
                 let mut items = Vec::new();
                 if let Some(book) = self.history_view.book {
                     items.push(
-                        Item::new(self.history_title(book), Action::Heading).detail("Book filter"),
+                        Item::new(self.history_title(book), Action::Heading)
+                            .detail(language.history_report_text("Book filter")),
                     );
                 }
                 items.extend([
                     show(
-                        "All books".into(),
+                        language.history_report_text("All books").into(),
                         Page::Range(ranges::Page::Books(ranges::BookGroup::All)),
                     ),
-                    show("Books by week".into(), Page::Periods(Period::Week)),
-                    show("Books by month".into(), Page::Periods(Period::Month)),
+                    show(
+                        language.history_report_text("Books by week").into(),
+                        Page::Periods(Period::Week),
+                    ),
+                    show(
+                        language.history_report_text("Books by month").into(),
+                        Page::Periods(Period::Month),
+                    ),
                 ]);
                 items.extend(
                     crate::reading_stats::history::report::Range::ALL.map(|range| {
                         show(
-                            range.title().into(),
+                            language.history_report_text(range.title()).into(),
                             Page::Range(ranges::Page::Periods(range)),
                         )
                     }),
@@ -97,7 +105,10 @@ impl Reader {
                 items
             }
             Page::Periods(_) if view.periods.is_empty() => {
-                vec![Item::new("No dated reading sessions yet", Action::Heading)]
+                vec![Item::new(
+                    language.history_report_text("No dated reading sessions yet"),
+                    Action::Heading,
+                )]
             }
             Page::Periods(period) => {
                 let rows =
@@ -113,8 +124,9 @@ impl Reader {
                 return Some((view.periods.len(), rows.collect()));
             }
             Page::PeriodBooks(period, start) => {
-                let heading = Item::new(period.label(start), Action::Heading)
-                    .detail("Hold a book to reset its time in this period");
+                let heading = Item::new(period.label(start), Action::Heading).detail(
+                    language.history_report_text("Hold a book to reset its time in this period"),
+                );
                 let books = view.books.iter().map(|&(id, totals)| {
                     show(self.history_title(id), Page::PeriodBook(period, start, id))
                         .detail(counts(totals))
@@ -133,13 +145,22 @@ impl Reader {
                     .unwrap_or_default();
                 let mut items = vec![
                     Item::new(self.history_title(id), Action::Heading).detail(period.label(start)),
-                    Item::new("Recorded reading time", Action::Heading)
-                        .detail(short_time(totals.seconds)),
-                    Item::new("Distinct reading screens", Action::Heading)
-                        .detail(totals.screens.to_string()),
+                    Item::new(
+                        language.history_report_text("Recorded reading time"),
+                        Action::Heading,
+                    )
+                    .detail(short_time(totals.seconds)),
+                    Item::new(
+                        language.history_report_text("Distinct reading screens"),
+                        Action::Heading,
+                    )
+                    .detail(totals.screens.to_string()),
                 ];
                 if self.library.state(id).is_some() {
-                    items.push(Item::new("Continue reading", Action::OpenTracked(id)));
+                    items.push(Item::new(
+                        language.history_report_text("Continue reading"),
+                        Action::OpenTracked(id),
+                    ));
                 }
                 items
             }
