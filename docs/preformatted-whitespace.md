@@ -81,9 +81,10 @@ source and staged archive copy; cleanup is deferred until recovery determines
 which path the state references. This failure path has not been tested yet.
 The decoder also validates book identities, retained collection
 membership, position lists and mark limits without invoking v1 sanitization or
-checking whether each book file is present. Raw-bearing books are explicitly
-excluded from legacy metadata sidecar checkpoints, which cannot represent them;
-the user receives a warning instead of a silently incomplete sidecar.
+checking whether each book file is present. Raw-bearing books use a strict single-book v2 metadata sidecar, while books
+without raw positions retain the existing v1 sidecar format. V2 sidecar recovery
+checks the edition identity, size and path and rejects unrelated library data;
+older versions cannot read that sidecar. The new path remains untested.
 App-level resume, saved-mark validation and old ODT anchor migration reject raw
 carets instead of silently using their collapsed canonical positions. Session
 restoration can resolve one only when the newly shaped source and raw page
@@ -164,3 +165,8 @@ have not supplied a verified stamp also fail closed. These stamps follow the
 existing single-writer/storage-lease model and are not cryptographic protection
 against arbitrary external file replacement. This path remains untested and the
 raw layout gate remains disabled.
+
+For raw saved marks, direct note editing and reviewed bulk note/mark removal
+verify the source location or complete saved quotation both at review and again
+before changing state. Stale or unresolvable locations are rejected. This path
+is staged and has not been behaviorally tested.

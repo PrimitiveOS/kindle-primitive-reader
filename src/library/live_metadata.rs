@@ -112,13 +112,6 @@ impl Store {
         let mut warning = self.warning.borrow_mut();
         *warning = None;
         for book in &library.recent {
-            if super::raw_v2::book_has_raw(book) {
-                requested.insert(book.id);
-                *warning = Some(
-                    "Raw whitespace positions cannot yet be saved to a metadata sidecar.".into(),
-                );
-                continue;
-            }
             if book.file_deleted {
                 requested.remove(&book.id);
                 continue;
@@ -355,8 +348,36 @@ fn hex(value: &str, length: usize) -> bool {
 fn read_snapshot(root: &File, path: &Path, id: u64) -> io::Result<Option<(SystemTime, BookState)>> {
     read_stable(root, path, MAX_BYTES, |file, len| {
         let modified = file.metadata()?.modified()?;
-        let mut snapshot: Snapshot =
-            serde_json::from_reader(file.take(len + 1)).map_err(io::Error::other)?;
+        let mut bytes = Vec::new();
+        file.take(len + 1).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > MAX_BYTES {
+            return Err(invalid_state("Reader book sidecar exceeds its size limit"));
+        }
+        let header: serde_json::Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        if header.get("version").and_then(serde_json::Value::as_u64) == Some(2) {
+            let mut library = super::raw_v2::decode(&bytes)?;
+            if library.books.len() != 1
+                || !library.collections.is_empty()
+                || library.page_browser_grid.is_some()
+            {
+                return Err(invalid_state(
+                    "Reader book sidecar contains unrelated library data",
+                ));
+            }
+            let book = library.books.pop().expect("one validated book");
+            if book.id != id
+                || book.file_deleted
+                || !safe_path(&book.path)
+                || DocumentFormat::for_path(&book.path)
+                    .is_none_or(|format| book.size > format.max_bytes())
+            {
+                return Err(invalid_state(
+                    "Reader book sidecar does not match a supported edition",
+                ));
+            }
+            return Ok((modified, book));
+        }
+        let mut snapshot: Snapshot = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
         let book = &mut snapshot.book;
         if snapshot.version != VERSION
             || book.id != id
@@ -388,6 +409,14 @@ fn read_snapshot(root: &File, path: &Path, id: u64) -> io::Result<Option<(System
 }
 
 fn encode(book: &BookState) -> io::Result<Vec<u8>> {
+    if super::raw_v2::book_has_raw(book) {
+        return super::raw_v2::encode(&SavedLibrary {
+            version: 2,
+            books: vec![book.clone()],
+            collections: Vec::new(),
+            page_browser_grid: None,
+        });
+    }
     state_json(
         &SnapshotRef {
             version: VERSION,

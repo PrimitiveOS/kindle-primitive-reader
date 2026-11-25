@@ -119,7 +119,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         || !matches!(compression, 1 | 5 | 8 | 32946 | 32773)
         || !matches!(orientation, 1..=8)
         || image.scalar(284, SHORT_ONLY, 1)? != 1 // PlanarConfiguration
-        || !(predictor == 1 || (predictor == 2 && matches!(bits, 8 | 16) && matches!(compression, 5 | 8 | 32946)))
+        || !(predictor == 1 || (predictor == 2 && (matches!(bits, 8 | 16) || (samples == 1 && matches!(bits, 1 | 2 | 4))) && matches!(compression, 5 | 8 | 32946)))
         || image.scalar(254, LONG_ONLY, 0)? != 0 // NewSubfileType
         || image.scalar(255, SHORT_ONLY, 1)? != 1
     // SubfileType
@@ -267,11 +267,27 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
                         previous[channel] = value;
                     }
                 }
-            } else {
+            } else if bits == 8 {
                 let channels = samples as usize;
                 for row in decoded.chunks_exact_mut(row_bytes) {
                     for index in channels..row.len() {
                         row[index] = row[index].wrapping_add(row[index - channels]);
+                    }
+                }
+            } else {
+                // Compressed reverse-fill streams were normalized before
+                // decompression, so packed predictor samples are MSB-first.
+                let mask = ((1u16 << bits) - 1) as u8;
+                for row in decoded.chunks_exact_mut(row_bytes) {
+                    let mut previous = 0u8;
+                    for x in 0..width as usize {
+                        let offset = x * bits as usize;
+                        let shift = 8 - bits as usize - offset % 8;
+                        let byte = &mut row[offset / 8];
+                        let difference = (*byte >> shift) & mask;
+                        let value = difference.wrapping_add(previous) & mask;
+                        *byte = (*byte & !(mask << shift)) | (value << shift);
+                        previous = value;
                     }
                 }
             }

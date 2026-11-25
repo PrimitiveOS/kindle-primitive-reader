@@ -296,13 +296,6 @@ impl NoteTarget {
                     .ok_or("A matching mark is unavailable")?;
                 if mark.note.as_ref().is_none_or(|note| note.trim().is_empty()) {
                     None
-                } else if mark
-                    .position
-                    .anchor
-                    .as_ref()
-                    .is_some_and(|anchor| anchor.raw_caret.is_some())
-                {
-                    return Err("A matching note uses an unsupported raw location".into());
                 } else {
                     Some(Self::Bookmark(index, mark.clone()))
                 }
@@ -314,10 +307,6 @@ impl NoteTarget {
                     .ok_or("A matching mark is unavailable")?;
                 if mark.note.as_ref().is_none_or(|note| note.trim().is_empty()) {
                     None
-                } else if mark.selection.start.raw_caret.is_some()
-                    || mark.selection.end.raw_caret.is_some()
-                {
-                    return Err("A matching note uses an unsupported raw location".into());
                 } else {
                     Some(Self::Reflow(index, mark.clone()))
                 }
@@ -333,6 +322,31 @@ impl NoteTarget {
                     .map(|_| Self::Fixed(index, mark.clone()))
             }
         })
+    }
+
+    fn verify_raw(&self, reader: &Reader) -> Result<()> {
+        let snapshot = match self {
+            Self::Bookmark(index, mark)
+                if mark
+                    .position
+                    .anchor
+                    .as_ref()
+                    .is_some_and(|a| a.raw_caret.is_some()) =>
+            {
+                Some(bulk_marks::Snapshot::Bookmark(*index, mark.clone()))
+            }
+            Self::Reflow(index, mark)
+                if mark.selection.start.raw_caret.is_some()
+                    || mark.selection.end.raw_caret.is_some() =>
+            {
+                Some(bulk_marks::Snapshot::Reflow(*index, mark.clone()))
+            }
+            _ => None,
+        };
+        if let Some(snapshot) = snapshot {
+            snapshot.verify_source(reader)?;
+        }
+        Ok(())
     }
 
     fn matches(&self, book: &BookState) -> bool {
@@ -965,6 +979,7 @@ impl Reader {
                         continue;
                     }
                     if let Some(target) = NoteTarget::capture(book, key.locator)? {
+                        target.verify_raw(self)?;
                         if targets.len() == 512 {
                             return Err("Too many matching notes; narrow the filters first".into());
                         }
@@ -1010,6 +1025,9 @@ impl Reader {
                         .all(|item| item.target.matches(state))
                 {
                     return Err("A matching mark changed; review the notes again".into());
+                }
+                for item in pending.targets.iter().filter(|item| item.selected) {
+                    item.target.verify_raw(self)?;
                 }
                 // Roll back all in-memory changes if the existing atomic library
                 // persistence fails; only the reviewed book is ever modified.

@@ -270,6 +270,12 @@ impl History {
     pub(crate) fn options(&self) -> Options {
         self.data.options
     }
+    /// Use the same dated-visit rule as the current-session statistics report.
+    pub(crate) fn visit_in_current_session(&self, visit: &Visit, now: i64) -> bool {
+        visit.start.is_some_and(|start| {
+            start <= now && self.session_since.is_some_and(|since| start >= since)
+        })
+    }
     pub(crate) fn begin_session(&mut self, wall: Option<i64>) {
         self.session_since = wall.filter(|&time| valid_wall(time));
     }

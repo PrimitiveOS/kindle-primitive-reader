@@ -140,6 +140,8 @@ impl Reader {
         // Fixed-document visit keys are zero-based physical pages. Aggregate
         // only the visible bounded slots, not unrelated or undated totals.
         let mut slot_seconds = [0u64; CAPACITY];
+        let mut slot_current_session = [false; CAPACITY];
+        let now = crate::mark_time::now();
         if self.reading_history.options().enabled {
             let span = window.slot_span(count);
             for visit in self
@@ -157,6 +159,9 @@ impl Reader {
                 let slot = (page - pages.start) / span;
                 if let Some(seconds) = slot_seconds.get_mut(slot) {
                     *seconds = seconds.saturating_add(u64::from(visit.seconds));
+                    slot_current_session[slot] |= now.is_some_and(|now| {
+                        self.reading_history.visit_in_current_session(visit, now)
+                    });
                 }
             }
         }
@@ -178,8 +183,12 @@ impl Reader {
         if max_seconds > 0 {
             summary.push_str("   ·   ");
             summary.push_str(language.book_map_text("Reading time"));
+            if slot_current_session.iter().any(|&current| current) {
+                summary.push_str("   ·   ");
+                summary.push_str(language.book_map_text("Gray: this session"));
+            }
         }
-        canvas.text(layout.body(137, 65), &summary, CAPTION);
+        canvas.text(layout.body(137, 65), &summary, CAPTION.lines(2));
         for (index, slot) in window.slots(count).enumerate() {
             let rect = projected_cell(layout, index);
             let selected = slot.contains(&focus);
@@ -300,9 +309,16 @@ impl Reader {
                 let height =
                     ((u128::from(seconds) * max_height as u128) / u128::from(max_seconds)) as i32;
                 let height = height.clamp(6.min(max_height), max_height);
+                let current = slot_current_session.get(index).copied().unwrap_or(false);
+                let bar_ink = match (pressed, current) {
+                    (true, true) => 170,
+                    (true, false) => 255,
+                    (false, true) => 140,
+                    (false, false) => 0,
+                };
                 canvas.fill(
                     Rect::new(rect.right() - 12, rect.bottom() - 10 - height, 4, height),
-                    ink,
+                    bar_ink,
                 );
             }
         }

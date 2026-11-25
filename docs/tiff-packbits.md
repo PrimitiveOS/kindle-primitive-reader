@@ -30,8 +30,8 @@ and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.p
 Single-sample 2-bit and 4-bit unsigned grayscale strips can also be read.
 Samples are unpacked independently for each byte-aligned row, scaled to the
 full grayscale range and inverted for WhiteIsZero. Existing stored, PackBits,
-LZW and Deflate strip decoders and resource bounds apply. Packed predictors and
-alpha are not supported. This candidate has not been compared with KOReader or behaviorally
+LZW and Deflate strip decoders and resource bounds apply. Packed alpha is not
+supported. This candidate has not been compared with KOReader or behaviorally
 checked on the simulator or Kindle. [Pinned MuPDF grayscale handling](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L1370-L1381)
 
 ## 16-bit grayscale strips
@@ -133,6 +133,13 @@ variants use the existing strip decoders. Eight-bit compressed indices support
 horizontal prediction; packed indices support either fill order.
 Orientation and existing image limits apply. At most 256 grayscale palette
 entries are allocated in addition to the existing bounded strip buffers.
+
+For single-sample 1-, 2- and 4-bit grayscale or palette images, compressed
+LZW/Deflate strips can also use horizontal predictor 2. Reader restores packed
+samples modulo their bit depth within each row after decompression; this uses
+the existing strip allocation and reverse-fill normalization. Packed alpha and
+other predictor modes remain unsupported. KOReader output comparison and
+behavioral, simulator and Kindle checks remain open. [Pinned MuPDF predictor](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L185-L242)
 
 For previously unsupported 1-, 2- and 4-bit LZW/Deflate strips with reverse
 fill order, Reader reverses each compressed input byte before decompression and
