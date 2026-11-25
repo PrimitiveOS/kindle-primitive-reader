@@ -215,6 +215,16 @@ alignment setting can still override publisher-style alignment. The original
 document and saved anchors do not change. These additions have not yet been
 built or behaviorally tested. [Pinned alignment choices](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L263-L295) · [Pinned hyphenation choice](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L347-L353)
 
+Legacy EPUB CSS aliases `hyphenate`, `-epub-hyphens`, `-webkit-hyphens`,
+`adobe-hyphenate` and `adobe-text-layout` share the inherited hyphenation
+setting and its cascade and reset behavior. For Adobe layout values,
+`optimizeSpeed` means none and `optimizeQuality` means automatic. In line with
+the pinned CRE parser, `adobe-hyphenate: explicit` maps to automatic, although
+CRE's source notes that manual hyphenation may be closer to Adobe's intended
+meaning. The `-epub-text-decoration` alias uses the existing decoration
+implementation. These aliases do not alter source text or saved anchors and
+have not yet been built or tested. [Pinned CRE aliases](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L2855-L2887)
+
 ## Heading page breaks
 
 Six independent **New page on H1** through **New page on H6** choices use

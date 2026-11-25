@@ -81,13 +81,16 @@ impl Reader {
         let latvian = self.active.as_ref().is_some_and(|book| {
             crate::hyphenation::is_latvian_language(book.reading.probe.main_language)
         });
+        let macedonian = self.active.as_ref().is_some_and(|book| {
+            crate::hyphenation::is_macedonian_language(book.reading.probe.main_language)
+        });
         let defaults = if settings.algorithmic_hyphenation {
             ALGORITHMIC_LIMITS
         } else if armenian {
             crate::HyphenationLimits { left: 1, right: 2 }
         } else if zulu {
             crate::HyphenationLimits { left: 2, right: 1 }
-        } else if serbian || romanian || latvian {
+        } else if serbian || romanian || latvian || macedonian {
             crate::HyphenationLimits { left: 2, right: 2 }
         } else {
             dictionary.map_or(ENGLISH_LIMITS, Dictionary::limits)
@@ -221,6 +224,18 @@ impl Reader {
                             "Polish built-in · override invalid"
                         }
                     }
+                } else if macedonian {
+                    match &self.user_hyphenation.macedonian {
+                        crate::user_hyphenation::OptionalPatterns::Loaded(_) => {
+                            "Macedonian patterns loaded"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Missing => {
+                            "Macedonian pattern file missing"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Invalid => {
+                            "Macedonian pattern file invalid"
+                        }
+                    }
                 } else {
                     dictionary.map_or("No dictionary for the main language", Dictionary::label)
                 };
@@ -294,6 +309,12 @@ impl Reader {
             items.push(
                 Item::new("Polish pattern override", Action::Heading)
                     .detail("Copy polish.pattern to reader/data/hyphenation, then reopen Reader"),
+            );
+        }
+        if macedonian {
+            items.push(
+                Item::new("Macedonian pattern file", Action::Heading)
+                    .detail("Copy hyph-mk.tex to reader/data/hyphenation, then reopen Reader"),
             );
         }
         let defaults = self

@@ -551,6 +551,107 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed backup-preview controls; component identities, counts and user data stay untouched.
+const READING_BACKUP_LABELS: &[(&str, &str)] = &[
+    ("Apply backup", "Áp dụng bản sao lưu"),
+    (
+        "Books and collections · merge",
+        "Sách và bộ sưu tập · hợp nhất",
+    ),
+    ("Saved components", "Các thành phần đã lưu"),
+    (
+        "New files are selected. Tap an existing component to replace it.",
+        "Các tệp mới đã được chọn. Chạm vào thành phần hiện có để thay thế thành phần đó.",
+    ),
+    (
+        "Collections and custom navigation",
+        "Bộ sưu tập và điều hướng tùy chỉnh",
+    ),
+    (
+        "Selected · replace existing local data",
+        "Đã chọn · thay thế dữ liệu hiện có trên máy",
+    ),
+    (
+        "Skipped · keep existing local data",
+        "Bỏ qua · giữ dữ liệu hiện có trên máy",
+    ),
+    (
+        "Selected · add missing local data",
+        "Đã chọn · thêm dữ liệu còn thiếu trên máy",
+    ),
+    (
+        "Skipped · leave missing",
+        "Bỏ qua · giữ nguyên trạng thái còn thiếu",
+    ),
+    (
+        "Legacy library-only backup",
+        "Bản sao lưu cũ chỉ có thư viện",
+    ),
+    (
+        "This file contains no global controls, vocabulary or dated history.",
+        "Tệp này không có cài đặt chung, từ vựng hoặc lịch sử có ngày.",
+    ),
+    (
+        "Restore returns to the library tools",
+        "Khôi phục đưa bạn về công cụ thư viện",
+    ),
+    (
+        "Your documents and current network accounts are kept.",
+        "Tài liệu và tài khoản mạng hiện tại của bạn được giữ lại.",
+    ),
+    ("Books to merge", "Sách cần hợp nhất"),
+    ("saved components to apply", "thành phần đã lưu cần áp dụng"),
+    ("New", "Mới"),
+    ("already known", "đã biết"),
+    (
+        "existing positions and settings kept",
+        "giữ vị trí và cài đặt hiện có",
+    ),
+    ("Bookmarks", "Dấu trang"),
+    ("highlights", "phần tô sáng"),
+    ("Notes", "Ghi chú"),
+    ("duplicates", "bản trùng"),
+    ("skipped", "đã bỏ qua"),
+    ("note conflicts", "xung đột ghi chú"),
+    ("Collections", "Bộ sưu tập"),
+    ("memberships", "lượt thuộc bộ sưu tập"),
+    ("custom chapters", "chương tùy chỉnh"),
+    ("flow boundaries", "ranh giới luồng"),
+    (
+        "Book progress, marks and collections",
+        "Tiến độ sách, đánh dấu và bộ sưu tập",
+    ),
+    ("Reading controls", "Điều khiển đọc"),
+    (
+        "Custom status bar text",
+        "Văn bản thanh trạng thái tùy chỉnh",
+    ),
+    ("Reading profiles", "Hồ sơ đọc"),
+    ("Reading gestures", "Cử chỉ đọc"),
+    ("Dictionary preferences", "Tùy chọn từ điển"),
+    (
+        "Vocabulary and local lookup history",
+        "Từ vựng và lịch sử tra cứu trên máy",
+    ),
+    ("Undated reading totals", "Các tổng số đọc không có ngày"),
+    (
+        "Daily reading history and calendar",
+        "Lịch sử đọc theo ngày và lịch",
+    ),
+    ("Personal hyphenation rules", "Quy tắc ngắt từ cá nhân"),
+    ("Bookmark browser preferences", "Tùy chọn duyệt dấu trang"),
+    ("Retained book metadata", "Siêu dữ liệu sách được lưu"),
+    ("Read timer preferences", "Tùy chọn hẹn giờ đọc"),
+    ("New book defaults", "Mặc định cho sách mới"),
+    (
+        "User style tweaks and book CSS",
+        "Điều chỉnh kiểu người dùng và CSS sách",
+    ),
+    ("Reading time estimates", "Ước tính thời gian đọc"),
+    ("Reading-time estimates", "Ước tính thời gian đọc"),
+    ("Reading pace", "Tốc độ đọc"),
+];
+
 // Fixed export settings controls; user paths and filename templates stay untouched.
 const EXPORT_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Choose export folder", "Chọn thư mục xuất"),
@@ -2524,6 +2625,18 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn reading_backup_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = READING_BACKUP_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn export_settings_text<'a>(self, english: &'a str) -> &'a str {

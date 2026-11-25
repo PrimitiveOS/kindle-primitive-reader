@@ -81,6 +81,10 @@ pub(super) fn load_polish(data: &Path) -> crate::user_hyphenation::OptionalPatte
     load_optional(data, PatternKind::Polish)
 }
 
+pub(super) fn load_macedonian(data: &Path) -> crate::user_hyphenation::OptionalPatterns {
+    load_optional(data, PatternKind::Macedonian)
+}
+
 #[derive(Clone, Copy)]
 enum PatternKind {
     Armenian,
@@ -92,6 +96,7 @@ enum PatternKind {
     Latvian,
     French,
     Polish,
+    Macedonian,
 }
 
 fn load_optional(data: &Path, kind: PatternKind) -> crate::user_hyphenation::OptionalPatterns {
@@ -109,6 +114,7 @@ fn load_optional(data: &Path, kind: PatternKind) -> crate::user_hyphenation::Opt
         PatternKind::Latvian => b"hyph-lv.tex\0",
         PatternKind::French => b"french.pattern\0",
         PatternKind::Polish => b"polish.pattern\0",
+        PatternKind::Macedonian => b"hyph-mk.tex\0",
     };
     let bytes = with_storage(|| {
         // Anchor both lookups in opened descriptors: replacing the directory
@@ -187,6 +193,9 @@ fn load_optional(data: &Path, kind: PatternKind) -> crate::user_hyphenation::Opt
                 }
                 PatternKind::Polish => {
                     crate::hyphenation::user_patterns::OwnedPatterns::parse_polish(&bytes)
+                }
+                PatternKind::Macedonian => {
+                    crate::hyphenation::user_patterns::OwnedPatterns::parse_macedonian(&bytes)
                 }
             };
             patterns
@@ -281,6 +290,7 @@ impl Reader {
         rules.latvian = self.user_hyphenation.latvian.clone();
         rules.french = self.user_hyphenation.french.clone();
         rules.polish = self.user_hyphenation.polish.clone();
+        rules.macedonian = self.user_hyphenation.macedonian.clone();
         let encoded = serde_json::to_vec(&rules)?;
         if encoded.len() as u64 > MAX_FILE_BYTES {
             return Err("Custom hyphenation rules are full".into());
@@ -321,6 +331,7 @@ impl Reader {
         rules.latvian = self.user_hyphenation.latvian.clone();
         rules.french = self.user_hyphenation.french.clone();
         rules.polish = self.user_hyphenation.polish.clone();
+        rules.macedonian = self.user_hyphenation.macedonian.clone();
         if rules.enabled == enabled && rules == *self.user_hyphenation {
             return Ok(());
         }
@@ -343,6 +354,7 @@ impl Reader {
         rules.latvian = self.user_hyphenation.latvian.clone();
         rules.french = self.user_hyphenation.french.clone();
         rules.polish = self.user_hyphenation.polish.clone();
+        rules.macedonian = self.user_hyphenation.macedonian.clone();
         if remove {
             rules.remove(&draft.language, &draft.word);
         } else {

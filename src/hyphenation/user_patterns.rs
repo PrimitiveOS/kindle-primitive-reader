@@ -27,6 +27,7 @@ enum Alphabet {
     Latvian,
     French,
     Polish,
+    Macedonian,
 }
 
 #[derive(Default)]
@@ -54,6 +55,10 @@ impl OwnedPatterns {
 
     pub(crate) fn parse_latvian(bytes: &[u8]) -> Option<Self> {
         Self::parse_tex(bytes, Alphabet::Latvian)
+    }
+
+    pub(crate) fn parse_macedonian(bytes: &[u8]) -> Option<Self> {
+        Self::parse_tex(bytes, Alphabet::Macedonian)
     }
 
     fn parse_tex(bytes: &[u8], alphabet: Alphabet) -> Option<Self> {
@@ -304,7 +309,7 @@ impl OwnedPatterns {
                     | Alphabet::Latvian
                     | Alphabet::French
                     | Alphabet::Polish => ch.is_lowercase() && scripts.get(ch) == Script::Latin,
-                    Alphabet::SerbianCyrillic => {
+                    Alphabet::SerbianCyrillic | Alphabet::Macedonian => {
                         ch.is_lowercase() && scripts.get(ch) == Script::Cyrillic
                     }
                 };

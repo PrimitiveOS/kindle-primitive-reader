@@ -634,6 +634,20 @@ pub(crate) fn suggestion(
             HyphenationLimits { left: 2, right: 2 },
             |at| breaks.push(at),
         );
+    } else if word.len() <= MAX_WORD * 5
+        && is_macedonian_language(crate::TypographyLocale::parse(language))
+        && word_has_script(word, Script::Cyrillic)
+        && let crate::user_hyphenation::OptionalPatterns::Loaded(patterns) = &rules.macedonian
+    {
+        pattern_breaks(
+            patterns.view(),
+            None,
+            word,
+            HyphenationLimits { left: 2, right: 2 },
+            false,
+            false,
+            |at| breaks.push(at),
+        );
     } else if let Some(locale) =
         dictionary(&Style::default(), crate::TypographyLocale::parse(language))
     {
@@ -655,6 +669,13 @@ pub(crate) fn is_zulu_language(locale: Option<crate::TypographyLocale>) -> bool 
         return false;
     };
     matches!(language.language(), "zu" | "zul") && matches!(language.script(), None | Some("Latn"))
+}
+
+pub(crate) fn is_macedonian_language(locale: Option<crate::TypographyLocale>) -> bool {
+    let Some(crate::TypographyLocale::Language(language)) = locale else {
+        return false;
+    };
+    language.language() == "mk" && matches!(language.script(), None | Some("Cyrl"))
 }
 
 pub(crate) fn is_latvian_language(locale: Option<crate::TypographyLocale>) -> bool {
@@ -747,7 +768,7 @@ pub(crate) fn with_user_rules_text(
             LocaleCheck,
             Option<Script>,
             HyphenationLimits,
-        ); 7] = [
+        ); 8] = [
             (
                 &rules.armenian,
                 is_armenian_language,
@@ -788,6 +809,12 @@ pub(crate) fn with_user_rules_text(
                 &rules.latvian,
                 is_latvian_language,
                 Some(Script::Latin),
+                HyphenationLimits { left: 2, right: 2 },
+            ),
+            (
+                &rules.macedonian,
+                is_macedonian_language,
+                Some(Script::Cyrillic),
                 HyphenationLimits { left: 2, right: 2 },
             ),
         ];

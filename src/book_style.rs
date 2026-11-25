@@ -2576,7 +2576,7 @@ impl<'i> DeclarationParser<'i> for Properties {
                     })
                 }
                 "text-indent" => Property::Indent(parse_indent(input)?),
-                "text-decoration" | "text-decoration-line" => {
+                "text-decoration" | "-epub-text-decoration" | "text-decoration-line" => {
                     let mut lines = TextDecoration::default();
                     let mut inherit = false;
                     let mut exclusive = false;
@@ -2590,7 +2590,9 @@ impl<'i> DeclarationParser<'i> for Properties {
                             "underline" => lines.underline = true,
                             "overline" => lines.overline = true,
                             "line-through" => lines.strike = true,
-                            "solid" if name.eq_ignore_ascii_case("text-decoration") => {}
+                            "solid"
+                                if name.eq_ignore_ascii_case("text-decoration")
+                                    || name.eq_ignore_ascii_case("-epub-text-decoration") => {}
                             "none" | "initial" | "unset" | "inherit" if first => {
                                 inherit = word == "inherit";
                                 exclusive = true;
@@ -2970,11 +2972,19 @@ impl<'i> DeclarationParser<'i> for Properties {
                         _ => return Err(ParseError::unexpected_token()),
                     })
                 }
-                "hyphens" | "-webkit-hyphens" | "-epub-hyphens" | "adobe-hyphenate" => {
+                "hyphens" | "hyphenate" | "-webkit-hyphens" | "-epub-hyphens"
+                | "adobe-hyphenate" | "adobe-text-layout" => {
                     Property::Hyphens(match input.expect_ident()?.to_ascii_lowercase().as_str() {
                         "none" => Hyphens::None,
                         "manual" => Hyphens::Manual,
                         "auto" => Hyphens::Auto,
+                        "optimizespeed" if name.eq_ignore_ascii_case("adobe-text-layout") => {
+                            Hyphens::None
+                        }
+                        "optimizequality" if name.eq_ignore_ascii_case("adobe-text-layout") => {
+                            Hyphens::Auto
+                        }
+                        "explicit" if name.eq_ignore_ascii_case("adobe-hyphenate") => Hyphens::Auto,
                         _ => return Err(ParseError::unexpected_token()),
                     })
                 }

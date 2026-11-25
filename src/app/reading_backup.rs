@@ -290,39 +290,76 @@ impl Reader {
         let Some(preview) = &self.backup_import else {
             return Vec::new();
         };
+        let language = self.controls.interface_language;
         let summary = preview.summary;
         let selected = preview.components.iter().filter(|c| c.selected).count();
         let mut items = vec![
-            Item::new("Apply backup", Action::MergeBackup).detail(format!(
-                "Books to merge: {} · saved components to apply: {selected}",
-                summary.new_books + summary.existing_books
+            Item::new(
+                language.reading_backup_text("Apply backup"),
+                Action::MergeBackup,
+            )
+            .detail(format!(
+                "{}: {} · {}: {selected}",
+                language.reading_backup_text("Books to merge"),
+                summary.new_books + summary.existing_books,
+                language.reading_backup_text("saved components to apply")
             )),
-            Item::new("Books and collections · merge", Action::Heading).detail(format!(
-                "New: {} · already known: {} · existing positions and settings kept",
-                summary.new_books, summary.existing_books
+            Item::new(
+                language.reading_backup_text("Books and collections · merge"),
+                Action::Heading,
+            )
+            .detail(format!(
+                "{}: {} · {}: {} · {}",
+                language.reading_backup_text("New"),
+                summary.new_books,
+                language.reading_backup_text("already known"),
+                summary.existing_books,
+                language.reading_backup_text("existing positions and settings kept")
             )),
             Item::new(
                 format!(
-                    "Bookmarks: {} · highlights: {}",
+                    "{}: {} · {}: {}",
+                    language.reading_backup_text("Bookmarks"),
                     summary.bookmarks_added,
+                    language.reading_backup_text("highlights"),
                     summary.highlights_added + summary.pdf_highlights_added
                 ),
                 Action::Heading,
             )
             .detail(format!(
-                "Notes: {} · duplicates: {} · skipped: {} · note conflicts: {}",
-                summary.notes_added, summary.duplicates, summary.skipped, summary.note_conflicts
+                "{}: {} · {}: {} · {}: {} · {}: {}",
+                language.reading_backup_text("Notes"),
+                summary.notes_added,
+                language.reading_backup_text("duplicates"),
+                summary.duplicates,
+                language.reading_backup_text("skipped"),
+                summary.skipped,
+                language.reading_backup_text("note conflicts"),
+                summary.note_conflicts
             )),
-            Item::new("Saved components", Action::Heading)
-                .detail("New files are selected. Tap an existing component to replace it."),
+            Item::new(
+                language.reading_backup_text("Saved components"),
+                Action::Heading,
+            )
+            .detail(language.reading_backup_text(
+                "New files are selected. Tap an existing component to replace it.",
+            )),
         ];
         items.insert(
             3,
-            Item::new("Collections and custom navigation", Action::Heading).detail(format!(
-                "Collections: {} · memberships: {} · custom chapters: {} · flow boundaries: {}",
+            Item::new(
+                language.reading_backup_text("Collections and custom navigation"),
+                Action::Heading,
+            )
+            .detail(format!(
+                "{}: {} · {}: {} · {}: {} · {}: {}",
+                language.reading_backup_text("Collections"),
                 summary.collections_added,
+                language.reading_backup_text("memberships"),
                 summary.memberships_added,
+                language.reading_backup_text("custom chapters"),
                 summary.custom_chapters_added,
+                language.reading_backup_text("flow boundaries"),
                 summary.custom_flow_points_added
             )),
         );
@@ -335,22 +372,42 @@ impl Reader {
             };
             let title = match component.key {
                 Key::Pace(book) => preview.titles.get(&book).map_or_else(
-                    || "Reading-time estimates".into(),
-                    |title| format!("Reading pace · {title}"),
+                    || {
+                        language
+                            .reading_backup_text("Reading-time estimates")
+                            .into()
+                    },
+                    |title| format!("{} · {title}", language.reading_backup_text("Reading pace")),
                 ),
-                _ => component.key.label(),
+                _ => language
+                    .reading_backup_text(&component.key.label())
+                    .to_owned(),
             };
-            items.push(Item::new(title, Action::ToggleBackupComponent(index)).detail(detail));
+            items.push(
+                Item::new(title, Action::ToggleBackupComponent(index))
+                    .detail(language.reading_backup_text(detail)),
+            );
         }
         if preview.components.is_empty() {
             items.push(
-                Item::new("Legacy library-only backup", Action::Heading)
-                    .detail("This file contains no global controls, vocabulary or dated history."),
+                Item::new(
+                    language.reading_backup_text("Legacy library-only backup"),
+                    Action::Heading,
+                )
+                .detail(language.reading_backup_text(
+                    "This file contains no global controls, vocabulary or dated history.",
+                )),
             );
         }
         items.push(
-            Item::new("Restore returns to the library tools", Action::Heading)
-                .detail("Your documents and current network accounts are kept."),
+            Item::new(
+                language.reading_backup_text("Restore returns to the library tools"),
+                Action::Heading,
+            )
+            .detail(
+                language
+                    .reading_backup_text("Your documents and current network accounts are kept."),
+            ),
         );
         items
     }

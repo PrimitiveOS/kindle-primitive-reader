@@ -595,3 +595,27 @@ historical source notices. It is not bundled with Reader. Obtain any optional
 file only with the necessary permission. Source-rights, licensing obligations
 and distribution review remain unresolved; keeping a file separate from
 Reader does not establish legal compliance.
+
+
+### Optional Macedonian patterns
+
+Reader does not include Macedonian hyphenation pattern data. If you have a
+permitted `hyph-mk.tex` file, create `reader/data/hyphenation/`, copy it there,
+and close and reopen Reader. In a Macedonian book, Text › Hyphenation reports
+whether the file was loaded, missing or invalid. Missing or invalid patterns
+leave Macedonian automatic hyphenation unavailable; the book remains readable.
+Reader reads the file locally as inert data and does not download or execute it.
+
+The loader accepts one `\patterns{...}` group, `%` comments, lowercase
+Cyrillic-script letters, ASCII digits and optional word-edge dots. It rejects
+files over 256 KiB, more than 4,096 rules, tries above 8,192 nodes, symlinks,
+malformed syntax and unsupported characters. Reader uses 2 / 2 minima and
+emits only original UTF-8 grapheme boundaries. The documented upstream file's
+725 pattern strings match pinned KOReader's Macedonian pattern set, but
+behavior and real-book comparisons remain unverified. Reopen Reader after
+replacing the file.
+
+The [upstream Macedonian source](https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-mk.tex)
+identifies GPL terms without specifying a version. Obtaining or redistributing
+the optional file has separate licensing obligations; keeping it separate from
+Reader does not establish legal compliance. Distribution review remains open.
