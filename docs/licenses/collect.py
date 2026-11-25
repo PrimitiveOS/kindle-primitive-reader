@@ -100,6 +100,7 @@ def collect():
         "For the compiled US and British English patterns and TUGboat exceptions, see ENGLISH-HYPHENATION.txt.",
         "For the compiled Spanish, Italian, and Portuguese patterns, see HYPHENATION-ES-IT-PT.txt.",
         "For the compiled Estonian and Finnish patterns, see HYPHENATION-ET-FI.txt.",
+        "For the compiled Danish and Dutch patterns, see HYPHENATION-DA-NL.txt.",
         "",
     ]
     fetched = {}

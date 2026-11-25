@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<head>
+<title>Cell alignment</title>
+<style>
+body { margin:0; padding:0; }
+p { margin:0; padding:0; text-indent:0; }
+table { width:100%; table-layout:fixed; border-collapse:collapse; margin:0 0 12px; }
+td,th { border:1px solid black; padding:4px; text-align:left; font-weight:normal; }
+tr td:first-child { background-color:#dedede; }
+</style>
+</head>
+<body>
+<table id="primary">
+<tr>
+ <td style="vertical-align:top">Tall one<br/>Tall two<br/>Tall three</td>
+ <td style="vertical-align:top">Top sample</td>
+ <td valign="middle">Mid sample</td>
+ <td style="vertical-align:bottom">Bottom sample</td>
+ <td style="vertical-align:baseline">Base sample</td>
+ <th style="vertical-align:bottom"><a href="#after">Header sample</a></th>
+</tr>
+</table>
+<table id="baseline">
+<tr>
+ <td style="font-size:12px;vertical-align:top">Small capitals<br/>Small next<br/>Small last</td>
+ <td style="font-size:32px;vertical-align:baseline">Large capitals</td>
+ <th style="vertical-align:top">Header top</th>
+</tr>
+</table>
+<table id="span">
+<tr>
+ <td rowspan="2" style="vertical-align:bottom"><a href="#after">Span bottom</a></td>
+ <td style="vertical-align:top">Upper first<br/>Upper last</td>
+</tr>
+<tr><td style="vertical-align:top">Lower first<br/>Lower last</td></tr>
+</table>
+<table id="deficit">
+<tr>
+ <td rowspan="2" style="font-size:12px;vertical-align:top">Span small start<br/>Filler one<br/>Filler two<br/>Filler three<br/>Filler four<br/>Filler five<br/>Span small end</td>
+ <td style="font-size:32px;vertical-align:baseline">Early peer</td>
+</tr>
+<tr><td style="vertical-align:top">Later peer</td></tr>
+</table>
+<p id="after">After table</p>
+</body>
+</html>

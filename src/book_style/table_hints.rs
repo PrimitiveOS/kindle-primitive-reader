@@ -114,6 +114,9 @@ impl TableHints {
                 set(Property::Padding(side, Some(padding)));
             }
         }
+        if cell && node.has_attribute("nowrap") {
+            set(Property::NoWrap(true));
+        }
 
         // Width, pattern, and color participate in the same per-edge cascade as CSS.
         let rules = word(table, "rules");
@@ -200,6 +203,97 @@ impl TableHints {
 mod tests {
     use super::*;
     use crate::{Settings, book_style::BookStyle, source::Source, table_layout::TableFlow};
+
+    #[test]
+    fn table_defaults_and_cell_alignments_follow_the_selected_book_stylesheet() {
+        let text = r#"<html><body><p id="outside">Ordinary prose</p>
+            <table id="stock"><tbody valign="bottom"><tr>
+                <td id="inherited"><p id="child">Cell paragraph</p></td>
+                <th id="override" style="font-size:125%;padding:0;vertical-align:top;text-align:right">Styled heading</th>
+                <td id="another" style="vertical-align:inherit">Inherited alignment</td>
+            </tr><tr style="vertical-align:top"><td id="row">Row override</td></tr></tbody></table>
+            <table><tr><td id="middle">Default middle</td></tr></table></body></html>"#;
+        let source = Source::parse(text).unwrap();
+        let book_path = crate::test_fixture("field-notes-epub3.epub");
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut fonts = crate::font_context(&fonts).unwrap();
+        let mut book = crate::Book::open(&book_path).unwrap();
+        let chapter = book.chapters[0].href.clone();
+        let book_mode = crate::PublisherRenderMode::Book.apply(Settings::default());
+        let mut read = |settings: Settings, snapshot: &crate::user_styles::Snapshot| {
+            BookStyle::load_with_base(&mut book, &chapter, &source, &mut fonts, settings)
+                .with_user_css(snapshot)
+                .unwrap()
+                .compute_with_footnotes(&source.elements, settings, None)
+        };
+        let index = |id| {
+            source
+                .elements
+                .iter()
+                .position(|e| e.id.as_deref() == Some(id))
+                .unwrap()
+        };
+        let def = crate::user_styles::Snapshot::default();
+        let stock = read(book_mode, &def);
+        assert_eq!(stock[index("outside")].size_scale, 1.);
+        assert_eq!(stock[index("child")].size_scale, 0.8);
+        assert_eq!(stock[index("override")].size_scale, 1.);
+        assert!(stock[index("stock")].has_table_spacing);
+        assert_eq!(
+            stock[index("stock")].vertical_margin[0].pixels(100, 32.),
+            3.
+        );
+        assert_eq!(stock[index("inherited")].padding[0].pixels(100, 32.), 3.);
+        assert_eq!(
+            stock[index("inherited")].vertical_padding[0].pixels(100, 32.),
+            3.
+        );
+        assert_eq!(stock[index("override")].padding[0].pixels(100, 32.), 0.);
+        assert_eq!(stock[index("override")].alignment, Some(Alignment::Right));
+        for (id, vertical) in [
+            ("inherited", parley::VerticalAlign::BOTTOM),
+            ("another", parley::VerticalAlign::BOTTOM),
+            ("override", parley::VerticalAlign::TOP),
+            ("row", parley::VerticalAlign::TOP),
+            ("middle", parley::VerticalAlign::MIDDLE),
+        ] {
+            assert_eq!(stock[index(id)].image_align, vertical, "{id}");
+            assert!(stock[index(id)].table_valign_explicit, "{id}");
+        }
+        assert_eq!(
+            stock[index("child")].image_align,
+            parley::VerticalAlign::BASELINE
+        );
+        assert!(!stock[index("child")].table_valign_explicit);
+
+        let mut data = crate::user_styles::Data::default();
+        data.choose(1, "td_vertical_align_none", Some(true))
+            .unwrap();
+        let adjusted = read(book_mode, &data.snapshot(1).unwrap());
+        for id in ["inherited", "another", "row", "middle"] {
+            assert_eq!(
+                adjusted[index(id)].image_align,
+                parley::VerticalAlign::BASELINE
+            );
+        }
+        assert_eq!(
+            adjusted[index("override")].image_align,
+            parley::VerticalAlign::TOP
+        );
+
+        let legacy = read(Settings::default(), &def);
+        assert_eq!(legacy[index("child")].size_scale, 1.);
+        assert!(!legacy[index("middle")].table_valign_explicit);
+        let plain = read(
+            Settings {
+                base_stylesheet: crate::BaseStylesheet::None,
+                ..book_mode
+            },
+            &def,
+        );
+        assert_eq!(plain[index("child")].size_scale, 1.);
+        assert!(!plain[index("middle")].table_valign_explicit);
+    }
 
     #[test]
     fn table_presentational_hints_are_separate_from_css_and_spans() {

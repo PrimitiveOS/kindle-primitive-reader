@@ -668,6 +668,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::IgnoreTableHints,
     },
     Preset {
+        id: "td_vertical_align_none",
+        title: "Ignore publisher vertical alignment in tables",
+        group: "table-vertical-align",
+        priority: 0,
+        effect: Effect::Css("td {vertical-align:baseline !important;}"),
+    },
+    Preset {
         id: "table_row_odd_even",
         title: "Alternate background color of table rows",
         group: "table-row-colors",

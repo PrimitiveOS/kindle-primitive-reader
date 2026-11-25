@@ -362,6 +362,7 @@ pub(crate) struct Style {
     pub border_collapse: bool,
     pub borders: Option<Arc<[borders::Border; 4]>>,
     pub border_spacing: [CssLength; 2],
+    pub(crate) has_table_spacing: bool,
     pub background: Option<u8>,
     pub marker: crate::list_marker::MarkerKind,
     pub image_width: Option<ImageLength>,
@@ -372,13 +373,15 @@ pub(crate) struct Style {
     pub min_height: Option<ImageLength>,
     pub box_sizing: BoxSizing,
     pub image_align: parley::VerticalAlign,
+    pub(crate) table_valign_explicit: bool,
     pub(crate) image_full_line: bool,
     pub alignment: Option<Alignment>,
     pub line_break: Option<LineBreak>,
     pub word_break: WordBreak,
+    pub(crate) inline_nowrap: bool,
     pub hyphens: Hyphens,
     pub writing_mode: WritingMode,
-    /// HTML pre ancestry only; CSS white-space remains unsupported.
+    /// HTML pre ancestry only; nowrap does not preserve ordinary spaces.
     pub preformatted_spaces: bool,
 }
 
@@ -415,6 +418,7 @@ impl Default for Style {
             border_collapse: false,
             borders: None,
             border_spacing: [CssLength::Pixels(1.); 2],
+            has_table_spacing: false,
             background: None,
             marker: crate::list_marker::MarkerKind::None,
             image_width: None,
@@ -425,10 +429,12 @@ impl Default for Style {
             min_height: None,
             box_sizing: BoxSizing::default(),
             image_align: parley::VerticalAlign::BASELINE,
+            table_valign_explicit: false,
             image_full_line: false,
             alignment: None,
             line_break: None,
             word_break: WordBreak::Normal,
+            inline_nowrap: false,
             hyphens: Hyphens::Auto,
             writing_mode: WritingMode::Horizontal,
             preformatted_spaces: false,
@@ -521,7 +527,11 @@ impl BookStyle {
         } else {
             settings.base_stylesheet
         };
-        styled.read_base_stylesheet(source, selection);
+        let stock_tables = matches!(
+            settings.publisher_render_mode,
+            Some(crate::PublisherRenderMode::Book | crate::PublisherRenderMode::Web)
+        );
+        styled.read_base_stylesheet(source, selection, stock_tables);
         styled
     }
 
@@ -576,7 +586,7 @@ impl BookStyle {
         } else {
             selection
         };
-        styled.read_base_stylesheet(source, selection);
+        styled.read_base_stylesheet(source, selection, false);
         Ok(styled)
     }
 
@@ -620,24 +630,33 @@ impl BookStyle {
         (styled, faces)
     }
 
-    fn read_base_stylesheet(&mut self, source: &Source, selection: crate::BaseStylesheet) {
-        let text = base_stylesheets::css(selection);
-        if text.is_empty() {
-            return;
-        }
+    fn read_base_stylesheet(
+        &mut self,
+        source: &Source,
+        selection: crate::BaseStylesheet,
+        stock_tables: bool,
+    ) {
         let names = ChapterNames::new(&source.elements);
-        let mut parser = Parser::new(text);
-        for rule in StyleSheetParser::new(&mut parser, &mut SheetParser)
-            .take(MAX_RULES)
-            .flatten()
-        {
-            if let SheetItem::Rule(mut rule) = rule
-                && self.base_rules.len() < MAX_RULES
-                && !rule.declarations.is_empty()
+        for text in [
+            base_stylesheets::css(selection),
+            base_stylesheets::traditional_tables(selection, stock_tables),
+        ] {
+            if text.is_empty() {
+                continue;
+            }
+            let mut parser = Parser::new(text);
+            for rule in StyleSheetParser::new(&mut parser, &mut SheetParser)
+                .take(MAX_RULES)
+                .flatten()
             {
-                rule.selectors.retain(|selector| names.possible(selector));
-                if !rule.selectors.is_empty() {
-                    self.base_rules.push(rule);
+                if let SheetItem::Rule(mut rule) = rule
+                    && self.base_rules.len() < MAX_RULES
+                    && !rule.declarations.is_empty()
+                {
+                    rule.selectors.retain(|selector| names.possible(selector));
+                    if !rule.selectors.is_empty() {
+                        self.base_rules.push(rule);
+                    }
                 }
             }
         }
@@ -805,7 +824,23 @@ impl BookStyle {
             style.min_width = None;
             style.min_height = None;
             style.box_sizing = BoxSizing::default();
-            style.image_align = parley::VerticalAlign::BASELINE;
+            let table_valign_element = matches!(
+                element.tag.as_str(),
+                "td" | "th" | "tr" | "thead" | "tbody" | "tfoot"
+            );
+            let inherits_table_valign = matches!(element.tag.as_str(), "td" | "th" | "tr")
+                && element.parent.is_some_and(|parent| {
+                    matches!(
+                        elements[parent].tag.as_str(),
+                        "tr" | "thead" | "tbody" | "tfoot"
+                    )
+                });
+            style.image_align = if inherits_table_valign {
+                parent.image_align
+            } else {
+                parley::VerticalAlign::BASELINE
+            };
+            style.table_valign_explicit = inherits_table_valign && parent.table_valign_explicit;
             style.image_full_line = self.layout_tweaks.full_width_images && element.tag == "img";
             let mut decoration = TextDecoration {
                 underline: matches!(element.tag.as_str(), "u" | "ins")
@@ -837,7 +872,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners: Winners = [None; 53];
+            let mut winners: Winners = [None; 54];
             let accept_fit = fit_content && element.tag == "p";
             if !style.ignore_table_hints
                 && let Some(hints) = &element.table_hints
@@ -902,6 +937,10 @@ impl BookStyle {
                 match property {
                     Property::Reset(16, reset) => {
                         decoration = user_css::decoration(*reset, parent.decoration)
+                    }
+                    Property::Reset(13, reset) => {
+                        user_css::apply_reset(&mut style, 13, *reset, parent, &defaults);
+                        style.table_valign_explicit = table_valign_element;
                     }
                     Property::Reset(key, reset) => {
                         user_css::apply_reset(&mut style, *key, *reset, parent, &defaults)
@@ -1003,6 +1042,7 @@ impl BookStyle {
                     Property::Slant(slant) => style.font_style = *slant,
                     Property::LineBreak(breaking) => style.line_break = *breaking,
                     Property::WordBreak(breaking) => style.word_break = *breaking,
+                    Property::NoWrap(nowrap) => style.inline_nowrap = *nowrap,
                     Property::Border(side, value)
                         if matches!(
                             element.tag.as_str(),
@@ -1038,6 +1078,7 @@ impl BookStyle {
                     }
                     Property::Border(..) => (),
                     Property::BorderSpacing(value) => {
+                        style.has_table_spacing = value.is_some() || parent.has_table_spacing;
                         style.border_spacing = value.map_or(parent.border_spacing, |values| {
                             if logical.is_some() {
                                 let font = relative_font(style.size_scale);
@@ -1112,7 +1153,10 @@ impl BookStyle {
                         }
                     }
                     Property::MinHeight(value) => style.min_height = Some(*value),
-                    Property::VerticalAlign(value) => style.image_align = *value,
+                    Property::VerticalAlign(value) => {
+                        style.image_align = *value;
+                        style.table_valign_explicit = table_valign_element;
+                    }
                     Property::Decoration(value) => decoration = value.unwrap_or(parent.decoration),
                     Property::FontSource(_) => {}
                 }
@@ -1742,7 +1786,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (u8, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 53];
+type Winners<'a> = [Option<(Priority, &'a Property)>; 54];
 
 #[derive(Clone, Copy)]
 enum CascadeOrigin {
@@ -1786,6 +1830,7 @@ fn choose<'a>(
             Property::Slant(_) => 6,
             Property::LineBreak(_) => 7,
             Property::WordBreak(_) => 8,
+            Property::NoWrap(_) => 53,
             Property::Hyphens(_) => 9,
             Property::WritingMode(_) => 10,
             Property::Width(ImageLength::FitContent) if !accept_fit => continue,
@@ -1897,6 +1942,7 @@ enum Property {
     Slant(FontStyle),
     LineBreak(Option<LineBreak>),
     WordBreak(WordBreak),
+    NoWrap(bool),
     Hyphens(Hyphens),
     WritingMode(WritingMode),
     Width(ImageLength),
@@ -2268,6 +2314,13 @@ impl<'i> DeclarationParser<'i> for Properties {
                         "normal" => Some(LineBreak::Normal),
                         "strict" => Some(LineBreak::Strict),
                         "anywhere" => Some(LineBreak::Anywhere),
+                        _ => return Err(ParseError::unexpected_token()),
+                    })
+                }
+                "white-space" => {
+                    Property::NoWrap(match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "normal" => false,
+                        "nowrap" => true,
                         _ => return Err(ParseError::unexpected_token()),
                     })
                 }

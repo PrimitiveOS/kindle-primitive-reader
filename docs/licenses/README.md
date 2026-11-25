@@ -14,6 +14,7 @@ Launcher. [Launcher artwork terms](https://github.com/PrimitiveOS/kindle-primiti
 - [American and British English hyphenation patterns](ENGLISH-HYPHENATION.txt) cover the dictionaries compiled into native reflow.
 - [Spanish, Italian, and Portuguese hyphenation patterns](HYPHENATION-ES-IT-PT.txt) record the upstream versions, checksums, and terms for those dictionaries.
 - [Estonian and Finnish hyphenation patterns](HYPHENATION-ET-FI.txt) record the upstream versions, checksums, and terms for those dictionaries.
+- [Danish and Dutch hyphenation patterns](HYPHENATION-DA-NL.txt) record the upstream versions, checksums, and terms for those dictionaries.
 - [PDF assets](pdf/README.md) covers embedded fonts, character maps, and colour
   profiles supplied by the Hayro PDF libraries.
 - The KOReader statistics importer links the SQLite 3.50.2 amalgamation

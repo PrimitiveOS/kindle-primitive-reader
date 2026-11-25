@@ -15,6 +15,20 @@ pub(super) fn css(stylesheet: BaseStylesheet) -> &'static str {
     }
 }
 
+pub(super) fn traditional_tables(stylesheet: BaseStylesheet, enabled: bool) -> &'static str {
+    if stylesheet != BaseStylesheet::Traditional || !enabled {
+        return "";
+    }
+    "
+    table { font-size:80%; margin-top:3px; margin-bottom:3px; border-spacing:1px; }
+    table table { font-size:100%; }
+    td, th { padding:3px; }
+    th { background-color:#ddd; font-weight:bold; text-align:center; }
+    table caption { padding:4px; background-color:#eee; }
+    thead, tbody, tfoot, table > tr { vertical-align:middle; }
+    "
+}
+
 // KOReader's epub.css extends HTML defaults with justified prose, indented
 // paragraphs, book-like heading scales, and restrained block quotations.
 const TRADITIONAL: &str = r#"

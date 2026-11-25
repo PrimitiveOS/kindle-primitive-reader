@@ -282,6 +282,57 @@ fn table_presentational_hints_menu_keeps_the_reading_place_and_saved_choices() {
 }
 
 #[test]
+fn table_vertical_alignment_menu_applies_to_the_open_book_and_reopens_at_its_source() {
+    let f = Fixture::new();
+    let path = f.root.join("Aligned table.xhtml");
+    fs::write(
+        &path,
+        r##"<html><body><p>Survey readings.</p><table>
+        <tr><td><p>Wind.</p><p>Current.</p><p>Tide.</p></td>
+        <td id="linked" style="vertical-align:bottom"><a href="#end">Harbor light</a></td>
+        </tr></table><p id="end">Reading complete.</p></body></html>"##,
+    )
+    .unwrap();
+    let mut app = open(&f);
+    app.open_path(&path).unwrap();
+    let anchor = app.current_history_location();
+    let link_rect = |app: &Reader| {
+        let probe = &app.active.as_ref().unwrap().reading.probe;
+        let first = probe.fragment("linked").unwrap();
+        let end = crate::Anchor {
+            offset: first.offset + "Harbor light".len(),
+            ..first.clone()
+        };
+        let selected = probe.select_range(&first, &end).unwrap();
+        let page = probe.page_for(&first).unwrap();
+        let rect = probe.selection_rects(page, &selected)[0];
+        assert!(
+            probe
+                .link_at(page, rect.x as f32 + 3., rect.y as f32 + 5.)
+                .is_some()
+        );
+        rect
+    };
+    let before = link_rect(&app);
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "Tables");
+    tap_contents_item(&mut app, "Ignore publisher vertical alignment in tables");
+    tap_contents_item(&mut app, "On for this book");
+    assert_eq!(app.style_preset_parent(), Screen::TableStyles);
+    let after = link_rect(&app);
+    assert!(
+        after.y < before.y,
+        "Publisher bottom alignment should move to the baseline"
+    );
+    assert_eq!(app.current_history_location(), anchor);
+    app.save().unwrap();
+    let mut reopened = open(&f);
+    reopened.open_path(&path).unwrap();
+    assert_eq!(link_rect(&reopened), after);
+    assert_eq!(reopened.current_history_location(), anchor);
+}
+
+#[test]
 fn styles_live_defaults_and_book_overrides_survive_profiles_defaults_restart_and_source_selections()
 {
     let f = Fixture::new();

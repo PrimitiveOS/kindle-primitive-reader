@@ -7,6 +7,7 @@ const MAX_COLUMNS: usize = 32;
 
 mod css;
 mod flow;
+pub(crate) mod vertical;
 pub(crate) use flow::{TableFlow, TableFlowError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]

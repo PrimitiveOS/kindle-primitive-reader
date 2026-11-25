@@ -116,7 +116,8 @@ impl Borders {
             !styles[index].border_collapse
                 && source.elements[index].tag == "table"
                 && (has_padding(index)
-                    || styles[index].border_spacing != [CssLength::Pixels(1.); 2]
+                    || (styles[index].has_table_spacing
+                        || styles[index].border_spacing != [CssLength::Pixels(1.); 2])
                         && styles[index]
                             .border_spacing
                             .iter()
@@ -383,6 +384,20 @@ impl Borders {
                 },
         )
     }
+
+    pub(crate) fn vertical_track_insets(
+        &self,
+        table: TableKey,
+    ) -> crate::table_layout::vertical::Insets {
+        let Some(t) = self.table.get(&table).filter(|t| t.active && !t.collapsed) else {
+            return crate::table_layout::vertical::Insets::default();
+        };
+        crate::table_layout::vertical::Insets {
+            head: t.spacing[1] + t.border[0].width + t.padding[0],
+            spacing: t.spacing[1],
+            tail: t.spacing[1] + t.border[2].width + t.padding[1],
+        }
+    }
 }
 
 #[derive(Default)]
@@ -391,6 +406,23 @@ pub(crate) struct Positions {
     bottom: HashMap<TableKey, f32>,
 }
 impl Positions {
+    pub(crate) fn record_tracks(
+        &mut self,
+        table: TableKey,
+        start: f32,
+        rows: &[Range<f32>],
+        bottom: f32,
+    ) {
+        self.rows.insert(
+            table,
+            rows.iter()
+                .enumerate()
+                .map(|(index, row)| (index, start + row.start))
+                .collect(),
+        );
+        self.bottom.insert(table, bottom);
+    }
+
     pub fn record(&mut self, cell: Cell, start: f32, end: f32) {
         self.rows
             .entry(cell.table)

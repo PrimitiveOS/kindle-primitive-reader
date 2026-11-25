@@ -150,6 +150,8 @@ fn main() {
         ("pt", "PORTUGUESE"),
         ("et", "ESTONIAN"),
         ("fi", "FINNISH"),
+        ("da", "DANISH"),
+        ("nl", "DUTCH"),
     ] {
         let tex = tex_source(&format!("assets/hyphenation/hyph-{tag}.tex"));
         let mut rules = stock_word_rules(&tex);
@@ -203,11 +205,22 @@ fn compile(mut rules: Vec<String>, name: &str, normalized: &Path) -> String {
     let mut records = Vec::new();
     let mut edges = Vec::new();
     let mut weights = Vec::new();
+    // Identical weight sequences share one offset without changing the
+    // contiguous slices used by the matcher. This keeps the Dutch table
+    // within its compact 16-bit weight indexes.
+    let mut weight_offsets = BTreeMap::new();
     for node in &nodes {
+        let offset = *weight_offsets
+            .entry(node.weights.as_slice())
+            .or_insert_with(|| {
+                let offset = u16::try_from(weights.len()).expect("hyphenation weight index");
+                weights.extend_from_slice(&node.weights);
+                offset
+            });
         records.push((
             u16::try_from(edges.len()).unwrap(),
             u8::try_from(node.edges.len()).unwrap(),
-            u16::try_from(weights.len()).unwrap(),
+            offset,
             u8::try_from(node.weights.len()).unwrap(),
         ));
         edges.extend(
@@ -215,7 +228,6 @@ fn compile(mut rules: Vec<String>, name: &str, normalized: &Path) -> String {
                 .iter()
                 .map(|(&key, &index)| (key, u16::try_from(index).unwrap())),
         );
-        weights.extend_from_slice(&node.weights);
     }
     format!(
         "const {name}: Patterns = Patterns {{ nodes:&{records:?}, edges:&{edges:?}, weights:&{weights:?} }};\n"

@@ -46,11 +46,12 @@ const LINE_HEIGHT: i32 = 48;
 // Use the same wrap in both orientations so that an open draft keeps its line.
 const COLUMNS: usize = 40;
 const PARAGRAPH_SPACING: &str = "paragraph-spacing";
-const TABLE_STYLES: [&str; 7] = [
+const TABLE_STYLES: [&str; 8] = [
     "table_no_presentational_hints",
     "table_full_width",
     "table_td_width_auto",
     "table_margin_left_right_auto",
+    "td_vertical_align_none",
     "table_row_odd_even",
     "table_force_border",
     "table-visible-borders",
@@ -613,6 +614,7 @@ impl Reader {
                     "table_no_presentational_hints" => {
                         "Use stylesheet rules without layout hints from HTML attributes"
                     }
+                    "td_vertical_align_none" => "Align body cells to the row’s first text baseline",
                     "paragraph_web_browser_style" => {
                         "Use block paragraphs with no default first-line indent"
                     }

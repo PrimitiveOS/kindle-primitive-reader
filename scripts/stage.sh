@@ -47,7 +47,7 @@ chmod 755 "$stage/documents/Reader.sh"
 install -m 644 LICENSE LICENSE-DOCS "$stage/reader/licenses/"
 install -m 644 docs/licenses/README.md docs/licenses/THIRD-PARTY.txt docs/licenses/ENGLISH-HYPHENATION.txt \
     docs/licenses/HYPHENATION-ES-IT-PT.txt docs/licenses/HYPHENATION-ET-FI.txt \
-    docs/licenses/SRELL.txt docs/licenses/NERDFONTS.txt "$stage/reader/licenses/"
+    docs/licenses/HYPHENATION-DA-NL.txt docs/licenses/SRELL.txt docs/licenses/NERDFONTS.txt "$stage/reader/licenses/"
 cp -R docs/licenses/pdf docs/licenses/runtime "$stage/reader/licenses/"
 install -d "$stage/reader/ocr/tessdata" "$stage/reader/licenses/ocr"
 install -m 755 "$ocr_engine" "$stage/reader/ocr/tesseract"

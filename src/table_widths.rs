@@ -75,6 +75,7 @@ fn intrinsic_width(content: u32, style: &Style, font: f32) -> u32 {
 pub(super) struct TableWidths {
     columns: Vec<Column>,
     edges: Vec<u32>,
+    has_nowrap: bool,
 }
 
 impl TableWidths {
@@ -116,7 +117,15 @@ impl TableWidths {
         let mut bytes = MAX_MEASURED_BYTES;
         let mut count = MAX_MEASURED_BLOCKS;
         for (table, blocks) in groups {
+            let nowrap = blocks.iter().any(|(block, _)| {
+                styles[block.element].inline_nowrap
+                    || block
+                        .styled_text
+                        .iter()
+                        .any(|run| styles[run.element].inline_nowrap)
+            });
             if !stock_native
+                && !nowrap
                 && !styles[table].border_collapse
                 && !blocks
                     .iter()
@@ -134,7 +143,8 @@ impl TableWidths {
             if blocks.len() > count
                 || text_bytes > bytes
                 || blocks.iter().any(|(block, cell)| {
-                    (!stock_native && (cell.span != 1 || cell.has_column_tracks()))
+                    (!stock_native && cell.has_column_tracks())
+                        || (!stock_native && !nowrap && cell.span != 1)
                         || !block.images.is_empty()
                 })
             {
@@ -209,6 +219,7 @@ impl TableWidths {
                 Self {
                     columns: tracks,
                     edges: Vec::new(),
+                    has_nowrap: nowrap,
                 },
             );
         }
@@ -241,10 +252,10 @@ impl TableWidths {
                 .fold(0u32, |sum, c| sum.saturating_add(c.min.max(1)));
             outer(text.saturating_add(spacing))
         });
-        let preferred = match style
+        let declared = style
             .image_width
-            .and_then(|width| width.pixels(available, font))
-        {
+            .and_then(|width| width.pixels(available, font));
+        let preferred = match declared {
             Some(width) if web => {
                 let width = width.max(0.0) as u32;
                 if style.box_sizing == crate::book_style::BoxSizing::BorderBox {
@@ -275,7 +286,13 @@ impl TableWidths {
         } else {
             preferred
         };
-        bound.max(min).min(available)
+        if web && declared.is_some_and(|width| width > 0.) && tracks.is_some_and(|t| t.has_nowrap) {
+            // A publisher-sized table stays constrained; a nowrap cell can
+            // fall back to natural breaks when the tracks cannot honor its min.
+            bound.min(available)
+        } else {
+            bound.max(min).min(available)
+        }
     }
 
     /// Simple CSS grids use the same measured column tracks as HTML tables.
@@ -339,6 +356,7 @@ impl TableWidths {
                 Self {
                     columns: tracks,
                     edges: Vec::new(),
+                    has_nowrap: false,
                 },
             );
         }
@@ -531,6 +549,7 @@ mod tests {
         let mut table = TableWidths {
             columns: vec![column(25, 50, 0, 0), column(40, 220, 0, 0)],
             edges: vec![],
+            has_nowrap: false,
         };
         table.resolve(200);
         assert_eq!(&table.edges, [0, 38, 200].as_slice());
@@ -550,6 +569,7 @@ mod tests {
                 column(25, 140, 0, 0),
             ],
             edges: vec![],
+            has_nowrap: false,
         };
         for width in [81, 270, 840, 1264] {
             table.resolve(width);

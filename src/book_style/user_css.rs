@@ -23,7 +23,7 @@ impl Reset {
             || matches!(self, Self::Unset)
                 && matches!(
                     key,
-                    0 | 1 | 2 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 14 | 15 | 20 | 21 | 24 | 37 | 41
+                    0 | 1 | 2 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 14 | 15 | 20 | 21 | 24 | 37 | 41 | 53
                 )
     }
 }
@@ -52,7 +52,9 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "font-style" => vec![6],
         "line-break" => vec![7],
         "word-break" => vec![8],
+        "white-space" => vec![53],
         "hyphens" | "-epub-hyphens" | "-webkit-hyphens" => vec![9],
+        "vertical-align" => vec![13],
         "writing-mode" | "-epub-writing-mode" | "-webkit-writing-mode" => vec![10],
         "list-style-type" | "list-style" => vec![14],
         "text-indent" => vec![15],
@@ -100,8 +102,10 @@ pub(super) fn apply_reset(
         6 => style.font_style = value.font_style,
         7 => style.line_break = value.line_break,
         8 => style.word_break = value.word_break,
+        53 => style.inline_nowrap = value.inline_nowrap,
         9 => style.hyphens = value.hyphens,
         10 => style.writing_mode = value.writing_mode,
+        13 => style.image_align = value.image_align,
         14 => style.marker = value.marker,
         15 => style.text_indent = value.text_indent,
         17 => style.page_breaks.before = value.page_breaks.before,
@@ -112,7 +116,10 @@ pub(super) fn apply_reset(
         22 => style.padding[0] = value.padding[0],
         23 => style.padding[1] = value.padding[1],
         24 => style.border_collapse = value.border_collapse,
-        37 => style.border_spacing = value.border_spacing,
+        37 => {
+            style.border_spacing = value.border_spacing;
+            style.has_table_spacing = value.has_table_spacing;
+        }
         38 => style.vertical_padding[0] = value.vertical_padding[0],
         39 => style.vertical_padding[1] = value.vertical_padding[1],
         _ => unreachable!("expanded supported reset key"),

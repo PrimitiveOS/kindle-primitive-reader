@@ -43,8 +43,8 @@ at the new locations and restoration of the original geometry.
 [Shared chapter](../tests/fixtures/table-width-tweaks.xhtml) ·
 [Reader geometry tests](../src/parley_layout/style_presets_tests.rs)
 
-The stock EPUB stylesheet reduces table type to 80% of the reading size,
-which also reduces the intrinsic width of the compact text tables. The
+Both engines use 80% of the reading type size in this EPUB stylesheet,
+which reduces the intrinsic width of the compact text tables. The
 fixed 172px CSS column retains the same width in both engines. With publisher
 cell widths ignored, its second-column text starts 177px from the left edge
 of Reader’s content area and 176px from KOReader’s. Suppressing the HTML

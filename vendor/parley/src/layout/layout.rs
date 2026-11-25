@@ -201,6 +201,12 @@ impl<B: Brush> Layout<B> {
         self.data.indent_options = options;
     }
 
+    /// Keep `nowrap` when measuring intrinsic widths and prefer its unbroken runs.
+    /// When a line would overflow, try their soft breaks before emergency breaks.
+    pub fn set_wrap_nowrap_on_overflow(&mut self, enabled: bool) {
+        self.data.wrap_nowrap_on_overflow = enabled;
+    }
+
     /// Returns line breaker to compute lines for the layout.
     pub fn break_lines(&mut self) -> BreakLines<'_, B> {
         self.data.punctuation_shifts.clear();

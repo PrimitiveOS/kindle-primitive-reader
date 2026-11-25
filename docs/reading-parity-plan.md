@@ -48,20 +48,21 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 332 of 539 in-scope reading-control rows have
-an implemented workflow, 158 are partial, 44 are gaps, and 5 need audit.
+**Pinned control inventory:** 333 of 539 in-scope reading-control rows have
+an implemented workflow, 157 are partial, 44 are gaps, and 5 need audit.
 The 44 gaps cover interface-language choices. The largest groups of partial
 controls are typography and style tweaks. The audited SDL fullscreen row
 belongs to the host window and is unavailable in KOReader’s Kindle menu.
 [Control matrix](koreader-sdl-reference-controls.json)
 
-The current Mac comparison covers table width, centering, HTML presentation,
-row shading, borders, and numbered EPUB and Wikipedia notes. The table and
-note groups remain partial in the stock menu inventory while cell alignment,
-additional publisher hints, and rich notes with tables or ruby are open.
-Foreground Kindle verification is still pending.
-[Table comparison](table-style-tweaks.md) ·
-[Numbered notes](in-page-footnotes.md#inline-all-footnote-content)
+The current Mac comparison covers all seven table style controls, including
+the TD baseline override, Traditional EPUB defaults, and legacy cell wrapping.
+The Danish and Dutch comparisons distinguish matching dictionary candidates
+from differences in fitted lines. Caption placement, some table presentation
+rules, additional dictionaries, and rich notes with tables or ruby remain open.
+Foreground Kindle verification is pending.
+[Table comparison](table-style-tweaks.md) · [Cell wrapping](table-cell-nowrap.md) ·
+[Hyphenation](multilingual-hyphenation.md) · [Numbered notes](in-page-footnotes.md#inline-all-footnote-content)
 
 The [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The

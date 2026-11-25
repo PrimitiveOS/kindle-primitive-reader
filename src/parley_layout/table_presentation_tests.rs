@@ -41,8 +41,8 @@ fn table_presentational_hints_change_rendered_positions_and_retain_the_link() {
         let selected = probe.select_range(&first, &last).unwrap();
         assert_eq!(selected.text, text);
         assert_eq!(probe.page_for(&first), Some(0));
-        let rect = probe.selection_rects(0, &selected)[0];
-        let glyph_x = match &probe.renderer {
+        let rects = probe.selection_rects(0, &selected);
+        let (glyph_x, font_size) = match &probe.renderer {
             Renderer::Parley(chapter) => chapter
                 .paragraphs
                 .iter()
@@ -52,26 +52,37 @@ fn table_presentational_hints_change_rendered_positions_and_retain_the_link() {
                 .lines()
                 .flat_map(|line| line.items())
                 .find_map(|item| match item {
-                    PositionedLayoutItem::GlyphRun(run) => {
-                        run.positioned_glyphs().next().map(|g| g.x)
-                    }
+                    PositionedLayoutItem::GlyphRun(run) => run
+                        .positioned_glyphs()
+                        .next()
+                        .map(|glyph| (glyph.x, run.run().font_size())),
                     _ => None,
                 })
                 .unwrap(),
             _ => unreachable!(),
         };
-        (first, rect, glyph_x)
+        (first, rects, glyph_x, font_size)
     };
-    let (dock, _, x) = measure(&original, "dock", "North dock");
-    let (new_dock, _, new_x) = measure(&filtered, "dock", "North dock");
+    let (dock, _, x, _) = measure(&original, "dock", "North dock");
+    let (new_dock, _, new_x, _) = measure(&filtered, "dock", "North dock");
     assert_eq!(dock, new_dock);
     assert!(x > new_x + 25., "{x} and {new_x}");
     let mut destinations = Vec::new();
     for (probe, name) in [(&mut original, "attributes"), (&mut filtered, "stylesheet")] {
-        let (_, links, _) = measure(probe, "rings", "Mooring rings");
-        destinations.push(probe.link_at(0, links.x as f32 + 5., links.y as f32 + 6.));
+        let (_, links, _, table_font) = measure(probe, "rings", "Mooring rings");
+        let (_, wind, _, _) = measure(probe, "wind", "Wind");
+        let (_, _, _, body_font) = measure(probe, "end", "Return to the harbor.");
+        assert!((table_font - body_font * 0.8).abs() < 0.01);
+        for link in &links {
+            assert!(
+                link.x + link.width < wind[0].x,
+                "link {link:?}, wind {wind:?}"
+            );
+        }
+        let first_link = links[0];
+        destinations.push(probe.link_at(0, first_link.x as f32 + 5., first_link.y as f32 + 6.));
         measure(probe, "merged", "Morning watch");
-        let (_, _, control_x) = measure(probe, "css-cell", "CSS table");
+        let (_, _, control_x, _) = measure(probe, "css-cell", "CSS table");
         assert!(control_x.abs() < 2.0);
         #[cfg(feature = "kindle")]
         if let Some(output) = std::env::var_os("READER_STYLE_GRID_CAPTURES") {

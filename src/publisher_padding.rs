@@ -272,6 +272,7 @@ pub(crate) fn layout_with_flow(
     };
     if flow.is_identity()
         && (!stock_native || flow.cells().is_empty())
+        && (flow.cells().is_empty() || !styles.iter().any(|style| style.inline_nowrap))
         && borders.is_none()
         && !width_candidates.contains(&TextBoxCandidate::Simple)
         && !wrapper_candidates.contains(&true)

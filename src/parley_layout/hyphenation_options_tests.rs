@@ -112,6 +112,27 @@ fn multilingual_hyphenation_renders_and_selects_estonian_and_finnish() {
     assert_dictionary_rendering("estonian-finnish-hyphenation", 574, words);
 }
 
+#[test]
+fn multilingual_hyphenation_renders_danish_and_dutch_with_original_selections() {
+    let words: &[&[&str]] = &[
+        &[
+            "læseoplevelse",
+            "bibliotekernes",
+            "samarbejdsmuligheder",
+            "påmindelser",
+            "færgeforbindelse",
+        ],
+        &[
+            "coördinatie",
+            "bibliotheek",
+            "schilderstalent",
+            "waterstaatsingenieur",
+            "maatschappij",
+        ],
+    ];
+    assert_dictionary_rendering("danish-dutch-hyphenation", 578, words);
+}
+
 fn assert_dictionary_rendering(specimen: &str, width: u32, words: &[&[&str]]) {
     let path = crate::test_fixture(&format!("{specimen}.xhtml"));
     let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];

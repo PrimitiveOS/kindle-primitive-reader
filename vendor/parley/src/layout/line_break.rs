@@ -634,6 +634,8 @@ pub struct BreakerState {
     // Saved breaker states for reverting to a previously encountered line-breaking opportunity
     /// Saved breaker state for the last non-emergency line-breaking opportunity
     prev_boundary: Option<PrevBoundaryState>,
+    /// Saved natural opportunity inside a `nowrap` run, used only to avoid overflow.
+    nowrap_boundary: Option<PrevBoundaryState>,
     /// Saved breaker state for the last emergency line-breaking opportunity
     emergency_boundary: Option<PrevBoundaryState>,
 }
@@ -655,6 +657,7 @@ impl Default for BreakerState {
             contributed: Vec::new(),
             subtrees: SubtreeHistory::default(),
             prev_boundary: None,
+            nowrap_boundary: None,
             emergency_boundary: None,
         }
     }
@@ -776,7 +779,11 @@ impl BreakerState {
     /// Store the current iteration state so that we can revert to it if we later want to take
     /// an *emergency* line breaking opportunity at this point.
     fn mark_emergency_break_opportunity(&mut self) {
-        self.emergency_boundary = Some(PrevBoundaryState {
+        self.emergency_boundary = Some(self.saved_boundary());
+    }
+
+    fn saved_boundary(&mut self) -> PrevBoundaryState {
+        PrevBoundaryState {
             item_idx: self.item_idx,
             run_idx: self.run_idx,
             cluster_idx: self.cluster_idx,
@@ -784,7 +791,7 @@ impl BreakerState {
             trusted_authored_word: None,
             contributed_len: self.contributed.len(),
             subtrees_len: self.subtrees.save(),
-        });
+        }
     }
 
     /// Revert boundary state to prev state
@@ -988,6 +995,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         self.state.items = self.lines.line_items.len();
         self.state.lines = self.lines.lines.len();
         self.state.prev_boundary = None;
+        self.state.nowrap_boundary = None;
         self.state.emergency_boundary = None;
 
         // `finish_line` reads the line's accumulated vertical metrics from `self.state.line`, so
@@ -1230,6 +1238,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         // Lag text_wrap_mode style by one atom
                         let text_wrap_mode = self.state.line.text_wrap_mode;
                         self.state.line.text_wrap_mode = style.text_wrap_mode;
+                        let relax_nowrap = self.layout.data.wrap_nowrap_on_overflow;
+                        // Preserve ordinary breaks on either side of a protected run.
+                        let wraps = text_wrap_mode == TextWrapMode::Wrap
+                            || (relax_nowrap && style.text_wrap_mode == TextWrapMode::Wrap);
 
                         let soft_hyphen =
                             self.soft_hyphen_at_boundary(atom.shaped_clusters_range().start);
@@ -1253,8 +1265,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 max_advance,
                                 line_indent,
                             );
-                        } else if (is_soft_wrap_opportunity || soft_hyphen.is_some())
-                            && text_wrap_mode == TextWrapMode::Wrap
+                        } else if (is_soft_wrap_opportunity || soft_hyphen.is_some()) && wraps
                         {
                             // We don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive
                             // line breaks. We should accept the overflowing fragment in that scenario.
@@ -1272,10 +1283,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                     Some(_) => {}
                                 }
                             }
+                        } else if relax_nowrap && is_soft_wrap_opportunity
+                            && soft_hyphen.is_none() && self.state.line.x != 0.0
+                        {
+                            self.state.nowrap_boundary = Some(self.state.saved_boundary());
                         } else if
                         // This text can contribute "emergency" line breaks.
                         style.overflow_wrap != OverflowWrap::Normal
-                        && text_wrap_mode == TextWrapMode::Wrap
+                        && (wraps || relax_nowrap)
                         // If we're at the start of the line, this particular atom will never fit, so it's not a valid emergency break opportunity.
                         && self.state.line.x != 0.0
                         {
@@ -1339,6 +1354,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             // We "take" the line-breaking opportunity by starting a new line and resetting our
                             // item/run/cluster iteration state back to how it was when the line-breaking opportunity was encountered
                             else if let Some(prev) = self.state.prev_boundary.take() {
+                                self.state.reset_to(prev);
+                                return self.start_new_line(
+                                    BreakReason::Regular,
+                                    max_advance,
+                                    line_indent,
+                                );
+                            }
+                            else if let Some(prev) = self.state.nowrap_boundary.take() {
                                 self.state.reset_to(prev);
                                 return self.start_new_line(
                                     BreakReason::Regular,

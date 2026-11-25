@@ -192,7 +192,7 @@ fn multilingual_hyphenation_settings_use_the_book_language_defaults() {
 }
 
 #[test]
-fn multilingual_hyphenation_settings_keep_estonian_and_finnish_book_choices() {
+fn multilingual_hyphenation_settings_keep_book_dictionary_choices() {
     use crate::app::typography_settings::{CatalogLanguage, LanguageScope};
 
     let f = Fixture::new();
@@ -201,7 +201,12 @@ fn multilingual_hyphenation_settings_keep_estonian_and_finnish_book_choices() {
     reader.open_path(&f.book).unwrap();
     let mut canvas = adopt(&mut reader, ReadingViewport::PORTRAIT, 1);
     let origin = reader.current_history_location();
-    for (tag, name, minimum) in [("et", "Estonian", "2 / 3"), ("fi", "Finnish", "2 / 2")] {
+    for (tag, name, minimum) in [
+        ("et", "Estonian", "2 / 3"),
+        ("fi", "Finnish", "2 / 2"),
+        ("da", "Danish", "2 / 2"),
+        ("nl", "Dutch", "2 / 2"),
+    ] {
         let language = CatalogLanguage::try_from(tag.to_owned()).unwrap();
         reader
             .choose_typography_language(LanguageScope::Book, Some(language))

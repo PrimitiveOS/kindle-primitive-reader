@@ -135,20 +135,22 @@ pub(crate) fn before_blocks(
         let Some(span) = spans[index] else {
             continue;
         };
-        if span.has_grid
-            || style.flow.suppressed
+        let table = span.has_grid && element.tag == "table" && style.display == Display::Table;
+        let ordinary_block = !span.has_grid
+            && matches!(
+                Display::native(&element.tag),
+                Display::Block | Display::ListItem
+            )
+            && matches!(
+                style.display,
+                Display::Block | Display::ListItem | Display::LegacyListItem
+            );
+        if style.flow.suppressed
             || element.selector_only
             || element.anonymous
             || ignore_publisher && !style.paragraph_edges.contains(&true)
             || matches!(element.tag.as_str(), "html" | "body")
-            || !matches!(
-                Display::native(&element.tag),
-                Display::Block | Display::ListItem
-            )
-            || !matches!(
-                style.display,
-                Display::Block | Display::ListItem | Display::LegacyListItem
-            )
+            || !(table || ordinary_block)
         {
             continue;
         }

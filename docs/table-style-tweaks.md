@@ -8,19 +8,18 @@ links, and saved locations continue to use the original source.
 
 | Control | Behavior and comparison |
 | --- | --- |
-| Ignore HTML table presentation | Suppresses supported legacy HTML width, alignment, background, padding, spacing, and border hints. CSS declarations and row and column spans still apply. [Presentation comparison](#html-presentation) |
+| Ignore HTML table presentation | Suppresses supported legacy HTML width, alignment, background, padding, spacing, border, and `nowrap` hints. CSS declarations and row and column spans still apply. [Presentation comparison](#html-presentation) · [Cell wrapping](table-cell-nowrap.md) |
 | Full-width tables | Uses the available column width. |
 | Ignore publisher table and cell widths | Uses intrinsic sizing for the table and cells while keeping explicit column track sizes. |
 | Center small tables | Centers the measured table when there is free horizontal space. The three width choices work together. [Width evidence](table-columns.md) |
+| Ignore publisher vertical alignment in tables | Aligns TD content to its row's first-line baseline. TH uses the publisher's alignment. [Vertical alignment comparison](#cell-vertical-alignment) |
 | Alternate background color of table rows | Uses #EEE and #CCC in row order and keeps the spacing between separate cells clear. Each row group starts its own sequence. [Paint comparison](publisher-table-borders.md) |
 | Show borders on all tables | Adds 1px collapsed borders, including on tables with one column. Publisher border choices retain their normal cascade priority. [Border comparison](publisher-table-borders.md) |
 | Force table borders (legacy) | Retains the original Reader preset for saved profiles that explicitly override table and cell borders. |
 
-The stock cell vertical-alignment switch still requires support for shifting
-cell content inside a measured row. Caption placement, legacy floating
-table alignment, no-wrap hints, and some table background and border
-details also remain open. Baseline table font sizes and cell padding
-differ in the two engines, so a cell's text can wrap at a different point.
+Caption placement, legacy floating table alignment, and some table background
+and border details remain open. Differences in the layout engines can still
+move a line break within a cell.
 
 ## HTML presentation
 
@@ -40,6 +39,14 @@ the same passage.
 [Cascade tests](../src/book_style/table_hints.rs) ·
 [Reader layout test](../src/parley_layout/table_presentation_tests.rs)
 
+Book and Web render modes apply the Traditional EPUB table defaults when
+that base stylesheet is selected. They use 80% text size, keep that size in
+nested tables, add 3 px cell padding and 1 px border spacing, and give table
+headers and captions their default backgrounds. Rows and row groups use
+middle alignment by default. Publisher CSS can override these values.
+[KOReader EPUB defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/cr3gui/data/epub.css#L84-L111) ·
+[KOReader HTML row alignment](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/cr3gui/data/html5.css#L638-L654)
+
 | Layout | Reader | KOReader |
 | --- | --- | --- |
 | With HTML presentation | [Page](screenshots/reader-table-presentation-attributes.png) | [Page](screenshots/stock-table-presentation-attributes.png) |
@@ -54,19 +61,37 @@ Use `READER_STYLE_GRID_CAPTURES` for the page images and
 
 ## Cell vertical alignment
 
-The remaining stock preset gives `td` cells baseline alignment and keeps
-the alignment declared on `th` cells. In the pinned Book-mode replay, a
-middle-aligned and a bottom-aligned cell moved onto the first baseline.
-An explicitly bottom-aligned header kept its position. A row mixing 12px
-and 32px text grew by 22px, shifting the following prose by the same amount.
-The link and source positions survived the change.
-[Stock preset](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L628-L632) ·
-[Row sizing and placement](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L1853-L1934)
+Reader positions a native horizontal table after measuring its cell
+contents. Top alignment uses the cell's leading edge. Middle and bottom
+use the available height across the row span. Baseline aligns the first
+shaped text lines. A smaller-font cell can move down and increase the row
+height. Pictures, Ruby annotations, list markers, links, and selection
+follow the content. Borders and row fills use the final tracks. The
+ordinary layout handles nested grids, chapters that use
+floating layout, and spanning cells whose baseline would overflow.
+[Row sizing](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L1853-L1934) ·
+[Content placement](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L2145-L2204)
 
-Reader currently lays out cell content as it encounters each row. Matching
-the baseline behavior requires measuring cell content and span heights,
-then placing text and illustrations relative to the completed row grid.
-Borders and background fills use the completed row rectangles. The next
-comparison covers mixed font sizes, cells spanning multiple rows, link
-targets, and the position of the following text.
-[Current row flow](../src/table_layout.rs)
+The pinned replay enables the real TD-only preset. On the authored
+specimen, middle and bottom TD text moves from y=59 and y=81 to y=37.
+The bottom-aligned TH stays at y=81. A 12 px cell moves down 22 px to
+share a 32 px cell's baseline. The row and following text gain the same
+22 px. The short rowspan moves from the bottom of its final row to the
+first row's baseline. The tall exact-fit rowspan stays at its start.
+The source anchors and links survive the toggle, and turning it off
+restores the initial frame.
+[Stock preset](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L628-L632)
+
+| Layout | Reader | KOReader |
+| --- | --- | --- |
+| Publisher alignment | [Page](screenshots/reader-table-vertical-publisher.png) | [Page](screenshots/stock-table-vertical-publisher.png) |
+| TD baseline override | [Page](screenshots/reader-table-vertical-baseline.png) | [Page](screenshots/stock-table-vertical-baseline.png) |
+
+The four-table specimen uses Noto Sans at 20 px, a 760 × 930 viewport,
+and 32 px page margins. Pass the specimen, cache folder, font path, and
+output folder to the native replay. [Specimen](../tests/fixtures/table-vertical-alignment.xhtml) ·
+[Native replay](../scripts/koreader-table-vertical-alignment-check.lua)
+
+Run the Mac checks with
+`cargo test --locked --features kindle --lib table_vertical` and set
+`READER_STYLE_GRID_CAPTURES` to save the Reader frames.

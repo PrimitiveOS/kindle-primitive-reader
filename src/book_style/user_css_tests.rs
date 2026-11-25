@@ -150,6 +150,10 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
                 "font-weight:300!important",
                 "font-weight:300!important;font-style:italic!important",
             ),
+            "td_vertical_align_none" => markup.replace(
+                "<td>Cell</td>",
+                "<td id='td' style='vertical-align:middle!important'>Cell</td><th id='th' style='vertical-align:bottom!important'>Header</th>",
+            ),
             _ => markup.into(),
         };
         let (source, before) = styles(&markup, "");
@@ -208,6 +212,20 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
                     .unwrap()
                     .pixels(1000, 42.)
             ),
+            "td_vertical_align_none" => {
+                assert_eq!(
+                    at(&source, &before, "td").image_align,
+                    parley::VerticalAlign::MIDDLE
+                );
+                assert_eq!(
+                    at(&source, &after, "td").image_align,
+                    parley::VerticalAlign::BASELINE
+                );
+                assert_eq!(
+                    at(&source, &after, "th").image_align,
+                    parley::VerticalAlign::BOTTOM
+                );
+            }
             "table_force_border" | "table-visible-borders" => {
                 assert!(at(&source, &before, "t").borders.is_none());
                 assert!(at(&source, &after, "t").borders.is_some());

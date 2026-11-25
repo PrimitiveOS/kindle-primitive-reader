@@ -46,6 +46,8 @@ pub(crate) enum Dictionary {
     Portuguese,
     Estonian,
     Finnish,
+    Danish,
+    Dutch,
 }
 
 impl Dictionary {
@@ -62,6 +64,8 @@ impl Dictionary {
             ("pt", None | Some("PT")) => Some(Self::Portuguese),
             ("et", _) => Some(Self::Estonian),
             ("fi", _) => Some(Self::Finnish),
+            ("da", _) => Some(Self::Danish),
+            ("nl", _) => Some(Self::Dutch),
             _ => None,
         }
     }
@@ -76,12 +80,14 @@ impl Dictionary {
             Self::Portuguese => "Portuguese (Portugal)",
             Self::Estonian => "Estonian",
             Self::Finnish => "Finnish",
+            Self::Danish => "Danish",
+            Self::Dutch => "Dutch",
         }
     }
 
     pub(crate) fn limits(self) -> HyphenationLimits {
         match self {
-            Self::Spanish | Self::Italian | Self::Finnish => {
+            Self::Spanish | Self::Italian | Self::Finnish | Self::Danish | Self::Dutch => {
                 HyphenationLimits { left: 2, right: 2 }
             }
             Self::American | Self::British | Self::Portuguese | Self::Estonian => ENGLISH_LIMITS,
@@ -97,6 +103,8 @@ impl Dictionary {
             Self::Portuguese => &PORTUGUESE,
             Self::Estonian => &ESTONIAN,
             Self::Finnish => &FINNISH,
+            Self::Danish => &DANISH,
+            Self::Dutch => &DUTCH,
         }
     }
 }
@@ -294,27 +302,22 @@ fn word_breaks_with_limits(
         return;
     }
     let patterns = locale.patterns();
-    if matches!(
-        locale,
-        Dictionary::Spanish
-            | Dictionary::Italian
-            | Dictionary::Portuguese
-            | Dictionary::Estonian
-            | Dictionary::Finnish
-    ) {
-        // CRE treats apostrophes as word boundaries for these pattern files.
-        // ICU can keep the two sides together for selection and search.
-        let mut offset = 0;
-        for part in word.split_inclusive(['\'', '\u{2019}']) {
-            let text = part.trim_end_matches(['\'', '\u{2019}']);
-            pattern_breaks(patterns, text, limits, |at| emit(offset + at));
-            offset += part.len();
+    if matches!(locale, Dictionary::American | Dictionary::British) {
+        if word
+            .chars()
+            .all(|ch| ch.is_ascii_alphabetic() || ch == '\u{ad}')
+        {
+            pattern_breaks(patterns, word, limits, emit);
         }
-    } else if word
-        .chars()
-        .all(|ch| ch.is_ascii_alphabetic() || ch == '\u{ad}')
-    {
-        pattern_breaks(patterns, word, limits, emit);
+        return;
+    }
+    // CRE treats apostrophes as word boundaries for these pattern files.
+    // ICU can keep the two sides together for selection and search.
+    let mut offset = 0;
+    for part in word.split_inclusive(['\'', '\u{2019}']) {
+        let text = part.trim_end_matches(['\'', '\u{2019}']);
+        pattern_breaks(patterns, text, limits, |at| emit(offset + at));
+        offset += part.len();
     }
 }
 
@@ -427,6 +430,16 @@ mod tests {
                 284,
                 "dc3f7225640585ff3ddcae30c90825c0",
             ),
+            (
+                include_str!(concat!(env!("OUT_DIR"), "/da_rules.txt")),
+                1144,
+                "e059248b00298eaa3edde6799e260c56",
+            ),
+            (
+                include_str!(concat!(env!("OUT_DIR"), "/nl_rules.txt")),
+                12764,
+                "662e0ec1a5e3cf040ab3b74f327d6c3f",
+            ),
         ] {
             assert_eq!(rules.lines().count(), count);
             assert_eq!(format!("{:x}", md5::compute(rules)), digest);
@@ -484,6 +497,31 @@ mod tests {
             ("fi-Latn-FI", "kansainvälinen", &[3, 7, 9, 11], &[7, 9]),
             ("fi-FI", "taloudellinen", &[2, 5, 8, 10], &[5, 8]),
             ("fi-FI", "kalastus", &[2, 5], &[]),
+            ("da-DK", "LÆSEOPLEVELSE", &[2, 4, 6, 8, 11], &[4, 6, 8]),
+            ("da-DK", "bibliotekernes", &[2, 5, 6, 8, 11], &[5, 6, 8]),
+            (
+                "da-DK",
+                "samarbejdsmuligheder",
+                &[3, 5, 10, 12, 15, 17],
+                &[5, 10, 12, 15],
+            ),
+            ("da", "påmindelser", &[2, 5, 8], &[5]),
+            (
+                "da-Latn-DK",
+                "færgeforbindelse",
+                &[3, 5, 8, 11, 14],
+                &[5, 8, 11],
+            ),
+            ("nl-NL", "coördinatie", &[2, 4, 6, 8], &[4, 6]),
+            ("nl", "bibliotheek", &[2, 5, 6], &[5, 6]),
+            ("nl-BE", "schilderstalent", &[5, 8, 9, 11], &[5, 8, 9, 11]),
+            (
+                "nl-NL",
+                "waterstaatsingenieur",
+                &[2, 5, 10, 11, 13, 15, 17],
+                &[5, 10, 11, 13, 15],
+            ),
+            ("nl-NL", "maatschappij", &[4, 9], &[4]),
         ] {
             let dictionary = Dictionary::for_language(Language::parse(tag).ok()).unwrap();
             assert_eq!(
@@ -503,6 +541,8 @@ mod tests {
              <span lang='pt-BR'>informação</span> \
              <span lang='et-EE'>lu\u{308}hi<b>ülevaa</b>de</span> \
              <span lang='fi-FI'>a\u{308}äntäminen</span> \
+             <span lang='da-DK'>pa\u{30a}min<b>del</b>ser</span> \
+             <span lang='nl-NL'>coo\u{308}rdinatie</span> \
              <span style='hyphens:manual'>murciélago</span> \
              <span xml:lang='es-Cyrl'>murciélago</span></p></body></html>",
         )
@@ -530,6 +570,14 @@ mod tests {
             (
                 "a\u{308}äntäminen",
                 &["a\u{308}än", "a\u{308}äntä", "a\u{308}äntämi"],
+            ),
+            (
+                "pa\u{30a}mindelser",
+                &["pa\u{30a}", "pa\u{30a}min", "pa\u{30a}mindel"],
+            ),
+            (
+                "coo\u{308}rdinatie",
+                &["co", "coo\u{308}r", "coo\u{308}rdi", "coo\u{308}rdina"],
             ),
         ];
         let mut expected = Vec::new();

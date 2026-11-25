@@ -2,6 +2,42 @@
 
 ## Current Mac simulator checkpoint
 
+**Table alignment and defaults** add the seventh stock table preset. The
+pinned replay checks that the override moves data cells to the first-line
+baseline and keeps header alignment. Reader tests cover merged rows, links,
+Ruby, list markers, pictures, and per-book settings after reopening. Book
+and Web modes use the Traditional EPUB table type size, padding, and spacing.
+[Table settings and native comparisons](table-style-tweaks.md)
+
+**Legacy table wrapping** retains a line when the cell can fit it and
+breaks oversized runs inside their available width. Ignoring HTML table
+presentation removes the legacy hint while retaining authored CSS and the
+original selection. [Cell wrapping comparison](table-cell-nowrap.md)
+
+**Danish and Dutch hyphenation** adds 1,144 and 12,764 pinned weighted
+rules, both with 2 / 2 default limits. The stock and Reader replays show
+which candidates become visible line breaks. [Dictionary comparison](multilingual-hyphenation.md)
+
+The full Mac run passed 1,648 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. The standard run skipped
+73 opt-in cases. The focused run passed 37 checks. The simulator and
+pinned native replays reproduced all 23 new or updated screenshots.
+
+The four original EPUB, PDF, AZW3, and MOBI documents opened through the
+picker, turned a page, and resumed with unchanged source bytes. The separate
+original EPUB notes test verified 65 bands and 63 canonical anchors across
+eight composed chapters.
+
+The locally staged ARMHF executable is stripped and statically linked.
+It contains 39,590,492 bytes with SHA-256
+`13c9fa5e63c97bacf86fc1f7ee1e1884e18e6ebf5d057793a4d7c71bd505770e`.
+The 33 staged files total 49,199,118 bytes. Both project licenses, the
+Danish and Dutch dictionary notice, SQLite notices, the embedded Launcher
+icon, and the OCR model passed inspection. Foreground Kindle testing and
+Store publication remain pending.
+
+## Table controls and numbered notes checkpoint
+
 **Table styles** add full-width, intrinsic, and centered layouts, plus
 alternating row backgrounds and a stock-priority border preset. The HTML
 presentation switch suppresses supported legacy attributes while preserving

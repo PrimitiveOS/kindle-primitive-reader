@@ -46,6 +46,23 @@ if specimen == "estonian-finnish-hyphenation" then
         { "et-EE", "Estonian.pattern", 3691, 3 },
         { "fi-FI", "Finnish.pattern",   285, 2 },
     }
+elseif specimen == "danish-dutch-hyphenation" then
+    samples = {
+        { "da-DK", "læseoplevelse",        "2,4,6,8,11",       "4,6,8",         "læ-se-op-le-vel-se",       "læse-op-le-velse" },
+        { "da-DK", "bibliotekernes",      "5,6,8,11",         "5,6,8",         "bi-bli-o-te-ker-nes",      "bibli-o-te-kernes" },
+        { "da-DK", "samarbejdsmuligheder", "3,5,10,12,15,17",  "5,10,12,15",    "sam-ar-bejds-mu-lig-he-der", "samar-bejds-mu-lig-heder" },
+        { "da-DK", "påmindelser",         "2,5,8",            "5",             "på-min-del-ser",          "påmin-delser" },
+        { "da-DK", "færgeforbindelse",    "3,5,8,11,14",      "5,8,11",        "fær-ge-for-bin-del-se",    "færge-for-bin-delse" },
+        { "nl-NL", "coördinatie",         "2,4,6,8",          "4,6",           "co-ör-di-na-tie",          "coör-di-natie" },
+        { "nl-NL", "bibliotheek",         "5,6",              "5,6",           "bi-bli-o-theek",           "bibli-o-theek" },
+        { "nl-NL", "schilderstalent",     "5,8,9,11",         "5,8,9,11",      "schil-der-s-ta-lent",      "schil-der-s-ta-lent" },
+        { "nl-NL", "waterstaatsingenieur","2,5,10,11,13,15,17","5,10,11,13,15","wa-ter-staat-s-in-ge-ni-eur", "water-staat-s-in-ge-nieur" },
+        { "nl-NL", "maatschappij",        "4,9",              "4",             "maat-schap-pij",           "maat-schappij" },
+    }
+    dictionaries = {
+        { "da-DK", "Danish.pattern",  1144, 2 },
+        { "nl-NL", "Dutch.pattern",  12764, 2 },
+    }
 else
     assert(specimen == "multilingual-hyphenation", specimen)
 end
@@ -128,6 +145,16 @@ local function measure(label, enabled, minimum, expected_column)
     doc:setTextHyphenation(enabled)
     doc:setHyphLeftHyphenMin(minimum)
     doc:setHyphRightHyphenMin(minimum)
+    if enabled and samples[1][5] then
+        local candidate_column = minimum == 0 and 5 or 6
+        for _, sample in ipairs(samples) do
+            doc:setTextMainLang(sample[1])
+            local candidate = Cre.getHyphenationForWord(sample[2])
+            assert(candidate == sample[candidate_column], sample[2] .. ": " .. candidate)
+            print("dictionary candidates", label, sample[1], candidate)
+        end
+        doc:setTextMainLang("en-US")
+    end
     local seen, sample_width, best_score = {}, nil, 0
     for i = 1, #words do seen[i] = {} end
     for width = min_width, max_width do
@@ -157,7 +184,8 @@ local function measure(label, enabled, minimum, expected_column)
             if seen[i][at] then table.insert(offsets, at) end
         end
         local vector = table.concat(offsets, ",")
-        assert(vector == (samples[i][expected_column] or ""), samples[i][2] .. ": " .. vector)
+        local expected = expected_column and samples[i][expected_column] or ""
+        assert(vector == expected, samples[i][2] .. ": " .. vector)
         print(label, samples[i][1], samples[i][2], vector ~= "" and vector or "none")
     end
     return sample_width
@@ -179,7 +207,7 @@ local sample_width = assert(measure("dictionary default", true, 0, 3))
 capture(sample_width, "stock-" .. specimen)
 measure("4/4 minima", true, 4, 4)
 capture(sample_width, "stock-" .. specimen .. "-limits")
-assert(not measure("hyphenation off", false, 0, 5))
+assert(not measure("hyphenation off", false, 0))
 capture(sample_width, "stock-" .. specimen .. "-off")
 print(("Comparison captures at %d × %d"):format(sample_width, height))
 view:close()

@@ -9,6 +9,7 @@ mod inline_blocks_tests;
 mod note_inline;
 #[cfg(test)]
 mod special_glyph_tests;
+mod table_vertical;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
@@ -28,7 +29,8 @@ use image::{DynamicImage, GrayImage, Luma, imageops::FilterType};
 use parley::{
     Affinity, Alignment, AlignmentOptions, BoundingBox, Cursor, FontContext, FontFamily,
     FontWeight, GenericFamily, Language, Layout, LayoutContext, LineBreak, LineHeight,
-    OverflowWrap, PositionedLayoutItem, Selection, SoftHyphenAction, StyleProperty, WordBreak,
+    OverflowWrap, PositionedLayoutItem, Selection, SoftHyphenAction, StyleProperty, TextWrapMode,
+    WordBreak,
     setting::{FontFeature, Tag},
 };
 
@@ -767,6 +769,8 @@ impl ParleyChapter {
         let mut trailing_gap = normal_gap;
         let mut row_flow = crate::table_layout::RowFlow::default();
         let mut positions = crate::table_borders::Positions::default();
+        let mut table_alignment =
+            table_vertical::Pass::new(&table_flow, styles, float_plan.is_none() && !source_order);
         let wrapper_backgrounds = publisher_boxes.as_ref().is_some_and(|boxes| {
             boxes.iter().zip(styles).any(|(area, style)| {
                 area.sized_wrapper && style.flow.painted && style.background.is_some()
@@ -839,6 +843,17 @@ impl ParleyChapter {
             };
             let block = flattened.as_ref().unwrap_or(&input);
             let cell = column_for(block);
+            if table_alignment.ends_before(cell) {
+                y = table_alignment.finish(
+                    row_flow.end(y),
+                    &mut chapter,
+                    &mut lines,
+                    fill_positions.as_deref_mut().unwrap_or_default(),
+                    borders.as_ref(),
+                    &mut positions,
+                );
+                row_flow = Default::default();
+            }
             let (natural_column, natural_width) = bounds_for(block);
             let float = float_plan.and_then(|plan| plan.floats[index]);
             if let Some(plan) = float_plan {
@@ -922,6 +937,17 @@ impl ParleyChapter {
             last_cell = cell;
             y += padding.before as f32;
             let flow_y = y;
+            if let Some(cell) = cell {
+                table_alignment.begin(
+                    cell,
+                    &chapter,
+                    lines.len(),
+                    fill_positions.as_ref().map_or(0, Vec::len),
+                    start_of_cell,
+                    flow_y,
+                    padding.before_grid > 0,
+                );
+            }
             let (column_x, column_width) = if let Some(spec) = float {
                 let clear = float_plan.unwrap().clears[index];
                 let (x, top) = float_flow.place(spec, clear, outer_width, y);
@@ -1512,6 +1538,16 @@ impl ParleyChapter {
             if let Some(c) = cell.filter(|&c| borders.as_ref().is_some_and(|b| b.tracks(c))) {
                 positions.record(c, start_of_cell, (y - gap).max(start_of_cell));
             }
+            if cell.is_some() {
+                table_alignment.end_block(
+                    &chapter,
+                    lines.len(),
+                    fill_positions.as_ref().map_or(0, Vec::len),
+                    y,
+                    gap,
+                    padding.after_grid > 0,
+                );
+            }
             if padding.after_grid > 0 {
                 y = row_flow.end(y) + padding.after_grid as f32;
             }
@@ -1534,6 +1570,17 @@ impl ParleyChapter {
             }
         }
 
+        if table_alignment.ends_before(None) {
+            y = table_alignment.finish(
+                row_flow.end(y),
+                &mut chapter,
+                &mut lines,
+                fill_positions.as_deref_mut().unwrap_or_default(),
+                borders.as_ref(),
+                &mut positions,
+            );
+            row_flow = Default::default();
+        }
         if chapter.float_geometry || source.blocks.iter().any(|b| column_for(b).is_some()) {
             chapter.paragraphs.sort_by(|a, b| a.y.total_cmp(&b.y));
         }
@@ -2678,16 +2725,34 @@ fn make_paragraph(
     builder.push_default(StyleProperty::FontWeight(weight(style)));
     builder.push_default(StyleProperty::FontStyle(style.font_style));
     builder.push_default(StyleProperty::Locale(language));
-    let paragraph_line_break = style.line_break.unwrap_or_else(|| line_break(language));
+    let line_break_for = |style: &Style, language| {
+        style
+            .line_break
+            .filter(|_| !style.inline_nowrap)
+            .unwrap_or_else(|| line_break(language))
+    };
+    let word_break_for = |style: &Style| {
+        if style.inline_nowrap {
+            WordBreak::Normal
+        } else {
+            style.word_break
+        }
+    };
+    let paragraph_line_break = line_break_for(style, language);
+    let paragraph_word_break = word_break_for(style);
     builder.push_default(StyleProperty::LineBreak(paragraph_line_break));
-    builder.push_default(StyleProperty::WordBreak(style.word_break));
+    builder.push_default(StyleProperty::WordBreak(paragraph_word_break));
+    if style.inline_nowrap {
+        builder.push_default(StyleProperty::TextWrapMode(TextWrapMode::NoWrap));
+    }
+    let mut has_nowrap = style.inline_nowrap;
     builder.set_base_direction(block.direction);
     for text in block.styled_text.iter() {
         let run = &styles[text.element];
         if text.language != language {
             builder.push(StyleProperty::Locale(text.language), text.bytes.clone());
         }
-        let run_line_break = run.line_break.unwrap_or_else(|| line_break(text.language));
+        let run_line_break = line_break_for(run, text.language);
         if run_line_break != paragraph_line_break {
             builder.push(StyleProperty::LineBreak(run_line_break), text.bytes.clone());
         }
@@ -2710,8 +2775,18 @@ fn make_paragraph(
                 text.bytes.clone(),
             );
         }
-        if run.word_break != style.word_break {
-            builder.push(StyleProperty::WordBreak(run.word_break), text.bytes.clone());
+        let run_word_break = word_break_for(run);
+        if run_word_break != paragraph_word_break {
+            builder.push(StyleProperty::WordBreak(run_word_break), text.bytes.clone());
+        }
+        if run.inline_nowrap != style.inline_nowrap {
+            let mode = if run.inline_nowrap {
+                TextWrapMode::NoWrap
+            } else {
+                TextWrapMode::Wrap
+            };
+            builder.push(StyleProperty::TextWrapMode(mode), text.bytes.clone());
+            has_nowrap |= run.inline_nowrap;
         }
         if !settings.override_fonts && run.font_family != style.font_family {
             builder.push(
@@ -2745,6 +2820,9 @@ fn make_paragraph(
         builder.push_inline_box(image.clone());
     }
     let mut layout = builder.build(&block.text);
+    if has_nowrap {
+        layout.set_wrap_nowrap_on_overflow(true);
+    }
     if let Some(pair) = settings.percent_word_spacing {
         let preserved: Vec<_> = block
             .styled_text
@@ -5075,6 +5153,8 @@ mod publisher_padding_tests;
 
 #[cfg(test)]
 mod table_border_tests;
+#[cfg(test)]
+mod table_nowrap_tests;
 #[cfg(test)]
 mod vertical_padding_tests;
 
