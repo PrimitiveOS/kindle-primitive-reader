@@ -384,6 +384,7 @@ impl Reader {
                 Action::Show(Screen::MetadataSaveSettings),
             )
             .detail(current.metadata_save.label()),
+            self.live_metadata_item(),
             self.metadata_archive_item(),
         ];
         if self.active.is_some() {

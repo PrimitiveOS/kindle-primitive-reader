@@ -122,14 +122,14 @@ fn hash_custom_metadata(
     read_literal(&hash_root, &relative, custom_metadata::MAX_BYTES)
 }
 
-fn open_directory(path: &Path) -> io::Result<File> {
+pub(super) fn open_directory(path: &Path) -> io::Result<File> {
     OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
         .open(path)
 }
 
-fn descend(root: &File, relative: &Path) -> io::Result<File> {
+pub(super) fn descend(root: &File, relative: &Path) -> io::Result<File> {
     let device = root.metadata()?.dev();
     let mut folder = root.try_clone()?;
     for part in relative.components() {
@@ -163,7 +163,7 @@ fn read_literal(root: &File, relative: &Path, limit: usize) -> io::Result<Option
     })
 }
 
-fn read_stable<T>(
+pub(super) fn read_stable<T>(
     root: &File,
     relative: &Path,
     limit: u64,
@@ -229,7 +229,7 @@ fn same_entry(open: &Metadata, named: &libc::stat) -> bool {
         && open.len() == named.st_size as u64
 }
 
-fn open_at(folder: &File, name: &CStr, flags: i32) -> io::Result<File> {
+pub(super) fn open_at(folder: &File, name: &CStr, flags: i32) -> io::Result<File> {
     // The descriptor and its terminated child name live through the syscall.
     let fd = unsafe {
         libc::openat(
@@ -245,7 +245,7 @@ fn open_at(folder: &File, name: &CStr, flags: i32) -> io::Result<File> {
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 
-fn stat_at(folder: &File, name: &CStr) -> io::Result<libc::stat> {
+pub(super) fn stat_at(folder: &File, name: &CStr) -> io::Result<libc::stat> {
     let mut result = MaybeUninit::uninit();
     // fstatat initializes this stat on success and does not follow leaf symlinks.
     if unsafe {

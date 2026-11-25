@@ -68,6 +68,7 @@ mod illustration;
 mod library_export;
 mod library_view;
 mod link_taps;
+mod live_metadata;
 mod lookup_history;
 mod mark_chapters;
 mod menu_search;
@@ -219,6 +220,7 @@ enum Screen {
     ArchiveFolder,
     MetadataArchive(metadata_archive::Page),
     BookShortcuts(book_shortcuts::Page),
+    LiveMetadata(live_metadata::Page),
     BookmarkBrowser(bookmark_browser::Page),
     ReadingHistory(reading_history::Page),
     BookList,
@@ -401,6 +403,7 @@ impl Screen {
             Self::ArchiveFolder => "Archive folder",
             Self::MetadataArchive(page) => page.title(),
             Self::BookShortcuts(page) => page.title(),
+            Self::LiveMetadata(page) => page.title(),
             Self::BookmarkBrowser(page) => page.title(),
             Self::ReadingHistory(page) => page.title(),
             Self::BookList => "Books",
@@ -632,6 +635,7 @@ enum Action {
     BookArchive(book_archive::Command),
     MetadataArchive(metadata_archive::Command),
     BookShortcut(book_shortcuts::Command),
+    LiveMetadata(live_metadata::Command),
     BookmarkBrowser(bookmark_browser::Command),
     ReadingHistory(reading_history::Command),
     ToggleNonlinear,
@@ -961,6 +965,7 @@ pub struct Reader {
     archive: book_archive::Archive,
     metadata_archive: metadata_archive::State,
     book_shortcuts: book_shortcuts::State,
+    live_metadata: live_metadata::State,
     bookmark_browser: bookmark_browser::Browser,
     library_query: String,
     book_list: Option<BookList>,
@@ -1208,6 +1213,7 @@ impl Reader {
                 data.join("book-metadata-archive.json"),
             ),
             book_shortcuts: book_shortcuts::State::load(data.join("book-shortcuts.json")),
+            live_metadata: Default::default(),
             bookmark_browser: bookmark_browser::Browser::load(data.join("bookmark-browser.json")),
             library_query: String::new(),
             book_list: None,
@@ -1482,6 +1488,10 @@ impl Reader {
                 Ok((absolute, self.library.identify(&entry)?, None))
             }
         })?;
+        with_storage(|| {
+            self.library.recover_live_metadata(&entry, id);
+            Ok(())
+        })?;
         let unseen = self.library.state(id).is_none();
         if unseen && check_archive && password.is_none() && self.offer_archived_metadata(&entry, id)
         {
@@ -1677,6 +1687,7 @@ impl Reader {
             if let Some(fixed) = &self.fixed {
                 self.library.cache_author(id, fixed.entry.author.as_deref());
             }
+            self.library.request_live_metadata(id);
             return Ok(());
         }
         if unseen
@@ -1900,6 +1911,7 @@ impl Reader {
             self.library
                 .cache_author(active.id, active.reading.probe.author.as_deref());
         }
+        self.library.request_live_metadata(id);
         Ok(())
     }
 
@@ -2496,9 +2508,12 @@ impl Reader {
     }
 
     fn save_library_at(&mut self, now: Instant) -> io::Result<()> {
-        if self.dirty {
+        if self.dirty || self.library.live_metadata_pending() {
             self.library.persist()?;
             self.dirty = false;
+            if let Some(warning) = self.library.take_live_metadata_warning() {
+                self.notice = Some(warning);
+            }
         }
         self.save_at = None;
         self.metadata_checkpoint = metadata_save::Checkpoint::new(now);
@@ -3181,6 +3196,9 @@ impl Reader {
         if let Screen::BookShortcuts(page) = screen {
             return self.book_shortcut_items(page);
         }
+        if let Screen::LiveMetadata(page) = screen {
+            return self.live_metadata_items(page);
+        }
         if let Some(items) = self.organization_items() {
             return items;
         }
@@ -3254,6 +3272,7 @@ impl Reader {
         if screen == Screen::ReadingData {
             let mut items = vec![
                 self.metadata_archive_item(),
+                self.live_metadata_item(),
                 Item::new(
                     "Export highlights",
                     Action::LibraryExport(library_export::Command::Open),
@@ -4065,6 +4084,7 @@ impl Reader {
             Action::BookArchive(command) => self.archive_command(command)?,
             Action::MetadataArchive(command) => self.metadata_archive_command(command)?,
             Action::BookShortcut(command) => self.book_shortcut_command(command)?,
+            Action::LiveMetadata(command) => self.live_metadata_command(command)?,
             Action::CurrentBookFolder => self.current_book_folder()?,
             Action::OpenTracked(id) => {
                 let entry = self.locate_tracked(id)?;
@@ -4269,8 +4289,11 @@ impl Reader {
                 self.open_read_alarm();
             }
             Action::SaveBookData => {
+                self.notice = None;
                 self.save_library()?;
-                self.notice = Some("Reading data saved".into());
+                if self.notice.is_none() {
+                    self.notice = Some("Reading data saved".into());
+                }
             }
             Action::AutoTurn(interval) => {
                 if let Some(interval) = interval {
@@ -8600,6 +8623,9 @@ impl Reader {
                         Action::BookShortcut(book_shortcuts::Command::Recursive) => {
                             RowAccessory::Toggle(self.book_shortcuts.recursive())
                         }
+                        Action::LiveMetadata(live_metadata::Command::Select(_)) => {
+                            RowAccessory::None
+                        }
                         Action::AnnotationExchange(command) => self
                             .annotation_exchange
                             .toggle(*command)
@@ -9889,6 +9915,7 @@ impl App for Reader {
                     Screen::ArchiveFolder => self.show(Screen::BookArchive),
                     Screen::MetadataArchive(page) => self.back_from_metadata_archive(page),
                     Screen::BookShortcuts(page) => self.back_from_book_shortcuts(page),
+                    Screen::LiveMetadata(page) => self.back_from_live_metadata(page),
                     Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
                         self.book_list = Some(BookList::Authors);
                         self.show(Screen::BookList);

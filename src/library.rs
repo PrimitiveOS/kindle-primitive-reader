@@ -6,6 +6,8 @@ pub(crate) mod contents_depths;
 pub(crate) mod custom_contents;
 pub(crate) mod hidden_flows;
 #[cfg(feature = "kindle")]
+pub(crate) mod live_metadata;
+#[cfg(feature = "kindle")]
 pub(crate) mod metadata_archive;
 #[cfg(feature = "kindle")]
 mod nearby_custom_metadata;
@@ -1553,6 +1555,8 @@ pub struct Library {
     collections: Vec<Collection>,
     page_browser_grid: Option<PageBrowserGrid>,
     truncated: bool,
+    #[cfg(feature = "kindle")]
+    live_metadata: live_metadata::Store,
 }
 
 impl Library {
@@ -1577,6 +1581,8 @@ impl Library {
             return Err(denied());
         }
         let saved = load_library_state(state_path)?;
+        #[cfg(feature = "kindle")]
+        let live_metadata = live_metadata::Store::open(state_path, &saved.books);
         Ok(Self {
             root: original_root.canonicalize()?,
             original_root,
@@ -1586,6 +1592,8 @@ impl Library {
             page_browser_grid: saved.page_browser_grid,
             books: Vec::new(),
             truncated: false,
+            #[cfg(feature = "kindle")]
+            live_metadata,
         })
     }
 
@@ -2477,7 +2485,11 @@ impl Library {
 
     #[cfg(feature = "kindle")]
     pub fn persist(&self) -> io::Result<()> {
-        self.save_with(primitive_app::save)
+        primitive_app::with_storage(|| {
+            self.save_with(primitive_app::save)?;
+            self.live_metadata.checkpoint(self);
+            Ok(())
+        })
     }
 
     #[cfg(feature = "kindle")]
