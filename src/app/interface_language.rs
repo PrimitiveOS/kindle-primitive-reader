@@ -3707,6 +3707,7 @@ impl InterfaceLanguage {
             "Back" => "Quay lại",
             "Pages" => "Trang",
             "Reading page" => "Trang đang đọc",
+            "Reading time" => "Thời gian đọc",
             "Map focus" => "Vị trí đang chọn",
             "Hidden" => "Đã ẩn",
             "Includes hidden pages" => "Có trang bị ẩn",

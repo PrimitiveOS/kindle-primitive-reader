@@ -137,6 +137,30 @@ impl Reader {
         let window = self.map_window;
         let pages = window.pages(count);
         let sections = self.fixed_sections(fixed);
+        // Fixed-document visit keys are zero-based physical pages. Aggregate
+        // only the visible bounded slots, not unrelated or undated totals.
+        let mut slot_seconds = [0u64; CAPACITY];
+        if self.reading_history.options().enabled {
+            let span = window.slot_span(count);
+            for visit in self
+                .reading_history
+                .visits()
+                .iter()
+                .filter(|visit| visit.book == fixed.id)
+            {
+                let Ok(page) = usize::try_from(visit.page) else {
+                    continue;
+                };
+                if !pages.contains(&page) {
+                    continue;
+                }
+                let slot = (page - pages.start) / span;
+                if let Some(seconds) = slot_seconds.get_mut(slot) {
+                    *seconds = seconds.saturating_add(u64::from(visit.seconds));
+                }
+            }
+        }
+        let max_seconds = slot_seconds.iter().copied().max().unwrap_or(0);
         let mut summary = format!(
             "{} {}   ·   {} {}",
             language.book_map_text("Pages"),
@@ -150,6 +174,10 @@ impl Reader {
                 language.book_map_text("Map focus"),
                 focus + 1
             ));
+        }
+        if max_seconds > 0 {
+            summary.push_str("   ·   ");
+            summary.push_str(language.book_map_text("Reading time"));
         }
         canvas.text(layout.body(137, 65), &summary, CAPTION);
         for (index, slot) in window.slots(count).enumerate() {
@@ -264,6 +292,17 @@ impl Reader {
                     Rect::new(rect.right() - 116, rect.bottom() - 50, 104, 34),
                     language.book_map_text("Hidden"),
                     TextStyle::new(22).ink(ink),
+                );
+            }
+            let seconds = slot_seconds.get(index).copied().unwrap_or(0);
+            if max_seconds > 0 && seconds > 0 {
+                let max_height = (rect.h - 20).max(1);
+                let height =
+                    ((u128::from(seconds) * max_height as u128) / u128::from(max_seconds)) as i32;
+                let height = height.clamp(6.min(max_height), max_height);
+                canvas.fill(
+                    Rect::new(rect.right() - 12, rect.bottom() - 10 - height, 4, height),
+                    ink,
                 );
             }
         }

@@ -17,7 +17,7 @@ use crate::{Anchor, Engine, Probe, Settings, epub::Chapter, user_hyphenation, us
 
 /// The file and the ordered reading font stack, including fallbacks. EPUB
 /// publisher CSS and embedded fonts are members of the same archive.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ScreenPageSources {
     book: FileStamp,
     fonts: Vec<FileStamp>,
@@ -37,7 +37,7 @@ impl ScreenPageSources {
         Self::read_paths(&config.book, &config.fonts)
     }
 
-    fn read_paths(book: &Path, fonts: &[PathBuf]) -> Option<Self> {
+    pub(super) fn read_paths(book: &Path, fonts: &[PathBuf]) -> Option<Self> {
         Some(Self {
             book: FileStamp::read(book)?,
             fonts: fonts
@@ -48,7 +48,7 @@ impl ScreenPageSources {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FileStamp {
     len: u64,
     modified: SystemTime,

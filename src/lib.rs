@@ -1169,6 +1169,8 @@ chapter_probe! {
     pub(crate) flow_pages: Option<crate::library::hidden_flows::PageFlows>,
     #[cfg(feature = "kindle")]
     screen_page_sources: Option<session::screen_pages::ScreenPageSources>,
+    #[cfg(feature = "kindle")]
+    raw_layout_sources: Option<session::screen_pages::ScreenPageSources>,
     settings: Settings,
     spine_rtl: bool,
     #[cfg(feature = "kindle")]
@@ -1752,6 +1754,8 @@ impl Probe {
             flow_pages: None,
             #[cfg(feature = "kindle")]
             screen_page_sources: None,
+            #[cfg(feature = "kindle")]
+            raw_layout_sources: None,
             settings,
             #[cfg(feature = "kindle")]
             custom_hyphenation_allowed,

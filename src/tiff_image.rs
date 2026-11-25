@@ -13,6 +13,7 @@ const MAX_IFD_ENTRIES: usize = 128;
 const MAX_SIDE: u32 = 4096;
 const MAX_PIXELS: u32 = 8 * 1024 * 1024;
 const MAX_BYTES: usize = crate::comic::MAX_IMAGE_BYTES as usize;
+const MAX_REVERSED_COMPRESSED_STRIP: usize = 4 * 1024 * 1024;
 
 const SHORT: u16 = 3;
 const LONG: u16 = 4;
@@ -116,9 +117,6 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         || formats.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != 1))
         || !(fill_order == 1 || (bits < 8 && fill_order == 2))
         || !matches!(compression, 1 | 5 | 8 | 32946 | 32773)
-        // TIFF reserves reverse fill order for special-purpose bilevel data;
-        // the bit ordering of LZW streams is ambiguous in that combination.
-        || (fill_order == 2 && matches!(compression, 5 | 8 | 32946))
         || !matches!(orientation, 1..=8)
         || image.scalar(284, SHORT_ONLY, 1)? != 1 // PlanarConfiguration
         || !(predictor == 1 || (predictor == 2 && matches!(bits, 8 | 16) && matches!(compression, 5 | 8 | 32946)))
@@ -227,10 +225,25 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         let strip = &bytes[range];
         let rows = remaining_rows.min(rows_per_strip) as usize;
         remaining_rows -= rows as u32;
+        let reverse_compressed = fill_order == 2 && matches!(compression, 5 | 8 | 32946);
+        let reversed = if reverse_compressed {
+            if strip.len() > MAX_REVERSED_COMPRESSED_STRIP {
+                return Err(TiffError::Limit);
+            }
+            Some(
+                strip
+                    .iter()
+                    .map(|byte| byte.reverse_bits())
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
+        let compressed = reversed.as_deref().unwrap_or(strip);
         let mut unpacked = match compression {
-            32773 => Some(unpack_packbits(strip, row_bytes, rows)?),
-            5 => Some(unpack_lzw(strip, row_bytes, rows)?),
-            8 | 32946 => Some(unpack_deflate(strip, row_bytes, rows)?),
+            32773 => Some(unpack_packbits(compressed, row_bytes, rows)?),
+            5 => Some(unpack_lzw(compressed, row_bytes, rows)?),
+            8 | 32946 => Some(unpack_deflate(compressed, row_bytes, rows)?),
             _ => None,
         };
         if predictor == 2 {
@@ -264,6 +277,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
             }
         }
         let strip = unpacked.as_deref().unwrap_or(strip);
+        // Reversing the compressed stream already normalized its packed
+        // samples. Existing stored and PackBits fill-order handling is kept.
+        let sample_fill_order = if reverse_compressed { 1 } else { fill_order };
         if let Some(palette) = &palette_gray {
             if alpha.is_some() {
                 // The supported two-sample palette mode is always 8-bit with
@@ -277,7 +293,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
                 for row in strip.chunks_exact(row_bytes) {
                     for x in 0..width as usize {
                         let offset = x * bits as usize;
-                        let byte = if fill_order == 1 {
+                        let byte = if sample_fill_order == 1 {
                             row[offset / 8]
                         } else {
                             row[offset / 8].reverse_bits()
@@ -344,7 +360,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
             for row in strip.chunks_exact(row_bytes) {
                 for x in 0..width as usize {
                     let offset = x * bits as usize;
-                    let byte = if fill_order == 1 {
+                    let byte = if sample_fill_order == 1 {
                         row[offset / 8]
                     } else {
                         row[offset / 8].reverse_bits()
@@ -358,7 +374,11 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         } else {
             for row in strip.chunks_exact(row_bytes) {
                 for x in 0..width as usize {
-                    let bit = if fill_order == 1 { 7 - x % 8 } else { x % 8 };
+                    let bit = if sample_fill_order == 1 {
+                        7 - x % 8
+                    } else {
+                        x % 8
+                    };
                     let sample = (row[x / 8] >> bit) & 1;
                     pixels.push((sample * 255) ^ invert);
                 }

@@ -588,8 +588,12 @@ impl Reader {
                 base_stylesheet: active.reading.config.settings.base_stylesheet,
                 user_styles: active.reading.config.user_styles.clone(),
             },
-            raw_layout: crate::parley_layout::RAW_LAYOUT_ENABLED
-                .then(|| active.reading.config.search_layout_recipe()),
+            raw_layout: crate::parley_layout::RAW_LAYOUT_ENABLED.then(|| {
+                active
+                    .reading
+                    .config
+                    .search_layout_recipe(&active.reading.probe)
+            }),
         })
     }
 

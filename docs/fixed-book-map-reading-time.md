@@ -1,0 +1,7 @@
+# Fixed Book Map reading time
+
+When reading statistics are enabled, the fixed-document Book Map shows a narrow bar in each visible slot with recorded page visits. The bar height is relative to the longest recorded slot in the current map window; a slot covering several pages sums their recorded durations. The **Reading time** caption appears only when that window has recorded visits. The display does not change statistics, reading position, map targets, saved marks, or the reading footer.
+
+Only visits associated with a zero-based physical page of the currently open fixed document are included, whether or not a visit has a wall-clock date. Time imported without a page assignment is not placed on the map. The computation uses the existing bounded visit journal and at most 48 slot totals. Disabling statistics hides the bars. Because the scale is local to the visible window, bar heights should not be compared between map windows. Distinct current-session shading and reflow-book maps remain open.
+
+KOReader's pinned [Book Map statistics integration](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/bookmapwidget.lua#L825-L833) and [legend](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/bookmapwidget.lua#L1450-L1453) provide the reference. Reader's grouped-slot, window-relative display is not a claim of identical statistics scaling. This addition has not yet been tested in simulation or on Kindle.

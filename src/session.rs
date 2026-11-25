@@ -225,6 +225,8 @@ pub(crate) struct SearchLayoutRecipe {
     engine: Engine,
     book: std::path::PathBuf,
     fonts: Vec<std::path::PathBuf>,
+    foreground_sources: Option<screen_pages::ScreenPageSources>,
+    current_sources: Option<screen_pages::ScreenPageSources>,
     settings: Settings,
     scroll: bool,
     facing_pages: bool,
@@ -246,6 +248,15 @@ impl SearchLayoutRecipe {
             }
         };
         check()?;
+        let expected = self
+            .foreground_sources
+            .as_ref()
+            .ok_or("Raw search requires a verified foreground layout")?;
+        if self.current_sources.as_ref() != Some(expected) {
+            return Err(
+                "The book or reading fonts changed; reopen the book before searching".into(),
+            );
+        }
         let config = BookConfig {
             viewport: self.viewport,
             user_styles: self.user_styles.clone(),
@@ -265,11 +276,27 @@ impl SearchLayoutRecipe {
         };
         let probe = with_storage(|| {
             check().map_err(io::Error::other)?;
+            if screen_pages::ScreenPageSources::read_paths(&config.book, &config.fonts).as_ref()
+                != Some(expected)
+            {
+                return Err(io::Error::other(
+                    "The book or reading fonts changed before search",
+                ));
+            }
             let sources = screen_pages::ScreenPageSources::read(&config);
             let book = Book::open(&config.book).map_err(io::Error::other)?;
-            config
+            let probe = config
                 .layout_chapter_cancellable(book, index, sources, &check)
-                .map_err(io::Error::other)
+                .map_err(io::Error::other)?;
+            if probe.raw_layout_sources.as_ref() != Some(expected)
+                || screen_pages::ScreenPageSources::read_paths(&config.book, &config.fonts).as_ref()
+                    != Some(expected)
+            {
+                return Err(io::Error::other(
+                    "The book or reading fonts changed during search",
+                ));
+            }
+            Ok(probe)
         })?;
         check()?;
         Ok(probe)
@@ -292,7 +319,7 @@ impl FacingGeometry {
 }
 
 impl BookConfig {
-    pub(crate) fn search_layout_recipe(&self) -> SearchLayoutRecipe {
+    pub(crate) fn search_layout_recipe(&self, probe: &Probe) -> SearchLayoutRecipe {
         SearchLayoutRecipe {
             viewport: self.viewport,
             user_styles: self.user_styles.clone(),
@@ -300,6 +327,8 @@ impl BookConfig {
             engine: self.engine,
             book: self.book.clone(),
             fonts: self.fonts.clone(),
+            foreground_sources: probe.raw_layout_sources.clone(),
+            current_sources: screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts),
             settings: self.settings,
             scroll: self.scroll,
             facing_pages: self.facing_pages,
@@ -418,6 +447,9 @@ impl BookConfig {
         check_cancelled: &dyn Fn() -> Result<()>,
     ) -> Result<Probe> {
         check_cancelled()?;
+        let raw_sources = crate::parley_layout::RAW_LAYOUT_ENABLED
+            .then(|| screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts))
+            .flatten();
         let eligible = sources.is_some() && book.supports_screen_page_count();
         let quote_stamp = if self.engine == Engine::Parley {
             self.quote_prefixes.prepare(&self.book, &mut book)?
@@ -495,6 +527,11 @@ impl BookConfig {
             }
         }?;
         check_cancelled()?;
+        if raw_sources.is_some()
+            && raw_sources == screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts)
+        {
+            probe.raw_layout_sources = raw_sources;
+        }
         if let (Some(stamp), Some(book)) = (quote_stamp, opened.as_mut()) {
             self.quote_prefixes.save(&self.book, book, stamp)?;
         }

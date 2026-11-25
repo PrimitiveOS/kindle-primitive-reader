@@ -156,3 +156,11 @@ unsupported or unverifiable projection must continue to use the current
 layout. This provenance has not yet been built or behaviorally tested.
 
 [Pinned CRE whitespace formatting](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L2569-L2575)
+
+Raw-aware search additionally requires the foreground chapter and worker to
+observe the same book and ordered font-stack file stamps before and after
+shaping. A missing or changed stamp rejects that search; prepared layouts that
+have not supplied a verified stamp also fail closed. These stamps follow the
+existing single-writer/storage-lease model and are not cryptographic protection
+against arbitrary external file replacement. This path remains untested and the
+raw layout gate remains disabled.
