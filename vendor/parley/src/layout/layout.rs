@@ -207,6 +207,12 @@ impl<B: Brush> Layout<B> {
         self.data.wrap_nowrap_on_overflow = enabled;
     }
 
+    /// Keep simple raised or lowered text inside the existing root line box.
+    /// Ink extents are preserved; call before line breaking.
+    pub fn set_confine_shifted_text(&mut self, enabled: bool) {
+        self.data.confine_shifted_text = enabled;
+    }
+
     /// Returns line breaker to compute lines for the layout.
     pub fn break_lines(&mut self) -> BreakLines<'_, B> {
         self.data.punctuation_shifts.clear();

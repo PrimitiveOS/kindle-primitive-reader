@@ -5,6 +5,14 @@ use parley::Language;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, ops::Range};
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ArmenianPatterns {
+    #[default]
+    Missing,
+    Invalid,
+    Loaded(std::sync::Arc<crate::hyphenation::user_patterns::OwnedPatterns>),
+}
+
 const MAX_WORD_CHARS: usize = 96;
 // Allow a four-byte character and a source soft hyphen at every position.
 const MAX_SOURCE_WORD_BYTES: usize = 6 * MAX_WORD_CHARS;
@@ -13,6 +21,8 @@ const MAX_ENTRIES: usize = 4096;
 #[serde(default)]
 pub(crate) struct Rules {
     pub(crate) enabled: bool,
+    #[serde(skip)]
+    pub(crate) armenian: ArmenianPatterns,
     words: BTreeMap<String, BTreeMap<String, Vec<u16>>>,
 }
 pub(crate) fn locale(tag: &Language) -> &str {

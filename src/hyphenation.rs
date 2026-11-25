@@ -14,6 +14,7 @@ use parley::{Language, LineBreak, WordBreak};
 use serde::{Deserialize, Serialize};
 
 mod algorithmic;
+pub(crate) mod user_patterns;
 
 include!(concat!(env!("OUT_DIR"), "/hyphenation_patterns.rs"));
 const MAX_WORD: usize = 64;
@@ -39,6 +40,23 @@ struct Patterns {
     nodes: &'static [(u16, u8, u16, u8)],
     edges: &'static [(char, u16)],
     weights: &'static [u8],
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PatternView<'a> {
+    nodes: &'a [(u16, u8, u16, u8)],
+    edges: &'a [(char, u16)],
+    weights: &'a [u8],
+}
+
+impl Patterns {
+    fn view(&self) -> PatternView<'_> {
+        PatternView {
+            nodes: self.nodes,
+            edges: self.edges,
+            weights: self.weights,
+        }
+    }
 }
 
 // Separate wide tables avoid increasing every other dictionary's memory cost.
@@ -479,12 +497,33 @@ pub(crate) fn suggestion(
             word.char_indices()
                 .filter_map(|(i, c)| (c == '\u{ad}').then_some(i)),
         );
+    } else if is_armenian_language(crate::TypographyLocale::parse(language))
+        && word.len() <= MAX_WORD * 5
+        && let crate::user_hyphenation::ArmenianPatterns::Loaded(patterns) = &rules.armenian
+    {
+        pattern_breaks(
+            patterns.view(),
+            None,
+            word,
+            HyphenationLimits { left: 1, right: 2 },
+            false,
+            false,
+            |at| breaks.push(at),
+        );
     } else if let Some(locale) =
         dictionary(&Style::default(), crate::TypographyLocale::parse(language))
     {
         word_breaks(locale, word, |i| breaks.push(i));
     }
     crate::user_hyphenation::marked(word, &breaks)
+}
+
+pub(crate) fn is_armenian_language(locale: Option<crate::TypographyLocale>) -> bool {
+    let Some(crate::TypographyLocale::Language(language)) = locale else {
+        return false;
+    };
+    matches!(language.language(), "hy" | "hye" | "arm" | "hyw")
+        && matches!(language.script(), None | Some("Armn"))
 }
 
 pub(crate) fn allows_user_rules(style: &Style) -> bool {
@@ -515,6 +554,57 @@ pub(crate) fn with_user_rules_text(
         custom_words: Vec::new(),
         matching_soft_hyphens: Vec::new(),
     };
+    if settings.automatic_hyphenation
+        && !settings.algorithmic_hyphenation
+        && !settings.disable_soft_hyphens
+        && let crate::user_hyphenation::ArmenianPatterns::Loaded(patterns) = &rules.armenian
+    {
+        for range in crate::selection::word_ranges(text) {
+            if range.len() > MAX_WORD * 5 {
+                continue;
+            }
+            let first = styled.partition_point(|span| span.bytes.end <= range.start);
+            let mut covered = range.start;
+            let mut valid = true;
+            for span in styled[first..]
+                .iter()
+                .take_while(|span| span.bytes.start < range.end)
+            {
+                if span.bytes.start > covered
+                    || !allows_user_rules(&styles[span.element])
+                    || !is_armenian_language(span.hyphenation_language)
+                {
+                    valid = false;
+                    break;
+                }
+                covered = covered.max(span.bytes.end.min(range.end));
+            }
+            if !valid || covered != range.end {
+                continue;
+            }
+            let mut offset = 0;
+            let limits = settings
+                .hyphenation_limits
+                .unwrap_or(HyphenationLimits { left: 1, right: 2 });
+            if !limits.valid() {
+                continue;
+            }
+            for part in text[range.clone()].split_inclusive(['\'', '\u{2019}']) {
+                let word = part.trim_end_matches(['\'', '\u{2019}']);
+                pattern_breaks(patterns.view(), None, word, limits, false, false, |at| {
+                    if result.breaks.len() < MAX_BREAKS {
+                        result.breaks.push(range.start + offset + at);
+                    }
+                });
+                offset += part.len();
+            }
+            if result.breaks.len() == MAX_BREAKS {
+                break;
+            }
+        }
+        result.breaks.sort_unstable();
+        result.breaks.dedup();
+    }
     if !rules.has_rules() || settings.disable_soft_hyphens {
         return result;
     }
@@ -609,14 +699,30 @@ fn word_breaks_with_limits(
             .chars()
             .all(|ch| ch.is_ascii_alphabetic() || ch == '\u{ad}')
         {
-            pattern_breaks(patterns, additional, word, limits, false, false, emit);
+            pattern_breaks(
+                patterns.view(),
+                additional.map(Patterns::view),
+                word,
+                limits,
+                false,
+                false,
+                emit,
+            );
         }
         return;
     }
     // Ukrainian patterns include the apostrophe as an internal letter-like
     // character; normalize the typographic spelling without changing offsets.
     if locale == Dictionary::Ukrainian {
-        pattern_breaks(patterns, additional, word, limits, true, false, emit);
+        pattern_breaks(
+            patterns.view(),
+            additional.map(Patterns::view),
+            word,
+            limits,
+            true,
+            false,
+            emit,
+        );
         return;
     }
     // CRE's dictionary lookup uses alphabetic runs, while ICU may keep
@@ -647,8 +753,8 @@ fn word_breaks_with_limits(
             );
         } else {
             pattern_breaks(
-                patterns,
-                additional,
+                patterns.view(),
+                additional.map(Patterns::view),
                 text,
                 limits,
                 false,
@@ -833,8 +939,8 @@ fn decomposed_pattern_breaks(
 }
 
 fn pattern_breaks(
-    patterns: &Patterns,
-    additional: Option<&Patterns>,
+    patterns: PatternView<'_>,
+    additional: Option<PatternView<'_>>,
     word: &str,
     limits: HyphenationLimits,
     apostrophes: bool,

@@ -434,6 +434,20 @@ impl LineBoxMetrics {
         subtrees: &mut SubtreeHistory,
     ) {
         self.last_text = (item_idx, style_index);
+        // Confine only simple baseline-shifted text on the root subtree.
+        // Retain content extents for painting and clipping. Mixed atoms and
+        // line-relative subtrees use the original sizing behavior.
+        let confined = data.confine_shifted_text
+            && !data.runs[run_idx].has_mixed_style_atoms
+            && self.root.line_box.over.is_finite()
+            && self.root.line_box.under.is_finite()
+            && self.root.line_box.height() > 0.0
+            && data.style_metrics.get(usize::from(style_index)).is_some_and(|metrics| {
+                metrics.parent == 0
+                    && metrics.aligned_subtree_root == 0
+                    && metrics.baseline_offset != 0.0
+            });
+        let previous_line_box = confined.then_some(self.root.line_box);
         if contributed.last() != Some(&style_index) {
             self.add_style(style_index, &data.style_metrics, contributed, subtrees);
         }
@@ -456,6 +470,9 @@ impl LineBoxMetrics {
             .run_box
             .or_else(|| run_box_metrics(&data.styles[style], shaped_run, data.quantize))
         else {
+            if let Some(previous) = previous_line_box {
+                self.root.line_box = previous;
+            }
             return;
         };
         let (baseline_offset, aligned_subtree_root) = data
@@ -463,6 +480,9 @@ impl LineBoxMetrics {
             .get(style)
             .map_or((0., 0), |m| (m.baseline_offset, m.aligned_subtree_root));
         self.add_box(aligned_subtree_root, baseline_offset, run_box, subtrees);
+        if let Some(previous) = previous_line_box {
+            self.root.line_box = previous;
+        }
     }
 
     /// Add an inline box extending `ascent` above and `descent` below a baseline that is

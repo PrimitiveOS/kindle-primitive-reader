@@ -113,6 +113,7 @@ pub(crate) struct LayoutTweaks {
     pub(crate) disable_first_letter: bool,
     pub(crate) disable_first_line: bool,
     pub(crate) normal_line_height_percent: Option<u8>,
+    pub(crate) steady_line_heights: bool,
 }
 
 #[repr(u8)]
@@ -251,6 +252,9 @@ impl Snapshot {
             digest.consume(b"\0normal-line-height");
             digest.consume([percent]);
         }
+        if layout.steady_line_heights {
+            digest.consume(b"\0steady-line-heights");
+        }
         Ok(Self {
             css: css.into(),
             digest: digest.finalize().0,
@@ -354,6 +358,7 @@ pub(crate) enum Effect {
     DisableFirstLetter,
     DisableFirstLine,
     NormalLineHeight(u8),
+    SteadyLineHeights,
     InPageEpubFootnotes,
     FullWidthImages,
     InPageClassicFootnotes,
@@ -980,6 +985,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("body,p,li,div,blockquote {font-size:1rem !important;}"),
     },
     Preset {
+        id: "lineheight_all_normal_strut_confined",
+        title: "Enforce steady line heights",
+        group: "steady-line-heights",
+        priority: 0,
+        effect: Effect::SteadyLineHeights,
+    },
+    Preset {
         id: "lineheight_all_inherit",
         title: "Ignore publisher line heights",
         group: "publisher-line-height",
@@ -1232,6 +1244,7 @@ impl Data {
                 Effect::NormalLineHeight(percent) => {
                     layout.normal_line_height_percent = Some(percent)
                 }
+                Effect::SteadyLineHeights => layout.steady_line_heights = true,
                 Effect::InPageEpubFootnotes => {
                     notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
                     notes.explicit_epub = true;

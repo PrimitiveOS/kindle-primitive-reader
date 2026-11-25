@@ -34,6 +34,18 @@ Blitz rendering remain outside this subset. Saved source anchors do not
 change. This addition has not yet been built or behaviorally tested.
 [Pinned KOReader choices](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L486-L505)
 
+**Enforce steady line heights** provides a bounded subset of KOReader's
+strut-confined setting. On ordinary horizontal paragraphs, simple directly
+shifted text such as a subscript or superscript does not enlarge the existing
+line box, while its real ink bounds remain available for painting and page
+layout. Complex mixed-style atoms, deeper style subtrees, first-line styling,
+initial letters, generated content, ruby and images retain ordinary sizing.
+Tightly spaced text can overlap neighboring lines; the existing emergency
+layout fallback remains in effect for unreadable page-height overlaps. This
+is an opt-in presentation setting and does not alter source text or saved
+anchors. Simulator, Kindle and KOReader comparisons have not yet been run.
+[Pinned KOReader setting](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L466-L476)
+
 **Document direction RTL** and **Document direction LTR** are mutually
 exclusive overrides on the document body. They are intended for books with
 missing or incorrect base direction, while supported block descendants with
@@ -129,11 +141,14 @@ and Kindle behavior have not yet been verified. [Pinned ruby tweaks](https://git
 
 An annotation wider than its base may extend into the neighboring annotation
 space when it fits inside the reading column. Reader avoids overlapping two
-painted ruby annotations on the same line; a later conflicting annotation,
-one wider than the column, or one without sufficient vertical clearance is
-omitted. This bounded layout does not widen or reflow the base to fit the
+painted ruby annotations on the same line; when their centered positions
+collide, it looks for the nearest free position whose center remains over its
+own base. An annotation with no such position, one wider than the column, or
+one without sufficient vertical clearance is omitted. This bounded layout does
+not widen or reflow the base to fit the
 annotation. Complex ruby arrangements remain outside the supported subset.
 These changes have not yet been built or behaviorally tested.
+[CREngine ruby boxing](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvtinydom.cpp#L8236-L8268)
 
 **Allow hyphenation on all text** overrides publisher hyphenation restrictions
 and excludes heading elements, using KOReader's selectors. Automatic

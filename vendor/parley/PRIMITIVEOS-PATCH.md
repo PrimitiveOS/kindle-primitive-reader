@@ -91,3 +91,8 @@ layout text. See `../parley_engine/PRIMITIVEOS-PATCH.md`.
 The ranged builder also forwards bounded source-byte boundaries for opt-in,
 conservative relaxation of selected non-breaking characters. No source text
 or text-selection coordinate is changed.
+
+Reader can opt into confining simple baseline-shifted text to the previously
+established root line box. The line breaker retains the true ink extents;
+mixed atoms and non-root or line-relative style subtrees keep normal sizing.
+Inline boxes remain governed by their existing geometry.

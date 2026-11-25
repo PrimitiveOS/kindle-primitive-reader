@@ -379,3 +379,26 @@ character, are skipped. MPL distribution obligations, device memory use,
 compiled-rule comparison, and real-document behavior remain open; this change
 has not been built or tested on the computer or Kindle.
 [Hungarian terms](licenses/HYPHENATION-HU.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+
+### Optional Armenian patterns
+
+Reader does not include Armenian hyphenation pattern data. If you have a
+permitted `hyph-hy.tex` file, create `reader/data/hyphenation/`, copy it there
+as `hyph-hy.tex`, and close and reopen Reader. In an Armenian book, Text ›
+Hyphenation reports whether the pattern file was loaded, missing or invalid.
+Missing or invalid patterns leave Armenian automatic hyphenation unavailable;
+the book remains readable, and existing user hyphenation rules remain separate.
+The file is read locally as inert data; Reader neither downloads nor executes it.
+
+The loader accepts one `\patterns{...}` group, `%` comments, Armenian
+lowercase pattern letters, ASCII digits and optional word-edge dots. It rejects
+other TeX commands, malformed groups, symlinked files or directories, files
+over 256 KiB, more than 4,096 rules and tries above 8,192 nodes. It uses
+KOReader's Armenian default 1 / 2 minima and emits breaks at original UTF-8
+grapheme boundaries; automatic behavior and real-book comparisons remain
+unverified. Restart Reader after replacing the file. The original
+[upstream Armenian patterns](https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-hy.tex)
+identify LGPL terms. Obtaining or redistributing that optional file has its own
+licensing obligations; separating it from Reader does not establish legal
+compliance. License and distribution review remains open.

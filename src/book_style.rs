@@ -361,6 +361,7 @@ pub(crate) struct Style {
     pub(crate) direction: parley::BaseDirection,
     pub line_height: Option<f32>,
     pub(crate) normal_line_height_percent: Option<u8>,
+    pub(crate) steady_line_heights: bool,
     pub text_indent: TextIndent,
     pub padding: [CssLength; 2],
     pub vertical_padding: [CssLength; 2],
@@ -429,6 +430,7 @@ impl Default for Style {
             direction: parley::BaseDirection::Auto,
             line_height: None,
             normal_line_height_percent: None,
+            steady_line_heights: false,
             text_indent: TextIndent::default(),
             padding: Default::default(),
             vertical_padding: Default::default(),
@@ -824,6 +826,7 @@ impl BookStyle {
         };
         let defaults = Style {
             normal_line_height_percent: self.layout_tweaks.normal_line_height_percent,
+            steady_line_heights: self.layout_tweaks.steady_line_heights,
             font_weights: self.font_weights.clone(),
             cjk_tailored: self.layout_tweaks.cjk_tailored,
             ignore_table_hints: !self.author_inline || self.layout_tweaks.ignore_table_hints,

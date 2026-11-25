@@ -152,6 +152,12 @@ for supported native tables are implemented in the latest candidate, alongside
 more Vietnamese reading controls. The Mac build-only check passes; functional,
 visual and device comparisons remain deferred.
 
+The current candidate also implements an optional local Armenian pattern
+loader, a bounded steady-line-height option and improved ruby placement. The
+Mac build-only check passes; Armenian data is not bundled, and its separate
+license review, malformed-input behavior, visual fit and device checks remain
+open.
+
 Georgian patterns, a bounded loose-line-break option and Vietnamese library
 Find/Sort controls have been implemented and pass a Mac build-only check.
 Full line-break parity, script behavior and visual/device checks remain open.

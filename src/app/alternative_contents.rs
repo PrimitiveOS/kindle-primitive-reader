@@ -128,6 +128,7 @@ impl Reader {
     }
 
     pub(super) fn draw_alternative_contents_confirmation(&self, canvas: &mut Canvas) {
+        let language = self.controls.interface_language;
         let Some(enable) = self.alternative_contents.confirm else {
             return;
         };
@@ -136,26 +137,28 @@ impl Reader {
         canvas.popup(at(PANEL));
         canvas.text(
             at(Rect::new(218, 668, 824, 86)),
-            if enable {
+            language.contents_text(if enable {
                 "Use document headings?"
             } else {
                 "Restore publisher contents?"
-            },
+            }),
             TextStyle::new(46).bold(),
         );
         canvas.text(
             at(Rect::new(218, 776, 824, 88)),
-            self.notice.as_deref().unwrap_or(if enable {
-                "Build the table of contents from this book's headings."
-            } else {
-                "Switch back to the table of contents supplied with this book."
+            self.notice.as_deref().unwrap_or_else(|| {
+                language.contents_text(if enable {
+                    "Build the table of contents from this book's headings."
+                } else {
+                    "Switch back to the table of contents supplied with this book."
+                })
             }),
             CAPTION.lines(2),
         );
-        canvas.button(at(CANCEL), "Cancel", false, false);
+        canvas.button(at(CANCEL), language.contents_text("Cancel"), false, false);
         canvas.button(
             at(APPLY),
-            if enable { "Use headings" } else { "Restore" },
+            language.contents_text(if enable { "Use headings" } else { "Restore" }),
             true,
             false,
         );

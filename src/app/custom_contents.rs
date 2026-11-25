@@ -80,6 +80,7 @@ impl Reader {
             return Vec::new();
         };
         let chapters = &state.custom_contents;
+        let language = self.controls.interface_language;
         if self.screen == Screen::CustomBookmarks {
             return state
                 .bookmarks
@@ -126,6 +127,14 @@ impl Reader {
                 Action::Show(Screen::CustomContents),
             ));
         }
+        // Only built-in controls have been added so far. Bookmark and custom
+        // chapter names below are user content and must remain verbatim.
+        for item in &mut items {
+            item.title = language.contents_text(&item.title).to_owned();
+            if let Some(detail) = &mut item.detail {
+                *detail = language.contents_text(detail).to_owned();
+            }
+        }
         for (i, entry) in chapters.entries().iter().enumerate() {
             let target = if self.screen == Screen::CustomEdits {
                 CustomAction::Edit(i)
@@ -133,9 +142,17 @@ impl Reader {
                 CustomAction::Open(i)
             };
             let detail = if self.fixed.is_some() {
-                format!("Page {}", entry.position.page.saturating_add(1))
+                format!(
+                    "{} {}",
+                    language.contents_text("Page"),
+                    entry.position.page.saturating_add(1)
+                )
             } else {
-                format!("Chapter {}", entry.position.chapter.saturating_add(1))
+                format!(
+                    "{} {}",
+                    language.contents_text("Chapter"),
+                    entry.position.chapter.saturating_add(1)
+                )
             };
             items.push(Item::new(&entry.label, Action::Custom(target)).detail(detail));
         }
@@ -321,29 +338,38 @@ impl Reader {
             return;
         };
         let layout = self.navigation_layout();
+        let language = self.controls.interface_language;
         layout.header_action(
             canvas,
-            if draft.editing {
+            language.contents_text(if draft.editing {
                 "Edit chapter"
             } else {
                 "Add chapter"
-            },
-            "Cancel",
+            }),
+            language.contents_text("Cancel"),
         );
         canvas.single_line_field(
             layout.body(LIST_Y, 130),
             &self.editor,
-            "Chapter title",
+            language.contents_text("Chapter title"),
             false,
         );
-        canvas.keyboard(self.editor.layer, "Save", None);
+        canvas.keyboard(self.editor.layer, language.contents_text("Save"), None);
         if draft.editing {
-            canvas.button(REMOVE, "Remove chapter", false, false);
+            canvas.button(
+                REMOVE,
+                language.contents_text("Remove chapter"),
+                false,
+                false,
+            );
         }
-        let page = draft
-            .overview
-            .as_ref()
-            .map(|_| format!("Starts on page {}", draft.position.page + 1));
+        let page = draft.overview.as_ref().map(|_| {
+            format!(
+                "{} {}",
+                language.contents_text("Starts on page"),
+                draft.position.page + 1
+            )
+        });
         if let Some(notice) = self.notice.as_deref().or(page.as_deref()) {
             canvas.text(layout.body(LIST_Y + 145, 82), notice, CAPTION);
         }
@@ -352,21 +378,32 @@ impl Reader {
             canvas.popup(panel);
             canvas.text(
                 Rect::new(panel.x + 40, panel.y + 36, panel.w - 80, 90),
-                "Remove this chapter?",
+                language.contents_text("Remove this chapter?"),
                 primitive_ui::TextStyle::new(50).bold(),
             );
             canvas.text(
                 Rect::new(panel.x + 40, panel.y + 132, panel.w - 80, 80),
-                "You can add this location again from Contents.",
+                language.contents_text("You can add this location again from Contents."),
                 BODY,
             );
-            canvas.button(layout.centered(CANCEL), "Cancel", false, false);
-            canvas.button(layout.centered(DELETE), "Remove", true, false);
+            canvas.button(
+                layout.centered(CANCEL),
+                language.contents_text("Cancel"),
+                false,
+                false,
+            );
+            canvas.button(
+                layout.centered(DELETE),
+                language.contents_text("Remove"),
+                true,
+                false,
+            );
         }
     }
 
     pub(super) fn chapter_editor_input(&mut self, input: Input) -> Change {
         let layout = self.navigation_layout();
+        let language = self.controls.interface_language;
         let Some(draft) = &mut self.chapter_draft else {
             return Change::None;
         };
@@ -398,7 +435,13 @@ impl Reader {
             draft.confirm_remove = true;
             return Change::Partial;
         }
-        let Some(key) = keyboard_key(&layout.keyboard(), &self.editor, "Save", x, y) else {
+        let Some(key) = keyboard_key(
+            &layout.keyboard(),
+            &self.editor,
+            language.contents_text("Save"),
+            x,
+            y,
+        ) else {
             return Change::None;
         };
         if matches!(self.editor.press(key), Press::Go)

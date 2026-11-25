@@ -385,6 +385,72 @@ struct RubyCandidate {
     painted: bool,
 }
 
+/// Find the nearest non-overlapping placement that remains in the column.
+/// If shifting is needed, the annotation's center must stay over its base.
+fn ruby_position(
+    base: BoundingBox,
+    annotation_width: f32,
+    column_width: f32,
+    line: usize,
+    painted: bool,
+    overlays: &[RubyOverlay],
+) -> Option<f32> {
+    let (left, right) = (base.x0 as f32, base.x1 as f32);
+    if !left.is_finite()
+        || !right.is_finite()
+        || !annotation_width.is_finite()
+        || annotation_width < 0.0
+        || annotation_width > column_width
+        || right <= left
+    {
+        return None;
+    }
+    let preferred =
+        ((left + right - annotation_width) * 0.5).clamp(0.0, column_width - annotation_width);
+    if !painted {
+        return Some(preferred);
+    }
+    let mut occupied: Vec<_> = overlays
+        .iter()
+        .filter(|other| other.painted && other.line == line)
+        .map(|other| (other.x, other.x + other.layout.width()))
+        .collect();
+    if occupied
+        .iter()
+        .all(|&(start, end)| preferred >= end + 1.0 || preferred + annotation_width + 1.0 <= start)
+    {
+        return Some(preferred);
+    }
+    occupied.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let minimum = (left - annotation_width * 0.5).max(0.0);
+    let maximum = (right - annotation_width * 0.5).min(column_width - annotation_width);
+    if minimum > maximum {
+        return None;
+    }
+    let mut cursor = minimum;
+    let mut best: Option<f32> = None;
+    for (start, end) in occupied {
+        let upper = maximum.min(start - annotation_width - 1.0);
+        if cursor <= upper {
+            let x = preferred.clamp(cursor, upper);
+            if best.is_none_or(|old| (x - preferred).abs() < (old - preferred).abs()) {
+                best = Some(x);
+            }
+        }
+        cursor = cursor.max(end + 1.0);
+        if cursor > maximum {
+            break;
+        }
+    }
+    if cursor <= maximum {
+        let x = preferred.clamp(cursor, maximum);
+        if best.is_none_or(|old| (x - preferred).abs() < (old - preferred).abs()) {
+            best = Some(x);
+        }
+    }
+    best
+}
+
 struct Illustration {
     block: usize,
     source_index: usize,
@@ -2799,18 +2865,16 @@ fn layout_with_images(
         if top < metrics.block_min_coord || annotation_width > width as f32 {
             continue;
         }
-        let x = (base.x0 as f32 + (base.width() as f32 - annotation_width) * 0.5)
-            .clamp(0.0, width as f32 - annotation_width);
-        if candidate.painted
-            && overlays.iter().any(|other| {
-                other.painted
-                    && other.line == index
-                    && x < other.x + other.layout.width() + 1.0
-                    && other.x < x + annotation_width + 1.0
-            })
-        {
+        let Some(x) = ruby_position(
+            base,
+            annotation_width,
+            width as f32,
+            index,
+            candidate.painted,
+            &overlays,
+        ) else {
             continue;
-        }
+        };
         overlays.push(RubyOverlay {
             line: index,
             x,
@@ -3514,6 +3578,18 @@ fn shape_paragraph(
         builder.push_inline_box(image.clone());
     }
     let mut layout = builder.build(&block.text);
+    if style.steady_line_heights
+        && !fit_font_metrics
+        && images.is_empty()
+        && block.images.is_empty()
+        && ruby.is_empty()
+        && block.ruby.is_empty()
+        && block.generated.is_empty()
+        && block.first_letter.is_none()
+        && style.first_line.is_none()
+    {
+        layout.set_confine_shifted_text(true);
+    }
     if has_nowrap {
         layout.set_wrap_nowrap_on_overflow(true);
     }

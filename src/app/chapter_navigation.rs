@@ -79,13 +79,12 @@ impl Reader {
             }
             return Ok(());
         }
-        self.notice = Some(
+        self.notice = Some(self.controls.interface_language.chapter_navigation_text(
             match direction {
                 Direction::Previous => "No previous chapter",
                 Direction::Next => "No next chapter",
-            }
-            .into(),
-        );
+            },
+        ));
         Ok(())
     }
 
@@ -97,11 +96,18 @@ impl Reader {
             return Vec::new();
         };
         let levels = &state.contents_depths;
+        let language = self.controls.interface_language;
         let counts = self.chapter_level_counts(book);
         if counts.is_empty() {
             return vec![
-                Item::new("No chapter levels", Action::Heading)
-                    .detail("The active Contents has no chapter destinations"),
+                Item::new(
+                    language.chapter_navigation_text("No chapter levels"),
+                    Action::Heading,
+                )
+                .detail(
+                    language
+                        .chapter_navigation_text("The active Contents has no chapter destinations"),
+                ),
             ];
         }
         let mut rows = vec![
@@ -162,6 +168,13 @@ impl Reader {
                     "Turn off a level to enable this option"
                 }),
             );
+        }
+        // These rows contain only built-in settings labels and generated counts.
+        for row in &mut rows {
+            row.title = language.chapter_navigation_text(&row.title);
+            if let Some(detail) = &mut row.detail {
+                *detail = language.chapter_navigation_text(detail);
+            }
         }
         rows
     }

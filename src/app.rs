@@ -1250,9 +1250,10 @@ impl Reader {
         let dictionary_settings = SourcePreferences::load(&dictionary_preference);
         let ocr_assets = with_storage(|| Ok(data.parent().and_then(OcrAssets::discover)))?;
         let user_hyphenation_path = data.join("user-hyphenation.json");
-        let user_hyphenation = user_hyphenation::load(&user_hyphenation_path)
-            .unwrap_or_default()
-            .into();
+        let mut user_hyphenation =
+            user_hyphenation::load(&user_hyphenation_path).unwrap_or_default();
+        user_hyphenation.armenian = user_hyphenation::load_armenian(data);
+        let user_hyphenation = user_hyphenation.into();
         Ok(Self {
             user_hyphenation,
             user_hyphenation_path,
@@ -3612,16 +3613,23 @@ impl Reader {
             ];
         }
         if screen == Screen::Annotation {
+            let language = self.controls.interface_language;
             let passage = if self.fixed.is_some() {
                 Action::PdfHighlight(self.highlight_index)
             } else {
                 Action::Highlight(self.highlight_index)
             };
             let mut items = vec![
-                Item::new("Read passage", passage),
-                Item::new("Extend highlight", Action::ExtendHighlight),
-                Item::new("Edit note", Action::EditNote),
-                Item::new("Remove highlight", Action::Show(Screen::RemoveHighlight)),
+                Item::new(language.annotation_text("Read passage"), passage),
+                Item::new(
+                    language.annotation_text("Extend highlight"),
+                    Action::ExtendHighlight,
+                ),
+                Item::new(language.annotation_text("Edit note"), Action::EditNote),
+                Item::new(
+                    language.annotation_text("Remove highlight"),
+                    Action::Show(Screen::RemoveHighlight),
+                ),
             ];
             if let Some(state) = self.open_book_id().and_then(|id| self.library.state(id)) {
                 let chapter_title = if self.fixed.is_some() {
@@ -3636,15 +3644,25 @@ impl Reader {
                         .and_then(|mark| mark.chapter_title.as_deref())
                 };
                 if let Some(title) = chapter_title {
-                    items.push(Item::new("Chapter", Action::Heading).detail(title));
+                    items.push(
+                        Item::new(language.annotation_text("Chapter"), Action::Heading)
+                            .detail(title),
+                    );
                 }
             }
             return items;
         }
         if screen == Screen::RemoveHighlight {
+            let language = self.controls.interface_language;
             return vec![
-                Item::new("Remove highlight and note", Action::RemoveHighlight),
-                Item::new("Keep highlight", Action::Show(Screen::Annotation)),
+                Item::new(
+                    language.annotation_text("Remove highlight and note"),
+                    Action::RemoveHighlight,
+                ),
+                Item::new(
+                    language.annotation_text("Keep highlight"),
+                    Action::Show(Screen::Annotation),
+                ),
             ];
         }
         if let Some(fixed) = &self.fixed {
@@ -4064,22 +4082,30 @@ impl Reader {
                         .count()
                 });
                 Item::new(&chapter.label, Action::BookMapChapter(index)).detail({
-                    let detail = map_detail(index == reading.chapter, marks, highlights);
+                    let detail = map_detail(
+                        index == reading.chapter,
+                        marks,
+                        highlights,
+                        self.controls.interface_language,
+                    );
                     let detail = if self.ribbon_map_target()
                         == Some(page_overview::RibbonMapTarget::Chapter(index))
                     {
-                        format!("Map focus · {detail}")
+                        format!(
+                            "{} · {detail}",
+                            self.controls.interface_language.book_map_text("Map focus")
+                        )
                     } else {
                         detail
                     };
                     reading.hidden_chapter(index).map_or(detail.clone(), |all| {
                         format!(
                             "{} · {detail}",
-                            if all {
+                            self.controls.interface_language.book_map_text(if all {
                                 "Hidden"
                             } else {
                                 "Includes hidden pages"
-                            }
+                            })
                         )
                     })
                 })
@@ -6207,7 +6233,7 @@ impl Reader {
             Screen::MenuSearch => "Search",
             Screen::LibraryFind => self.controls.interface_language.library_view_text("Find"),
             Screen::BookmarkFind => self.controls.interface_language.bookmark_text("Find"),
-            _ if note => "Save",
+            _ if note => self.controls.interface_language.annotation_text("Save"),
             Screen::Find => self
                 .controls
                 .interface_language
@@ -8674,6 +8700,10 @@ impl Reader {
                 .controls
                 .interface_language
                 .contents_text("Search contents"),
+            (Screen::ChapterNavigation, _) => self
+                .controls
+                .interface_language
+                .chapter_navigation_fixed("Chapter navigation"),
             (Screen::BookMap, _) => self.controls.interface_language.book_map_text("Book map"),
             (Screen::PageOverview, _) => self.controls.interface_language.overview_text("Pages"),
             (Screen::BookmarkBrowser(page), _) => {
@@ -8712,6 +8742,19 @@ impl Reader {
                 .interface_language
                 .search_settings_text("Search settings"),
 
+            (Screen::Annotation, _) => self
+                .controls
+                .interface_language
+                .annotation_text("Highlight"),
+            (Screen::RemoveHighlight, _) => self
+                .controls
+                .interface_language
+                .annotation_text("Remove highlight?"),
+            (Screen::Note, _) => self.controls.interface_language.annotation_text("Add note"),
+            (Screen::EditNote, _) => self
+                .controls
+                .interface_language
+                .annotation_text("Edit note"),
             (Screen::BookList, Some(BookList::Favorites)) => "Favorites",
             (Screen::BookList, Some(BookList::Recent)) => "Recently read",
             (Screen::BookList, Some(BookList::Authors)) => "Authors",
@@ -8755,10 +8798,19 @@ impl Reader {
             self.controls.interface_language.bookmark_text("Back")
         } else if matches!(self.screen, Screen::LibraryFind | Screen::FolderOrder) {
             self.controls.interface_language.library_view_text("Back")
+        } else if self.screen == Screen::ChapterNavigation {
+            self.controls
+                .interface_language
+                .chapter_navigation_fixed("Back")
         } else if self.screen == Screen::BookMap {
             self.controls.interface_language.book_map_text("Back")
         } else if self.screen == Screen::PageOverview {
             self.controls.interface_language.overview_text("Back")
+        } else if matches!(
+            self.screen,
+            Screen::Annotation | Screen::RemoveHighlight | Screen::Note | Screen::EditNote
+        ) {
+            self.controls.interface_language.annotation_text("Back")
         } else if self.screen == Screen::DictionaryEntry {
             self.controls
                 .interface_language
@@ -8852,7 +8904,12 @@ impl Reader {
                 | Screen::PdfPassword
         ) {
             let (hint, action) = match self.screen {
-                Screen::Note | Screen::EditNote => ("Note text", "Save"),
+                Screen::Note | Screen::EditNote => (
+                    self.controls
+                        .interface_language
+                        .annotation_text("Note text"),
+                    self.controls.interface_language.annotation_text("Save"),
+                ),
                 Screen::LibraryFind => (
                     self.controls
                         .interface_language
@@ -9374,6 +9431,7 @@ impl Reader {
                     "Building the outline"
                 }
                 Screen::GeneratedContents => "No readable chapters found",
+                Screen::BookMap => self.controls.interface_language.book_map_text("No entries"),
                 _ => "No entries",
             };
             canvas.text(navigation.body(LIST_Y, 110), empty, BODY);
@@ -9439,12 +9497,23 @@ impl Reader {
                 canvas.text(navigation.footer_text(LIST_X, 179, 64), notice, CAPTION);
             }
         } else {
+            let language = self.controls.interface_language;
             if self.list_page > 0 {
-                canvas.button(navigation.previous(), "Previous", false, false);
+                let label = if self.screen == Screen::BookMap {
+                    language.book_map_text("Previous")
+                } else {
+                    "Previous"
+                };
+                canvas.button(navigation.previous(), label, false, false);
             }
             let rows = self.list_geometry().rows;
             if (self.list_page + 1) * rows < count {
-                canvas.button(navigation.next(), "Next", false, false);
+                let label = if self.screen == Screen::BookMap {
+                    language.book_map_text("Next")
+                } else {
+                    "Next"
+                };
+                canvas.button(navigation.next(), label, false, false);
             }
             if let Some(notice) = &self.notice {
                 canvas.text(navigation.footer_text(310, 104, 80), notice, CAPTION);
@@ -11386,10 +11455,19 @@ fn overview_tile(index: usize) -> Rect {
     page_overview::OverviewLayout::new(navigation_layout::NavigationLayout::PORTRAIT).tile(index)
 }
 
-fn map_detail(current: bool, bookmarks: usize, highlights: usize) -> String {
-    let markers = format!("Bookmarks {bookmarks} · Highlights {highlights}");
+fn map_detail(
+    current: bool,
+    bookmarks: usize,
+    highlights: usize,
+    language: interface_language::InterfaceLanguage,
+) -> String {
+    let markers = format!(
+        "{} {bookmarks} · {} {highlights}",
+        language.book_map_text("Bookmarks"),
+        language.book_map_text("Highlights")
+    );
     if current {
-        format!("Current position · {markers}")
+        format!("{} · {markers}", language.book_map_text("Current position"))
     } else {
         markers
     }

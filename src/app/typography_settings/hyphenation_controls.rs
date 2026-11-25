@@ -63,8 +63,13 @@ impl Reader {
             .and_then(|book| book.reading.probe.main_language)
             .map(TypographyLocale::shaping_language);
         let dictionary = Dictionary::for_language(language);
+        let armenian = self.active.as_ref().is_some_and(|book| {
+            crate::hyphenation::is_armenian_language(book.reading.probe.main_language)
+        });
         let defaults = if settings.algorithmic_hyphenation {
             ALGORITHMIC_LIMITS
+        } else if armenian {
+            crate::HyphenationLimits { left: 1, right: 2 }
         } else {
             dictionary.map_or(ENGLISH_LIMITS, Dictionary::limits)
         };
@@ -111,8 +116,21 @@ impl Reader {
                 optional(Action::Hyphenation(Command::Method(method))),
             );
             if method == HyphenationMode::Automatic {
-                let name =
-                    dictionary.map_or("No dictionary for the main language", Dictionary::label);
+                let name = if armenian {
+                    match &self.user_hyphenation.armenian {
+                        crate::user_hyphenation::ArmenianPatterns::Loaded(_) => {
+                            "Armenian patterns loaded"
+                        }
+                        crate::user_hyphenation::ArmenianPatterns::Missing => {
+                            "Armenian pattern file missing"
+                        }
+                        crate::user_hyphenation::ArmenianPatterns::Invalid => {
+                            "Armenian pattern file invalid"
+                        }
+                    }
+                } else {
+                    dictionary.map_or("No dictionary for the main language", Dictionary::label)
+                };
                 if mode == method {
                     item.detail(format!("Selected · {name}"))
                 } else {
@@ -124,6 +142,12 @@ impl Reader {
                 item
             }
         }));
+        if armenian {
+            items.push(
+                Item::new("Armenian pattern file", Action::Heading)
+                    .detail("Copy hyph-hy.tex to reader/data/hyphenation, then reopen Reader"),
+            );
+        }
         let defaults = self
             .controls
             .hyphenation_default

@@ -399,6 +399,85 @@ const SEARCH_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Disabled", "Đã tắt"),
 ];
 
+// Built-in chapter navigation settings; never chapter titles or user text.
+const CHAPTER_NAVIGATION_LABELS: &[(&str, &str)] = &[
+    ("Chapter navigation", "Điều hướng chương"),
+    ("Back", "Quay lại"),
+    ("No previous chapter", "Không có chương trước"),
+    ("No next chapter", "Không có chương tiếp"),
+    ("No chapter levels", "Không có cấp chương"),
+    (
+        "The active Contents has no chapter destinations",
+        "Mục lục hiện tại không có đích chương",
+    ),
+    (
+        "Use levels for chapter jumps",
+        "Dùng cấp mục lục để chuyển chương",
+    ),
+    (
+        "Turn off a level to enable this option",
+        "Tắt một cấp để bật tùy chọn này",
+    ),
+    (
+        "Chapter jumps and indexed chapter progress use the included levels",
+        "Chuyển chương và tiến độ theo mục lục dùng các cấp đã chọn",
+    ),
+    (
+        "Chapter jumps and reading time use the included levels",
+        "Chuyển chương và thời gian đọc dùng các cấp đã chọn",
+    ),
+    (
+        "Chapter jumps, pages left, and reading time use the included levels",
+        "Chuyển chương, số trang còn lại và thời gian đọc dùng các cấp đã chọn",
+    ),
+    (
+        "Previous and next chapter use the included levels",
+        "Chương trước và tiếp theo dùng các cấp đã chọn",
+    ),
+    ("Progress markers", "Dấu tiến độ"),
+    (
+        "The reading header, footer and Skim use the included levels",
+        "Thanh trên, thanh dưới và Đọc lướt dùng các cấp đã chọn",
+    ),
+    (
+        "The footer and Skim use the included levels",
+        "Thanh dưới và Đọc lướt dùng các cấp đã chọn",
+    ),
+    (
+        "The footer and Skim use included levels when ready",
+        "Thanh dưới và Đọc lướt dùng các cấp đã chọn khi sẵn sàng",
+    ),
+    (
+        "The reading header uses the included levels for this book",
+        "Thanh trên dùng các cấp đã chọn cho sách này",
+    ),
+    (
+        "Chapter titles from ticks only",
+        "Tên chương chỉ từ dấu cấp đã chọn",
+    ),
+    (
+        "Use included levels for the footer and new saved marks",
+        "Dùng các cấp đã chọn cho thanh dưới và dấu lưu mới",
+    ),
+];
+
+// Reader-owned Contents settings labels and statuses only.
+const CONTENTS_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Rows per page", "Số hàng mỗi trang"),
+    ("Entry font size", "Cỡ chữ mục"),
+    ("Show chapter length", "Hiện độ dài chương"),
+    ("Dot leaders", "Đường chấm dẫn"),
+    ("Alternative table of contents", "Mục lục thay thế"),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    (
+        "Disable custom contents to switch",
+        "Tắt mục lục tùy chỉnh để chuyển",
+    ),
+    ("Document headings · On", "Tiêu đề tài liệu · Bật"),
+    ("Publisher contents · Off", "Mục lục nhà xuất bản · Tắt"),
+];
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum InterfaceLanguage {
@@ -954,6 +1033,35 @@ impl InterfaceLanguage {
             "Find" => "Tìm",
             "Back" => "Quay lại",
             "No matching headings" => "Không tìm thấy tiêu đề phù hợp",
+            "Add current location" => "Thêm vị trí hiện tại",
+            "Add from bookmark" => "Thêm từ dấu trang",
+            "Edit chapters" => "Sửa các chương",
+            "Use publisher contents" => "Dùng mục lục nhà xuất bản",
+            "Use custom contents" => "Dùng mục lục tùy chỉnh",
+            "Page browser" => "Duyệt trang",
+            "Hold a page to add or edit a chapter" => "Nhấn giữ trang để thêm hoặc sửa chương",
+            "Edit chapter" => "Sửa chương",
+            "Add chapter" => "Thêm chương",
+            "Chapter title" => "Tên chương",
+            "Save" => "Lưu",
+            "Cancel" => "Hủy",
+            "Remove chapter" => "Xóa chương",
+            "Starts on page" => "Bắt đầu ở trang",
+            "Remove this chapter?" => "Xóa chương này?",
+            "You can add this location again from Contents." => {
+                "Bạn có thể thêm lại vị trí này từ Mục lục."
+            }
+            "Remove" => "Xóa",
+            "Use document headings?" => "Dùng tiêu đề tài liệu?",
+            "Restore publisher contents?" => "Khôi phục mục lục nhà xuất bản?",
+            "Build the table of contents from this book's headings." => {
+                "Tạo mục lục từ các tiêu đề trong sách này."
+            }
+            "Switch back to the table of contents supplied with this book." => {
+                "Chuyển lại mục lục được cung cấp cùng sách này."
+            }
+            "Use headings" => "Dùng tiêu đề",
+            "Restore" => "Khôi phục",
             "Building contents…" => "Đang tạo mục lục…",
             "Showing publisher contents" => "Đang hiện mục lục nhà xuất bản",
             "The alternative contents could not be built" => "Không thể tạo mục lục thay thế",
@@ -1513,10 +1621,121 @@ impl InterfaceLanguage {
             "Reading page" => "Trang đang đọc",
             "Map focus" => "Vị trí đang chọn",
             "Hidden" => "Đã ẩn",
+            "Includes hidden pages" => "Có trang bị ẩn",
+            "Current position" => "Vị trí hiện tại",
+            "Bookmarks" => "Dấu trang",
+            "Highlights" => "Đoạn tô sáng",
+            "No entries" => "Không có mục",
             "Previous" => "Trước",
             "Next" => "Tiếp",
             _ => english,
         }
+    }
+
+    /// Fixed annotation detail and note-editor labels only.
+    pub(super) fn annotation_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Highlight" => "Đoạn tô sáng",
+            "Remove highlight?" => "Xóa tô sáng?",
+            "Add note" => "Thêm ghi chú",
+            "Edit note" => "Sửa ghi chú",
+            "Back" => "Quay lại",
+            "Read passage" => "Đọc đoạn văn",
+            "Extend highlight" => "Mở rộng vùng tô sáng",
+            "Remove highlight" => "Xóa tô sáng",
+            "Chapter" => "Chương",
+            "Remove highlight and note" => "Xóa tô sáng và ghi chú",
+            "Keep highlight" => "Giữ vùng tô sáng",
+            "Note text" => "Nội dung ghi chú",
+            "Save" => "Lưu",
+            _ => english,
+        }
+    }
+
+    pub(super) fn chapter_navigation_fixed<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = CHAPTER_NAVIGATION_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    /// This screen generates levels and heading counts from numeric indices.
+    pub(super) fn chapter_navigation_text(self, english: &str) -> String {
+        if self == Self::Vietnamese {
+            if let Some(number) = english.strip_prefix("Contents level ")
+                && !number.is_empty()
+                && number.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return format!("Cấp mục lục {number}");
+            }
+            if let Some(number) = english
+                .strip_suffix(" headings")
+                .or_else(|| english.strip_suffix(" heading"))
+                && !number.is_empty()
+                && number.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return format!("{number} tiêu đề");
+            }
+        }
+        self.chapter_navigation_fixed(english).to_owned()
+    }
+
+    pub(super) fn chapter_navigation_english(self, label: &str) -> String {
+        if self == Self::Vietnamese {
+            if let Some(number) = label.strip_prefix("Cấp mục lục ")
+                && !number.is_empty()
+                && number.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return format!("Contents level {number}");
+            }
+            if let Some((english, _)) = CHAPTER_NAVIGATION_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return (*english).to_owned();
+            }
+        }
+        label.to_owned()
+    }
+
+    pub(super) fn contents_settings_text(self, english: &str) -> String {
+        if self == Self::Vietnamese {
+            if let Some(number) = english
+                .strip_prefix("Automatic (")
+                .and_then(|s| s.strip_suffix(')'))
+                && !number.is_empty()
+                && number.bytes().all(|byte| byte.is_ascii_digit())
+            {
+                return format!("Tự động ({number})");
+            }
+            if let Some((_, vietnamese)) = CONTENTS_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return (*vietnamese).to_owned();
+            }
+        }
+        english.to_owned()
+    }
+
+    pub(super) fn contents_settings_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = CONTENTS_SETTINGS_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
     }
 
     /// Return the canonical English search alias for a known Screen-panel row.
