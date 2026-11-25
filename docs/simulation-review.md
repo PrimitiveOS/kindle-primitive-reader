@@ -2,6 +2,54 @@
 
 ## Current Mac simulator checkpoint
 
+**Reading status** adds optional brightness and warmth items, a 12-hour
+clock in Reader, and hide rules for inactive items. The simulator tests
+combined status, cycling, presets, reopening, older saved item order, and a
+pixel-identical return to the chapter-and-page footer with the progress
+track and far-right Exit. [Footer controls and screenshots](footer-composition.md#inactive-items-and-clock)
+
+**Multiswipes** adds 35 editable one-finger presets, a custom recorder and an
+assignment overview. The integrated controls dispatch on release and
+restore the continuous scroll position before the assigned action starts.
+Fast bends can fall between toolkit samples. [Multiswipe comparison and screenshots](reading-multiswipes.md)
+
+**Reading metadata** can be archived on close or before deletion. The
+simulator opens the same EPUB edition after a rename and restores its
+position and saved marks. A successful restore saves the live record
+before consuming the chosen snapshot. A failed archive write prevents
+deletion. Reader uses its own archive format. Live KOReader sidecar writing
+and automatic relocation of existing archives remain open.
+[Archive comparison and screenshots](book-metadata-archive.md)
+
+**In-page notes** adds a cosmetic spacing fix and support for local
+EPUBs with the tested Wikipedia reference markup. Reference links and
+selectable note text remain usable. Whole-note flattening and automatic
+non-linear grouping remain open. [Note comparison and screenshots](in-page-footnotes.md)
+
+The 11 focused Reader checks passed in the integrated simulator. The
+comparison regenerated 18 Reader screenshots and five pinned KOReader
+screenshots byte for byte. The five native stock replay modes exercised
+status-item visibility and time, multiswipe configuration, metadata
+archiving, cosmetic note spacing, and Wikipedia reference bands.
+
+Four original EPUB, PDF, AZW3 and MOBI files opened through the normal
+picker, turned a page, and resumed at the saved location. Their source bytes
+matched. The opt-in original EPUB note test also retained 63 canonical
+anchors with 65 bands across eight chapters.
+
+The full Mac suite passed 1,568 library tests, one Kindle entry test, 14 EPUB
+package tests and four layout tests. The standard run skipped 72 opt-in tests.
+
+The local ARMHF package staged a stripped, statically linked 38,599,708-byte
+executable with SHA-256
+`9c4a02a96cc4ee52217b00263b900ff152b1b098604017e7fdfa8219fa9f1d6c`.
+Both builds produced the same executable hash. The 30 staged files total
+48,199,208 bytes. Both project licenses, SQLite notices, Launcher icon,
+OCR model, and the new control labels passed inspection.
+Foreground Kindle verification and Store publication remain pending.
+
+## Menu search, selection, Back, and classic footnotes checkpoint
+
 **Menu search** searches the open document’s available controls. It opens
 the matching route, marks the control and preserves the reading position.
 Normal tap shows the path first. A hold jumps directly. The pinned stock
