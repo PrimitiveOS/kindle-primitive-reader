@@ -15,7 +15,8 @@ inline boundaries; each run keeps its computed style and language. Explicit
 preferred `<pre>` content and 256 KiB for other content. The ordinary layout
 is used for content outside these bounds, unsupported projections, images,
 ruby, generated content, unsupported inline styles, transforms, bidi controls, joined
-notes and in-page footnotes. A layout whose source or ordered font stack cannot
+notes and chapters with detected in-page note targets. The in-page-note setting alone
+does not disable raw layout in chapters without note targets. A layout whose source or ordered font stack cannot
 be stamped also uses the canonical path. Folder books retain canonical search.
 
 The layout-only source map may represent one normalized space with one byte of
@@ -84,7 +85,7 @@ positions in split ODT/text sections pass the current-section identity check;
 legacy raw positions that would require translation remain unsupported.
 This path remains untested.
 
-When a virtual whitespace-only line has no glyph cluster, a touch within a
+When a whitespace-only raw line has no exact glyph cluster, a touch within a
 single verified line maps to its exact start or end according to the touched
 half of the column. Overlapping or unverifiable line regions are rejected.
 This interaction remains untested.

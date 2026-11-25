@@ -63,7 +63,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let samples = image.scalar(277, SHORT_ONLY, 1)?;
     if !matches!(
         (photometric, samples),
-        (0 | 1 | 3, 1) | (0 | 1 | 3, 2) | (2, 3 | 4) | (5, 4)
+        (0 | 1 | 3, 1) | (0 | 1 | 3, 2) | (2, 3 | 4) | (5, 4) | (6, 3)
     ) {
         return Err(TiffError::Unsupported);
     }
@@ -116,6 +116,25 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     };
     let predictor = image.scalar(317, SHORT_ONLY, 1)?;
     let orientation = image.scalar(274, SHORT_ONLY, 1)?;
+    let jpeg_sampling = if photometric == 6 {
+        if compression != 7
+            || image.has_tag(529)
+            || image.has_tag(532)
+            || image.scalar(531, SHORT_ONLY, 1)? != 1
+        {
+            return Err(TiffError::Unsupported);
+        }
+        let sampling = image.numbers(530, SHORT_ONLY, 2)?;
+        let pair = sampling
+            .as_ref()
+            .map_or((2, 2), |values| (values.value(0), values.value(1)));
+        if !matches!(pair, (1, 1) | (2, 1) | (2, 2)) {
+            return Err(TiffError::Unsupported);
+        }
+        Some(pair)
+    } else {
+        None
+    };
     if !matches!(bits, 1 | 2 | 4 | 8 | 16)
         || (bits == 16 && !matches!((photometric, samples), (0 | 1, 1 | 2) | (2, 3 | 4) | (3, 1)))
         || (!matches!(photometric, 0 | 1 | 3) && !matches!(bits, 1 | 8) && !(photometric == 2 && bits == 16))
@@ -125,7 +144,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         || !(fill_order == 1 || (bits < 8 && fill_order == 2))
         || !matches!(compression, 1 | 2 | 3 | 4 | 5 | 7 | 8 | 32946 | 32773)
         || (matches!(compression, 2 | 3 | 4) && (!matches!(photometric, 0 | 1) || samples != 1 || bits != 1 || predictor != 1))
-        || (compression == 7 && (photometric != 1 || samples != 1 || bits != 8 || predictor != 1 || [280, 281, 301, 318, 319, 340, 341, 342, 513, 514, 34675].iter().any(|&tag| image.has_tag(tag))))
+        || (compression == 7 && (!matches!((photometric, samples), (1, 1) | (6, 3)) || bits != 8 || predictor != 1 || [280, 281, 301, 318, 319, 340, 341, 342, 513, 514, 34675].iter().any(|&tag| image.has_tag(tag))))
         || (compression == 3 && fax_options > 1)
         || (compression == 4 && fax_options != 0)
         || !matches!(orientation, 1..=8)
@@ -308,11 +327,12 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
                 }
                 Err(error) => return Err(error),
             }),
-            7 => Some(unpack_grayscale_jpeg(
+            7 => Some(unpack_tiff_jpeg(
                 compressed,
                 width,
                 rows,
                 jpeg_tables.as_ref().map(|tables| tables.data),
+                jpeg_sampling,
             )?),
             8 | 32946 => Some(unpack_deflate(compressed, row_bytes, rows)?),
             _ => None,
@@ -571,12 +591,119 @@ fn validate_jpeg_tables(tables: &[u8]) -> Result<(), TiffError> {
     Ok(())
 }
 
-/// Decode a self-contained or safely reconstructed grayscale JPEG strip.
-fn unpack_grayscale_jpeg(
+/// Require baseline JFIF YCbCr with sampling matching the TIFF metadata.
+fn validate_ycbcr_jfif(
+    input: &[u8],
+    width: u32,
+    rows: usize,
+    sampling: (u32, u32),
+) -> Result<(), TiffError> {
+    if !input.starts_with(&[0xff, 0xd8]) || !input.ends_with(&[0xff, 0xd9]) {
+        return Err(TiffError::Strips);
+    }
+    let mut position = 2usize;
+    let mut jfif = false;
+    let mut frame = false;
+    let mut adobe = false;
+    while position < input.len() {
+        if input[position] != 0xff {
+            return Err(TiffError::Strips);
+        }
+        while input.get(position) == Some(&0xff) {
+            position += 1;
+        }
+        let marker = *input.get(position).ok_or(TiffError::Strips)?;
+        position += 1;
+        let length =
+            u16::from_be_bytes(at::<2>(input, position).ok_or(TiffError::Strips)?) as usize;
+        if length < 2 {
+            return Err(TiffError::Strips);
+        }
+        let end = position.checked_add(length).ok_or(TiffError::Strips)?;
+        if end > input.len() - 2 {
+            return Err(TiffError::Strips);
+        }
+        let payload = input.get(position + 2..end).ok_or(TiffError::Strips)?;
+        match marker {
+            0xe0 => {
+                if jfif || payload.len() < 14 || !payload.starts_with(b"JFIF\0") || payload[5] != 1
+                {
+                    return Err(TiffError::Unsupported);
+                }
+                let thumbnail = usize::from(payload[12]) * usize::from(payload[13]) * 3;
+                if payload.len() != 14 + thumbnail {
+                    return Err(TiffError::Strips);
+                }
+                jfif = true;
+            }
+            0xee => {
+                if adobe
+                    || payload.len() != 12
+                    || !payload.starts_with(b"Adobe")
+                    || payload[11] != 1
+                {
+                    return Err(TiffError::Unsupported);
+                }
+                adobe = true;
+            }
+            // Reject embedded ICC, Exif and other application metadata.
+            0xe1..=0xed | 0xef => return Err(TiffError::Unsupported),
+            0xc0 => {
+                let expected_sampling = ((sampling.0 as u8) << 4) | sampling.1 as u8;
+                if frame
+                    || payload.len() != 15
+                    || payload[0] != 8
+                    || u32::from(u16::from_be_bytes([payload[1], payload[2]])) != rows as u32
+                    || u32::from(u16::from_be_bytes([payload[3], payload[4]])) != width
+                    || payload[5] != 3
+                    || payload[6] != 1
+                    || payload[7] != expected_sampling
+                    || payload[9] != 2
+                    || payload[10] != 0x11
+                    || payload[12] != 3
+                    || payload[13] != 0x11
+                {
+                    return Err(TiffError::Unsupported);
+                }
+                frame = true;
+            }
+            0xda => {
+                if !jfif
+                    || !frame
+                    || payload.len() != 10
+                    || payload[0] != 3
+                    || payload[1] != 1
+                    || payload[3] != 2
+                    || payload[5] != 3
+                    || payload[7..10] != [0, 63, 0]
+                {
+                    return Err(TiffError::Unsupported);
+                }
+                // The accepted baseline form has exactly one scan: only
+                // stuffed 0xff bytes and restart markers may precede EOI.
+                if input[end..input.len() - 2]
+                    .windows(2)
+                    .any(|pair| pair[0] == 0xff && !matches!(pair[1], 0x00 | 0xff | 0xd0..=0xd7))
+                {
+                    return Err(TiffError::Unsupported);
+                }
+                return Ok(());
+            }
+            0xdb | 0xc4 | 0xdd | 0xfe => {}
+            _ => return Err(TiffError::Unsupported),
+        }
+        position = end;
+    }
+    Err(TiffError::Strips)
+}
+
+/// Decode a self-contained or safely reconstructed TIFF JPEG strip.
+fn unpack_tiff_jpeg(
     input: &[u8],
     width: u32,
     rows: usize,
     tables: Option<&[u8]>,
+    sampling: Option<(u32, u32)>,
 ) -> Result<Vec<u8>, TiffError> {
     // The JPEG adapter copies its input before its own limits are applied.
     if input.len() > MAX_JPEG_COMPRESSED_STRIP {
@@ -603,15 +730,27 @@ fn unpack_grayscale_jpeg(
     } else {
         input
     };
+    if let Some(sampling) = sampling {
+        validate_ycbcr_jfif(input, width, rows, sampling)?;
+    }
     let reader = crate::image_reader(input).map_err(|_| TiffError::Strips)?;
     if reader.format() != Some(image::ImageFormat::Jpeg) {
         return Err(TiffError::Strips);
     }
     let decoder = reader.into_decoder().map_err(|_| TiffError::Strips)?;
     let height = u32::try_from(rows).map_err(|_| TiffError::Limit)?;
-    let expected = (width as usize).checked_mul(rows).ok_or(TiffError::Limit)?;
+    let channels = if sampling.is_some() { 3 } else { 1 };
+    let expected = (width as usize)
+        .checked_mul(rows)
+        .and_then(|size| size.checked_mul(channels))
+        .ok_or(TiffError::Limit)?;
+    let color = if sampling.is_some() {
+        image::ColorType::Rgb8
+    } else {
+        image::ColorType::L8
+    };
     if decoder.dimensions() != (width, height)
-        || decoder.color_type() != image::ColorType::L8
+        || decoder.color_type() != color
         || decoder.total_bytes() != expected as u64
     {
         return Err(TiffError::Unsupported);

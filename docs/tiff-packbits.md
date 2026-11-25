@@ -45,7 +45,7 @@ makes a separate input copy; the original TIFF file remains limited to 16 MiB.
 Decoded strip plus grayscale output is at most 16 MiB. The decoder's other
 internal allocations still need a separate audit, and ICC profiles embedded
 inside the JPEG stream are not inspected or applied.
-Padded final strips, YCbCr/RGB TIFF JPEG, old compression 6 and
+Padded final strips, RGB-photometric TIFF JPEG, old compression 6 and
 color-managed cases remain unsupported. This candidate has not been compared
 with KOReader or behaviorally tested in the simulator or on Kindle. [Pinned MuPDF JPEG handling](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L400-L413)
 
@@ -60,6 +60,18 @@ decoder internals. APP or other table markers, shared-table color scans and
 padded strips remain unsupported. This path and its decoder's remaining
 internal allocations have not been behaviorally verified or compared with
 KOReader, the simulator or Kindle.
+
+As a narrower color candidate, 8-bit YCbCr TIFF JPEG strips can render when
+each reconstructed JPEG has one baseline interleaved JFIF scan, component IDs
+1/2/3 and 1×1, 2×1 or 2×2 sampling matching the TIFF metadata. TIFF custom
+coefficients, reference ranges or non-centered positioning are rejected.
+Embedded JPEG ICC/Exif and other application metadata are rejected; an Adobe
+marker is accepted only for YCbCr. The JPEG RGB8 output is converted using
+Reader's existing grayscale weighting, with decoded strip plus output capped
+at 32 MiB. It is not color-managed, JPEG decoder internal allocations still
+need audit, and exact color/KOReader/simulator/device behavior is unverified.
+Non-JFIF, progressive/multiscan and ambiguous or mismatched streams remain
+unsupported.
 
 ## CCITT 1D, Group 3 and Group 4 scans
 

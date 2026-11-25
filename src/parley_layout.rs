@@ -1108,7 +1108,8 @@ impl ParleyChapter {
         let mut floating_table = None;
         let virtual_allowed = RAW_ONLY_RENDER_ENABLED
             && RAW_LAYOUT_ENABLED
-            && !settings.in_page_footnotes
+            && footnotes.is_none()
+            && !source_order
             && source.table_cells.is_empty()
             && float_plan.is_none()
             && order.is_none();
@@ -1643,7 +1644,8 @@ impl ParleyChapter {
                     None
                 };
                 let raw_candidate = if RAW_LAYOUT_ENABLED
-                    && !settings.in_page_footnotes
+                    && footnotes.is_none()
+                    && !source_order
                     && plan.is_none()
                     && generated.is_none()
                     && tabular.is_none()

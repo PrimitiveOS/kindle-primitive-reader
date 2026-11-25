@@ -1027,6 +1027,7 @@ pub struct Reader {
     book_details: Option<BookDetails>,
     overview: Option<PageOverview>,
     overview_raw: Option<page_overview::RawVerification>,
+    book_map_raw_history: Option<reflow_book_map_history::Verification>,
     skim: Option<skim::Session>,
     staged_viewport: Option<(
         primitive_app::viewport::Viewport,
@@ -1295,6 +1296,7 @@ impl Reader {
             book_details: None,
             overview: None,
             overview_raw: None,
+            book_map_raw_history: None,
             skim: None,
             library_viewport: crate::session::ReadingViewport::PORTRAIT,
             staged_viewport: None,
@@ -2264,6 +2266,7 @@ impl Reader {
         }
         if screen != Screen::BookMap {
             self.fixed_map_help = false;
+            self.book_map_raw_history = None;
         }
         if !matches!(screen, Screen::PageOverview | Screen::BookMap) {
             self.ribbon_maps.clear();
@@ -2523,6 +2526,9 @@ impl Reader {
         }
         self.link_popup = None;
         self.screen = screen;
+        if screen == Screen::BookMap {
+            self.start_book_map_raw_history();
+        }
         self.sync_alternative_contents();
         self.prepare_content_dpi_editor();
         self.prepare_logical_font_editor();
@@ -4186,7 +4192,12 @@ impl Reader {
         };
         let reading = &active.reading;
         let counts = reflow_book_map_marks::collect(reading, state);
-        let history = reflow_book_map_history::collect(reading, &self.back, &self.forward);
+        let history = reflow_book_map_history::collect(
+            reading,
+            &self.back,
+            &self.forward,
+            self.book_map_raw_history.as_ref(),
+        );
         reading
             .probe
             .chapter_entries()
@@ -10412,6 +10423,7 @@ impl App for Reader {
             self.screen_page_worker.cancel();
             self.cancel_screen_page_jump();
             self.overview_raw = None;
+            self.book_map_raw_history = None;
         }
         if matches!(
             input,
@@ -10479,6 +10491,9 @@ impl App for Reader {
             }
             if input == Input::Wake && self.screen == Screen::PageOverview {
                 self.start_overview_raw_verification();
+            }
+            if input == Input::Wake && self.screen == Screen::BookMap {
+                self.start_book_map_raw_history();
             }
             let progress_changed = if input == Input::Wake {
                 self.reset_footer_initial_position();
@@ -11206,6 +11221,11 @@ impl App for Reader {
                     .as_ref()
                     .and_then(page_overview::RawVerification::deadline),
             )
+            .chain(
+                self.book_map_raw_history
+                    .as_ref()
+                    .and_then(reflow_book_map_history::Verification::deadline),
+            )
             .chain(self.spelling_lookup.as_ref().map(|job| job.deadline))
             .chain(self.cjk_selection_lookup.as_ref().map(|job| job.deadline))
             .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
@@ -11236,6 +11256,9 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if let Some(change) = self.poll_book_map_raw_history(now) {
+            return change;
+        }
         if let Some(change) = self.poll_overview_raw_verification(now) {
             return change;
         }
@@ -11475,6 +11498,7 @@ impl App for Reader {
     fn save(&mut self) -> io::Result<()> {
         self.finish_interrupted_scroll();
         self.overview_raw = None;
+        self.book_map_raw_history = None;
         self.embedded_font_report = None;
         self.eager_typography.cancel();
         self.screen_page_worker.cancel();
@@ -11493,6 +11517,7 @@ impl App for Reader {
 
     fn storage_returned(&mut self) -> io::Result<()> {
         self.overview_raw = None;
+        self.book_map_raw_history = None;
         self.gestures.multiswipes.clear_contact();
         self.finish_interrupted_scroll();
         self.embedded_font_report = None;
@@ -11553,6 +11578,9 @@ impl App for Reader {
         self.refresh_browser()?;
         if self.screen == Screen::PageOverview {
             self.start_overview_raw_verification();
+        }
+        if self.screen == Screen::BookMap {
+            self.start_book_map_raw_history();
         }
         Ok(())
     }

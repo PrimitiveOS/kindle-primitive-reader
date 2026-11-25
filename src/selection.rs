@@ -790,18 +790,13 @@ impl Probe {
             let (layout, x, y) = child.map_or((&paragraph.layout, x, y), |child| {
                 (&child.layout, x - child.x, y - child.y)
             });
-            // A virtual line containing only a hard break may have no glyph
-            // cluster. Its verified line endpoints remain exact selectable
-            // positions; do not guess when line hit regions overlap.
+            // A raw whitespace-only line may have no glyph cluster. Its
+            // verified endpoints are selectable; overlapping line regions or
+            // non-whitespace text must never be guessed.
             if child.is_none()
                 && paragraph.raw_binding.is_some()
                 && point.inside_columns
                 && paragraph.hit_columns().contains(&point.x)
-                && self
-                    .source
-                    .raw_only_blocks
-                    .binary_search_by_key(&paragraph.key, |block| block.key)
-                    .is_ok()
                 && Cluster::from_point_exact(layout, x, y).is_none()
             {
                 let block = self.raw_source_block(paragraph.key)?;
@@ -820,8 +815,15 @@ impl Probe {
                     if hits.next().is_some() {
                         return None;
                     }
-                    let end = point.x >= (paragraph.column.start + paragraph.column.end) * 0.5;
-                    return self.raw_line_anchor(line, end);
+                    let raw_line = line.raw_whitespace.as_ref()?;
+                    let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+                    let text = bound
+                        .raw()
+                        .get(raw_line.start.raw_offset..raw_line.end.raw_offset)?;
+                    if text.chars().all(char::is_whitespace) {
+                        let end = point.x >= (paragraph.column.start + paragraph.column.end) * 0.5;
+                        return self.raw_line_anchor(line, end);
+                    }
                 }
             }
             if (point.inside_columns || paragraph.allows_margin_hits())

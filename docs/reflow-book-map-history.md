@@ -9,13 +9,15 @@ unresolvable entry may leave a gap. The cues are read-only and do not change
 the stacks, chapter actions, reading position, or requested reading footer.
 
 Anchored entries must identify the open publication and a known chapter; legacy
-anchorless entries use a bounded chapter index. A raw anchor is shown only if
-it belongs to the already open chapter and the current probe verifies it.
-Unloaded raw anchors are omitted without synchronous chapter loading. The
-non-raw chapter-level cue does not verify the source revision or its position
-within a chapter. A follow-up should reuse bounded asynchronous source
-verification to recover eligible raw anchors from unloaded chapters. None of
-these changes has been validated in simulation or on Kindle yet.
+anchorless entries use a bounded chapter index. A raw anchor in the open
+chapter appears only when the current probe verifies it. For other chapters,
+a cancellable worker verifies at most six recent anchors, grouped by chapter,
+using an isolated layout and source-stamp checks. Until verification succeeds,
+those cues are omitted. Exiting the map, sleeping, saving, or returning from
+USB cancels the job, and a changed source/layout snapshot rejects its results.
+The non-raw chapter-level cue does not verify the source revision or its
+position within a chapter. None of these changes has been validated in
+simulation or on Kindle yet.
 
 KOReader's [location-stack integration](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/bookmapwidget.lua#L839-L841)
 and [map legend](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/bookmapwidget.lua#L1454-L1461)

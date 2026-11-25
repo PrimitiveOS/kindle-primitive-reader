@@ -72,7 +72,7 @@ impl Plan {
             return None;
         }
         let originals = &*block.styled_text;
-        if (originals.is_empty() && !block.text.is_empty())
+        if (originals.is_empty() && !block.text.chars().all(char::is_whitespace))
             || originals.iter().any(|run| {
                 run.bytes.start >= run.bytes.end
                     || run.bytes.end > block.text.len()
