@@ -33,7 +33,7 @@ impl Node {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct FileStamp {
+pub(super) struct FileStamp {
     node: Node,
     size: u64,
     modified: (i64, i64),
@@ -41,7 +41,7 @@ struct FileStamp {
 }
 
 impl FileStamp {
-    fn from(metadata: &fs::Metadata) -> io::Result<Self> {
+    pub(super) fn from(metadata: &fs::Metadata) -> io::Result<Self> {
         if !metadata.is_file() {
             return Err(changed_source());
         }
@@ -123,7 +123,7 @@ fn require_absent(path: &Path) -> io::Result<()> {
     }
 }
 
-fn sync_directory(path: &Path) -> io::Result<()> {
+pub(super) fn sync_directory(path: &Path) -> io::Result<()> {
     match File::open(path)?.sync_all() {
         Err(error) if matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOTSUP)) => Ok(()),
         result => result,

@@ -254,3 +254,250 @@ fn metadata_archive_consumption_preserves_a_newer_copy() {
         newer.revision
     );
 }
+
+const ARCHIVE: &str = "primitive-reader-book-metadata.json";
+const DESTINATION: &str = "Saved editions";
+
+fn choose_move(app: &mut Reader) {
+    choose(app, "Archive folder");
+    choose(app, "Up");
+    choose(app, DESTINATION);
+    choose(app, "Use this folder");
+    assert!(matches!(
+        app.metadata_archive.confirmation,
+        Some(Confirmation::Move(_))
+    ));
+}
+
+fn confirm_move(app: &mut Reader) {
+    let button = app
+        .metadata_archive_sheet()
+        .unwrap()
+        .button(SheetAction::Confirm);
+    assert_eq!(app.input(tap(button)), Change::Partial);
+}
+
+#[test]
+fn metadata_archive_folder_move_merges_editions_and_keeps_newer_snapshots() {
+    let fixture = Fixture::new();
+    let documents = fixture.root.join("Documents");
+    fs::create_dir(&documents).unwrap();
+    let epub = documents.join(fixture.book.file_name().unwrap());
+    fs::rename(&fixture.book, &epub).unwrap();
+    let mut app = reader_in(&documents, &fixture.state);
+    let source = setup(&mut app);
+    let destination = Path::new(DESTINATION);
+    fs::create_dir(documents.join(destination)).unwrap();
+    let untouched = documents.join(&source).join("Other notes.txt");
+    fs::write(&untouched, b"Independent notes").unwrap();
+    let pdf = documents.join("Field Survey.pdf");
+    fs::write(&pdf, crate::fixed_session::tests::striped_pdf_bytes(4)).unwrap();
+    app.open_path(&pdf).unwrap();
+    let pdf_id = app.open_book_id().unwrap();
+    let destination_newer = {
+        app.library
+            .archive_metadata(&source, pdf_id, SavedOn::Close, Some(100))
+            .unwrap();
+        app.follow_fixed(2, None).unwrap();
+        app.library
+            .archive_metadata(destination, pdf_id, SavedOn::Delete, Some(200))
+            .unwrap();
+        app.library
+            .archived_book(destination, pdf_id)
+            .unwrap()
+            .unwrap()
+    };
+    let other = documents.join("Coast notes.pdf");
+    fs::write(&other, crate::fixed_session::tests::striped_pdf_bytes(6)).unwrap();
+    app.open_path(&other).unwrap();
+    let other_id = app.open_book_id().unwrap();
+    app.library
+        .archive_metadata(destination, other_id, SavedOn::Close, Some(300))
+        .unwrap();
+    app.open_path(&epub).unwrap();
+    let epub_id = app.open_book_id().unwrap();
+    app.library
+        .archive_metadata(destination, epub_id, SavedOn::Delete, Some(400))
+        .unwrap();
+    app.follow_reflow_page(1, 0).unwrap();
+    app.activate(Action::ToggleBookmark).unwrap();
+    app.library
+        .archive_metadata(&source, epub_id, SavedOn::Close, Some(500))
+        .unwrap();
+    let epub_bytes = fs::read(&epub).unwrap();
+    let source_file = documents.join(&source).join(ARCHIVE);
+    let dest_file = documents.join(destination).join(ARCHIVE);
+    let before = (
+        fs::read(&source_file).unwrap(),
+        fs::read(&dest_file).unwrap(),
+    );
+    app.show(Screen::ReadingControls);
+    choose(&mut app, "Book metadata archive");
+    choose(&mut app, "Save metadata on book close");
+    choose_move(&mut app);
+    capture_test_screen(&app, &app.fonts, "READER_METADATA_ARCHIVE_MOVE", false);
+    assert_eq!(app.input(Input::PageBack), Change::Partial);
+    assert_eq!(fs::read(&source_file).unwrap(), before.0);
+    assert_eq!(fs::read(&dest_file).unwrap(), before.1);
+    assert_eq!(
+        State::load(app.metadata_archive.path.clone())
+            .preference
+            .unwrap()
+            .folder,
+        source
+    );
+    choose(&mut app, "Use this folder");
+    // Another checkpoint can be written while the confirmation is open.
+    app.library
+        .archive_metadata(&source, epub_id, SavedOn::Delete, Some(600))
+        .unwrap();
+    let source_newer = app
+        .library
+        .archived_book(&source, epub_id)
+        .unwrap()
+        .unwrap();
+    confirm_move(&mut app);
+    assert_eq!(app.notice.as_deref(), Some("Metadata archive moved"));
+    assert!(!source_file.exists());
+    assert_eq!(fs::read(&untouched).unwrap(), b"Independent notes");
+    assert_eq!(fs::read(&epub).unwrap(), epub_bytes);
+    let persisted = State::load(app.metadata_archive.path.clone())
+        .preference
+        .unwrap();
+    assert_eq!(persisted.folder, destination);
+    assert!(persisted.on_close && persisted.on_delete);
+    let saved_epub = app
+        .library
+        .archived_book(destination, epub_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved_epub.revision, source_newer.revision);
+    assert_eq!(
+        saved_epub.book.bookmarks[0].position,
+        app.current_position().unwrap()
+    );
+    let saved_pdf = app
+        .library
+        .archived_book(destination, pdf_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved_pdf.revision, destination_newer.revision);
+    assert_eq!(saved_pdf.book.position, destination_newer.book.position);
+    assert!(
+        app.library
+            .archived_book(destination, other_id)
+            .unwrap()
+            .is_some()
+    );
+    choose(&mut app, "Archived books");
+    assert_eq!(app.items().len(), 3);
+}
+
+#[test]
+fn metadata_archive_folder_move_can_retry_after_data_or_preference_failures() {
+    let fixture = Fixture::new();
+    let mut app = reader(&fixture, &fixture.state);
+    let source = setup(&mut app);
+    let destination = Path::new(DESTINATION);
+    fs::create_dir(fixture.root.join(destination)).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    let id = app.open_book_id().unwrap();
+    app.save_metadata_archive(id, SavedOn::Delete).unwrap();
+    let source_file = fixture.root.join(&source).join(ARCHIVE);
+    let dest_file = fixture.root.join(destination).join(ARCHIVE);
+    let source_bytes = fs::read(&source_file).unwrap();
+    let preference_bytes = fs::read(&app.metadata_archive.path).unwrap();
+    fs::write(&dest_file, b"Unreadable archive content").unwrap();
+    app.show(Screen::ReadingControls);
+    choose(&mut app, "Book metadata archive");
+    choose_move(&mut app);
+    confirm_move(&mut app);
+    assert!(app.notice.is_some());
+    assert_eq!(fs::read(&source_file).unwrap(), source_bytes);
+    assert_eq!(fs::read(&dest_file).unwrap(), b"Unreadable archive content");
+    assert_eq!(
+        fs::read(&app.metadata_archive.path).unwrap(),
+        preference_bytes
+    );
+    fs::remove_file(&dest_file).unwrap();
+
+    // Block primitive-app's atomic preference write after the destination is staged.
+    let mut temporary_name = app.metadata_archive.path.file_name().unwrap().to_owned();
+    temporary_name.push(".tmp");
+    let temporary = app.metadata_archive.path.with_file_name(temporary_name);
+    fs::create_dir(&temporary).unwrap();
+    choose(&mut app, "Use this folder");
+    confirm_move(&mut app);
+    assert!(app.notice.is_some());
+    assert_eq!(fs::read(&source_file).unwrap(), source_bytes);
+    assert!(
+        app.library
+            .archived_book(destination, id)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        fs::read(&app.metadata_archive.path).unwrap(),
+        preference_bytes
+    );
+    fs::remove_dir(&temporary).unwrap();
+    choose(&mut app, "Use this folder");
+    confirm_move(&mut app);
+    assert_eq!(app.notice.as_deref(), Some("Metadata archive moved"));
+    assert!(!source_file.exists());
+    assert_eq!(
+        app.metadata_archive.preference.as_ref().unwrap().folder,
+        destination
+    );
+    assert!(
+        app.library
+            .archived_book(destination, id)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn metadata_archive_folder_move_retains_ambiguous_date_conflicts() {
+    let fixture = Fixture::new();
+    let mut app = reader(&fixture, &fixture.state);
+    let source = setup(&mut app);
+    let destination = Path::new(DESTINATION);
+    fs::create_dir(fixture.root.join(destination)).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    let id = app.open_book_id().unwrap();
+    app.library
+        .archive_metadata(destination, id, SavedOn::Delete, Some(100))
+        .unwrap();
+    let first = app.library.archived_book(destination, id).unwrap().unwrap();
+    app.activate(Action::ToggleBookmark).unwrap();
+    app.library
+        .archive_metadata(&source, id, SavedOn::Close, Some(100))
+        .unwrap();
+    let alternative = app.library.archived_book(&source, id).unwrap().unwrap();
+    app.show(Screen::ReadingControls);
+    choose(&mut app, "Book metadata archive");
+    choose_move(&mut app);
+    confirm_move(&mut app);
+    assert!(app.notice.as_deref().unwrap().contains("ambiguous dates"));
+    assert_eq!(
+        app.metadata_archive.preference.as_ref().unwrap().folder,
+        destination
+    );
+    assert_eq!(
+        app.library
+            .archived_book(destination, id)
+            .unwrap()
+            .unwrap()
+            .revision,
+        first.revision
+    );
+    assert_eq!(
+        app.library
+            .archived_book(&source, id)
+            .unwrap()
+            .unwrap()
+            .revision,
+        alternative.revision
+    );
+}

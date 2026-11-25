@@ -1,7 +1,7 @@
 //! Configure and use the book metadata archive independently of moving book files.
 use super::book_archive::{FolderPicker, folder_title};
 use super::*;
-use crate::library::metadata_archive::{SavedOn, Snapshot};
+use crate::library::metadata_archive::{MoveOutcome, SavedOn, Snapshot};
 use primitive_ui::{Sheet, SheetAction};
 
 #[cfg(test)]
@@ -21,7 +21,7 @@ impl Page {
     pub(super) fn title(self) -> &'static str {
         match self {
             Self::Settings => "Book metadata archive",
-            Self::Folder => "Choose metadata archive folder",
+            Self::Folder => "Archive folder",
             Self::Books => "Archived books",
             Self::Entry(_) => "Archived book",
         }
@@ -58,6 +58,7 @@ enum Confirmation {
         folder: PathBuf,
     },
     Remove(u64),
+    Move(PathBuf),
     Info {
         title: String,
         text: String,
@@ -271,12 +272,16 @@ impl Reader {
                 let state = &mut self.metadata_archive;
                 let folder = state.picker.as_ref().ok_or("Choose a folder")?.directory.clone();
                 with_storage(|| self.library.browse_folder(&folder))?;
-                state.set(Preference {
-                    folder,
-                    on_close: state.preference.as_ref().is_some_and(|pref| pref.on_close),
-                    on_delete: state.preference.as_ref().is_none_or(|pref| pref.on_delete),
-                })?;
-                self.show(Screen::MetadataArchive(Page::Settings));
+                match &state.preference {
+                    Some(preference) if preference.folder != folder => {
+                        state.confirmation = Some(Confirmation::Move(folder));
+                    }
+                    Some(_) => self.show(Screen::MetadataArchive(Page::Settings)),
+                    None => {
+                        state.set(Preference { folder, on_close: false, on_delete: true })?;
+                        self.show(Screen::MetadataArchive(Page::Settings));
+                    }
+                }
             }
             Command::Toggle(reason) => {
                 let state = &mut self.metadata_archive;
@@ -298,6 +303,41 @@ impl Reader {
         let picker = FolderPicker::load(&self.library, folder)?;
         self.show(Screen::MetadataArchive(Page::Folder));
         self.metadata_archive.picker = Some(picker);
+        Ok(())
+    }
+
+    fn move_metadata_archive_to(&mut self, folder: PathBuf) -> Result<()> {
+        let state = &mut self.metadata_archive;
+        let current = state
+            .preference
+            .as_ref()
+            .ok_or("Choose an archive folder first")?;
+        let from = current.folder.clone();
+        let on_close = current.on_close;
+        let on_delete = current.on_delete;
+        let preference_path = state.path.clone();
+        let outcome = with_storage(|| {
+            self.library
+                .move_metadata_archive(&from, &folder, &preference_path, || {
+                    state.set(Preference {
+                        folder: folder.clone(),
+                        on_close,
+                        on_delete,
+                    })
+                })
+        })?;
+        self.show(Screen::MetadataArchive(Page::Settings));
+        self.notice = Some(
+            match outcome {
+                MoveOutcome::Moved => "Metadata archive moved",
+                MoveOutcome::Empty => "Archive folder updated",
+                MoveOutcome::OldCopyKept => "Archive moved. The old copy is still available.",
+                MoveOutcome::DateConflict => {
+                    "Archive moved. Copies with ambiguous dates remain in the old folder."
+                }
+            }
+            .into(),
+        );
         Ok(())
     }
 
@@ -401,6 +441,12 @@ impl Reader {
                 "Remove this saved copy?",
                 "The book and its current reading data stay in your Library.",
                 "Remove",
+            ),
+            Confirmation::Move(_) => Sheet::centered(
+                screen,
+                "Move metadata archive?",
+                "Merge saved reading data into this folder.\nKeep the newest dated copy of each edition.",
+                "Move",
             ),
         })
     }
@@ -577,7 +623,10 @@ impl Reader {
                 self.load_metadata_archive_books()?;
                 self.notice = Some("Saved copy removed".into());
             }
-            Confirmation::Remove(_) | Confirmation::Info { .. } => {}
+            Confirmation::Move(folder) if action == SheetAction::Confirm => {
+                self.move_metadata_archive_to(folder)?;
+            }
+            Confirmation::Remove(_) | Confirmation::Move(_) | Confirmation::Info { .. } => {}
         }
         Ok(())
     }
