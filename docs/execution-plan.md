@@ -45,6 +45,13 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
+The latest Mac workflow pass covers selectable footer light readouts and the
+Reader clock, native archive and restore, one-finger multiswipes, and two
+in-page note styles. The [implementation checklist](reading-parity-plan.md#execution-checklist)
+records the remaining work for sidecar locations, gesture coverage, and note
+pagination. The [simulator review](simulation-review.md) records the test and
+packaging results for this checkpoint.
+
 ## Negotiated viewport verification
 
 The release history and the viewport branch are integrated in the Reader

@@ -27,6 +27,7 @@ fn footer_hides_inactive_metrics_only_when_combined_and_restores_saved_settings(
     use crate::reading_controls::{FooterSeparator, TopHeader};
 
     let fixture = Fixture::new();
+    std::fs::copy(crate::test_fixture("night-landing.epub"), &fixture.book).unwrap();
     let mut app = open(&fixture, &fixture.book);
     let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
     let initial = app.current_history_location();
@@ -74,9 +75,11 @@ fn footer_hides_inactive_metrics_only_when_combined_and_restores_saved_settings(
         Some("BM: 1 bookmarks | L: 7 | LW: 50%")
     );
     let id = app.open_book_id().unwrap();
-    let location = app.active.as_ref().unwrap().reading.anchor().unwrap();
-    let mut end = location.clone();
-    end.offset += 1;
+    let probe = &app.active.as_ref().unwrap().reading.probe;
+    let passage = "The fog still hid the far bank";
+    let start = probe.matches(passage).remove(0);
+    let end = probe.anchor(start.block, start.offset + passage.len());
+    let selection = probe.select_range(&start, &end).unwrap();
     app.library
         .state_mut(id)
         .unwrap()
@@ -87,11 +90,7 @@ fn footer_hides_inactive_metrics_only_when_combined_and_restores_saved_settings(
             created_at: None,
             style: Default::default(),
             color: Default::default(),
-            selection: crate::selection::TextSelection {
-                start: location,
-                end,
-                text: "A".into(),
-            },
+            selection,
             note: Some("A saved note".into()),
         });
     assert_eq!(

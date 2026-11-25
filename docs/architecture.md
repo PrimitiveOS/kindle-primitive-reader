@@ -82,6 +82,10 @@ chapters before picking the implementation.
   resource handles when USB exports the user volume, pause file access, and
   revalidate the current document on return. Handle a removed or changed file
   with an actionable notice and recover any saved state that still resolves.
+- Keep live reading records in the library. The optional book metadata
+  archive writes a versioned record to a chosen Documents folder on book
+  close or deletion. Restore verifies the edition and saves its live record
+  before consuming the matching snapshot. [Book metadata archive](book-metadata-archive.md)
 - Treat KOReader migration as an explicit, read-only import. Resolve exported
   highlights by uniquely matched quotation. Check fixed-page sidecar progress
   using the sampled fingerprint and page count. Reflowable import verifies

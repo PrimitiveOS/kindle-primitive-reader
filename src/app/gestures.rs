@@ -557,7 +557,9 @@ impl Reader {
             }
             Binding::RecentBooks => Action::ListBooks(BookList::Recent),
             Binding::BookDetails => Action::OrganizeCurrent,
-            Binding::PreviousChapter => Action::Chapter(super::chapter_navigation::Direction::Previous),
+            Binding::PreviousChapter => {
+                Action::Chapter(super::chapter_navigation::Direction::Previous)
+            }
             Binding::NextChapter => Action::Chapter(super::chapter_navigation::Direction::Next),
             Binding::PreviousBook => Action::OpenPreviousDocument,
             Binding::FavoriteBooks => Action::ListBooks(BookList::Favorites),

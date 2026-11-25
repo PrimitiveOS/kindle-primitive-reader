@@ -14732,14 +14732,37 @@ mod tests {
         let fixture = Fixture::new();
         let mut app = fixture.app();
         app.open_path(&fixture.book).unwrap();
-        let row = |slot: i32| Input::Tap(220.0, (LIST_Y + slot * ROW_HEIGHT + 48) as f32);
+        let tap_row = |app: &mut Reader, matches: fn(&Action) -> bool| {
+            let index = app
+                .items()
+                .iter()
+                .position(|item| matches(&item.action))
+                .unwrap();
+            let geometry = app.list_geometry();
+            app.list_page = index / geometry.rows;
+            let row = geometry.row(index % geometry.rows);
+            app.input(Input::Tap(
+                (row.x + row.w / 2) as f32,
+                (row.y + row.h / 2) as f32,
+            ));
+        };
         app.input(Input::Tap(630.0, 28.0));
         tap_reading_control(&mut app, "Settings");
         tap_reading_control(&mut app, "Reading gestures");
         assert_eq!(app.screen, Screen::Gestures);
-        app.input(row(1));
+        tap_row(&mut app, |action| {
+            matches!(
+                action,
+                Action::Show(Screen::GestureBinding(Gesture::TapTopRight))
+            )
+        });
         assert_eq!(app.screen, Screen::GestureBinding(Gesture::TapTopRight));
-        app.input(row(4));
+        tap_row(&mut app, |action| {
+            matches!(
+                action,
+                Action::BindGesture(Gesture::TapTopRight, Binding::Contents)
+            )
+        });
         assert_eq!(app.screen, Screen::Gestures);
 
         let mut resumed = fixture.app();

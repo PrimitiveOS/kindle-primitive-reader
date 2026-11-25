@@ -48,9 +48,21 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 290 of 537 in-scope reading-control rows have
-an implemented workflow, 195 are partial, 44 are gaps, and 8 need audit. The
-[statistics reset comparison](reading-statistics.md#reset-statistics) updates
+**Pinned control inventory:** 300 of 540 in-scope reading-control rows have
+an implemented workflow, 188 are partial, 44 are gaps, and 8 need audit. The
+three newly in-scope rows represent Reader's own clock format and the two
+front-light readouts. Launcher continues to set the system clock and time zone.
+[Reading status controls](footer-composition.md#inactive-items-and-clock)
+
+The Mac replay now covers one-contact multiswipes, archiving and recovering
+the same edition's reading data, cosmetic note spacing and local
+Wikipedia-pattern references. The remaining contracts include complete
+gesture sampling and assignments, native live sidecar locations,
+whole-note flattening and automatic non-linear note grouping.
+[Multiswipes](reading-multiswipes.md) · [Metadata archive](book-metadata-archive.md) ·
+[In-page notes](in-page-footnotes.md)
+
+The [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The
 [corner hold comparison](corner-hold-gestures.md) covers the ignore toggle,
 a timed pause, and the fallback to text selection.
