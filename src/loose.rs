@@ -1232,7 +1232,16 @@ fn html_document_with_text_fallback(input: &str, fallback_title: &str) -> Result
         Ok(document) => return Ok(document),
         Err(error) => error,
     };
-    let mut start = input.trim_start_matches('\u{feff}').trim_start();
+    let original_start = input.trim_start_matches('\u{feff}').trim_start();
+    let Some(mut start) = html_recovery_prolog(original_start) else {
+        return Err(original_error);
+    };
+    let prolog = &original_start[..original_start.len() - start.len()];
+    let recovery_input = if start.len() == original_start.len() {
+        input
+    } else {
+        start
+    };
     let plain_doctype = start
         .get(..15)
         .is_some_and(|value| value.eq_ignore_ascii_case("<!doctype html>"));
@@ -1250,10 +1259,18 @@ fn html_document_with_text_fallback(input: &str, fallback_title: &str) -> Result
         return Err(original_error);
     }
     // Do not silently recover XML entity declarations or external doctypes.
-    if start
+    if prolog
         .as_bytes()
         .windows(9)
         .any(|window| window.eq_ignore_ascii_case(b"<!doctype"))
+        || prolog
+            .as_bytes()
+            .windows(8)
+            .any(|window| window.eq_ignore_ascii_case(b"<!entity"))
+        || start
+            .as_bytes()
+            .windows(9)
+            .any(|window| window.eq_ignore_ascii_case(b"<!doctype"))
         || start
             .as_bytes()
             .windows(8)
@@ -1261,9 +1278,63 @@ fn html_document_with_text_fallback(input: &str, fallback_title: &str) -> Result
     {
         return Err(original_error);
     }
-    let xhtml = crate::mobi::html_xhtml(input)?;
+    let xhtml = crate::mobi::html_xhtml(recovery_input)?;
     check_output(&xhtml)?;
     html_document(&xhtml, fallback_title)
+}
+
+/// Recognize only a short, well-formed XML declaration and HTML comments.
+/// The original XML-compatible conversion runs first; this is only a gate for
+/// the text-only recovery of otherwise rejected documents.
+fn html_recovery_prolog(input: &str) -> Option<&str> {
+    const MAX_PROLOG: usize = 2_048;
+    let mut start = input;
+    if start.starts_with("<?xml") {
+        if !start
+            .as_bytes()
+            .get(5)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            return None;
+        }
+        let end = html_prolog_prefix(start, MAX_PROLOG)
+            .find("?>")?
+            .checked_add(2)?;
+        if end > MAX_PROLOG {
+            return None;
+        }
+        let declaration = &start[..end];
+        let probe = format!("{declaration}<html/>");
+        Xml::parse(&probe).ok()?;
+        start = start[end..].trim_start();
+    }
+    while start.starts_with("<!--") {
+        let remaining = MAX_PROLOG.checked_sub(input.len() - start.len())?;
+        let end = html_prolog_prefix(start, remaining).find("-->")?;
+        if end < 4 {
+            return None;
+        }
+        let comment = &start[4..end];
+        if comment.contains("--") || comment.ends_with('-') {
+            return None;
+        }
+        start = start[end + 3..].trim_start();
+        if input.len() - start.len() > MAX_PROLOG {
+            return None;
+        }
+    }
+    if input.len() - start.len() > MAX_PROLOG {
+        return None;
+    }
+    Some(start)
+}
+
+fn html_prolog_prefix(input: &str, limit: usize) -> &str {
+    let mut end = input.len().min(limit);
+    while !input.is_char_boundary(end) {
+        end -= 1;
+    }
+    &input[..end]
 }
 
 fn html_document(input: &str, fallback_title: &str) -> Result<Document> {

@@ -2541,6 +2541,9 @@ impl Probe {
     }
 
     pub(crate) fn anchor_top(&self, anchor: &Anchor) -> Option<f32> {
+        if anchor.raw_caret.is_some() {
+            return self.raw_anchor_top(anchor);
+        }
         let (index, offset) = self.project_anchor(anchor)?;
         let block = &self.source.blocks[index];
         if self.source_presentation(anchor) == Some(SourcePresentation::CssOmitted) {
@@ -2617,37 +2620,40 @@ impl Probe {
     }
 
     pub(crate) fn anchor_in(&self, range: Range<f32>) -> Option<Anchor> {
-        self.lines
+        let line = self
+            .lines
             .iter()
             .find(|line| {
-                !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
+                (!line.bytes.is_empty() || line.raw_whitespace.is_some())
+                    && line.bottom > range.start
+                    && line.top < range.end
             })
             .or_else(|| {
                 self.lines
                     .iter()
                     .find(|line| line.bottom > range.start && line.top < range.end)
-            })
-            .map(|line| {
-                let mut anchor = self.anchor(line.block, line.bytes.start);
-                if line.bytes.is_empty()
-                    && let Renderer::Parley(renderer) = &self.renderer
-                    && let Some((key, ordinal)) =
-                        renderer.image_source_on_line(line.block, line.top)
-                {
-                    anchor = self.anchor(key, 0);
-                    if ordinal != 0
-                        || self
-                            .source
-                            .blocks
-                            .iter()
-                            .find(|block| block.key == key)
-                            .is_some_and(|block| !block.text.is_empty())
-                    {
-                        anchor.illustration = Some(ordinal);
-                    }
-                }
-                anchor
-            })
+            })?;
+        if line.raw_whitespace.is_some() {
+            return self.raw_anchor_in(range);
+        }
+        let mut anchor = self.anchor(line.block, line.bytes.start);
+        if line.bytes.is_empty()
+            && let Renderer::Parley(renderer) = &self.renderer
+            && let Some((key, ordinal)) = renderer.image_source_on_line(line.block, line.top)
+        {
+            anchor = self.anchor(key, 0);
+            if ordinal != 0
+                || self
+                    .source
+                    .blocks
+                    .iter()
+                    .find(|block| block.key == key)
+                    .is_some_and(|block| !block.text.is_empty())
+            {
+                anchor.illustration = Some(ordinal);
+            }
+        }
+        Some(anchor)
     }
 
     /// Detached raw-page lookup for a future installed raw layout. This is

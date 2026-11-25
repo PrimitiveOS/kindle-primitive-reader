@@ -47,6 +47,9 @@ const MAX_IMAGE_BOXES: usize = 2_048;
 const MAX_DISTINCT_IMAGE_READS: usize = 512;
 const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
 const MAX_RUBY_BASE_BYTES: usize = 192;
+// Raw layouts remain disabled until source-aware search, restoration,
+// selection and versioned state promotion are integrated end to end.
+const RAW_LAYOUT_ENABLED: bool = false;
 
 fn declared_box_height(style: &Style, width: u32, font: f32) -> Option<f32> {
     let length = match style.image_height? {
@@ -1603,7 +1606,45 @@ impl ParleyChapter {
                 } else {
                     None
                 };
-                let (layout, ruby) = if let Some(table) = &mut tabular {
+                let raw_candidate = if RAW_LAYOUT_ENABLED
+                    && plan.is_none()
+                    && generated.is_none()
+                    && tabular.is_none()
+                    && initial.is_none()
+                    && note_layout.is_none()
+                    && contour.is_none()
+                    && fitted.is_none()
+                    && cell.is_none()
+                    && float.is_none()
+                    && inline_boxes.is_empty()
+                {
+                    inline_blocks::raw_whitespace::Plan::new(block, &projection, styles)
+                        .and_then(|plan| {
+                            plan.shape(
+                                &mut context,
+                                &mut fonts,
+                                block,
+                                width,
+                                settings,
+                                styles,
+                                indent,
+                                user_rules,
+                            )
+                        })
+                        .and_then(|prepared| prepared.into_page_parts(block))
+                } else {
+                    None
+                };
+                let mut raw_text = None;
+                let mut raw_lines = None;
+                let mut raw_binding = None;
+                let (layout, ruby) = if let Some((layout, text, positions, binding)) = raw_candidate
+                {
+                    raw_text = Some(text);
+                    raw_lines = Some(positions);
+                    raw_binding = Some(binding);
+                    (layout, Vec::new())
+                } else if let Some(table) = &mut tabular {
                     let generated: Vec<_> = block
                         .generated
                         .iter()
@@ -1722,10 +1763,11 @@ impl ParleyChapter {
                         contour,
                     )
                 };
-                let mut inline_text = plan
-                    .map(|boxed| boxed.text)
-                    .or_else(|| generated.map(|generated| generated.text))
-                    .or_else(|| initial.map(|initial| initial.text));
+                let mut inline_text = raw_text.or_else(|| {
+                    plan.map(|boxed| boxed.text)
+                        .or_else(|| generated.map(|generated| generated.text))
+                        .or_else(|| initial.map(|initial| initial.text))
+                });
                 let initial_bounds = inline_text
                     .as_ref()
                     .and_then(inline_blocks::InlineText::initial_bounds);
@@ -1806,6 +1848,14 @@ impl ParleyChapter {
                             })
                             .sum(),
                     };
+                    if let Some(positions) = &raw_lines {
+                        source_line.raw_whitespace = Some(
+                            positions
+                                .get(index)
+                                .ok_or("Raw line metadata does not match the layout")?
+                                .clone(),
+                        );
+                    }
                     if let (Some(note), Some(table), Some(candidate)) =
                         (&note_layout, &mut tabular, &note_table)
                     {
@@ -1964,7 +2014,7 @@ impl ParleyChapter {
                         None
                     },
                     inline_text,
-                    raw_binding: None,
+                    raw_binding,
                     joined_note: note_layout.as_ref().map(Arc::clone),
                 });
             }

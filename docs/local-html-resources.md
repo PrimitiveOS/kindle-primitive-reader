@@ -48,6 +48,14 @@ external links and head metadata, and does not cover arbitrary malformed HTML.
 External doctypes and entity declarations are rejected. Previously readable
 documents retain their existing conversion and anchors.
 
+The text-only recovery can also recognize an optional XML declaration followed
+by complete HTML comments before the root or plain HTML doctype. This prolog is
+limited to 2,048 UTF-8 bytes after leading whitespace, and malformed declarations,
+invalid or unterminated comments, external doctypes and entity declarations are
+rejected. Existing successful conversions keep their original source identity.
+This is narrower than KOReader's HTML detection and has not yet been behaviorally
+compared or verified on Kindle. [Pinned KOReader HTML detection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L6097-L6198)
+
 The loose-document decoder additionally accepts strictly valid
 BOM-marked UTF-32LE and UTF-32BE; BOM-less UTF-32 is not detected. KOReader's
 pinned CREngine resolves non-container HTML resources against

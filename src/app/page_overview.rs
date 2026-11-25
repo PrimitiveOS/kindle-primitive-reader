@@ -1,6 +1,7 @@
 //! Page overview thumbnails and the source position of the browsed page.
 use primitive_app::Change;
 use primitive_ui::{CAPTION, Canvas, GrayImage, Input, Rect};
+use std::collections::BTreeSet;
 
 use super::fixed_book_map::MapWindow;
 use super::navigation_layout::NavigationLayout;
@@ -548,15 +549,65 @@ impl Reader {
             .map_or((page, overview.count, "Skim pages"), |chapter| {
                 (chapter, chapters, "Skim chapters")
             });
-        let detail = format!(
+        let mut section_title = None;
+        let mut closest_section_page = None;
+        let mut ticks = BTreeSet::new();
+        if let Some(fixed) = self.fixed.as_ref().filter(|_| overview.chapter.is_none()) {
+            let mut add_section = |start: usize, title: &str| {
+                if start >= count {
+                    return;
+                }
+                if start <= selected && closest_section_page.is_none_or(|old| start > old) {
+                    closest_section_page = Some(start);
+                    section_title = Some(title.to_owned());
+                }
+                // Quantize markers so a dense outline cannot draw more ticks
+                // than the ribbon can distinguish. Mirror the same geometry
+                // used by the scrub indicator below.
+                let portion = start as f64 / count.saturating_sub(1).max(1) as f64;
+                let portion = if layout.navigation.mirrored {
+                    1.0 - portion
+                } else {
+                    portion
+                };
+                let offset = (portion * (track.w - 20).max(0) as f64).round() as i32;
+                ticks.insert(offset / 3 * 3);
+            };
+            if let Some(custom) = self
+                .library
+                .state(fixed.id)
+                .map(|book| &book.custom_contents)
+                .filter(|custom| custom.enabled)
+            {
+                for entry in custom.entries() {
+                    if entry.position.chapter == 0 {
+                        add_section(entry.position.page, &entry.label);
+                    }
+                }
+            } else {
+                for entry in fixed.reading.chapter_outline() {
+                    if let Some(page) = entry.page {
+                        add_section(page, &entry.title);
+                    }
+                }
+            }
+        }
+        let mut detail = format!(
             "{} · {} {} {count}",
             language.overview_text(title),
             selected + 1,
             language.overview_text("of")
         );
+        if let Some(title) = section_title.filter(|title| !title.trim().is_empty()) {
+            detail.push_str(" · ");
+            detail.push_str(&title);
+        }
         canvas.text(layout.track_caption(), &detail, CAPTION);
         let center = track.y + track.h / 2;
         canvas.fill(Rect::new(track.x, center - 3, track.w, 6), 151);
+        for offset in ticks {
+            canvas.fill(Rect::new(track.x + 10 + offset, center - 10, 2, 20), 85);
+        }
         let portion = selected as f64 / count.saturating_sub(1).max(1) as f64;
         let portion = if layout.navigation.mirrored {
             1.0 - portion

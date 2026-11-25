@@ -102,10 +102,11 @@ its explicit boundary affinity. These are not installed into Reader's page model
 or UI; durable state and the full integration remain open. A detached hit-test
 can also resolve a shaped cluster to a verified raw grapheme caret, including
 positions within restored whitespace. Empty areas without a cluster are rejected.
-The chapter page model can also hold verified raw line boundaries and resolve
-a raw page anchor back to a line with its explicit affinity. All active
-renderers still leave this field empty; installing it, coordinating ordinary
-and raw lines on the same page, and integrating resume remain future work.
+The chapter builder has a hard-disabled raw-layout branch that would transfer
+verified source bindings and raw line boundaries into the page model. Page
+lookup can map those lines to and from raw anchors with explicit affinity,
+including blank lines. The branch remains disabled while resume, search and
+state promotion are incomplete; active rendering still uses the legacy layout.
 The detached shaped-block search can use Reader's existing literal-query
 case/accent folding and return exact raw quotes with grapheme-checked endpoints.
 If any result has an unsupported boundary it fails closed; it is not yet used
