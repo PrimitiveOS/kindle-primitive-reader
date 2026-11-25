@@ -11,6 +11,7 @@ impl Reader {
     }
 
     pub(super) fn history_reset_items(&self, page: Page) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let current = self.open_book_id();
         let open = |page| Action::ReadingHistory(Command::Show(page));
         let confirm = |scope| open(Page::ConfirmReset(scope));
@@ -21,19 +22,32 @@ impl Reader {
                     let (action, title) = if self.reading_history.options().enabled {
                         (confirm(Scope::Book(id)), self.history_title(id))
                     } else {
-                        (Action::Heading, "Statistics recording is off".into())
+                        (
+                            Action::Heading,
+                            language
+                                .history_reset_text("Statistics recording is off")
+                                .into(),
+                        )
                     };
                     rows.push(
-                        Item::new("Reset statistics for the current book", action).detail(title),
+                        Item::new(
+                            language.history_reset_text("Reset statistics for the current book"),
+                            action,
+                        )
+                        .detail(title),
                     );
                 }
                 rows.push(Item::new(
-                    "Reset statistics per book",
+                    language.history_reset_text("Reset statistics per book"),
                     open(Page::ResetBooks),
                 ));
                 rows.extend(SHORT_READING_MINUTES.into_iter().map(|minutes| {
                     Item::new(
-                        format!("Books read for less than {minutes} min"),
+                        if language.is_english() {
+                            format!("Books read for less than {minutes} min")
+                        } else {
+                            format!("Sách được đọc dưới {minutes} phút")
+                        },
                         confirm(Scope::ShortBooks {
                             minutes,
                             keep: current,
@@ -59,7 +73,10 @@ impl Reader {
                     .collect();
                 books.sort_unstable();
                 if books.is_empty() {
-                    vec![Item::new("No other books have statistics", Action::Heading)]
+                    vec![Item::new(
+                        language.history_reset_text("No other books have statistics"),
+                        Action::Heading,
+                    )]
                 } else {
                     books
                         .into_iter()
@@ -73,24 +90,36 @@ impl Reader {
                 let (question, count) = match scope {
                     Scope::Book(id) => (self.history_title(id), 1),
                     Scope::ShortBooks { minutes, .. } => (
-                        format!("Books read for less than {minutes} min"),
+                        if language.is_english() {
+                            format!("Books read for less than {minutes} min")
+                        } else {
+                            format!("Sách được đọc dưới {minutes} phút")
+                        },
                         self.reading_history.reset_selection(scope).len(),
                     ),
                 };
                 let detail = match count {
-                    0 => "No eligible books".into(),
-                    1 => "Remove recorded statistics for one book".into(),
-                    count => format!("Remove recorded statistics for {count} books"),
+                    0 => language.history_reset_text("No eligible books").into(),
+                    1 => language
+                        .history_reset_text("Remove recorded statistics for one book")
+                        .into(),
+                    count => {
+                        if language.is_english() {
+                            format!("Remove recorded statistics for {count} books")
+                        } else {
+                            format!("Xóa thống kê đã ghi của {count} sách")
+                        }
+                    }
                 };
                 let mut items = vec![Item::new(question, Action::Heading).detail(detail)];
                 if count > 0 {
                     items.push(Item::new(
-                        "Reset statistics",
+                        language.history_reset_text("Reset statistics"),
                         Action::ReadingHistory(Command::ConfirmReset),
                     ));
                 }
                 items.push(Item::new(
-                    "Cancel",
+                    language.history_reset_text("Cancel"),
                     Action::ReadingHistory(Command::CancelReset),
                 ));
                 items

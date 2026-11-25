@@ -50,6 +50,9 @@ Copyright (C) 2004-2015 Kevin P. Scannell
 MIT (selected from the upstream dual licence)
 Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-ga.tex
 Source SHA-256: 7856cb341fd978b910c3807aa6918b39791e2f507d803253daccb5c71bbc02c6
+The unchanged source is packaged as hyph-ga.tex. Reader compiles the
+alphabetic weighted patterns and the two exceptions retained by pinned
+KOReader; behavior and distribution review remain open.
 
 Ukrainian, version 10 May 2001
 Copyright (C) 1998-2001 Maksym Polyakov

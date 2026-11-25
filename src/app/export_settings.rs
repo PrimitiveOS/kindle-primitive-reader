@@ -126,7 +126,13 @@ pub(super) fn folder_label(folder: &Path) -> String {
 
 impl Reader {
     pub(super) fn export_settings_items(&self, origin: Origin, page: Page) -> Vec<Item> {
-        let row = |title, command| Item::new(title, Action::ExportSettings(origin, command));
+        let language = self.controls.interface_language;
+        let row = |title: &str, command| {
+            Item::new(
+                language.export_settings_text(title),
+                Action::ExportSettings(origin, command),
+            )
+        };
         let settings = &self.export_settings;
         let preferences = &settings.preferences;
         if page == Page::Tokens {
@@ -141,32 +147,38 @@ impl Reader {
                     "Choose export folder",
                     Command::Browse(preferences.folder.clone().unwrap_or_default()),
                 )
-                .detail(
-                    preferences
-                        .folder
-                        .as_deref()
-                        .map_or_else(|| "Reader data / exports".into(), folder_label),
-                ),
+                .detail(preferences.folder.as_deref().map_or_else(
+                    || {
+                        language
+                            .export_settings_text("Reader data / exports")
+                            .into()
+                    },
+                    folder_label,
+                )),
                 row("Use Reader exports", Command::UseDefault).detail(
                     if preferences.folder.is_none() {
-                        "Selected"
+                        language.export_settings_text("Selected")
                     } else {
-                        "Default folder"
+                        language.export_settings_text("Default folder")
                     },
                 ),
-                row("Export beside the book", Command::ToggleBookFolder)
-                    .detail("When one book with a source file is exported"),
+                row("Export beside the book", Command::ToggleBookFolder).detail(
+                    language.export_settings_text("When one book with a source file is exported"),
+                ),
                 row("Use book titles for filenames", Command::ToggleBookName).detail(
                     if preferences.book_title {
-                        "Book title · Field Notes.txt"
+                        language.export_settings_text("Book title · Field Notes.txt")
                     } else {
-                        "Book ID · 0123456789abcdef.txt"
+                        language.export_settings_text("Book ID · 0123456789abcdef.txt")
                     },
                 ),
             ];
             rows.extend([Scope::Single, Scope::Multiple].map(|scope| {
-                row(scope.title(), Command::EditTemplate(scope))
-                    .detail(preferences.template(scope).unwrap_or("Default name"))
+                row(scope.title(), Command::EditTemplate(scope)).detail(
+                    preferences
+                        .template(scope)
+                        .unwrap_or_else(|| language.export_settings_text("Default name")),
+                )
             }));
             rows.push(row("Filename tokens", Command::Tokens));
             return rows;
@@ -186,12 +198,15 @@ impl Reader {
                 display_filename(&name),
                 Action::ExportSettings(origin, Command::Browse(child.clone())),
             )
-            .detail("Folder");
+            .detail(language.export_settings_text("Folder"));
             item.folder = true;
             item
         }));
         if picker.truncated {
-            rows.push(Item::new("Some folders are unavailable", Action::Heading));
+            rows.push(Item::new(
+                language.export_settings_text("Some folders are unavailable"),
+                Action::Heading,
+            ));
         }
         rows
     }

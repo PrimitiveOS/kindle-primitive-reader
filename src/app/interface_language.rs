@@ -551,6 +551,65 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed export settings controls; user paths and filename templates stay untouched.
+const EXPORT_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Choose export folder", "Chọn thư mục xuất"),
+    ("Reader data / exports", "Dữ liệu Reader / exports"),
+    ("Use Reader exports", "Dùng thư mục xuất của Reader"),
+    ("Selected", "Đã chọn"),
+    ("Default folder", "Thư mục mặc định"),
+    ("Export beside the book", "Xuất cạnh tệp sách"),
+    (
+        "When one book with a source file is exported",
+        "Khi xuất một sách có tệp nguồn",
+    ),
+    ("Use book titles for filenames", "Dùng tên sách làm tên tệp"),
+    ("Book title · Field Notes.txt", "Tên sách · Field Notes.txt"),
+    (
+        "Book ID · 0123456789abcdef.txt",
+        "ID sách · 0123456789abcdef.txt",
+    ),
+    ("Single-book filename", "Tên tệp cho một sách"),
+    ("Multiple-book filename", "Tên tệp cho nhiều sách"),
+    ("Default name", "Tên mặc định"),
+    ("Filename tokens", "Ký hiệu trong tên tệp"),
+    ("Use this folder", "Dùng thư mục này"),
+    ("Up one folder", "Lên một thư mục"),
+    ("Folder", "Thư mục"),
+    (
+        "Some folders are unavailable",
+        "Một số thư mục không khả dụng",
+    ),
+];
+
+// Fixed statistics-reset controls; book names and destructive scopes stay untouched.
+const HISTORY_RESET_LABELS: &[(&str, &str)] = &[
+    ("Statistics recording is off", "Ghi thống kê đang tắt"),
+    (
+        "Reset statistics for the current book",
+        "Đặt lại thống kê của sách hiện tại",
+    ),
+    (
+        "Reset statistics per book",
+        "Đặt lại thống kê theo từng sách",
+    ),
+    (
+        "No other books have statistics",
+        "Không có sách nào khác có thống kê",
+    ),
+    ("No eligible books", "Không có sách đủ điều kiện"),
+    (
+        "Remove recorded statistics for one book",
+        "Xóa thống kê đã ghi của một sách",
+    ),
+    ("Reset statistics", "Đặt lại thống kê"),
+    (
+        "Reset statistics for this period",
+        "Đặt lại thống kê trong kỳ này",
+    ),
+    ("Cancel", "Hủy"),
+];
+
 // Fixed KOReader statistics-transfer controls; database/book data stay untouched.
 const HISTORY_IMPORT_LABELS: &[(&str, &str)] = &[
     (
@@ -2412,6 +2471,29 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn export_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = EXPORT_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn history_reset_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                HISTORY_RESET_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn history_import_text<'a>(self, english: &'a str) -> &'a str {

@@ -20,12 +20,12 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | German, reformed spelling | 2 / 2 | 36,729 pinned KOReader rules; behavior comparison pending |
 | Bulgarian | 2 / 2 | 6,883 upstream word rules; stock comparison pending |
 | Galician | 2 / 2 | 2,321 upstream word rules; stock comparison pending |
-| Irish | 2 / 3 | 6,033 upstream word rules and 46 exceptions; stock comparison pending |
+| Irish | 2 / 3 | 6,033 source rules and 2 exceptions match pinned KOReader; behavior pending |
 | Ukrainian | 2 / 2 | 1,897 weighted source rules match pinned KOReader; behavior pending |
 | Polish | 2 / 2 | 4,053 upstream word rules and 20 exceptions; stock comparison pending |
 | Russian | 2 / 2 | 4,808 source rules match pinned KOReader; behavior pending |
 | Swedish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
-| Catalan | 2 / 2 | Upstream single-word patterns and exceptions; stock comparison pending |
+| Catalan | 2 / 2 | 869 source rules match pinned KOReader; behavior pending |
 | Turkish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Croatian | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Norwegian | 2 / 2 | Upstream single-word patterns and exceptions; stock comparison pending |
@@ -82,9 +82,11 @@ the alphabetic source-only subset: its 1,897 effective weighted rules match
 the pinned KOReader set, whose remaining unweighted entry cannot add a break.
 Straight and curly apostrophes split lookup input without changing source
 offsets. U+02BC modifier-letter segmentation, actual wrapping and real-book
-behavior still need comparison. Bulgarian, Galician and Irish normalized rule
-sets and Irish exceptions have not yet been compared exhaustively, and
-simulator and device checks remain pending. [Pattern provenance and notices](licenses/HYPHENATION-BG-GL-GA.txt)
+behavior still need comparison. Irish compiles the 6,033 source patterns and
+only the two exceptions retained by pinned KOReader; the other 44 source
+exceptions are omitted. Bulgarian and Galician normalized rule sets and
+Irish real-word behavior still need comparison, and simulator and device
+checks remain pending. [Pattern provenance and notices](licenses/HYPHENATION-BG-GL-GA.txt)
 Russian uses Alexander Lebedev's upstream TeX patterns, also identified as
 the origin of KOReader's pinned Russian dictionary. The 4,808 selected source
 rules match pinned KOReader; 184 TeX exceptions are omitted because the pinned
@@ -185,16 +187,18 @@ release packages. The compiled rules and their word breaks have not been
 compared with the pinned KOReader dictionary, built, or tested on the computer
 or Kindle. [Swedish terms](licenses/HYPHENATION-SV.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
 
-Catalan uses the upstream TeX patterns and exceptions compiled by Gonçal
-Badenes and Francina Turon, with KOReader's 2 / 2 minima. The unmodified
-source, LPPL 1.3c and provenance are included in release packages. For dictionary lookup only, Reader treats Catalan's U+00B7 middle dot as a
+Catalan uses the upstream TeX patterns compiled by Gonçal Badenes and
+Francina Turon, with KOReader's 2 / 2 minima. The 869 selected patterns match
+pinned KOReader; 26 source exceptions are omitted as in the pinned file. The
+unmodified source, LPPL 1.3c and provenance are included in release packages.
+For dictionary lookup only, Reader treats Catalan's U+00B7 middle dot as a
 boundary between alphabetic runs and keeps each resulting break at its original
 UTF-8 source offset. This follows the pinned CREngine's alphabetic word-bound
 selection without changing selection or search. It does not add a break at the
 dot or implement the Catalan spelling change that may be needed when a line
 actually breaks there; precomposed middle-dot letters also remain open. The
-compiled rules and their word breaks have not been compared with the pinned
-KOReader dictionary, built, or tested on the computer or Kindle.
+compiled behavior and real-word breaks have not been compared with KOReader
+on the computer or Kindle.
 [Catalan terms](licenses/HYPHENATION-CA.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
 
 Turkish uses the upstream TeX patterns with KOReader's 2 / 2 minima. Lookup

@@ -574,12 +574,8 @@ fn property_slot(property: &Property) -> Option<usize> {
 pub(super) fn accepts_user_declaration(target: Target, property: &Property) -> bool {
     match (target, property) {
         (_, Property::Display(value)) => matches!(value, Display::Inline | Display::None),
-        (Target::Generated(_), _) => property_slot(property).is_some_and(|slot| slot <= 8),
-        (
-            Target::FirstLetter | Target::FirstLine,
-            Property::VariantShorthand(..) | Property::LigatureShorthand(..),
-        ) => true,
-        (Target::FirstLetter | Target::FirstLine, Property::ResetMany(keys, _)) => {
+        (_, Property::VariantShorthand(..) | Property::LigatureShorthand(..)) => true,
+        (_, Property::ResetMany(keys, _)) => {
             !keys.is_empty()
                 && keys.iter().all(|key| {
                     matches!(
@@ -593,6 +589,9 @@ pub(super) fn accepts_user_declaration(target: Target, property: &Property) -> b
                             | super::VARIANT_HISTORICAL
                     )
                 })
+        }
+        (Target::Generated(_), _) => {
+            property_slot(property).is_some_and(|slot| slot <= 8 || slot >= 13)
         }
         (Target::FirstLine, _) => is_first_line_typography(property),
         (
@@ -753,11 +752,6 @@ impl<'a> Rules<'a> {
                     let Some(slot) = property_slot(&decl.property) else {
                         continue;
                     };
-                    // Generated text uses a separate typography lifecycle; do
-                    // not imply variant support there until it is implemented.
-                    if matches!(target, Target::Generated(_)) && slot >= 13 {
-                        continue;
-                    }
                     let priority = super::cascade_priority(
                         *origin,
                         decl.important,

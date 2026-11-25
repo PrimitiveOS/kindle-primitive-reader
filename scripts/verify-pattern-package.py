@@ -53,6 +53,7 @@ with ZipFile(args.package) as package:
         'licenses/LPPL-1.3c.txt': root / 'docs/licenses/LPPL-1.3c.txt',
         'licenses/hyph-ru.tex': root / 'assets/hyphenation/hyph-ru.tex',
         'licenses/hyph-uk.tex': root / 'assets/hyphenation/hyph-uk.tex',
+        'licenses/hyph-ga.tex': root / 'assets/hyphenation/hyph-ga.tex',
         'licenses/hyph-sv.tex': root / 'assets/hyphenation/hyph-sv.tex',
         'licenses/hyph-ca.tex': root / 'assets/hyphenation/hyph-ca.tex',
         'licenses/hyph-tr.tex': root / 'assets/hyphenation/hyph-tr.tex',

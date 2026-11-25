@@ -353,10 +353,24 @@ fn main() {
         let mut rules = if matches!(tag, "la-x-classic" | "la-x-liturgic" | "grc" | "ml") {
             decomposed_rules(&tex, tag)
         } else {
-            // KOReader's Russian dictionary contains the source patterns but
-            // omits the TeX exception group. Other languages keep theirs.
-            stock_word_rules(&tex, false, tag != "ru")
+            // Pinned Russian and Catalan omit TeX exceptions. Irish keeps
+            // only two exceptions, which are added explicitly below.
+            stock_word_rules(&tex, false, !matches!(tag, "ru" | "ca" | "ga"))
         };
+        if tag == "ga" {
+            let exceptions = group(&tex, "\\hyphenation{");
+            for word in ["dtiom-áintí", "thiom-áintí"] {
+                assert_eq!(
+                    exceptions
+                        .split_whitespace()
+                        .filter(|entry| *entry == word)
+                        .count(),
+                    1,
+                    "Expected Irish exception is missing or duplicated"
+                );
+                rules.push(word.replace('-', "5"));
+            }
+        }
         if tag == "fi" {
             // CRE converted this two-entry TeX line into one pattern with an
             // internal word-edge marker, unreachable when matching one word.

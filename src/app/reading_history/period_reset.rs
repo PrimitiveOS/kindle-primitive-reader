@@ -56,13 +56,16 @@ impl Reader {
         let Some(pending) = &self.history_view.period_reset else {
             return Vec::new();
         };
+        let language = self.controls.interface_language;
         let count =
             self.reading_history
                 .count_period_visits(pending.book, pending.from, pending.until);
         let mut items = vec![
             Item::new(self.history_title(pending.book), Action::Heading).detail(&pending.label),
             Item::new(
-                if count == 1 {
+                if !language.is_english() {
+                    format!("Xóa {count} lượt đọc đã ghi")
+                } else if count == 1 {
                     "Remove 1 recorded visit".into()
                 } else {
                     format!("Remove {count} recorded visits")
@@ -72,12 +75,12 @@ impl Reader {
         ];
         if count != 0 {
             items.push(Item::new(
-                "Reset statistics for this period",
+                language.history_reset_text("Reset statistics for this period"),
                 Action::ReadingHistory(Command::ConfirmPeriodReset),
             ));
         }
         items.push(Item::new(
-            "Cancel",
+            language.history_reset_text("Cancel"),
             Action::ReadingHistory(Command::CancelReset),
         ));
         items
