@@ -63,7 +63,10 @@ fn one_and_multiple_wrapped_media_lines_keep_valid_empty_input_carets_and_real_i
                         media_lines += 1;
                         assert_eq!(bytes, view.text().len()..view.text().len());
                         let top = paragraph.y + line.metrics().content_block_min_coord;
-                        assert!(renderer.image_ordinal(block.key, top).is_some());
+                        assert_eq!(
+                            renderer.image_source_on_line(block.key, top),
+                            Some((block.key, media_lines - 1))
+                        );
                     }
                 }
             }

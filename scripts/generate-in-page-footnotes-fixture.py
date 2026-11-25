@@ -144,12 +144,21 @@ chapters = {
 <p id="media-return"><a href="#media-ref" role="doc-backlink">Back to cabinet.</a></p>
 </aside>
 <p id="media-key">The cabinet diagram was filed with the tally.</p>""",
-    "inline-image-fallback": """<p id="image-fallback-start">The hinge measured a thumb's width<a href="#image-fallback-note" epub:type="noteref"><sup>12</sup></a>.</p>
-<aside id="image-fallback-note" epub:type="footnote">
+    "inline-block-image": """<p id="isolated-start">The hinge measured a thumb's width<a id="isolated-ref" href="#isolated-note" epub:type="noteref"><sup>12</sup></a>.</p>
+<p style="page-break-before:always">The measurements follow on another leaf.</p>
+<aside id="isolated-note" epub:type="footnote">
 <p>Measurements in the workshop.</p>
-<p><img src="chart.png" width="108" height="69" alt="Hinge diagram"/></p>
-<p id="image-fallback-end">A hinge holds the door.</p>
+<p id="isolated-picture"><a href="#isolated-start"><img src="chart.png" width="108" height="69" alt="Hinge diagram"/></a></p>
+<p id="isolated-end">A hinge holds the door.</p>
 </aside>""",
+    "inline-block-images": """<p id="pair-start">Two views show the handles<a href="#pair-note" epub:type="noteref"><sup>13</sup></a>.</p>
+<p style="page-break-before:always">This page includes both views.</p>
+<aside id="pair-note" epub:type="footnote">
+<p>Two handle views.</p>
+<p id="pair-pictures"><a href="#pair-start"><img src="chart.png" width="42" height="27" alt="Front handle"/></a><a href="#pair-key"><img src="chart.png" width="70" height="45" alt="Back handle"/></a></p>
+<p id="pair-end">The latch faces east.</p>
+</aside>
+<p id="pair-key">The workshop closed before dusk.</p>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)

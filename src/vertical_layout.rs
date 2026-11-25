@@ -111,6 +111,7 @@ pub(crate) struct PaintGlyph<'a> {
     pub y: f32,
     pub clockwise: bool,
     pub strength: f32,
+    pub ink: u8,
     pub variations: &'a [NormalizedCoord],
 }
 
@@ -154,6 +155,7 @@ struct Run {
     face: usize,
     size: f32,
     strength: f32,
+    ink: u8,
     painted: bool,
 }
 
@@ -174,6 +176,7 @@ struct Glyph {
     y: f32,
     clockwise: bool,
     strength: f32,
+    ink: u8,
     painted: bool,
 }
 
@@ -619,6 +622,7 @@ impl VerticalChapter {
                         y: glyph.y - top as f32,
                         clockwise: glyph.clockwise,
                         strength: glyph.strength,
+                        ink: glyph.ink,
                         variations: &self.faces[glyph.face].variations,
                     },
                     settings.text_contrast,
@@ -818,6 +822,7 @@ fn font_runs(
                 face,
                 size,
                 strength,
+                ink: style.link_ink.unwrap_or(0),
                 painted: style.flow.painted,
             });
         }
@@ -1065,6 +1070,7 @@ fn shape_block(
                 y,
                 clockwise: sideways,
                 strength: run.strength,
+                ink: run.ink,
                 painted: run.painted,
             });
             pen += advance;

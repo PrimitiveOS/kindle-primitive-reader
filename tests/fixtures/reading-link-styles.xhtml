@@ -1,0 +1,14 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head><title>Reading link styles</title>
+<style type="text/css">
+p { margin: 0.4em 0; text-align: start; text-indent: 0; }
+</style>
+</head>
+<body>
+<p><a id="plain" href="#target" style="font-weight:normal!important;font-style:normal!important;text-decoration:none!important">Wide plain link</a></p>
+<p><a id="nested" href="#target"><span style="color:green!important;font-weight:bold!important;font-style:italic!important;text-decoration:underline!important">Held nested link</span></a></p>
+<p><a id="marker" style="text-decoration:none"><span>Named anchor only</span></a></p>
+<p id="outside">Quiet shore text</p>
+<div style="text-decoration:underline"><p><a id="parent-ink" href="#target">Decorated parent link</a></p></div>
+<p id="target">Destination stays.</p>
+</body></html>

@@ -24,13 +24,13 @@ location. Line wraps and exact page breaks reflect each engine's layout.
 [Pinned page splitter](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvpagesplitter.cpp#L810-L1340)
 
 The compositor covers explicit EPUB and ARIA notes referenced from the same
-spine chapter, including notes between paragraphs. Ordinary standalone and
-inline illustrations stay in body flow. Each artwork area stays on one page,
-its links and opening position keep the original source geometry, and
+spine chapter, including notes between paragraphs. Standalone and inline
+illustrations remain in their original body or note flow. Each artwork area
+stays on one page, its links and opening position use its source identity, and
 ordinary forced page breaks still start a new page.
 Overlapping glyphs within a text band stay together. A note whose boundaries
-overlap adjacent content, artwork on a standalone note line, an illustration
-without a source line, nested or cross-spine notes, tables, complex publisher breaks,
+overlap adjacent content, an illustration without a source line, nested or
+cross-spine notes, tables, complex publisher breaks,
 FictionBook, facing pages, continuous reading and custom flows use the normal
 layout. The reading position uses the same source anchor when the layout changes.
 
@@ -214,11 +214,14 @@ and backlinks keep their targets.
 [Reader after](screenshots/reader-note-inline-after.png) ·
 [Reader original note](screenshots/reader-note-inline-original.png)
 
-Formatting applies to supported horizontal in-page notes. Inline pictures
-that fit with their source line travel with the text. Standalone pictures,
-tables, ruby, inline boxes, preformatted blocks, and authored page breaks
-inside a note keep their original layout. A note whose own container is a
-list item also keeps its block layout.
+Formatting applies to supported horizontal in-page notes. Inline and
+standalone pictures can flow with the surrounding note text. Tables, ruby,
+inline boxes, preformatted blocks, and authored page breaks inside a note
+keep their original layout. Reader also keeps the block layout when the
+note’s own container is a list item. In that case, KOReader flattens the
+paragraphs and moves the generated marker to the start of the shared
+line, outside searchable text. The original backlink still resolves.
+[Stock inside-marker rendering](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L3915-L3935)
 If the chapter cannot fit the joined notes, Reader retries the original
 layout. The publication stays unchanged.
 Reader stores this option with the edition's existing style settings.
@@ -266,8 +269,7 @@ The replay verifies all 56 × 36 painted pixels before and after, the same
 pixels in the bottom-band copy, and that tapping the original diagram
 returns the same link and source PNG. Reader's simulator also checks
 the image and its link in both locations, along with the canonical image
-location, source text and word selection. A note with a standalone
-diagram retains its ordinary layout.
+location, source text and word selection.
 [Reader illustrated note before](screenshots/reader-note-inline-image-before.png) ·
 [Reader illustrated note after](screenshots/reader-note-inline-image-after.png) ·
 [Reader canonical illustration](screenshots/reader-note-inline-image-original.png) ·
@@ -275,13 +277,23 @@ diagram retains its ordinary layout.
 [KOReader illustrated note after](screenshots/stock-note-inline-image-after.png) ·
 [KOReader canonical illustration](screenshots/stock-note-inline-image-original.png)
 
-The native reference also paints standalone artwork in the note strip.
-On the separate artwork specimen, both copies measure 216 × 138 pixels
-and match in all 29,808 pixels. Whole-note flattening moves both copies
-inline at 108 × 69 pixels. In both cases, tapping the canonical image
-returns its PNG. The stock strip copy is paint-only. Reader exposes the
-image link in supported inline bands, and standalone strips and flattening
-remain open. [Stock strip rendering](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L2172-L2204) ·
+The `inline-block-image` replay uses a linked picture in its own source
+paragraph. KOReader paints both standalone copies at 216 × 138 pixels
+and matches all 29,808 pixels between them. Whole-note flattening places
+both copies inline at 108 × 69 pixels. In both modes, tapping the
+canonical picture returns its link and the original 248-byte PNG.
+The stock strip copy is paint-only. Reader lets you open the picture
+and follow its link from both locations. Reader keeps its usual standalone
+centering and uses the authored 108 × 69 size in both modes. The Mac tests
+resolve the default first picture and the explicit ordinals of two
+pictures that share a source block.
+[Reader standalone note](screenshots/reader-note-inline-block-image-before.png) ·
+[Reader flattened note](screenshots/reader-note-inline-block-image-after.png) ·
+[Reader canonical picture](screenshots/reader-note-inline-block-image-original.png) ·
+[KOReader standalone note](screenshots/stock-note-inline-block-image-before.png) ·
+[KOReader flattened note](screenshots/stock-note-inline-block-image-after.png) ·
+[KOReader canonical picture](screenshots/stock-note-inline-block-image-original.png) ·
+[Stock strip rendering](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L2172-L2204) ·
 [Stock main-page hit testing](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L2597-L2666)
 
 ## Replay on macOS
@@ -313,7 +325,8 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
 ```
 
 Pass `cosmetic`, `wikipedia`, `inline-all`, `inline-list`, `inline-nested`,
-or `inline-image` as the fifth argument to select an advanced style replay.
+`inline-image`, or `inline-block-image` as the fifth argument to select an
+advanced style replay.
 
 Run the combined note flow checks with the same stock runtime and scratch
 paths.

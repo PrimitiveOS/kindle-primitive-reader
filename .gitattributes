@@ -5,5 +5,7 @@ docs/licenses/SRELL.txt -text whitespace=cr-at-eol,-blank-at-eof
 tests/fixtures/pdf-password/*.pdf binary
 vendor/hayro-syntax/** whitespace=-trailing-space,-blank-at-eof
 assets/hyphenation/hyph-es.tex -text whitespace=-trailing-space
+assets/hyphenation/hyph-et.tex -text whitespace=-trailing-space
+assets/hyphenation/hyph-fi.tex -text
 assets/hyphenation/hyph-it.tex -text whitespace=-blank-at-eof
 assets/hyphenation/hyph-pt.tex -text whitespace=-trailing-space

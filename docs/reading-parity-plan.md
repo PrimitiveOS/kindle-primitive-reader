@@ -48,22 +48,22 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 330 of 539 in-scope reading-control rows have
-an implemented workflow, 160 are partial, 44 are gaps, and 5 need audit.
+**Pinned control inventory:** 332 of 539 in-scope reading-control rows have
+an implemented workflow, 158 are partial, 44 are gaps, and 5 need audit.
 The 44 gaps cover interface-language choices. The largest groups of partial
 controls are typography and style tweaks. The audited SDL fullscreen row
 belongs to the host window and is unavailable in KOReader’s Kindle menu.
 [Control matrix](koreader-sdl-reference-controls.json)
 
-The current Mac comparison covers repeated areas in embedded-text and
-OCR scan reflow, fitting inline images in notes, paragraph spacing and
-browser-style defaults, and offline Quickstart. Additional rich-note
-layouts, expanded publisher geometry, multi-window DjVu reflow checks,
-and foreground Kindle verification remain open.
-[Page overlap](scroll-page-overlap.md) ·
-[Inline notes](in-page-footnotes.md#inline-all-footnote-content) ·
-[Reading styles](reading-style-presets.md#paragraph-spacing-and-browser-defaults) ·
-[Quickstart](quickstart-guide.md)
+The current Mac comparison covers the link-style pairs, separate-line
+and vertically centered image styles, standalone artwork in footnote
+strips, and Estonian and Finnish hyphenation. Additional rich-note
+layouts, publisher table styles, multilingual line fitting, and foreground
+Kindle verification remain open.
+[Link styles](link-style-presets.md) ·
+[Image styles](image-style-tweaks.md) ·
+[Artwork in notes](in-page-footnotes.md#inline-all-footnote-content) ·
+[Hyphenation](multilingual-hyphenation.md)
 
 The [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The

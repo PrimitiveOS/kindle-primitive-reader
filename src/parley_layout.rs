@@ -153,6 +153,7 @@ fn apply_kerning<B: parley::Brush>(
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PaintBrush {
     pub(crate) decoration: TextDecoration,
+    pub(crate) link_ink: Option<u8>,
     pub(crate) painted: bool,
 }
 
@@ -160,6 +161,7 @@ impl Default for PaintBrush {
     fn default() -> Self {
         Self {
             decoration: Default::default(),
+            link_ink: None,
             painted: true,
         }
     }
@@ -344,14 +346,16 @@ struct Illustration {
     block: usize,
     source_index: usize,
     painted: bool,
+    full_line: bool,
     path: Option<String>,
     link: Option<String>,
     label: String,
     // Inline boxes provide x once the paragraph's line breaks and alignment are known.
     x: Option<usize>,
     y: f32,
-    // Preserve exact layout-line ownership separately from rounded paint Y.
-    line_top: Option<f32>,
+    // Layout row ownership can differ from the canonical owner of the image
+    // when a footnote joins artwork and text from different source blocks.
+    render_line: Option<(usize, f32)>,
     pixels: Arc<GrayImage>,
     display: (u32, u32),
 }
@@ -740,12 +744,13 @@ impl ParleyChapter {
                 if image_boxes == MAX_IMAGE_BOXES {
                     break;
                 }
+                let style = &styles[image.element];
                 variants.insert(
                     ImageSizing::new(
                         &image,
                         settings,
-                        &styles[image.element],
-                        !block.text.is_empty(),
+                        style,
+                        !block.text.is_empty() && !style.image_full_line,
                         image_width,
                     )
                     .key(&image.original().href),
@@ -970,11 +975,12 @@ impl ParleyChapter {
                 .take(available)
             {
                 let inline = !block.text.is_empty();
+                let style = &styles[image.element];
                 let sizing = ImageSizing::new(
                     &image,
                     settings,
-                    &styles[image.element],
-                    inline,
+                    style,
+                    inline && !style.image_full_line,
                     image_width,
                 );
                 let key = sizing.key(&image.original().href);
@@ -999,9 +1005,13 @@ impl ParleyChapter {
                     inline_boxes.push(parley::InlineBox {
                         id: chapter.illustrations.len() as u64,
                         index: image.offset,
-                        kind: parley::InlineBoxKind::InFlow,
+                        kind: if style.image_full_line {
+                            parley::InlineBoxKind::Block
+                        } else {
+                            parley::InlineBoxKind::InFlow
+                        },
                         width: (display.0 as f32
-                            + if image.space_after {
+                            + if image.space_after && !style.image_full_line {
                                 settings.font_size * 0.25
                             } else {
                                 0.0
@@ -1009,19 +1019,24 @@ impl ParleyChapter {
                         .min(width as f32),
                         height: display.1 as f32,
                         baseline: None,
-                        vertical_align: styles[image.element].image_align,
+                        vertical_align: if style.image_full_line {
+                            parley::VerticalAlign::TOP
+                        } else {
+                            style.image_align
+                        },
                     });
                 }
                 chapter.illustrations.push(Illustration {
                     block: owner,
                     source_index: image.source_index,
                     painted: image.painted,
+                    full_line: style.image_full_line,
                     path,
                     link: image.link.clone(),
                     label: image.label.clone(),
                     x: None,
                     y: 0.0,
-                    line_top: None,
+                    render_line: None,
                     pixels,
                     display,
                 });
@@ -1225,14 +1240,25 @@ impl ParleyChapter {
                             && let PositionedLayoutItem::InlineBox(position) = item
                         {
                             let image = &mut chapter.illustrations[position.id as usize];
-                            let after_gap = if layout.is_rtl() {
-                                position.width - image.display.0 as f32
+                            let image_left = if position.kind == parley::InlineBoxKind::Block {
+                                let inset = if rtl {
+                                    text_width.saturating_sub(image.display.0)
+                                } else {
+                                    gutter - hanging
+                                };
+                                text_x + inset as f32
                             } else {
-                                0.0
+                                let after_gap = if rtl {
+                                    position.width - image.display.0 as f32
+                                } else {
+                                    0.0
+                                };
+                                x + position.x + after_gap
                             };
-                            image.x = Some((x + position.x + after_gap).round().max(0.0) as usize);
+                            image.x = Some(image_left.round().max(0.0) as usize);
                             image.y = (origin + position.y).round();
-                            image.line_top = Some(origin + line.metrics().content_block_min_coord);
+                            image.render_line =
+                                Some((block.key, origin + line.metrics().content_block_min_coord));
                         }
                     }
                     let metrics = line.metrics();
@@ -1275,6 +1301,12 @@ impl ParleyChapter {
                     };
                     if let Some(note) = &note_layout {
                         note.project_line(&mut source_line, line.text_range());
+                        for item in line.items() {
+                            if let PositionedLayoutItem::InlineBox(position) = item {
+                                chapter.illustrations[position.id as usize].render_line =
+                                    Some((source_line.block, source_line.top));
+                            }
+                        }
                     } else if let Some(boxed) = &mut inline_text {
                         boxed.project_line(&mut source_line, &line, &projection)?;
                     } else {
@@ -1381,8 +1413,15 @@ impl ParleyChapter {
                         missing_glyphs: 0,
                     });
                     image.y = top;
-                    image.line_top = Some(top);
-                    if gutter != 0 || cell.is_some() || column_width != outer_width {
+                    image.render_line = Some((block.key, top));
+                    if image.full_line {
+                        let inset = if rtl {
+                            width.saturating_sub(image.display.0)
+                        } else {
+                            gutter
+                        };
+                        image.x = Some((column_x + inset) as usize);
+                    } else if gutter != 0 || cell.is_some() || column_width != outer_width {
                         let inset = if rtl { 0 } else { gutter };
                         image.x = Some(
                             (column_x + inset + width.saturating_sub(image.display.0) / 2) as usize,
@@ -1688,13 +1727,13 @@ impl ParleyChapter {
     ) -> Option<std::collections::BTreeMap<usize, f32>> {
         let mut bottoms = std::collections::BTreeMap::<_, f32>::new();
         for image in &self.illustrations {
-            let top = image.line_top?;
+            let (owner, top) = image.render_line?;
             let first = lines.partition_point(|line| line.top < top - 0.01);
             let (offset, line) = lines[first..]
                 .iter()
                 .enumerate()
                 .take_while(|(_, line)| line.top <= top + 0.01)
-                .find(|(_, line)| line.sources().any(|(key, _)| key == image.block))?;
+                .find(|(_, line)| line.block == owner)?;
             // Drawing rounds the image position relative to the page's origin.
             if (image.y - line.top).round() < 0.0 {
                 return None;
@@ -1715,16 +1754,15 @@ impl ParleyChapter {
             .map(|image| image.y)
     }
 
-    pub(crate) fn image_ordinal(&self, key: usize, top: f32) -> Option<usize> {
+    pub(crate) fn image_source_on_line(&self, key: usize, top: f32) -> Option<(usize, usize)> {
         self.illustrations
             .iter()
             .find(|image| {
-                image.block == key
-                    && image
-                        .line_top
-                        .is_some_and(|line_top| (line_top - top).abs() < 0.01)
+                image
+                    .render_line
+                    .is_some_and(|(owner, line_top)| owner == key && (line_top - top).abs() < 0.01)
             })
-            .map(|image| image.source_index)
+            .map(|image| (image.block, image.source_index))
     }
 
     pub(crate) fn illustration_at(
@@ -2055,7 +2093,8 @@ fn paint_text_run(
             let start = y.round().clamp(0.0, visible_height as f32) as usize;
             let end = (y.round() + thickness).clamp(0.0, visible_height as f32) as usize;
             for row in start..end {
-                page[row * stride + x0..row * stride + x1].fill(48);
+                page[row * stride + x0..row * stride + x1]
+                    .fill(run.style().brush.link_ink.unwrap_or(48));
             }
         }
     }
@@ -2622,6 +2661,7 @@ fn make_paragraph(
     }
     builder.push_default(StyleProperty::Brush(PaintBrush {
         decoration: style.decoration,
+        link_ink: style.link_ink,
         painted: style.flow.painted,
     }));
     builder.push_default(StyleProperty::FontWeight(weight(style)));
@@ -2640,10 +2680,14 @@ fn make_paragraph(
         if run_line_break != paragraph_line_break {
             builder.push(StyleProperty::LineBreak(run_line_break), text.bytes.clone());
         }
-        if run.decoration != style.decoration || run.flow.painted != style.flow.painted {
+        if run.decoration != style.decoration
+            || run.link_ink != style.link_ink
+            || run.flow.painted != style.flow.painted
+        {
             builder.push(
                 StyleProperty::Brush(PaintBrush {
                     decoration: run.decoration,
+                    link_ink: run.link_ink,
                     painted: run.flow.painted,
                 }),
                 text.bytes.clone(),
@@ -4521,12 +4565,13 @@ mod tests {
             block: source.blocks[0].key,
             source_index: 0,
             painted: true,
+            full_line: false,
             path: Some(path),
             link: None,
             label: String::new(),
             x: Some(0),
             y: 0.0,
-            line_top: None,
+            render_line: None,
             pixels: Arc::new(preview),
             display,
         };
@@ -4994,6 +5039,9 @@ mod tests {
 mod decoration_tests;
 
 #[cfg(test)]
+mod link_styles_tests;
+
+#[cfg(test)]
 mod inline_baseline_tests;
 
 #[cfg(test)]
@@ -5019,6 +5067,8 @@ mod vertical_padding_tests;
 #[cfg(test)]
 mod flow_tests;
 
+#[cfg(test)]
+mod image_style_tests;
 #[cfg(test)]
 mod media_line_tests;
 

@@ -453,7 +453,7 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                     let y = self.line.inline_box_top(box_index);
 
                     self.item_index += 1;
-                    if inline_box.kind == InlineBoxKind::InFlow {
+                    if inline_box.kind.is_in_flow() {
                         self.offset += inline_box.width;
                     }
                     return Some(PositionedLayoutItem::InlineBox(PositionedInlineBox {

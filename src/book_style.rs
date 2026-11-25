@@ -340,6 +340,7 @@ pub(crate) struct Style {
     pub(crate) allow_small_note_text: bool,
     pub text_rise: TextRise,
     pub decoration: TextDecoration,
+    pub(crate) link_ink: Option<u8>,
     pub page_breaks: crate::publisher_breaks::Rules,
     pub orphans: u8,
     pub widows: u8,
@@ -368,6 +369,7 @@ pub(crate) struct Style {
     pub min_height: Option<ImageLength>,
     pub box_sizing: BoxSizing,
     pub image_align: parley::VerticalAlign,
+    pub(crate) image_full_line: bool,
     pub alignment: Option<Alignment>,
     pub line_break: Option<LineBreak>,
     pub word_break: WordBreak,
@@ -389,6 +391,7 @@ impl Default for Style {
             allow_small_note_text: false,
             text_rise: TextRise::default(),
             decoration: TextDecoration::default(),
+            link_ink: None,
             page_breaks: Default::default(),
             orphans: 1,
             widows: 1,
@@ -417,6 +420,7 @@ impl Default for Style {
             min_height: None,
             box_sizing: BoxSizing::default(),
             image_align: parley::VerticalAlign::BASELINE,
+            image_full_line: false,
             alignment: None,
             line_break: None,
             word_break: WordBreak::Normal,
@@ -759,6 +763,9 @@ impl BookStyle {
                 continue;
             }
             let mut style = parent.clone();
+            if element.tag == "a" {
+                style.link_ink = self.layout_tweaks.link_ink.map(|ink| ink as u8);
+            }
             style.preformatted_spaces |= element.tag == "pre";
             // Display is not inherited. Visibility is inherited independently of
             // ancestor suppression, so a visible descendant can restore paint.
@@ -792,6 +799,7 @@ impl BookStyle {
             style.min_height = None;
             style.box_sizing = BoxSizing::default();
             style.image_align = parley::VerticalAlign::BASELINE;
+            style.image_full_line = self.layout_tweaks.full_width_images && element.tag == "img";
             let mut decoration = TextDecoration {
                 underline: matches!(element.tag.as_str(), "u" | "ins")
                     || (element.tag == "a" && element.has_href),
@@ -1147,6 +1155,9 @@ impl BookStyle {
             } else {
                 style.size_scale.clamp(0.125, 8.0)
             };
+            if style.image_full_line {
+                style.display = Display::Block;
+            }
             style.flow = flow::resolve(parent.flow, style.display, style.visibility);
             if self.layout_tweaks.monochrome {
                 style.background = None;

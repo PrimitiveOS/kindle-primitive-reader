@@ -45,10 +45,10 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
-The latest Mac workflow pass covers fixed-text and OCR reflow overlap,
-inline note images, paragraph spacing, and offline Quickstart. The
+The latest Mac workflow pass covers link and image styles, standalone
+artwork in footnote strips, and Estonian and Finnish hyphenation. The
 [implementation checklist](reading-parity-plan.md#execution-checklist) tracks
-remaining layout, gesture, and Kindle checks. The
+remaining layout, language, gesture, and Kindle checks. The
 [simulator review](simulation-review.md) records this checkpoint.
 
 ## Negotiated viewport verification

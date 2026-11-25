@@ -48,6 +48,9 @@ pub enum InlineBoxKind {
     ///
     /// They correspond to `display: inline-block` boxes in CSS.
     InFlow,
+    /// An in-flow replacement on its own line, with breaks before and after.
+    /// The box retains its byte position in the surrounding text.
+    Block,
     /// `OutOfFlow` boxes are assigned a position as if they were a zero-sized inline box, but
     /// do not take up space in the layout.
     ///
@@ -59,4 +62,10 @@ pub enum InlineBoxKind {
     ///
     /// They can be used to implement advanced layout modes such as CSS's `float`
     CustomOutOfFlow,
+}
+
+impl InlineBoxKind {
+    pub(crate) fn is_in_flow(self) -> bool {
+        matches!(self, Self::InFlow | Self::Block)
+    }
 }

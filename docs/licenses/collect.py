@@ -99,6 +99,7 @@ def collect():
         "below provide the source of each MPL-2.0 component used in this package.",
         "For the compiled US and British English patterns and TUGboat exceptions, see ENGLISH-HYPHENATION.txt.",
         "For the compiled Spanish, Italian, and Portuguese patterns, see HYPHENATION-ES-IT-PT.txt.",
+        "For the compiled Estonian and Finnish patterns, see HYPHENATION-ET-FI.txt.",
         "",
     ]
     fetched = {}

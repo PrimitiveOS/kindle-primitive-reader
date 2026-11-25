@@ -24,6 +24,87 @@ fn choose(app: &mut Reader, id: &str, value: Option<bool>) {
 }
 
 #[test]
+fn image_style_menu_preserves_legacy_fit_and_applies_both_stock_choices() {
+    use std::io::Write as _;
+
+    let fixture = Fixture::new();
+    let original = fs::File::open(crate::test_fixture("field-notes-epub3.epub")).unwrap();
+    let mut archive = zip::ZipArchive::new(original).unwrap();
+    let mut authored = zip::ZipWriter::new(fs::File::create(&fixture.book).unwrap());
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).unwrap();
+        if entry.name() == "EPUB/chapters/shore.xhtml" {
+            let options =
+                zip::write::SimpleFileOptions::default().compression_method(entry.compression());
+            authored.start_file(entry.name(), options).unwrap();
+            authored
+                .write_all(include_bytes!(
+                    "../../../tests/fixtures/image-style-tweaks.xhtml"
+                ))
+                .unwrap();
+        } else {
+            authored.raw_copy_file(entry).unwrap();
+        }
+    }
+    authored.finish().unwrap();
+    let original_book = fs::read(&fixture.book).unwrap();
+
+    let mut app = open(&fixture);
+    app.open_path(&fixture.book).unwrap();
+    let origin = app.current_history_location();
+    let book = app.open_book_id().unwrap();
+    let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
+    let before = capture(&mut app);
+    app.open_reading_edge(true, 630.0);
+    crate::app::tests::tap_reading_control(&mut app, "Settings");
+    crate::app::tests::tap_reading_control(&mut app, "Style tweaks");
+    assert_eq!(app.screen, Screen::StyleTweaks);
+    tap_contents_item(&mut app, "Images");
+    assert_eq!(app.screen, Screen::ImageStyles);
+    tap_contents_item(&mut app, "Fit images to text width");
+    tap_contents_item(&mut app, "On for this book");
+    assert!(app.style_store.data.enabled(book, "image-text-width"));
+    assert_ne!(capture(&mut app), before);
+
+    let back = app.navigation_layout().back();
+    tap(&mut app, back);
+    assert_eq!(app.screen, Screen::ImageStyles);
+    tap_contents_item(&mut app, "Full-width images");
+    tap_contents_item(&mut app, "On for this book");
+    assert!(!app.style_store.data.enabled(book, "image-text-width"));
+    assert!(app.style_store.data.enabled(book, "image_full_width"));
+
+    tap(&mut app, back);
+    tap_contents_item(&mut app, "Vertically center-align images relative to text");
+    tap_contents_item(&mut app, "Use on all books");
+    assert!(app.style_store.data.enabled(book, "image_full_width"));
+    assert!(app.style_store.data.enabled(book, "image_valign_middle"));
+    assert_eq!(app.current_history_location(), origin);
+    tap(&mut app, back);
+    capture_viewport(&app, &mut canvas, "image-style-reader-menu.png", false);
+    app.show(Screen::Book);
+    capture_viewport(
+        &app,
+        &mut canvas,
+        "image-style-reader-full-width.png",
+        false,
+    );
+    app.save().unwrap();
+
+    let mut reopened = open(&fixture);
+    reopened.open_path(&fixture.book).unwrap();
+    assert_eq!(reopened.current_history_location(), origin);
+    assert!(reopened.style_store.data.enabled(book, "image_full_width"));
+    assert!(
+        reopened
+            .style_store
+            .data
+            .enabled(book, "image_valign_middle")
+    );
+    assert_eq!(fs::read(&fixture.book).unwrap(), original_book);
+}
+
+#[test]
 fn reading_style_preset_controls_preserve_page_and_global_defaults() {
     let f = Fixture::new();
     let path = crate::test_fixture("harbour-cjk-width.epub");
@@ -114,6 +195,58 @@ fn reading_style_paragraph_spacing_menu_persists_one_effective_preset() {
     choose(&mut reopened, "paragraph_no_whitespace", None);
     choose(&mut reopened, "paragraph_whitespace_half", None);
     assert_eq!(spacing(&reopened), ParagraphSpacing::Half);
+}
+
+#[test]
+fn reading_style_link_menu_saves_independent_pairs_and_the_open_passage() {
+    use user_styles::LinkInk;
+
+    let f = Fixture::new();
+    let path = f.root.join("Link styles.xhtml");
+    fs::copy(crate::test_fixture("reading-link-styles.xhtml"), &path).unwrap();
+    let mut app = open(&f);
+    app.open_path(&path).unwrap();
+    let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
+    let anchor = app.current_history_location();
+    let id = app.active.as_ref().unwrap().id;
+    let ink = |app: &Reader| {
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .user_styles
+            .layout_tweaks()
+            .link_ink
+    };
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "Links");
+    assert_eq!(app.screen, Screen::LinkStyles);
+    assert_eq!(app.style_items(Screen::LinkStyles).len(), 8);
+    tap_contents_item(&mut app, "Links always blue");
+    tap_contents_item(&mut app, "Use on all books");
+    assert_eq!(ink(&app), Some(LinkInk::Blue));
+    assert_eq!(app.style_preset_parent(), Screen::LinkStyles);
+    app.show(Screen::LinkStyles);
+    capture_viewport(&app, &mut canvas, "reader-link-styles-controls.png", false);
+    tap_contents_item(&mut app, "Links always black");
+    tap_contents_item(&mut app, "On for this book");
+    assert_eq!(ink(&app), Some(LinkInk::Black));
+    app.show(Screen::LinkStyles);
+    tap_contents_item(&mut app, "Links always bold");
+    tap_contents_item(&mut app, "On for this book");
+    assert_eq!(ink(&app), Some(LinkInk::Black));
+    assert!(app.style_store.data.enabled(id, "link-bold"));
+    assert!(!app.style_store.data.enabled(id, "link-blue"));
+    assert!(app.style_store.data.global.contains("link-blue"));
+    assert_eq!(app.current_history_location(), anchor);
+    app.save().unwrap();
+
+    let mut reopened = open(&f);
+    reopened.open_path(&path).unwrap();
+    assert_eq!(ink(&reopened), Some(LinkInk::Black));
+    assert!(reopened.style_store.data.enabled(id, "link-bold"));
+    assert_eq!(reopened.current_history_location(), anchor);
 }
 
 #[test]

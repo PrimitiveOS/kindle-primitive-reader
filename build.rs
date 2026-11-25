@@ -144,10 +144,22 @@ fn main() {
         "BRITISH",
         &out_dir.join("british_english_rules.txt"),
     ));
-    for (tag, name) in [("es", "SPANISH"), ("it", "ITALIAN"), ("pt", "PORTUGUESE")] {
+    for (tag, name) in [
+        ("es", "SPANISH"),
+        ("it", "ITALIAN"),
+        ("pt", "PORTUGUESE"),
+        ("et", "ESTONIAN"),
+        ("fi", "FINNISH"),
+    ] {
         let tex = tex_source(&format!("assets/hyphenation/hyph-{tag}.tex"));
+        let mut rules = stock_word_rules(&tex);
+        if tag == "fi" {
+            // CRE converted this two-entry TeX line into one pattern with an
+            // internal word-edge marker, unreachable when matching one word.
+            rules.retain(|rule| !matches!(rule.as_str(), "r2as" | "l2as"));
+        }
         output.push_str(&compile(
-            stock_word_rules(&tex),
+            rules,
             name,
             &out_dir.join(format!("{tag}_rules.txt")),
         ));

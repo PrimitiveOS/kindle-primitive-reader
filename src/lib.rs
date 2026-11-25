@@ -2303,6 +2303,10 @@ impl Probe {
                     .iter()
                     .find(|line| line.block == block.key)
                     .map(|line| line.top)
+                    .or_else(|| match &self.renderer {
+                        Renderer::Parley(layout) => layout.image_top(block.key, 0),
+                        _ => None,
+                    })
             } else {
                 self.lines
                     .iter()
@@ -2349,15 +2353,16 @@ impl Probe {
                 let mut anchor = self.anchor(line.block, line.bytes.start);
                 if line.bytes.is_empty()
                     && let Renderer::Parley(renderer) = &self.renderer
-                    && let Some(ordinal) = renderer.image_ordinal(line.block, line.top)
+                    && let Some((key, ordinal)) =
+                        renderer.image_source_on_line(line.block, line.top)
                 {
-                    anchor.offset = 0;
+                    anchor = self.anchor(key, 0);
                     if ordinal != 0
                         || self
                             .source
                             .blocks
                             .iter()
-                            .find(|block| block.key == line.block)
+                            .find(|block| block.key == key)
                             .is_some_and(|block| !block.text.is_empty())
                     {
                         anchor.illustration = Some(ordinal);

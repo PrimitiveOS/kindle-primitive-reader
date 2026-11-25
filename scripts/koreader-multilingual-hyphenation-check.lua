@@ -1,4 +1,4 @@
--- Run with the pinned native KOReader runtime and multilingual-hyphenation.xhtml.
+-- Run with the pinned native KOReader runtime and the named XHTML specimen.
 -- Offsets are Unicode scalars before a visual line break, as counted by CRE XPointers.
 require("setupkoenv")
 G_defaults = require("luadefaults"):open()
@@ -8,6 +8,7 @@ local CreDocument = require("document/credocument")
 local Cre = CreDocument:engineInit()
 local BB = require("ffi/blitbuffer")
 local book, cache, font, output = assert(arg[1]), assert(arg[2]), assert(arg[3]), assert(arg[4])
+local specimen = arg[5] or "multilingual-hyphenation"
 Cre.initCache(cache, 0, true, 1)
 Cre.registerFont(font)
 Cre.initHyphDict("./data/hyph/")
@@ -29,6 +30,25 @@ local dictionaries = {
     { "it-IT", "Italian.pattern",      326, 2 },
     { "pt-PT", "Portuguese.pattern",   308, 3 },
 }
+if specimen == "estonian-finnish-hyphenation" then
+    samples = {
+        { "et-EE", "õigekeelsussõnaraamat", "2,4,8,11,13,15,18", "4,8,11,13,15" },
+        { "et-EE", "raudteejaam",          "4,7",               "4,7" },
+        { "et-EE", "lühiülevaade",         "4,7",               "4,7" },
+        { "et-EE", "päikesepaisteline",    "3,5,7,11,13",       "5,7,11,13" },
+        { "fi-FI", "työskenteleminen",     "4,7,9,11,13",       "4,7,9,11" },
+        { "fi-FI", "ääntäminen",           "3,5,7",             "5" },
+        { "fi-FI", "kansainvälinen",       "3,7,9,11",          "7,9" },
+        { "fi-FI", "taloudellinen",        "2,5,8,10",          "5,8" },
+        { "fi-FI", "kalastus",             "2,5",               "" },
+    }
+    dictionaries = {
+        { "et-EE", "Estonian.pattern", 3691, 3 },
+        { "fi-FI", "Finnish.pattern",   285, 2 },
+    }
+else
+    assert(specimen == "multilingual-hyphenation", specimen)
+end
 local initial_width, height, margin = 960, 864, 16
 local view = Cre.newDocView(initial_width, height, 1)
 view:setStyleSheet("./data/epub.css", "")
@@ -59,6 +79,12 @@ for _, dictionary in ipairs(dictionaries) do
     local _, left, right = Cre.getSelectedHyphDict()
     assert(left == 2 and right == last)
     print(("%s %s, %d patterns, minima %d/%d"):format(language, file, count, left, right))
+end
+if specimen == "estonian-finnish-hyphenation" then
+    doc:setTextMainLang("et-EE")
+    local candidates = Cre.getHyphenationForWord("lühiülevaade")
+    assert(candidates == "lü-hi-üle-vaade", candidates)
+    print("dictionary candidates", "et-EE", candidates)
 end
 doc:setTextMainLang("en-US")
 
@@ -150,10 +176,10 @@ local function capture(width, filename)
 end
 
 local sample_width = assert(measure("dictionary default", true, 0, 3))
-capture(sample_width, "stock-multilingual-hyphenation")
+capture(sample_width, "stock-" .. specimen)
 measure("4/4 minima", true, 4, 4)
-capture(sample_width, "stock-multilingual-hyphenation-limits")
+capture(sample_width, "stock-" .. specimen .. "-limits")
 assert(not measure("hyphenation off", false, 0, 5))
-capture(sample_width, "stock-multilingual-hyphenation-off")
+capture(sample_width, "stock-" .. specimen .. "-off")
 print(("Comparison captures at %d × %d"):format(sample_width, height))
 view:close()

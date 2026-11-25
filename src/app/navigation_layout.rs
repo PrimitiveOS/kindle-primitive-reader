@@ -204,8 +204,10 @@ impl Screen {
                 | Self::FontRendering(_)
                 | Self::StyleTweaks
                 | Self::ParagraphSpacing
+                | Self::LinkStyles
                 | Self::FootnoteTweaks
                 | Self::StylePreset
+                | Self::ImageStyles
                 | Self::InPageFootnoteSize(_)
                 | Self::StyleFiles
                 | Self::StyleReview

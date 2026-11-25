@@ -105,6 +105,16 @@ pub(crate) struct LayoutTweaks {
     pub(crate) monochrome: bool,
     pub(crate) browser_paragraphs: bool,
     pub(crate) paragraph_spacing: ParagraphSpacing,
+    pub(crate) full_width_images: bool,
+    pub(crate) link_ink: Option<LinkInk>,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LinkInk {
+    Black = 0,
+    // KOReader’s Kindle framebuffer converts pure blue to (0 + 0 + 255) / 4.
+    Blue = 63,
 }
 
 #[repr(u8)]
@@ -208,6 +218,13 @@ impl Snapshot {
                 u8::from(layout.browser_paragraphs),
                 layout.paragraph_spacing as u8,
             ]);
+            if let Some(ink) = layout.link_ink {
+                digest.consume(b"link-ink");
+                digest.consume([ink as u8]);
+            }
+        }
+        if layout.full_width_images {
+            digest.consume(b"\0full-width-images");
         }
         Ok(Self {
             css: css.into(),
@@ -305,7 +322,9 @@ pub(crate) enum Effect {
     Monochrome,
     BrowserParagraphs,
     ParagraphSpacing(ParagraphSpacing),
+    LinkInk(LinkInk),
     InPageEpubFootnotes,
+    FullWidthImages,
     InPageClassicFootnotes,
     InPageWikipediaFootnotes,
     InPageFb2Footnotes,
@@ -555,25 +574,60 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("* {orphans:2 !important;widows:2 !important;}"),
     },
     Preset {
-        id: "link-underline",
-        title: "Underline links",
-        group: "link-line",
+        id: "link-black",
+        title: "Links always black",
+        group: "link-ink",
         priority: 0,
-        effect: Effect::Css("a[href] {text-decoration:underline !important;}"),
+        effect: Effect::LinkInk(LinkInk::Black),
     },
     Preset {
-        id: "link-no-underline",
-        title: "Remove link underlines",
-        group: "link-line",
+        id: "link-blue",
+        title: "Links always blue",
+        group: "link-ink",
         priority: 0,
-        effect: Effect::Css("a[href] {text-decoration:none !important;}"),
+        effect: Effect::LinkInk(LinkInk::Blue),
     },
     Preset {
         id: "link-bold",
-        title: "Bold links",
+        title: "Links always bold",
         group: "link-weight",
         priority: 0,
-        effect: Effect::Css("a[href] {font-weight:bold !important;}"),
+        effect: Effect::Css("a, a * {font-weight:bold !important;}"),
+    },
+    Preset {
+        id: "link-no-bold",
+        title: "Links never bold",
+        group: "link-weight",
+        priority: 0,
+        effect: Effect::Css("a, a * {font-weight:normal !important;}"),
+    },
+    Preset {
+        id: "link-italic",
+        title: "Links always italic",
+        group: "link-slant",
+        priority: 0,
+        effect: Effect::Css("a, a * {font-style:italic !important;}"),
+    },
+    Preset {
+        id: "link-no-italic",
+        title: "Links never italic",
+        group: "link-slant",
+        priority: 0,
+        effect: Effect::Css("a, a * {font-style:normal !important;}"),
+    },
+    Preset {
+        id: "link-underline",
+        title: "Links always underlined",
+        group: "link-line",
+        priority: 0,
+        effect: Effect::Css("a[href], a[href] * {text-decoration:underline !important;}"),
+    },
+    Preset {
+        id: "link-no-underline",
+        title: "Links never underlined",
+        group: "link-line",
+        priority: 0,
+        effect: Effect::Css("a, a * {text-decoration:none !important;}"),
     },
     Preset {
         id: "image-text-width",
@@ -581,6 +635,20 @@ pub(crate) const PRESETS: &[Preset] = &[
         group: "images",
         priority: 0,
         effect: Effect::Css("img {width:100% !important;height:auto !important;}"),
+    },
+    Preset {
+        id: "image_full_width",
+        title: "Full-width images",
+        group: "images",
+        priority: 0,
+        effect: Effect::FullWidthImages,
+    },
+    Preset {
+        id: "image_valign_middle",
+        title: "Vertically center-align images relative to text",
+        group: "image-alignment",
+        priority: 0,
+        effect: Effect::Css("img {vertical-align:middle;}"),
     },
     Preset {
         id: "table-visible-borders",
@@ -708,7 +776,9 @@ impl Data {
                 | Effect::TailorCjk
                 | Effect::Monochrome
                 | Effect::BrowserParagraphs
+                | Effect::FullWidthImages
                 | Effect::ParagraphSpacing(_)
+                | Effect::LinkInk(_)
         ) {
             if enabled {
                 if matches!(target.effect, Effect::ExtendNote(_)) {
@@ -764,6 +834,11 @@ impl Data {
                 Effect::Monochrome => layout.monochrome = true,
                 Effect::BrowserParagraphs => layout.browser_paragraphs = true,
                 Effect::ParagraphSpacing(spacing) => layout.paragraph_spacing = spacing,
+                Effect::FullWidthImages => {
+                    layout.full_width_images = true;
+                    css.push_str("img {width:100% !important;}\n");
+                }
+                Effect::LinkInk(ink) => layout.link_ink = Some(ink),
                 Effect::InPageEpubFootnotes => {
                     notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
                     notes.explicit_epub = true;

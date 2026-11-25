@@ -2,6 +2,47 @@
 
 ## Current Mac simulator checkpoint
 
+**Link styles** expose all four pairs for ink, weight, slant, and
+underlining. The pinned replays check nested text and named anchors,
+and the renders measure black at gray 0 and blue at gray 63. Styling
+preserves source selections and link targets.
+[Comparison and screenshots](link-style-presets.md)
+
+**Image styles** put full-width images on their own line and independently
+center inline images relative to text. Width-constrained images follow the
+column’s leading edge in left-to-right and right-to-left settings.
+[Comparison and screenshots](image-style-tweaks.md)
+
+**Standalone note artwork** appears in the footnote strip and can move
+inline with surrounding paragraphs. Tests verify the original image,
+link, and source ordinal in Reader. Stock exposes the original-image
+action and paints the copy in its strip.
+[Comparison and screenshots](in-page-footnotes.md#inline-all-footnote-content)
+
+**Estonian and Finnish hyphenation** adds 3,691 and 284 pinned single-word
+rules with their language defaults. The replays distinguish dictionary
+candidates from line breaks chosen by the renderer, including the
+Estonian case where a dictionary break is available but the stock
+layout chooses a later one. [Comparison and screenshots](multilingual-hyphenation.md)
+
+The full Mac run passed 1,631 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. The standard run skipped
+73 opt-in cases. The Reader simulator and pinned KOReader replays reproduced 38 new
+screenshots. The four original EPUB, PDF, AZW3, and MOBI files opened
+through the picker, turned a page, and resumed with unchanged source
+bytes. The separate original EPUB footnote test verified 65 bands and
+63 canonical anchors across eight composed chapters.
+
+The locally staged ARMHF executable is stripped and statically linked.
+It contains 39,435,668 bytes with SHA-256
+`b87a986d9564abcb17d51539aa556e45eb7a7351077c6e73e18668c7622caff3`.
+The 32 staged files total 49,042,263 bytes. Project and dictionary
+licenses, SQLite notices, the embedded Launcher icon, and the OCR
+model passed inspection. Foreground Kindle testing and Store
+publication remain pending.
+
+## Fixed-page reflow, inline artwork, paragraph spacing, and Quickstart checkpoint
+
 **Fixed-document reflow** now overlaps page turns within the same physical
 page in **Read text** and **Reflow scan**. The cue can be hidden with the
 same movement and bookmark behavior. The pinned K2pdfopt replay exercises

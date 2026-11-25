@@ -139,13 +139,16 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
         let crate::user_styles::Effect::Css(css) = preset.effect else {
             continue;
         };
-        let markup = if preset.id == "link-underline" {
-            markup.replace(
+        let markup = match preset.id {
+            "link-underline" => markup.replace(
                 "font-weight:300!important",
                 "font-weight:300!important;text-decoration:none!important",
-            )
-        } else {
-            markup.into()
+            ),
+            "link-no-italic" => markup.replace(
+                "font-weight:300!important",
+                "font-weight:300!important;font-style:italic!important",
+            ),
+            _ => markup.into(),
         };
         let (source, before) = styles(&markup, "");
         let (_, after) = styles(&markup, css);
@@ -185,9 +188,13 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
                 at(&source, &after, "a").decoration.underline,
                 at(&source, &before, "a").decoration.underline
             ),
-            "link-bold" => assert_ne!(
+            "link-bold" | "link-no-bold" => assert_ne!(
                 at(&source, &after, "a").font_weight,
                 at(&source, &before, "a").font_weight
+            ),
+            "link-italic" | "link-no-italic" => assert_ne!(
+                at(&source, &after, "a").font_style,
+                at(&source, &before, "a").font_style
             ),
             "image-text-width" => assert_ne!(
                 at(&source, &after, "i")
@@ -202,6 +209,16 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
             "table-visible-borders" => {
                 assert!(at(&source, &before, "t").borders.is_none());
                 assert!(at(&source, &after, "t").borders.is_some());
+            }
+            "image_valign_middle" => {
+                assert_eq!(
+                    at(&source, &before, "i").image_align,
+                    parley::VerticalAlign::BASELINE
+                );
+                assert_eq!(
+                    at(&source, &after, "i").image_align,
+                    parley::VerticalAlign::MIDDLE
+                );
             }
             "inherit-font-size" => assert_ne!(p.size_scale, old.size_scale),
             "inherit-font-family" => {

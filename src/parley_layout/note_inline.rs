@@ -76,6 +76,7 @@ fn join<'a>(
     };
     let mut runs = Vec::new();
     let mut images = Vec::new();
+    let mut artwork_blocks = 0;
     for block in &source.blocks[indices] {
         let style = &styles[block.element];
         // Descendant list items become inline text. A list item that is
@@ -92,13 +93,7 @@ fn join<'a>(
             return Ok(None);
         }
         let input = flow.layout_block(source, block)?;
-        if style.flow.suppressed {
-            continue;
-        }
-        if input.text.is_empty() {
-            if !input.images.is_empty() {
-                return Ok(None);
-            }
+        if style.flow.suppressed || (input.text.is_empty() && input.images.is_empty()) {
             continue;
         }
         if input.styled_text.iter().any(|run| {
@@ -110,7 +105,7 @@ fn join<'a>(
         }) {
             return Ok(None);
         }
-        if joined.text.len() + 1 + input.text.len() > MAX_BYTES {
+        if joined.text.len() + 1 + input.text.len().max(1) > MAX_BYTES {
             return Ok(None);
         }
         if !joined.text.is_empty()
@@ -130,19 +125,30 @@ fn join<'a>(
             image.offset += offset;
             (block.key, image)
         }));
-        joined.pieces.push(Piece {
-            block: block.key,
-            joined: offset..joined.text.len(),
-            projected: flow.shared(block.key),
-        });
+        if input.text.is_empty() {
+            // Keep the inline box between its neighboring source blocks.
+            // The separating space has no canonical text offset.
+            joined.text.push(' ');
+            artwork_blocks += 1;
+        } else {
+            joined.pieces.push(Piece {
+                block: block.key,
+                joined: offset..joined.text.len(),
+                projected: flow.shared(block.key),
+            });
+        }
     }
-    Ok((joined.pieces.len() > 1).then_some(Fragment {
-        element,
-        end_index,
-        runs,
-        images,
-        layout: Arc::new(joined),
-    }))
+    Ok(
+        (!joined.pieces.is_empty() && joined.pieces.len() + artwork_blocks > 1).then_some(
+            Fragment {
+                element,
+                end_index,
+                runs,
+                images,
+                layout: Arc::new(joined),
+            },
+        ),
+    )
 }
 
 impl JoinedNote {

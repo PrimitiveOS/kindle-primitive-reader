@@ -579,11 +579,21 @@ impl ContentWidthsMeasurer {
                 }
                 LayoutItemKind::InlineBox => {
                     let inline_box = &layout_data.inline_boxes[item.index].inline_box;
-                    if inline_box.kind == InlineBoxKind::InFlow {
+                    if inline_box.kind == InlineBoxKind::Block {
+                        if self.line_has_content {
+                            self.hard_break();
+                        }
+                        self.min_width = self.min_width.max(inline_box.width);
+                        self.max_width = self.max_width.max(inline_box.width);
+                        self.running_min_width = self.hard_indent;
+                        self.running_max_width = self.hard_indent;
+                    } else if inline_box.kind == InlineBoxKind::InFlow {
                         let next = items.as_slice().iter().find(|next| {
                             next.kind == LayoutItemKind::TextRun
-                                || layout_data.inline_boxes[next.index].inline_box.kind
-                                    == InlineBoxKind::InFlow
+                                || layout_data.inline_boxes[next.index]
+                                    .inline_box
+                                    .kind
+                                    .is_in_flow()
                         });
                         // A forced break right after a box suppresses the box's soft wrap
                         // opportunity.
@@ -592,7 +602,10 @@ impl ContentWidthsMeasurer {
                                 let slice = layout_data.shaped_text.run_slice(next.index as u32);
                                 slice.shaped_clusters()[0].whitespace() != Whitespace::Newline
                             }
-                            Some(_) => true,
+                            Some(next) => {
+                                layout_data.inline_boxes[next.index].inline_box.kind
+                                    != InlineBoxKind::Block
+                            }
                             None => false,
                         };
                         self.measure_inline_box(inline_box, followed_by_inline_content);

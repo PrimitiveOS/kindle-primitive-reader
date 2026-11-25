@@ -84,10 +84,39 @@ fn hyphenation_options_choose_fitting_authored_breaks_without_suppressing_fallba
 
 #[test]
 fn multilingual_hyphenation_renders_and_selects_the_original_word() {
-    let path = crate::test_fixture("multilingual-hyphenation.xhtml");
+    let words: &[&[&str]] = &[
+        &["información", "lingüística", "murciélago"],
+        &["straordinario", "elettroencefalogramma", "acqua"],
+        &["informação", "linguística", "extraordinário", "saúde"],
+    ];
+    assert_dictionary_rendering("multilingual-hyphenation", 570, words);
+}
+
+#[test]
+fn multilingual_hyphenation_renders_and_selects_estonian_and_finnish() {
+    let words: &[&[&str]] = &[
+        &[
+            "õigekeelsussõnaraamat",
+            "raudteejaam",
+            "lühiülevaade",
+            "päikesepaisteline",
+        ],
+        &[
+            "työskenteleminen",
+            "ääntäminen",
+            "kansainvälinen",
+            "taloudellinen",
+            "kalastus",
+        ],
+    ];
+    assert_dictionary_rendering("estonian-finnish-hyphenation", 574, words);
+}
+
+fn assert_dictionary_rendering(specimen: &str, width: u32, words: &[&[&str]]) {
+    let path = crate::test_fixture(&format!("{specimen}.xhtml"));
     let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
     let settings = Settings {
-        width: 570,
+        width,
         height: 864,
         margin: 16,
         font_size: 24.0,
@@ -108,18 +137,7 @@ fn multilingual_hyphenation_renders_and_selects_the_original_word() {
         unreachable!()
     };
     let mut split_words = Vec::new();
-    for word in [
-        "información",
-        "lingüística",
-        "murciélago",
-        "straordinario",
-        "elettroencefalogramma",
-        "acqua",
-        "informação",
-        "linguística",
-        "extraordinário",
-        "saúde",
-    ] {
+    for word in words.iter().flat_map(|language| language.iter().copied()) {
         let start = dictionary.matches(word).remove(0);
         let end = crate::Anchor {
             offset: start.offset + word.len(),
@@ -162,15 +180,9 @@ fn multilingual_hyphenation_renders_and_selects_the_original_word() {
         }
     }
     assert!(
-        split_words
+        words
             .iter()
-            .any(|word| matches!(*word, "información" | "lingüística" | "murciélago"))
-            && split_words
-                .iter()
-                .any(|word| matches!(*word, "straordinario" | "elettroencefalogramma" | "acqua"))
-            && split_words
-                .iter()
-                .any(|word| matches!(*word, "informação" | "linguística" | "extraordinário")),
+            .all(|language| { language.iter().any(|word| split_words.contains(word)) }),
         "{split_words:?}"
     );
     assert_eq!(dictionary.coverage().0, dictionary.coverage().1);
@@ -189,7 +201,7 @@ fn multilingual_hyphenation_renders_and_selects_the_original_word() {
             ("-off", off_frame),
         ] {
             primitive_app::write_png(
-                &folder.join(format!("reader-multilingual-hyphenation{suffix}.png")),
+                &folder.join(format!("reader-{specimen}{suffix}.png")),
                 settings.width,
                 settings.height,
                 &pixels,

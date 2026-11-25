@@ -138,7 +138,8 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         },
         Action::ToggleNonlinear => BOOK,
         Action::Flow(_) | Action::Show(Screen::HiddenFlows) => BOOK,
-        Action::Show(Screen::Links | Screen::LinkSettings) | Action::Wikipedia => LINK,
+        Action::Show(Screen::Links | Screen::LinkSettings | Screen::LinkStyles)
+        | Action::Wikipedia => LINK,
         Action::ReadAlarm | Action::Show(Screen::OnlineHistory) | Action::ReadingHistory(_) => {
             CLOCK
         }

@@ -74,6 +74,10 @@ fn advanced_note(preset: &str) -> bool {
     )
 }
 
+fn image_preset(preset: &user_styles::Preset) -> bool {
+    matches!(preset.group, "images" | "image-alignment")
+}
+
 fn preset_item(preset: user_styles::Preset, data: &Data, book: &user_styles::BookTweaks) -> Item {
     let source = match book.choices.get(preset.id) {
         Some(true) => "On for this book",
@@ -153,6 +157,8 @@ impl Reader {
         {
             Some(preset) if advanced_note(preset.id) => Screen::FootnoteTweaks,
             Some(preset) if preset.group == PARAGRAPH_SPACING => Screen::ParagraphSpacing,
+            Some(preset) if preset.group.starts_with("link-") => Screen::LinkStyles,
+            Some(preset) if image_preset(&preset) => Screen::ImageStyles,
             _ => Screen::StyleTweaks,
         }
     }
@@ -426,6 +432,12 @@ impl Reader {
                 }
                 let mut note_row = 1;
                 for p in PRESETS {
+                    if p.group.starts_with("link-") {
+                        if p.id == "link-black" {
+                            items.push(Item::new("Links", Action::Show(Screen::LinkStyles)));
+                        }
+                        continue;
+                    }
                     if p.group == PARAGRAPH_SPACING {
                         if p.id == "paragraph_whitespace" {
                             let state = PRESETS
@@ -443,6 +455,12 @@ impl Reader {
                                 )
                                 .detail(state),
                             );
+                        }
+                        continue;
+                    }
+                    if image_preset(p) {
+                        if p.id == "image_full_width" {
+                            items.push(Item::new("Images", Action::Show(Screen::ImageStyles)));
                         }
                         continue;
                     }
@@ -510,6 +528,16 @@ impl Reader {
                 .filter(|preset| preset.group == PARAGRAPH_SPACING)
                 .map(|preset| preset_item(*preset, data, &b))
                 .collect(),
+            Screen::LinkStyles => PRESETS
+                .iter()
+                .filter(|preset| preset.group.starts_with("link-"))
+                .map(|preset| preset_item(*preset, data, &b))
+                .collect(),
+            Screen::ImageStyles => PRESETS
+                .iter()
+                .filter(|preset| image_preset(preset))
+                .map(|preset| preset_item(*preset, data, &b))
+                .collect(),
             Screen::FootnoteTweaks => PRESETS
                 .iter()
                 .copied()
@@ -559,6 +587,8 @@ impl Reader {
                 let current = b.choices.get(p.id).copied();
                 let global = data.global.contains(p.id);
                 let description = match p.id {
+                    "link-black" => "Use black ink for links and anchors",
+                    "link-blue" => "Use the Kindle grayscale shade for blue links",
                     "paragraph_web_browser_style" => {
                         "Use block paragraphs with no default first-line indent"
                     }
@@ -584,6 +614,10 @@ impl Reader {
                     }
                     NOTE_INLINE_SIZING => "Use inherited note text size, line height and baseline",
                     COMBINE_NONLINEAR_NOTES => "Group original notes for Hide non-linear fragments",
+                    "image_full_width" => {
+                        "Place images on separate lines. Authored height can affect the aspect ratio."
+                    }
+                    "image_valign_middle" => "Align inline images to the middle of adjoining text",
                     _ => "Book choice overrides the live all-books default",
                 };
                 let detail = if note_format(p.id).is_some() {

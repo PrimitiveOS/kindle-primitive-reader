@@ -24,8 +24,7 @@ pub(super) fn paint(
     phase: u8,
     variations: &[NormalizedCoord],
     hints: Option<&HintingInstance>,
-    contrast: bool,
-    gamma: &[u8; 256],
+    ink: Ink<'_>,
 ) -> std::result::Result<(), PaintError> {
     if !style.strength.is_finite() || style.strength.abs() > MAX_STRENGTH {
         return Err("A font's weight synthesis exceeds the bounded outline range");
@@ -134,7 +133,7 @@ pub(super) fn paint(
                 width,
                 alpha,
             }
-            .blend(page, stride, columns, x, baseline, contrast, gamma);
+            .blend(page, stride, columns, x, baseline, ink);
         }
     }
     Ok(())
@@ -474,7 +473,11 @@ mod tests {
         let font = FontData::new(parley::fontique::Blob::new(Arc::new(bytes)), 0);
         let face = FontRef::from_index(font.data.data(), 0).unwrap();
         let id = face.charmap().map('g').unwrap().to_u32();
-        let gamma = crate::font_render::gamma_table(crate::font_render::NORMAL_GAMMA);
+        let paint_ink = Ink {
+            gray: 63,
+            contrast: false,
+            gamma: crate::font_render::gamma_table(crate::font_render::NORMAL_GAMMA),
+        };
         for clockwise in [false, true] {
             for strength in [-2.25, 2.25] {
                 for phase in [0, 1, 3] {
@@ -489,7 +492,7 @@ mod tests {
                     let reference = super::super::rasterize(&style, id, phase, &[], None).unwrap();
                     let mut expected = vec![255; 500 * 400];
                     let mut actual = expected.clone();
-                    reference.blend(&mut expected, 500, &(30..470), -15, 65, false, gamma);
+                    reference.blend(&mut expected, 500, &(30..470), -15, 65, paint_ink);
                     paint(
                         &mut actual,
                         500,
@@ -501,8 +504,7 @@ mod tests {
                         phase,
                         &[],
                         None,
-                        false,
-                        gamma,
+                        paint_ink,
                     )
                     .unwrap();
                     let ink = expected

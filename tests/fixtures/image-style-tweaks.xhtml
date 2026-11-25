@@ -1,0 +1,24 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head>
+  <title>Image styles</title>
+  <style>
+    .line { text-align: right; text-indent: 2em; }
+    .mark { width: 42px; height: 84px; max-width: 35%; }
+    .authored { width: 42px; height: 84px; vertical-align: top; }
+    .plate { width: 72px; height: 48px; }
+  </style>
+</head>
+<body>
+  <h1>Image styles</h1>
+  <p class="line"><span id="lead">Lead text.</span>
+    <a href="#destination"><img class="mark" src="../images/shore.png" alt="Shore marker"/></a>
+    <span id="trail">Tail text.</span>
+  </p>
+  <p><span id="author-lead">Author alignment.</span>
+    <img class="authored" src="../images/shore.png" alt="Authored alignment"/>
+    leaves this image at the top of the line.
+  </p>
+  <p><img class="plate" src="../images/shore.png" alt="Harbor plate"/></p>
+  <p id="destination">The lower dock.</p>
+</body>
+</html>

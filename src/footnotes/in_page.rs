@@ -538,9 +538,6 @@ fn discover(
             return None;
         }
         if let Some(id) = targets.ancestry[block.element] {
-            if line.bytes.is_empty() && !block.images.is_empty() {
-                return None;
-            }
             let region = regions[id].get_or_insert(index..index);
             if region.end != index {
                 return None;
@@ -1063,19 +1060,46 @@ mod tests {
             (&mut joined, page, "reader-note-inline-image-after.png"),
         ] {
             let pixels = capture(probe, current, name);
-            artwork.push(note_illustration_pixels(probe, current, &pixels));
+            artwork.push(
+                note_artwork(
+                    probe,
+                    current,
+                    &pixels,
+                    (56, 36),
+                    "media-key",
+                    "Shelf diagram",
+                )
+                .0,
+            );
         }
         let pixels = capture(
             &mut joined,
             original,
             "reader-note-inline-image-original.png",
         );
-        artwork.push(note_illustration_pixels(&joined, original, &pixels));
+        artwork.push(
+            note_artwork(
+                &joined,
+                original,
+                &pixels,
+                (56, 36),
+                "media-key",
+                "Shelf diagram",
+            )
+            .0,
+        );
         assert!(artwork[0].iter().any(|&pixel| pixel < 200));
         assert!(artwork.windows(2).all(|pair| pair[0] == pair[1]));
     }
 
-    fn note_illustration_pixels(probe: &Probe, page: usize, pixels: &[u8]) -> Vec<u8> {
+    fn note_artwork(
+        probe: &Probe,
+        page: usize,
+        pixels: &[u8],
+        size: (usize, usize),
+        fragment: &str,
+        label: &str,
+    ) -> (Vec<u8>, Range<usize>, Range<usize>) {
         let crate::Renderer::Parley(layout) = &probe.renderer else {
             unreachable!();
         };
@@ -1084,28 +1108,148 @@ mod tests {
             .find_map(|(range, offset)| {
                 layout
                     .visible_illustrations(range, probe.settings)
-                    .find(|(path, _, _)| *path == "chart.png")
+                    .find(|(path, columns, rows)| {
+                        *path == "chart.png" && (columns.len(), rows.len()) == size
+                    })
                     .map(|(_, columns, rows)| {
                         let offset = offset as usize;
                         (columns, (rows.start + offset)..(rows.end + offset))
                     })
             })
             .expect("the whole illustration is visible");
-        assert_eq!((columns.len(), rows.len()), (56, 36));
         let x = (columns.start + columns.len() / 2) as f32;
         let y = (rows.start + rows.len() / 2) as f32;
         assert_eq!(probe.illustration_at(page, x, y), Some("chart.png"));
         assert_eq!(
             probe.link_at(page, x, y).unwrap().fragment.as_deref(),
-            Some("media-key")
+            Some(fragment)
         );
-        assert!(probe.links_on_page(page).iter().any(|(label, target)| {
-            label == "Shelf diagram" && target.fragment.as_deref() == Some("media-key")
+        assert!(probe.links_on_page(page).iter().any(|(text, target)| {
+            text == label && target.fragment.as_deref() == Some(fragment)
         }));
         let width = probe.settings.width as usize;
-        rows.flat_map(|row| &pixels[row * width + columns.start..row * width + columns.end])
+        let crop = rows
+            .clone()
+            .flat_map(|row| &pixels[row * width + columns.start..row * width + columns.end])
             .copied()
-            .collect()
+            .collect();
+        (crop, columns, rows)
+    }
+
+    #[test]
+    fn whole_note_inline_moves_a_standalone_picture_between_its_original_text_blocks() {
+        use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
+        let mut ordinary = advanced_note_layout(17, &[EPUB_FOOTNOTES]);
+        let mut joined = advanced_note_layout(17, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        let reference = ordinary.fragment("isolated-ref").unwrap();
+        let image = ordinary.fragment("isolated-picture").unwrap();
+        let page = ordinary.page_for(&reference).unwrap();
+        let original = ordinary.page_for(&image).unwrap();
+        assert!(original > page);
+        assert_eq!(ordinary.coverage(), joined.coverage());
+        assert_eq!(joined.fragment("isolated-picture"), Some(image.clone()));
+        let mut ordinal = image.clone();
+        ordinal.illustration = Some(0);
+        for probe in [&ordinary, &joined] {
+            assert_eq!(probe.page_for(&reference), Some(page));
+            assert_eq!(probe.page_for(&image), Some(original));
+            assert_eq!(probe.anchor_top(&ordinal), probe.anchor_top(&image));
+            assert!(
+                probe.in_page_notes.as_ref().unwrap()[page]
+                    .separator
+                    .is_some()
+            );
+        }
+
+        let mut crops = Vec::new();
+        for (probe, current, name, flattened) in [
+            (
+                &mut ordinary,
+                page,
+                "reader-note-inline-block-image-before.png",
+                false,
+            ),
+            (
+                &mut joined,
+                page,
+                "reader-note-inline-block-image-after.png",
+                true,
+            ),
+        ] {
+            let pixels = capture(probe, current, name);
+            let (art, columns, rows) = note_artwork(
+                probe,
+                current,
+                &pixels,
+                (108, 69),
+                "isolated-start",
+                "Hinge diagram",
+            );
+            let intro = phrase_rects(probe, current, "Measurements in the workshop.")[0];
+            let after = phrase_rects(probe, current, "A hinge holds the door.")[0];
+            if flattened {
+                assert_eq!(intro.y, after.y);
+                assert!((intro.x + intro.width) as usize <= columns.start);
+                assert!(columns.end <= after.x as usize);
+            } else {
+                assert!((intro.y + intro.height) as usize <= rows.start);
+                assert!(rows.end <= after.y as usize);
+            }
+            crops.push(art);
+        }
+        let canonical = capture(
+            &mut joined,
+            original,
+            "reader-note-inline-block-image-original.png",
+        );
+        crops.push(
+            note_artwork(
+                &joined,
+                original,
+                &canonical,
+                (108, 69),
+                "isolated-start",
+                "Hinge diagram",
+            )
+            .0,
+        );
+        assert!(crops[0].iter().any(|&pixel| pixel < 200));
+        assert!(crops.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    #[test]
+    fn whole_note_inline_keeps_multiple_picture_ordinals_from_one_source_block() {
+        use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
+        let mut ordinary = advanced_note_layout(18, &[EPUB_FOOTNOTES]);
+        let mut joined = advanced_note_layout(18, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        let image = ordinary.fragment("pair-pictures").unwrap();
+        let mut second = image.clone();
+        second.illustration = Some(1);
+        let reference = ordinary.fragment("pair-start").unwrap();
+        let reference_page = ordinary.page_for(&reference).unwrap();
+        let page = ordinary.page_for(&image).unwrap();
+        assert!(reference_page < page);
+        for probe in [&mut ordinary, &mut joined] {
+            assert_eq!(probe.fragment("pair-pictures"), Some(image.clone()));
+            assert_eq!(probe.page_for(&image), Some(page));
+            assert_eq!(probe.page_for(&second), Some(page));
+            assert_ne!(probe.anchor_top(&image), probe.anchor_top(&second));
+            for current in [reference_page, page] {
+                let pixels = probe.capture(current).unwrap();
+                let (front, _, _) = note_artwork(
+                    probe,
+                    current,
+                    &pixels,
+                    (42, 27),
+                    "pair-start",
+                    "Front handle",
+                );
+                let (back, _, _) =
+                    note_artwork(probe, current, &pixels, (70, 45), "pair-key", "Back handle");
+                assert!(front.iter().any(|&pixel| pixel < 200));
+                assert!(back.iter().any(|&pixel| pixel < 200));
+            }
+        }
     }
 
     #[test]
@@ -1133,17 +1277,6 @@ mod tests {
                 .all(|line| line.additional_sources.is_none())
         );
         assert!(ordinary.capture(0).unwrap() == option.capture(0).unwrap());
-
-        // A standalone image block prevents joining the note. Keep the
-        // original blocks, source IDs and illustration.
-        let mut ordinary = advanced_note_layout(17, &[EPUB_FOOTNOTES]);
-        let mut option = advanced_note_layout(17, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
-        let end = ordinary.fragment("image-fallback-end").unwrap();
-        let page = ordinary.page_for(&end).unwrap();
-        assert_eq!(option.fragment("image-fallback-end"), Some(end.clone()));
-        assert_eq!(option.page_for(&end), Some(page));
-        assert!(ordinary.in_page_notes.is_none() && option.in_page_notes.is_none());
-        assert!(ordinary.capture(page).unwrap() == option.capture(page).unwrap());
     }
 
     #[test]

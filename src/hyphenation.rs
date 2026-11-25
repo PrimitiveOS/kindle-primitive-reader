@@ -44,6 +44,8 @@ pub(crate) enum Dictionary {
     Spanish,
     Italian,
     Portuguese,
+    Estonian,
+    Finnish,
 }
 
 impl Dictionary {
@@ -58,6 +60,8 @@ impl Dictionary {
             ("es", _) => Some(Self::Spanish),
             ("it", _) => Some(Self::Italian),
             ("pt", None | Some("PT")) => Some(Self::Portuguese),
+            ("et", _) => Some(Self::Estonian),
+            ("fi", _) => Some(Self::Finnish),
             _ => None,
         }
     }
@@ -70,13 +74,17 @@ impl Dictionary {
             Self::Spanish => "Spanish",
             Self::Italian => "Italian",
             Self::Portuguese => "Portuguese (Portugal)",
+            Self::Estonian => "Estonian",
+            Self::Finnish => "Finnish",
         }
     }
 
     pub(crate) fn limits(self) -> HyphenationLimits {
         match self {
-            Self::Spanish | Self::Italian => HyphenationLimits { left: 2, right: 2 },
-            Self::American | Self::British | Self::Portuguese => ENGLISH_LIMITS,
+            Self::Spanish | Self::Italian | Self::Finnish => {
+                HyphenationLimits { left: 2, right: 2 }
+            }
+            Self::American | Self::British | Self::Portuguese | Self::Estonian => ENGLISH_LIMITS,
         }
     }
 
@@ -87,6 +95,8 @@ impl Dictionary {
             Self::Spanish => &SPANISH,
             Self::Italian => &ITALIAN,
             Self::Portuguese => &PORTUGUESE,
+            Self::Estonian => &ESTONIAN,
+            Self::Finnish => &FINNISH,
         }
     }
 }
@@ -286,7 +296,11 @@ fn word_breaks_with_limits(
     let patterns = locale.patterns();
     if matches!(
         locale,
-        Dictionary::Spanish | Dictionary::Italian | Dictionary::Portuguese
+        Dictionary::Spanish
+            | Dictionary::Italian
+            | Dictionary::Portuguese
+            | Dictionary::Estonian
+            | Dictionary::Finnish
     ) {
         // CRE treats apostrophes as word boundaries for these pattern files.
         // ICU can keep the two sides together for selection and search.
@@ -403,6 +417,16 @@ mod tests {
                 308,
                 "9bfdcde055dc8d8625a5e1a790e94067",
             ),
+            (
+                include_str!(concat!(env!("OUT_DIR"), "/et_rules.txt")),
+                3691,
+                "d4dbc5867827914d13b74b23e4a94762",
+            ),
+            (
+                include_str!(concat!(env!("OUT_DIR"), "/fi_rules.txt")),
+                284,
+                "dc3f7225640585ff3ddcae30c90825c0",
+            ),
         ] {
             assert_eq!(rules.lines().count(), count);
             assert_eq!(format!("{:x}", md5::compute(rules)), digest);
@@ -436,6 +460,30 @@ mod tests {
             ("pt", "linguística", &[3, 7], &[7]),
             ("pt-PT", "extraordinário", &[2, 5, 7, 9, 11], &[5, 7, 9]),
             ("pt-PT", "saúde", &[], &[]),
+            (
+                "et-EE",
+                "õigekeelsussõnaraamat",
+                &[2, 4, 8, 11, 13, 15, 18],
+                &[4, 8, 11, 13, 15],
+            ),
+            ("et", "raudteejaam", &[4, 7], &[4, 7]),
+            ("et-Latn-EE", "lühiülevaade", &[2, 4, 7], &[4, 7]),
+            (
+                "et-EE",
+                "päikesepaisteline",
+                &[3, 5, 7, 11, 13],
+                &[5, 7, 11, 13],
+            ),
+            (
+                "fi-FI",
+                "työskenteleminen",
+                &[4, 7, 9, 11, 13],
+                &[4, 7, 9, 11],
+            ),
+            ("fi", "ääntäminen", &[3, 5, 7], &[5]),
+            ("fi-Latn-FI", "kansainvälinen", &[3, 7, 9, 11], &[7, 9]),
+            ("fi-FI", "taloudellinen", &[2, 5, 8, 10], &[5, 8]),
+            ("fi-FI", "kalastus", &[2, 5], &[]),
         ] {
             let dictionary = Dictionary::for_language(Language::parse(tag).ok()).unwrap();
             assert_eq!(
@@ -453,6 +501,8 @@ mod tests {
             "<html lang='es'><body><p>murcie\u{301}lago <span lang='it'>l’<b>ital</b>iano</span> \
              <span lang='pt-PT'>infor<b>ma</b>ção</span> \
              <span lang='pt-BR'>informação</span> \
+             <span lang='et-EE'>lu\u{308}hi<b>ülevaa</b>de</span> \
+             <span lang='fi-FI'>a\u{308}äntäminen</span> \
              <span style='hyphens:manual'>murciélago</span> \
              <span xml:lang='es-Cyrl'>murciélago</span></p></body></html>",
         )
@@ -473,6 +523,14 @@ mod tests {
             ),
             ("l’italiano", &["l’ita", "l’italia"]),
             ("informação", &["in", "infor", "informa"]),
+            (
+                "lu\u{308}hiülevaade",
+                &["lu\u{308}", "lu\u{308}hi", "lu\u{308}hiüle"],
+            ),
+            (
+                "a\u{308}äntäminen",
+                &["a\u{308}än", "a\u{308}äntä", "a\u{308}äntämi"],
+            ),
         ];
         let mut expected = Vec::new();
         let mut from = 0;

@@ -161,8 +161,10 @@ fn child_menu(action: &Action) -> Option<Screen> {
             | Screen::LinkSettings
             | Screen::StyleTweaks
             | Screen::ParagraphSpacing
+            | Screen::LinkStyles
             | Screen::FootnoteTweaks
             | Screen::InPageFootnoteSize(_)
+            | Screen::ImageStyles
             | Screen::TypographyRules
             | Screen::TypographyLanguages(_)
             | Screen::FontRendering(_)

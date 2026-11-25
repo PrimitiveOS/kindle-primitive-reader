@@ -152,19 +152,24 @@ local function width_in_canonical_note(view_, text)
     return boxes[#boxes].x1 - boxes[1].x0, boxes[1].x0
 end
 
-if arg[5] == "inline-image" then
+if arg[5] == "inline-image" or arg[5] == "inline-block-image" then
     controller:onReadSettings(Settings:wrap({}))
     local option = assert(find_tweak(menu.style_tweaks.sub_item_table, "inpage_footnote_all_inline"))
     local ffi = require("ffi")
     ffi.cdef[[void free(void *);]]
-    local image_width, image_height = 56, 36
+    local block = arg[5] == "inline-block-image"
+    local prefix = "stock-note-" .. arg[5] .. "-"
+    local body_text = block and "The hinge measured" or "The carpenter read the pencilled instructions"
+    local before_image = block and "Measurements in the workshop." or "Cabinet diagram legend."
+    local after_image = block and "A hinge holds the door." or "for shelf depth."
+    local target = block and "isolated-start" or "media-key"
     local function draw(view, page)
         view:gotoPage(page)
         local frame = BB.new(width, height, BB.TYPE_BB8)
         view:drawCurrentPage(frame, false, false, false, false)
         return frame
     end
-    local function raster(frame, x0, y0)
+    local function raster(frame, x0, y0, image_width, image_height)
         local data = {}
         for y = y0, y0 + image_height - 1 do
             for x = x0, x0 + image_width - 1 do
@@ -174,16 +179,20 @@ if arg[5] == "inline-image" then
         return table.concat(data)
     end
     local function measure(phase, same_line)
+        local image_width, image_height = 56, 36
+        if block then
+            image_width, image_height = 216, 138
+            if same_line then image_width, image_height = 108, 69 end
+        end
         local view = open(assert(controller:getCssText()))
-        local reference, body_y = position(view, "The carpenter read the pencilled instructions")
-        local separator = assert(capture(view, reference, "stock-note-inline-image-" .. phase))
-        local original, intro_y = position(view, "Cabinet diagram legend.")
-        local text, caption_y = position(view, "for shelf depth.")
+        local reference, body_y = position(view, body_text)
+        local separator = assert(capture(view, reference, prefix .. phase))
+        local original, intro_y = position(view, before_image)
+        local text, caption_y = position(view, after_image)
         assert(text == original and original > reference)
         assert(same_line and intro_y == caption_y or not same_line and intro_y < caption_y)
 
         local frame = draw(view, original)
-        local target = "media-key"
         local box, png
         for _, link in ipairs(view:getPageLinks(true)) do
             if link.section:sub(-#target) == target then
@@ -201,23 +210,30 @@ if arg[5] == "inline-image" then
             end
         end
         assert(box and png)
-        local image = raster(frame, box.x0, box.y0)
+        local image = raster(frame, box.x0, box.y0, image_width, image_height)
         assert(image:find(string.char(35), 1, true))
         frame:free()
         local copy = draw(view, reference)
         local copy_y
         for y = separator + 1, height - margin - image_height do
-            if raster(copy, box.x0, y) == image then
+            if raster(copy, box.x0, y, image_width, image_height) == image then
                 copy_y = y
                 break
             end
         end
         copy:free()
         assert(copy_y, "the reference band must preserve the complete image")
+        if block then
+            local x = box.x0 + image_width / 2
+            local y = copy_y + math.floor(image_height / 2)
+            assert(not view:getImageDataFromPosition(x, y))
+            assert(view:getLinkFromPosition(x, y) == "")
+            print("The stock strip paints the image without a tap target")
+        end
         print(("Image %d×%d x=%d, note y=%d, copy y=%d, PNG=%d bytes"):format(
             image_width, image_height, box.x0, box.y0, copy_y, #png))
         if same_line then
-            assert(not capture(view, original, "stock-note-inline-image-original"))
+            assert(not capture(view, original, prefix .. "original"))
         end
         view:close()
         return body_y, png, image
@@ -227,7 +243,7 @@ if arg[5] == "inline-image" then
     option.callback()
     assert(option.checked_func())
     local body, png, pixels = measure("after", true)
-    assert(body == old_body and png == old_png and pixels == old_pixels)
+    assert(body == old_body and png == old_png and (block or pixels == old_pixels))
     print("Pinned whole-note inline toggle reflows around unchanged linked artwork")
     return
 end

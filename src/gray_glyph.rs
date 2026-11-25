@@ -46,6 +46,13 @@ struct GlyphStyle<'a> {
     strength: f32,
 }
 
+#[derive(Clone, Copy)]
+struct Ink<'a> {
+    gray: u8,
+    contrast: bool,
+    gamma: &'a [u8; 256],
+}
+
 #[derive(Default)]
 struct Mask {
     left: i32,
@@ -105,7 +112,7 @@ impl GlyphCache {
         stride: usize,
         columns: &Range<usize>,
         origin: (f32, f32),
-        glyphs: &GlyphRun<'_, impl parley::style::Brush>,
+        glyphs: &GlyphRun<'_, crate::parley_layout::PaintBrush>,
         contrast: bool,
         gamma: u8,
     ) {
@@ -131,7 +138,12 @@ impl GlyphCache {
         let positions = glyphs
             .positioned_glyphs()
             .map(|glyph| (glyph.id, origin.0 + glyph.x, origin.1 + glyph.y));
-        self.draw_positioned(page, stride, columns, style, positions, contrast, gamma);
+        let ink = Ink {
+            gray: glyphs.style().brush.link_ink.unwrap_or(0),
+            contrast,
+            gamma: crate::font_render::gamma_table(gamma),
+        };
+        self.draw_positioned(page, stride, columns, style, positions, ink);
     }
 
     pub(crate) fn draw_vertical(
@@ -156,15 +168,12 @@ impl GlyphCache {
             strength: glyph.strength,
         };
         let position = (glyph.id, glyph.x - columns.start as f32, glyph.y);
-        self.draw_positioned(
-            page,
-            stride,
-            columns,
-            style,
-            std::iter::once(position),
+        let ink = Ink {
+            gray: glyph.ink,
             contrast,
-            gamma,
-        );
+            gamma: crate::font_render::gamma_table(gamma),
+        };
+        self.draw_positioned(page, stride, columns, style, std::iter::once(position), ink);
     }
 
     fn draw_positioned(
@@ -174,8 +183,7 @@ impl GlyphCache {
         columns: &Range<usize>,
         style: GlyphStyle<'_>,
         glyphs: impl Iterator<Item = (u32, f32, f32)>,
-        contrast: bool,
-        gamma: u8,
+        ink: Ink<'_>,
     ) {
         if stride == 0
             || stride > MAX_VIEWPORT_EDGE
@@ -210,8 +218,6 @@ impl GlyphCache {
             clockwise: style.clockwise,
             strength: style.strength.to_bits(),
         };
-        let gamma = crate::font_render::gamma_table(gamma);
-
         let face = self.faces.entry(key).or_default();
         let mut scaled_variations = None;
         // Reuse one hinting instance for misses in this run, without keeping additional
@@ -229,9 +235,9 @@ impl GlyphCache {
             let x = x.div_euclid(X_PHASES);
             let baseline = baseline.round() as i32;
             match face.entry((glyph, phase)) {
-                Entry::Occupied(entry) => entry
-                    .get()
-                    .blend(page, stride, columns, x, baseline, contrast, gamma),
+                Entry::Occupied(entry) => {
+                    entry.get().blend(page, stride, columns, x, baseline, ink)
+                }
                 Entry::Vacant(entry) => {
                     let variations = scaled_variations.get_or_insert_with(|| {
                         style
@@ -256,8 +262,7 @@ impl GlyphCache {
                                 phase,
                                 variations,
                                 hints.as_ref(),
-                                contrast,
-                                gamma,
+                                ink,
                             ) {
                                 self.paint_error = Some(error);
                             }
@@ -265,7 +270,7 @@ impl GlyphCache {
                         }
                         None => Mask::default(),
                     };
-                    mask.blend(page, stride, columns, x, baseline, contrast, gamma);
+                    mask.blend(page, stride, columns, x, baseline, ink);
                     let cost = mask.alpha.len() + ENTRY_OVERHEAD;
                     if self.bytes + cost <= CACHE_BYTES {
                         self.bytes += cost;
@@ -287,8 +292,7 @@ impl Mask {
         columns: &Range<usize>,
         x: i32,
         y: i32,
-        contrast: bool,
-        gamma: &[u8; 256],
+        ink: Ink<'_>,
     ) {
         if self.alpha.is_empty() {
             return;
@@ -309,16 +313,18 @@ impl Mask {
             let src = (row - y) as usize * self.width + (visible_left - x) as usize;
             let mask = &self.alpha[src..src + width];
             for (pixel, &alpha) in page[dst..dst + width].iter_mut().zip(mask) {
-                let alpha = if contrast {
+                let alpha = if ink.contrast {
                     alpha.saturating_add(alpha / 2)
                 } else {
                     alpha
                 };
-                let alpha = gamma[usize::from(alpha)];
-                if *pixel == 255 {
+                let alpha = ink.gamma[usize::from(alpha)];
+                if ink.gray == 0 && *pixel == 255 {
                     *pixel = 255 - alpha;
                 } else if alpha != 0 {
-                    *pixel = ((u16::from(*pixel) * (255 - u16::from(alpha)) + 127) / 255) as u8;
+                    let alpha = u16::from(alpha);
+                    let gray = u16::from(ink.gray);
+                    *pixel = ((u16::from(*pixel) * (255 - alpha) + gray * alpha + 127) / 255) as u8;
                 }
             }
         }
@@ -654,8 +660,11 @@ mod logical_bound_tests {
                 &(0..500),
                 style,
                 std::iter::once((1, 0., 340.)),
-                false,
-                crate::font_render::NORMAL_GAMMA,
+                Ink {
+                    gray: 0,
+                    contrast: false,
+                    gamma: crate::font_render::gamma_table(crate::font_render::NORMAL_GAMMA),
+                },
             );
             assert_eq!(cache.check_paint().is_err(), logical);
             assert!(frame.iter().all(|&n| n == 255));

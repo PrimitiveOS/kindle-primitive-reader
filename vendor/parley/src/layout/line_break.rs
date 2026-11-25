@@ -912,7 +912,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         let quantize = self.layout.data.quantize;
         let layout_box = &mut self.layout.data.inline_boxes[index];
         let inline_box = &layout_box.inline_box;
-        if inline_box.kind == InlineBoxKind::InFlow {
+        if inline_box.kind.is_in_flow() {
             let placement = inline_box_placement(
                 inline_box,
                 layout_box.parent_style_index,
@@ -1127,6 +1127,30 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                     // line and otherwise skipped.
                     let (width_contribution, height_contribution) = match inline_box.kind {
                         InlineBoxKind::InFlow => (inline_box.width, inline_box.height),
+                        InlineBoxKind::Block => {
+                            if self.state.line.box_metrics.has_content {
+                                return self.start_new_line(
+                                    BreakReason::Explicit,
+                                    max_advance,
+                                    line_indent,
+                                );
+                            }
+                            if inline_box.height > self.state.line_max_height {
+                                return self.max_height_break_data(inline_box.height);
+                            }
+                            self.append_layout_inline_box(item.index, inline_box.width);
+                            self.done = self.state.item_idx == item_count;
+                            let reason = if self.done {
+                                BreakReason::None
+                            } else {
+                                BreakReason::Explicit
+                            };
+                            return self.start_new_line(
+                                reason,
+                                self.state.line_max_advance,
+                                0.0,
+                            );
+                        }
                         InlineBoxKind::OutOfFlow => {
                             self.append_layout_inline_box(item.index, self.state.line.x);
                             continue;
@@ -1399,7 +1423,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                 LayoutItemKind::InlineBox => {
                     let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
 
-                    if inline_box.kind != InlineBoxKind::InFlow {
+                    if !inline_box.kind.is_in_flow() {
                         self.append_layout_inline_box(item.index, self.state.line.x);
                         continue;
                     }
@@ -2004,7 +2028,7 @@ fn hanging_whitespace<B: Brush>(
                 let item = &layout.data.inline_boxes[line_item.index].inline_box;
 
                 // Inline boxes don't hang.
-                if item.kind == InlineBoxKind::InFlow {
+                if item.kind.is_in_flow() {
                     break;
                 }
             }

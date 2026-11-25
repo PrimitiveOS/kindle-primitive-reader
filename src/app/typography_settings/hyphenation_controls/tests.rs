@@ -190,3 +190,52 @@ fn multilingual_hyphenation_settings_use_the_book_language_defaults() {
                 && item.detail.as_deref() == Some("Selected · Spanish"))
     );
 }
+
+#[test]
+fn multilingual_hyphenation_settings_keep_estonian_and_finnish_book_choices() {
+    use crate::app::typography_settings::{CatalogLanguage, LanguageScope};
+
+    let f = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut reader = Reader::open(&f.root, &f.state, fonts.clone()).unwrap();
+    reader.open_path(&f.book).unwrap();
+    let mut canvas = adopt(&mut reader, ReadingViewport::PORTRAIT, 1);
+    let origin = reader.current_history_location();
+    for (tag, name, minimum) in [("et", "Estonian", "2 / 3"), ("fi", "Finnish", "2 / 2")] {
+        let language = CatalogLanguage::try_from(tag.to_owned()).unwrap();
+        reader
+            .choose_typography_language(LanguageScope::Book, Some(language))
+            .unwrap();
+        reader.show(Screen::TypographyRules);
+        tap_contents_item(&mut reader, "Hyphenation");
+        let items = reader.hyphenation_items();
+        let dictionary = format!("Selected · {name}");
+        let defaults = format!("Language defaults · {minimum}");
+        assert!(
+            items
+                .iter()
+                .any(|item| item.title == "Hyphenation dictionary"
+                    && item.detail.as_deref() == Some(dictionary.as_str()))
+        );
+        assert!(items.iter().any(|item| item.title == "Hyphenation limits"
+            && item.detail.as_deref() == Some(defaults.as_str())));
+        capture(
+            &reader,
+            &mut canvas,
+            &format!("{tag}-hyphenation-settings.png"),
+            false,
+        );
+        assert_eq!(reader.current_history_location(), origin);
+        reader.save().unwrap();
+        reader = Reader::open(&f.root, &f.state, fonts.clone()).unwrap();
+        reader.open_path(&f.book).unwrap();
+        assert_eq!(reader.current_history_location(), origin);
+        assert!(
+            reader
+                .hyphenation_items()
+                .iter()
+                .any(|item| item.title == "Hyphenation dictionary"
+                    && item.detail.as_deref() == Some(dictionary.as_str()))
+        );
+    }
+}

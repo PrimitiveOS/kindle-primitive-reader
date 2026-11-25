@@ -72,6 +72,11 @@ regression covers one, two and three wrapped pictures, projected captions,
 original picture ordinals and serialized page restoration:
 `cargo test --lib parley_layout::media_line_tests`.
 
+An opt-in block replacement occupies its own unindented line and retains the
+image's original byte offset. The line breaker uses the replacement's bounds
+for height and intrinsic width. Reader positions the image in its text column.
+[Image style workflow and tests](../../docs/image-style-tweaks.md)
+
 Reader can supply an optical margin rule after line breaking. The layout
 measures the first and last visual glyphs, adjusts alignment and
 justification at the applicable edges, and reports the applied bleed for

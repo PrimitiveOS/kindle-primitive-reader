@@ -1,6 +1,6 @@
 # Reading style presets
 
-Open **Appearance › Style tweaks** to apply a change to the open book or
+Open **Settings › Style tweaks** to apply a change to the open book or
 set a default for other books. A book can override the default, and turning
 off style tweaks preserves the saved choices.
 

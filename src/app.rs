@@ -335,8 +335,10 @@ enum Screen {
     TypographyLanguages(typography_settings::LanguageScope),
     StyleTweaks,
     ParagraphSpacing,
+    LinkStyles,
     FootnoteTweaks,
     StylePreset,
+    ImageStyles,
     InPageFootnoteSize(style_tweaks::NoteSizeScope),
     StyleFiles,
     StyleReview,
@@ -557,8 +559,10 @@ impl Screen {
             Self::FontRendering(eager_typography::Scope::Default) => "Default font size rendering",
             Self::StyleTweaks => "Style tweaks",
             Self::ParagraphSpacing => "Spacing between paragraphs",
+            Self::LinkStyles => "Links",
             Self::FootnoteTweaks => "Footnote options",
             Self::StylePreset => "Style tweak",
+            Self::ImageStyles => "Images",
             Self::InPageFootnoteSize(style_tweaks::NoteSizeScope::Book) => "In-page footnote size",
             Self::InPageFootnoteSize(style_tweaks::NoteSizeScope::Default) => {
                 "Default footnote size"
@@ -2683,8 +2687,10 @@ impl Reader {
             screen,
             Screen::StyleTweaks
                 | Screen::ParagraphSpacing
+                | Screen::LinkStyles
                 | Screen::FootnoteTweaks
                 | Screen::StylePreset
+                | Screen::ImageStyles
                 | Screen::InPageFootnoteSize(_)
                 | Screen::StyleFiles
                 | Screen::StyleReview
@@ -3603,8 +3609,10 @@ impl Reader {
             Screen::DocumentDefaults
             | Screen::StyleTweaks
             | Screen::ParagraphSpacing
+            | Screen::LinkStyles
             | Screen::FootnoteTweaks
             | Screen::StylePreset
+            | Screen::ImageStyles
             | Screen::InPageFootnoteSize(_)
             | Screen::StyleFiles
             | Screen::StyleReview
@@ -10110,6 +10118,8 @@ impl App for Reader {
                     Screen::StylePreset => self.show(self.style_preset_parent()),
                     Screen::FootnoteTweaks
                     | Screen::ParagraphSpacing
+                    | Screen::LinkStyles
+                    | Screen::ImageStyles
                     | Screen::StyleFiles
                     | Screen::StyleClear => self.show(Screen::StyleTweaks),
                     Screen::StyleReview => self.show(if self.style_view.editor.is_some() {
