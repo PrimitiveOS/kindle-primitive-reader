@@ -130,6 +130,7 @@ impl Screen {
                 | Self::PageTurnDefaults
                 | Self::ReadingNotifications
                 | Self::PastNotifications
+                | Self::FooterItemWidths
                 | Self::Gestures
                 | Self::Scrolling
                 | Self::GestureBinding(_)

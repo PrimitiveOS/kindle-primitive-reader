@@ -40,6 +40,36 @@ The custom footer has 18 selectable items, including [brightness and warmth](#in
 Memory and Wi-Fi indicators, plug-in supplied items, and physical E Ink
 verification remain open.
 
+## Item maximum width
+
+Open **Reading status bar → Item maximum width** when using **Custom items**.
+Book author, book title, and chapter title each use 30% of the screen width
+by default. Each cap can be set to 10–100%. Tap **−** or **+** to change it
+by five percentage points. Hold either control to move by 20 points. Tap
+the displayed value to enter a whole percentage. **Default** restores 30%,
+**Apply** saves the value and leaves the picker open, and **Close** discards
+any pending change. Status bar presets save all three caps.
+
+The limit follows the open reading viewport and includes the item’s icon or
+letter prefix. Reader measures each label with the selected footer typeface,
+size and weight. Long labels get an ellipsis at a grapheme boundary. Shorter
+labels use their measured width. This fitted width feeds the normal row,
+single-item cycling, the alongside progress track, and the dynamic filler.
+
+The native replay opens the three pinned KOReader width pickers. It exercises
+the tap and hold steps, range boundaries, direct entry, Default, Apply
+and the generated ellipses. The desktop Reader replay checks independent
+values, reopening, presets, portrait EPUB and landscape PDF. It verifies the
+default chapter footer before and after the custom settings.
+[KOReader width controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerfooter.lua#L1970-L1997) ·
+[KOReader fitted labels](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerfooter.lua#L2101-L2117) ·
+[Stock replay](../scripts/koreader-footer-width-check.lua) ·
+[KOReader picker](screenshots/stock-footer-width-picker.png) ·
+[Reader settings](screenshots/footer-width-settings.png) ·
+[Reader picker](screenshots/footer-width-picker.png) ·
+[Portrait EPUB](screenshots/footer-width-epub-combined.png) ·
+[Landscape PDF](screenshots/footer-width-alongside-landscape.png)
+
 ## Inactive items and clock
 
 **Reading status bar → Hide inactive items** applies when custom items

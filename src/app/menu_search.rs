@@ -153,6 +153,7 @@ fn child_menu(action: &Action) -> Option<Screen> {
             | Screen::VeryLongPressSettings
             | Screen::HighlightPromptSettings
             | Screen::FooterSettings
+            | Screen::FooterItemWidths
             | Screen::FooterPresets
             | Screen::EndActionSettings
             | Screen::MetadataSaveSettings

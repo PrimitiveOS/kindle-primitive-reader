@@ -245,6 +245,7 @@ enum Screen {
     VeryLongPressSettings,
     HighlightPromptSettings,
     FooterSettings,
+    FooterItemWidths,
     FooterFontFaces,
     FooterCustomText,
     FooterCustomTextGuide,
@@ -426,6 +427,7 @@ impl Screen {
             Self::VeryLongPressSettings => "Very long press interval",
             Self::HighlightPromptSettings => "Highlight prompt",
             Self::FooterSettings => "Reading status bar",
+            Self::FooterItemWidths => "Item maximum width",
             Self::FooterFontFaces => "Status bar font",
             Self::FooterCustomText => "Custom footer text",
             Self::FooterCustomTextGuide => "Custom text tokens",
@@ -494,6 +496,7 @@ impl Screen {
             Self::NumberingValue(NumberField::FooterTrackMarginWidth) => "Progress bar margins",
             Self::NumberingValue(NumberField::FooterBatteryHideThreshold) => "Battery threshold",
             Self::NumberingValue(NumberField::FooterItemFontSize) => "Footer text size",
+            Self::NumberingValue(NumberField::FooterItemWidth(item, _)) => item.width_label(),
             Self::NumberingValue(NumberField::FooterContainerHeight) => "Footer item height",
             Self::NumberingValue(NumberField::FooterContainerBottomMargin) => {
                 "Footer bottom margin"
@@ -649,6 +652,7 @@ enum Action {
     ConfirmReadingOrientationDefault(ReadingOrientation),
     EditListDensity(list_density::Scope, list_density::Field),
     EditSearchPresentation(search_presentation::Field),
+    EditFooterItemWidth(crate::reading_controls::FooterTextItem),
     BindGesture(Gesture, Binding),
     Multiswipe(multiswipes::Command),
     MultiswipePreview(multiswipes::Shape),
@@ -2110,6 +2114,7 @@ impl Reader {
                             | NumberField::FooterTrackMarginWidth
                             | NumberField::FooterBatteryHideThreshold
                             | NumberField::FooterItemFontSize
+                            | NumberField::FooterItemWidth(_, _)
                             | NumberField::FooterContainerHeight
                             | NumberField::FooterContainerBottomMargin
                             | NumberField::FooterCustomTextRepetitions
@@ -2174,6 +2179,10 @@ impl Reader {
                 Screen::NumberingValue(NumberField::FooterItemFontSize) => {
                     let size = self.controls.footer_item_font_size.unwrap_or(14);
                     self.editor.text = size.to_string().chars().collect();
+                    self.editor.caret = self.editor.text.len();
+                }
+                Screen::NumberingValue(NumberField::FooterItemWidth(_, width)) => {
+                    self.editor.text = width.to_string().chars().collect();
                     self.editor.caret = self.editor.text.len();
                 }
                 Screen::NumberingValue(NumberField::FooterContainerHeight) => {
@@ -2674,6 +2683,7 @@ impl Reader {
         }
         match screen {
             Screen::FooterSettings => return self.footer_items(),
+            Screen::FooterItemWidths => return self.footer_item_widths(),
             Screen::FooterPresets => {
                 let mut items = vec![
                     Item::new(
@@ -4025,6 +4035,7 @@ impl Reader {
             Action::ToggleNotificationSource(source) => self.toggle_notification_source(source)?,
             Action::EditListDensity(scope, field) => self.open_list_density(scope, field),
             Action::EditSearchPresentation(field) => self.open_search_presentation(field),
+            Action::EditFooterItemWidth(item) => self.open_footer_width(item, None),
             Action::BookmarkBrowser(command) => self.activate_bookmark_browser(command)?,
             Action::ReadingHistory(command) => self.activate_reading_history(command)?,
             Action::Flow(action) => self.flow_action(action)?,
@@ -5982,6 +5993,11 @@ impl Reader {
         if matches!(input, Input::PageBack)
             || matches!(input, Input::Tap(x, y) if navigation.back().contains(x, y))
         {
+            if let Screen::NumberingValue(NumberField::FooterItemWidth(item, draft)) = self.screen {
+                self.show(Screen::FooterItemWidths);
+                self.open_footer_width(item, Some(draft));
+                return Change::Partial;
+            }
             self.show(match self.screen {
                 Screen::NumberingValue(field) => field.parent(),
                 Screen::FootnoteFontSize(_) => Screen::LinkSettings,
@@ -5996,6 +6012,11 @@ impl Reader {
         };
         let layout = navigation.keyboard();
         let action = if matches!(
+            self.screen,
+            Screen::NumberingValue(NumberField::FooterItemWidth(_, _))
+        ) {
+            "Use width"
+        } else if matches!(
             self.screen,
             Screen::NumberingValue(_) | Screen::FootnoteFontSize(_)
         ) {
@@ -7793,13 +7814,6 @@ impl Reader {
                 .flat_map(|selection| selection.page_bounds())
                 .collect();
             let search_caption = self.search_caption();
-            let status_caption = self.status_caption();
-            let display_notice = self
-                .notice
-                .as_deref()
-                .or(search_caption.as_deref())
-                .or(status_caption.as_deref());
-            let footer_caption = fixed.reading.footer_caption(display_notice);
             let footer_font_px = self.footer_caption_font_px();
             let footer_style = self.footer_caption_style();
             let footer_font_file = self.footer_font_render_file();
@@ -7808,50 +7822,53 @@ impl Reader {
                 && self.pdf_selection.is_none()
                 && self.selection.is_none();
             let footer_slot_width = fixed.reading.zoom_buttons().0.x.saturating_sub(60) as u32;
-            let filler = allow_custom_footer
+            let custom_footer = allow_custom_footer
                 .then(|| {
-                    self.custom_footer_filler_line(
-                        canvas,
-                        footer_slot_width,
-                        footer_font_file.as_deref(),
-                    )
+                    self.custom_footer_line(canvas, footer_slot_width, footer_font_file.as_deref())
                 })
                 .flatten();
-            let draw_footer_icons =
-                filler.is_none() && allow_custom_footer && self.custom_footer_icons_enabled();
-            let status_text_width = if let Some(line) = &filler {
-                line.width() as i32
-            } else {
-                (if let Some(font_file) = footer_font_file.as_deref() {
-                    canvas.measure_with_font_file(
-                        &footer_caption,
-                        footer_font_px,
-                        self.controls.footer_item_bold,
-                        font_file,
-                    )
-                } else {
-                    canvas.measure_with_weight(
-                        &footer_caption,
-                        footer_font_px,
-                        self.controls.footer_item_bold,
-                    )
-                }) + if draw_footer_icons {
-                    self.custom_footer_icon_width()
-                } else {
-                    0
-                }
-            };
+            let caption =
+                (custom_footer.is_none() && self.notice.is_none() && search_caption.is_none())
+                    .then(|| self.status_caption())
+                    .flatten();
+            let display_notice = self
+                .notice
+                .as_deref()
+                .or(search_caption.as_deref())
+                .or(caption.as_deref());
+            let footer_caption = fixed.reading.footer_caption(display_notice);
+            let status_text_width = custom_footer.as_ref().map_or_else(
+                || {
+                    if let Some(font_file) = footer_font_file.as_deref() {
+                        canvas.measure_with_font_file(
+                            &footer_caption,
+                            footer_font_px,
+                            self.controls.footer_item_bold,
+                            font_file,
+                        )
+                    } else {
+                        canvas.measure_with_weight(
+                            &footer_caption,
+                            footer_font_px,
+                            self.controls.footer_item_bold,
+                        )
+                    }
+                },
+                |line| line.width(),
+            );
             let status_rect = self.footer_caption_rect(
-                filler.as_ref().map_or_else(
-                    || self.footer_caption_width(footer_slot_width, status_text_width),
-                    |line| line.width(),
-                ),
+                custom_footer
+                    .as_ref()
+                    .and_then(|line| line.gap_width())
+                    .unwrap_or_else(|| {
+                        self.footer_caption_width(footer_slot_width, status_text_width)
+                    }),
                 status_text_width,
                 footer_font_px,
             );
             fixed.reading.draw_with_footer_cover(
                 canvas,
-                if draw_footer_icons || filler.is_some() {
+                if custom_footer.is_some() {
                     Some("")
                 } else {
                     display_notice
@@ -7866,15 +7883,13 @@ impl Reader {
                 footer_font_file.as_deref(),
                 self.footer_cover_top(status_rect, status_text_width),
             );
-            if let Some(line) = filler {
+            if let Some(line) = custom_footer {
                 line.draw(
                     canvas,
                     status_rect,
                     footer_style,
                     footer_font_file.as_deref(),
                 );
-            } else if draw_footer_icons {
-                self.draw_custom_footer_icons(canvas, status_rect, footer_style, footer_font_px);
             }
             self.draw_footer_track(canvas, status_text_width);
             if self.saved_popup_over_book() {
@@ -7997,61 +8012,58 @@ impl Reader {
                 .as_ref()
                 .map_or_else(Vec::new, |selection| reading.highlight_rects(selection));
             let search_caption = self.search_caption();
-            let status_caption = self.status_caption();
-            let display_notice = self
-                .notice
-                .as_deref()
-                .or(search_caption.as_deref())
-                .or(status_caption.as_deref());
-            let footer_caption = reading.footer_caption(display_notice);
             let footer_font_px = self.footer_caption_font_px();
             let footer_style = self.footer_caption_style();
             let footer_font_file = self.footer_font_render_file();
             let note_covers_footer = self.footnote.is_some();
             let allow_custom_footer = !note_covers_footer
+                && reading.footer_caption(Some("")).is_empty()
                 && self.notice.is_none()
                 && search_caption.is_none()
                 && self.selection.is_none()
                 && self.pdf_selection.is_none();
             let footer_slot_width = self.reading_viewport().done().x.saturating_sub(60) as u32;
-            let filler = allow_custom_footer
+            let custom_footer = allow_custom_footer
                 .then(|| {
-                    self.custom_footer_filler_line(
-                        canvas,
-                        footer_slot_width,
-                        footer_font_file.as_deref(),
-                    )
+                    self.custom_footer_line(canvas, footer_slot_width, footer_font_file.as_deref())
                 })
                 .flatten();
-            let draw_footer_icons =
-                filler.is_none() && allow_custom_footer && self.custom_footer_icons_enabled();
-            let status_text_width = if let Some(line) = &filler {
-                line.width() as i32
-            } else {
-                (if let Some(font_file) = footer_font_file.as_deref() {
-                    canvas.measure_with_font_file(
-                        &footer_caption,
-                        footer_font_px,
-                        self.controls.footer_item_bold,
-                        font_file,
-                    )
-                } else {
-                    canvas.measure_with_weight(
-                        &footer_caption,
-                        footer_font_px,
-                        self.controls.footer_item_bold,
-                    )
-                }) + if draw_footer_icons {
-                    self.custom_footer_icon_width()
-                } else {
-                    0
-                }
-            };
+            let caption =
+                (custom_footer.is_none() && self.notice.is_none() && search_caption.is_none())
+                    .then(|| self.status_caption())
+                    .flatten();
+            let display_notice = self
+                .notice
+                .as_deref()
+                .or(search_caption.as_deref())
+                .or(caption.as_deref());
+            let footer_caption = reading.footer_caption(display_notice);
+            let status_text_width = custom_footer.as_ref().map_or_else(
+                || {
+                    if let Some(font_file) = footer_font_file.as_deref() {
+                        canvas.measure_with_font_file(
+                            &footer_caption,
+                            footer_font_px,
+                            self.controls.footer_item_bold,
+                            font_file,
+                        )
+                    } else {
+                        canvas.measure_with_weight(
+                            &footer_caption,
+                            footer_font_px,
+                            self.controls.footer_item_bold,
+                        )
+                    }
+                },
+                |line| line.width(),
+            );
             let status_rect = self.footer_caption_rect(
-                filler.as_ref().map_or_else(
-                    || self.footer_caption_width(footer_slot_width, status_text_width),
-                    |line| line.width(),
-                ),
+                custom_footer
+                    .as_ref()
+                    .and_then(|line| line.gap_width())
+                    .unwrap_or_else(|| {
+                        self.footer_caption_width(footer_slot_width, status_text_width)
+                    }),
                 status_text_width,
                 footer_font_px,
             );
@@ -8059,7 +8071,7 @@ impl Reader {
                 canvas,
                 (self.selection.is_none() && !note_covers_footer).then_some("Exit"),
                 self.hidden_overlap_footer(),
-                if draw_footer_icons || filler.is_some() {
+                if custom_footer.is_some() {
                     Some("")
                 } else {
                     display_notice
@@ -8073,15 +8085,13 @@ impl Reader {
                 footer_font_file.as_deref(),
                 self.footer_cover_top(status_rect, status_text_width),
             );
-            if let Some(line) = filler {
+            if let Some(line) = custom_footer {
                 line.draw(
                     canvas,
                     status_rect,
                     footer_style,
                     footer_font_file.as_deref(),
                 );
-            } else if draw_footer_icons {
-                self.draw_custom_footer_icons(canvas, status_rect, footer_style, footer_font_px);
             }
             self.draw_publisher_margins(canvas);
             self.draw_top_header(canvas);
@@ -8322,6 +8332,9 @@ impl Reader {
                 }
                 Screen::NumberingValue(NumberField::FooterItemFontSize) => {
                     ("Footer text size: 8 to 36; default 14", "Set")
+                }
+                Screen::NumberingValue(NumberField::FooterItemWidth(_, _)) => {
+                    ("Screen width from 10 to 100%", "Use width")
                 }
                 Screen::NumberingValue(NumberField::FooterContainerHeight) => {
                     ("Footer item height: 7 to 98; default 14", "Set")
@@ -9922,6 +9935,7 @@ impl App for Reader {
                     | Screen::SelectionPosition
                     | Screen::LongPressSettings => self.show(Screen::ReadingControls),
                     Screen::FooterFontFaces => self.show(Screen::FooterSettings),
+                    Screen::FooterItemWidths => self.show(Screen::FooterSettings),
                     Screen::FooterPresets => self.show(Screen::FooterSettings),
                     Screen::FooterPreset(_) => self.show(Screen::FooterPresets),
                     Screen::FooterPresetDelete(index) => self.show(Screen::FooterPreset(index)),

@@ -8,12 +8,13 @@ use super::{
 };
 use crate::logical_font::ScaleContext;
 use crate::reading_controls::{
-    DEFAULT_BOOKMARK_LINES, ListDensity, MAX_BOOKMARK_LINES, ReadingControls,
+    DEFAULT_BOOKMARK_LINES, FooterTextItem, ListDensity, MAX_BOOKMARK_LINES, ReadingControls,
 };
 
 const PANEL: Rect = Rect::new(192, 480, 880, 710);
 pub(super) const DECREASE: Rect = Rect::new(244, 675, 112, 112);
 pub(super) const INCREASE: Rect = Rect::new(908, 675, 112, 112);
+pub(super) const PICKER_VALUE: Rect = Rect::new(371, 676, 522, 112);
 pub(super) const DEFAULT: Rect = Rect::new(244, 817, 776, 108);
 pub(super) const LINE_DEFAULT: Rect = Rect::new(244, 817, 376, 108);
 pub(super) const DISABLE_LINES: Rect = Rect::new(644, 817, 376, 108);
@@ -183,6 +184,7 @@ impl Field {
 pub(super) enum PickerTarget {
     Density(Scope, Field),
     Search(super::search_presentation::Field),
+    FooterWidth(FooterTextItem),
 }
 
 impl PickerTarget {
@@ -190,6 +192,7 @@ impl PickerTarget {
         match self {
             Self::Density(scope, field) => field.title(scope),
             Self::Search(field) => field.title(),
+            Self::FooterWidth(item) => item.width_label(),
         }
     }
 
@@ -197,6 +200,7 @@ impl PickerTarget {
         match self {
             Self::Density(_, field) => field.bounds(),
             Self::Search(field) => field.bounds(),
+            Self::FooterWidth(_) => (FooterTextItem::MIN, FooterTextItem::MAX),
         }
     }
 
@@ -204,6 +208,7 @@ impl PickerTarget {
         match self {
             Self::Density(scope, field) => field.default_value(scope.preferences(controls)),
             Self::Search(field) => field.default_value(),
+            Self::FooterWidth(_) => FooterTextItem::DEFAULT,
         }
     }
 
@@ -221,7 +226,24 @@ impl PickerTarget {
     fn hold_step(self) -> i8 {
         match self {
             Self::Search(super::search_presentation::Field::Words) => 5,
+            Self::FooterWidth(_) => 20,
             _ => 4,
+        }
+    }
+
+    fn step(self) -> i8 {
+        if matches!(self, Self::FooterWidth(_)) {
+            5
+        } else {
+            1
+        }
+    }
+
+    fn format(self, value: u8) -> String {
+        if matches!(self, Self::FooterWidth(_)) {
+            format!("{value}%")
+        } else {
+            value.to_string()
         }
     }
 }
@@ -295,8 +317,19 @@ impl Reader {
         });
     }
 
+    pub(super) fn open_footer_width(&mut self, item: FooterTextItem, draft: Option<u8>) {
+        self.notice = None;
+        self.list_density_picker = Some(Picker {
+            target: PickerTarget::FooterWidth(item),
+            value: Some(draft.unwrap_or_else(|| self.controls.footer_text_widths.get(item))),
+        });
+    }
+
     fn density_picker_layout(&self, target: PickerTarget) -> NavigationLayout {
-        if matches!(target, PickerTarget::Density(Scope::Contents, _)) {
+        if matches!(
+            target,
+            PickerTarget::Density(Scope::Contents, _) | PickerTarget::FooterWidth(_)
+        ) {
             self.navigation_layout()
         } else {
             NavigationLayout::PORTRAIT
@@ -308,6 +341,7 @@ impl Reader {
             return;
         };
         let target = picker.target;
+        let footer_width = matches!(target, PickerTarget::FooterWidth(_));
         let layout = self.density_picker_layout(target);
         let place = |rect| layout.centered(rect);
         let (min, max) = target.bounds();
@@ -317,9 +351,15 @@ impl Reader {
             target.title(),
             TextStyle::new(50).bold().center(),
         );
+        let bounds = format!("{} to {}", target.format(min), target.format(max));
+        let hint = if footer_width {
+            format!("{bounds} of screen width")
+        } else {
+            bounds
+        };
         canvas.text(
             place(Rect::new(244, 607, 776, 49)),
-            &format!("{min} to {max}"),
+            &hint,
             TextStyle::new(30).ink(SECONDARY).center(),
         );
         canvas.button(place(DECREASE), "-", false, false);
@@ -327,13 +367,17 @@ impl Reader {
         let value = if target.is_lines() && picker.value.is_none() {
             "Disabled".to_owned()
         } else {
-            picker.value(&self.controls).to_string()
+            target.format(picker.value(&self.controls))
         };
-        canvas.text(
-            place(Rect::new(371, 686, 522, 105)),
-            &value,
-            TextStyle::new(66).bold().center(),
-        );
+        if footer_width {
+            canvas.button(place(PICKER_VALUE), &value, false, false);
+        } else {
+            canvas.text(
+                place(Rect::new(371, 686, 522, 105)),
+                &value,
+                TextStyle::new(66).bold().center(),
+            );
+        }
         let default_value = target.default_value(&self.controls);
         if target.is_lines() {
             canvas.button(
@@ -351,7 +395,7 @@ impl Reader {
             };
             canvas.button(
                 place(DEFAULT),
-                &format!("{label} ({default_value})"),
+                &format!("{label} ({})", target.format(default_value)),
                 false,
                 false,
             );
@@ -363,7 +407,12 @@ impl Reader {
                 TextStyle::new(28).ink(SECONDARY).lines(2).center(),
             );
         }
-        canvas.button(place(CANCEL), "Cancel", false, false);
+        canvas.button(
+            place(CANCEL),
+            if footer_width { "Close" } else { "Cancel" },
+            false,
+            false,
+        );
         canvas.button(place(APPLY), "Apply", true, false);
     }
 
@@ -372,6 +421,15 @@ impl Reader {
         let layout = self.density_picker_layout(target);
         let place = |rect| layout.centered(rect);
         let picker = self.list_density_picker.as_mut()?;
+        if let PickerTarget::FooterWidth(item) = target
+            && matches!(input, Input::Tap(x, y) if place(PICKER_VALUE).contains(x, y))
+        {
+            let value = picker.value(&self.controls);
+            self.show(super::Screen::NumberingValue(
+                super::NumberField::FooterItemWidth(item, value),
+            ));
+            return Some(Change::Partial);
+        }
         let clear_button = if target.is_lines() {
             DISABLE_LINES
         } else {
@@ -396,10 +454,16 @@ impl Reader {
                         controls.bookmark_max_lines = picker.value
                     }
                     PickerTarget::Search(field) => field.set(&mut controls, picker.value),
+                    PickerTarget::FooterWidth(item) => {
+                        let width = picker.value(&controls);
+                        controls.footer_text_widths.set(item, width);
+                    }
                 }
                 return Some(match self.activate(Action::SetReadingControls(controls)) {
                     Ok(()) => {
-                        self.list_density_picker = None;
+                        if !matches!(target, PickerTarget::FooterWidth(_)) {
+                            self.list_density_picker = None;
+                        }
                         self.notice = None;
                         Change::Partial
                     }
@@ -416,12 +480,12 @@ impl Reader {
                 self.notice = None;
                 return Some(Change::Partial);
             }
-            Input::Tap(x, y) if place(DECREASE).contains(x, y) => -1,
-            Input::Tap(x, y) if place(INCREASE).contains(x, y) => 1,
+            Input::Tap(x, y) if place(DECREASE).contains(x, y) => -target.step(),
+            Input::Tap(x, y) if place(INCREASE).contains(x, y) => target.step(),
             Input::LongTap(x, y) if place(DECREASE).contains(x, y) => -target.hold_step(),
             Input::LongTap(x, y) if place(INCREASE).contains(x, y) => target.hold_step(),
-            Input::PageBack => -1,
-            Input::PageForward => 1,
+            Input::PageBack => -target.step(),
+            Input::PageForward => target.step(),
             _ => return Some(Change::None),
         };
         let prior = picker.value(&self.controls);

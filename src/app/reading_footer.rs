@@ -1,5 +1,5 @@
 //! Reading status shares the existing compact page footer with document controls.
-mod filler;
+mod custom_line;
 
 use super::character_page_settings::NumberField;
 use super::progress_markers::MarkerPages;
@@ -10,8 +10,8 @@ use crate::fixed_session::FixedReading;
 use crate::library::Bookmark;
 use crate::library::hidden_flows::PageFlows;
 use crate::reading_controls::{
-    FooterAlignment, FooterItem, FooterItemCycle, FooterSymbolStyle, FooterTrackPosition,
-    HeaderBattery, ProgressScope, ReadingControls, StatusBar, TopHeader,
+    FooterAlignment, FooterItem, FooterItemCycle, FooterSymbolStyle, FooterTextItem,
+    FooterTrackPosition, HeaderBattery, ProgressScope, ReadingControls, StatusBar, TopHeader,
 };
 use crate::session::ReadingViewport;
 use primitive_app::Change;
@@ -1718,6 +1718,7 @@ impl Reader {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn custom_footer_icons_enabled(&self) -> bool {
         self.controls.status_bar == StatusBar::Custom
             && self.controls.footer_symbol_style == FooterSymbolStyle::Icons
@@ -1729,69 +1730,6 @@ impl Reader {
                         footer_item_icon(*item, self.page_turning_inverted()).is_some()
                     })
             })
-    }
-
-    pub(super) fn custom_footer_icon_width(&self) -> i32 {
-        let Some(progress) = self.footer_progress() else {
-            return 0;
-        };
-        let cycle = self.controls.footer_item_cycle;
-        self.custom_footer_parts(&progress, cycle, cycle.is_none())
-            .iter()
-            .filter(|(item, _, _)| footer_item_icon(*item, self.page_turning_inverted()).is_some())
-            .count() as i32
-            * (FOOTER_ICON_SIZE + FOOTER_ICON_GAP)
-    }
-
-    pub(super) fn draw_custom_footer_icons(
-        &self,
-        canvas: &mut Canvas,
-        status_rect: Rect,
-        status_style: TextStyle,
-        font_size: i32,
-    ) {
-        let Some(progress) = self.footer_progress() else {
-            return;
-        };
-        let cycle = self.controls.footer_item_cycle;
-        let items = self.custom_footer_parts(&progress, cycle, cycle.is_none());
-        let separator = self.controls.footer_separator.text();
-        let mut x = status_rect.x;
-        let right = status_rect.right();
-        for (index, (item, text, merge)) in items.iter().enumerate() {
-            if x >= right {
-                break;
-            }
-            let prior_merge = index > 0 && items[index - 1].2;
-            if index != 0 && !prior_merge && !merge {
-                let width = canvas.measure(separator, font_size).min(right - x);
-                canvas.text(
-                    Rect::new(x, status_rect.y, width, status_rect.h),
-                    separator,
-                    status_style,
-                );
-                x += width;
-            }
-            if let Some(icon) = footer_item_icon(*item, self.page_turning_inverted()) {
-                if right - x < FOOTER_ICON_SIZE + FOOTER_ICON_GAP {
-                    break;
-                }
-                let top = status_rect.y + (status_rect.h - FOOTER_ICON_SIZE) / 2;
-                canvas.icon(
-                    Rect::new(x, top, FOOTER_ICON_SIZE, FOOTER_ICON_SIZE),
-                    icon,
-                    0,
-                );
-                x += FOOTER_ICON_SIZE + FOOTER_ICON_GAP;
-            }
-            let width = canvas.measure(text, font_size).max(1).min(right - x);
-            canvas.text(
-                Rect::new(x, status_rect.y, width, status_rect.h),
-                text,
-                status_style,
-            );
-            x += width;
-        }
     }
 
     fn footer_right(&self) -> i32 {
@@ -2458,6 +2396,10 @@ impl Reader {
             ),
         ]);
         if c.status_bar == StatusBar::Custom {
+            items.push(
+                Item::new("Item maximum width", Action::Show(Screen::FooterItemWidths))
+                    .detail("Book author, book title, and chapter title"),
+            );
             items.push(Item::new("Visible status items", Action::Heading));
             items.push(setting(
                 "Auto refresh items",
@@ -2599,6 +2541,16 @@ impl Reader {
             ));
         }
         items
+    }
+
+    pub(super) fn footer_item_widths(&self) -> Vec<Item> {
+        FooterTextItem::ALL
+            .into_iter()
+            .map(|item| {
+                Item::new(item.label(), Action::EditFooterItemWidth(item))
+                    .detail(format!("{}%", self.controls.footer_text_widths.get(item)))
+            })
+            .collect()
     }
 }
 

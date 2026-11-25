@@ -240,6 +240,8 @@ pub(crate) struct ReadingControls {
     /// KOReader's optional bold weight for status footer text.
     #[serde(skip_serializing_if = "is_false")]
     pub footer_item_bold: bool,
+    #[serde(skip_serializing_if = "FooterTextWidths::is_default")]
+    pub footer_text_widths: FooterTextWidths,
     /// KOReader's status item container height in logical screen units (7–98).
     /// `None` keeps the stock default of 14.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -872,6 +874,87 @@ impl FooterItem {
             Self::BrightnessLevel => "Brightness level",
             Self::WarmthLevel => "Warmth level",
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FooterTextItem {
+    Author,
+    BookTitle,
+    ChapterTitle,
+}
+
+impl FooterTextItem {
+    pub(crate) const ALL: [Self; 3] = [Self::Author, Self::BookTitle, Self::ChapterTitle];
+    pub(crate) const MIN: u8 = 10;
+    pub(crate) const MAX: u8 = 100;
+    pub(crate) const DEFAULT: u8 = 30;
+
+    pub(crate) fn for_item(item: FooterItem) -> Option<Self> {
+        match item {
+            FooterItem::Author => Some(Self::Author),
+            FooterItem::BookTitle => Some(Self::BookTitle),
+            FooterItem::ChapterTitle => Some(Self::ChapterTitle),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Author => "Book author",
+            Self::BookTitle => "Book title",
+            Self::ChapterTitle => "Chapter title",
+        }
+    }
+
+    pub(crate) fn width_label(self) -> &'static str {
+        match self {
+            Self::Author => "Book author width",
+            Self::BookTitle => "Book title width",
+            Self::ChapterTitle => "Chapter title width",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub(crate) struct FooterTextWidths {
+    author: u8,
+    book_title: u8,
+    chapter_title: u8,
+}
+
+impl Default for FooterTextWidths {
+    fn default() -> Self {
+        Self {
+            author: FooterTextItem::DEFAULT,
+            book_title: FooterTextItem::DEFAULT,
+            chapter_title: FooterTextItem::DEFAULT,
+        }
+    }
+}
+
+impl FooterTextWidths {
+    pub(crate) fn get(self, item: FooterTextItem) -> u8 {
+        let width = match item {
+            FooterTextItem::Author => self.author,
+            FooterTextItem::BookTitle => self.book_title,
+            FooterTextItem::ChapterTitle => self.chapter_title,
+        };
+        width.clamp(FooterTextItem::MIN, FooterTextItem::MAX)
+    }
+
+    pub(crate) fn set(&mut self, item: FooterTextItem, width: u8) {
+        let stored = match item {
+            FooterTextItem::Author => &mut self.author,
+            FooterTextItem::BookTitle => &mut self.book_title,
+            FooterTextItem::ChapterTitle => &mut self.chapter_title,
+        };
+        *stored = width.clamp(FooterTextItem::MIN, FooterTextItem::MAX);
+    }
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
     }
 }
 

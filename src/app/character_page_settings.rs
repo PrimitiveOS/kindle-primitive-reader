@@ -3,7 +3,7 @@ use super::{
     Action, ActiveBook, Change, Item, Reader, SEARCH_DELAY, SEARCH_REFRESH, Screen, position,
 };
 use crate::library::{FixedTileAxis, MAX_CROP_MARGIN};
-use crate::reading_controls::ReadingControls;
+use crate::reading_controls::{FooterTextItem, ReadingControls};
 use crate::{Result, epub::Book, library::DocumentFormat, synthetic_pages::CharacterPages};
 use primitive_app::with_storage;
 use std::{borrow::Cow, io, path::PathBuf, time::Instant};
@@ -30,6 +30,7 @@ pub(super) enum NumberField {
     FooterTrackMarginWidth,
     FooterBatteryHideThreshold,
     FooterItemFontSize,
+    FooterItemWidth(FooterTextItem, u8),
     FooterContainerHeight,
     FooterContainerBottomMargin,
     FooterCustomTextRepetitions,
@@ -77,6 +78,7 @@ impl NumberField {
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
             Self::FixedTileZoom(_) | Self::CropMargin => Screen::Fixed,
             Self::ReadingGuide(_) => Screen::ReadingGuides,
+            Self::FooterItemWidth(_, _) => Screen::FooterItemWidths,
             Self::FooterTrackMinimumWidth
             | Self::FooterTrackMarginWidth
             | Self::FooterBatteryHideThreshold
@@ -311,6 +313,17 @@ impl Reader {
             self.show(field.parent());
             return Ok(());
         }
+        if let NumberField::FooterItemWidth(item, _) = field {
+            let width = value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|width| (FooterTextItem::MIN..=FooterTextItem::MAX).contains(width))
+                .ok_or("Enter a width from 10% to 100%")?;
+            self.show(field.parent());
+            self.open_footer_width(item, Some(width));
+            return Ok(());
+        }
         if field == NumberField::FooterCustomTextRepetitions {
             let repetitions = value
                 .trim()
@@ -415,6 +428,7 @@ impl Reader {
             NumberField::FooterTrackMarginWidth => unreachable!("handled above"),
             NumberField::FooterBatteryHideThreshold => unreachable!("handled above"),
             NumberField::FooterItemFontSize => unreachable!("handled above"),
+            NumberField::FooterItemWidth(_, _) => unreachable!("handled above"),
             NumberField::FooterContainerHeight => unreachable!("handled above"),
             NumberField::FooterContainerBottomMargin => unreachable!("handled above"),
             NumberField::FooterCustomTextRepetitions => unreachable!("handled above"),

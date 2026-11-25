@@ -175,6 +175,7 @@ fn footer_controls(controls: ReadingControls) -> ReadingControls {
         footer_battery_hide_threshold: controls.footer_battery_hide_threshold,
         footer_item_font_size: controls.footer_item_font_size,
         footer_item_bold: controls.footer_item_bold,
+        footer_text_widths: controls.footer_text_widths,
         footer_container_height: controls.footer_container_height,
         footer_container_bottom_margin: controls.footer_container_bottom_margin,
         top_header: crate::reading_controls::TopHeader {
@@ -217,6 +218,7 @@ fn apply_footer_controls(current: ReadingControls, preset: ReadingControls) -> R
         footer_battery_hide_threshold: preset.footer_battery_hide_threshold,
         footer_item_font_size: preset.footer_item_font_size,
         footer_item_bold: preset.footer_item_bold,
+        footer_text_widths: preset.footer_text_widths,
         footer_container_height: preset.footer_container_height,
         footer_container_bottom_margin: preset.footer_container_bottom_margin,
         top_header: crate::reading_controls::TopHeader {
