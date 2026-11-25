@@ -1,4 +1,4 @@
-//! Column widths for simple, publisher-styled tables in the horizontal reading view.
+//! Intrinsic sizing and column widths for tables in the horizontal reading view.
 use crate::{
     book_style::{ImageLength, Style},
     source::{Block, Source},
@@ -21,27 +21,29 @@ struct Column {
 }
 
 impl Column {
-    fn observe(&mut self, style: &Style, min: u32, max: u32, font: f32, width: u32) {
+    fn observe(&mut self, style: &Style, min: u32, max: u32, font: f32) {
         let outer_min = intrinsic_width(min, style, font);
         let outer_max = intrinsic_width(max, style, font);
         self.min = self.min.max(outer_min);
         self.max = self.max.max(outer_max);
         self.sum += u64::from(outer_max);
         self.count += 1;
+    }
+
+    fn prefer_hint(&mut self, style: &Style, font: f32, width: u32, same_kind_only: bool) {
         match style.image_width {
             Some(ImageLength::Fraction(ratio)) => {
-                self.percent = self
-                    .percent
-                    .max(((ratio * 25600.).round() / 256.).clamp(0., 100.) as u32)
+                if !same_kind_only || self.fixed == 0 {
+                    self.percent = self
+                        .percent
+                        .max(((ratio * 25600.).round() / 256.).clamp(0., 100.) as u32);
+                }
             }
-            Some(hint) => {
-                self.fixed = self.fixed.max(
-                    hint.pixels(width, font * style.size_scale)
-                        .unwrap_or(0.)
-                        .clamp(0., width as f32) as u32,
-                );
+            Some(hint) if !same_kind_only || self.percent == 0 => {
+                let pixels = hint.pixels(width, font * style.size_scale).unwrap_or(0.);
+                self.fixed = self.fixed.max(pixels.clamp(0., width as f32) as u32);
             }
-            None => (),
+            _ => (),
         }
     }
 }
@@ -86,42 +88,54 @@ impl TableWidths {
         font: f32,
         width: u32,
         borders: Option<&crate::table_borders::Borders>,
+        stock_native: bool,
         mut measure: impl FnMut(&Block) -> (u32, u32),
     ) -> BTreeMap<usize, Self> {
-        let mut groups: BTreeMap<usize, Vec<&Block>> = BTreeMap::new();
+        let mut groups: BTreeMap<usize, Vec<(&Block, Cell)>> = BTreeMap::new();
         for block in &source.blocks {
             if !styles[block.element].flow.suppressed
-                && flow.block_cell(block).is_some()
+                && let Some(cell) = flow.block_cell(block)
+                && matches!(cell.table, TableKey::Native(_))
                 && let Some(table) = tables[block.element]
             {
-                groups.entry(table).or_default().push(block);
+                groups.entry(table).or_default().push((block, cell));
+            }
+        }
+        let mut column_styles = BTreeMap::<usize, Vec<&Style>>::new();
+        if stock_native {
+            for (index, element) in source.elements.iter().enumerate() {
+                if element.tag == "col"
+                    && !styles[index].flow.suppressed
+                    && let Some(table) = tables[index]
+                {
+                    column_styles.entry(table).or_default().push(&styles[index]);
+                }
             }
         }
         let mut out = BTreeMap::new();
         let mut bytes = MAX_MEASURED_BYTES;
         let mut count = MAX_MEASURED_BLOCKS;
         for (table, blocks) in groups {
-            let any_hint = blocks.iter().filter_map(|b| owners[b.element]).any(|i| {
-                matches!(
-                    styles[i].image_width,
-                    Some(
-                        ImageLength::Fraction(_)
-                            | ImageLength::Em(_)
-                            | ImageLength::Pixels(_)
-                            | ImageLength::Physical(_)
-                            | ImageLength::RootEm(_)
-                    )
-                )
-            });
-            if !any_hint && !styles[table].border_collapse {
+            if !stock_native
+                && !styles[table].border_collapse
+                && !blocks
+                    .iter()
+                    .filter_map(|(b, _)| owners[b.element])
+                    .any(|i| {
+                        styles[i]
+                            .image_width
+                            .and_then(ImageLength::css_length)
+                            .is_some()
+                    })
+            {
                 continue;
             }
-            let text_bytes = blocks.iter().map(|b| b.text.len()).sum::<usize>();
+            let text_bytes = blocks.iter().map(|(b, _)| b.text.len()).sum::<usize>();
             if blocks.len() > count
                 || text_bytes > bytes
-                || blocks.iter().any(|block| {
-                    let cell = flow.block_cell(block).unwrap();
-                    cell.span != 1 || cell.has_column_tracks() || !block.images.is_empty()
+                || blocks.iter().any(|(block, cell)| {
+                    (!stock_native && (cell.span != 1 || cell.has_column_tracks()))
+                        || !block.images.is_empty()
                 })
             {
                 continue;
@@ -129,8 +143,8 @@ impl TableWidths {
             count -= blocks.len();
             bytes -= text_bytes;
             let mut demands: BTreeMap<usize, (u32, u32)> = BTreeMap::new();
-            let columns = usize::from(flow.block_cell(blocks[0]).unwrap().columns);
-            for block in blocks {
+            let columns = usize::from(blocks[0].1.columns);
+            for (block, _) in blocks {
                 if let Some(owner) = owners[block.element] {
                     let (min, max) = measure(block);
                     let demand = demands.entry(owner).or_default();
@@ -139,20 +153,56 @@ impl TableWidths {
                 }
             }
             let mut tracks: Vec<_> = (0..columns).map(|_| Column::default()).collect();
+            if let Some(columns) = column_styles.get(&table) {
+                for (track, style) in tracks.iter_mut().zip(columns) {
+                    track.prefer_hint(style, font, width, true);
+                }
+            }
+            let mut spanning = Vec::new();
             for (owner, (min, max)) in demands {
                 let Some(cell) = cells[owner] else { continue };
-                let col = &mut tracks[usize::from(cell.column)];
                 let style = &styles[owner];
-                let stroke = borders
-                    .and_then(|b| b.cells.get(&cell))
-                    .map_or(0, |c| c.edges[3].width + c.edges[1].width);
-                col.observe(
-                    style,
-                    min.saturating_add(stroke),
-                    max.saturating_add(stroke),
-                    font,
-                    width,
+                let stroke = borders.and_then(|b| b.cells.get(&cell)).map_or_else(
+                    || {
+                        if stock_native && !styles[table].border_collapse {
+                            2 * (font * 0.22).round() as u32
+                        } else {
+                            0
+                        }
+                    },
+                    |c| c.edges[3].width + c.edges[1].width,
                 );
+                let min = min.saturating_add(stroke);
+                let max = max.saturating_add(stroke);
+                if cell.span == 1 {
+                    let track = &mut tracks[usize::from(cell.column)];
+                    track.observe(style, min, max, font);
+                    track.prefer_hint(style, font, width, stock_native);
+                } else {
+                    spanning.push((cell, style, min, max));
+                }
+            }
+            // A merged cell contributes only the width its existing tracks cannot supply.
+            spanning.sort_by_key(|(cell, ..)| cell.span);
+            for (cell, style, min, max) in spanning {
+                let start = usize::from(cell.column);
+                let span = usize::from(cell.span);
+                let tracks = &mut tracks[start..start + span];
+                let min = intrinsic_width(min, style, font);
+                let max = intrinsic_width(max, style, font);
+                let occupied_min = tracks.iter().fold(0u32, |sum, c| sum.saturating_add(c.min));
+                let occupied_max = tracks.iter().fold(0u32, |sum, c| sum.saturating_add(c.max));
+                let mut short_min = min.saturating_sub(occupied_min);
+                let mut short_max = max.saturating_sub(occupied_max);
+                for (idx, track) in tracks.iter_mut().enumerate() {
+                    let remaining = (span - idx) as u32;
+                    let extra_min = short_min.div_ceil(remaining);
+                    let extra_max = short_max.div_ceil(remaining);
+                    short_min -= extra_min;
+                    short_max -= extra_max;
+                    track.min += extra_min;
+                    track.max = (track.max + extra_max).max(track.min);
+                }
             }
             out.insert(
                 table,
@@ -163,6 +213,69 @@ impl TableWidths {
             );
         }
         out
+    }
+
+    /// Size the whole native table before applying cell spacing and track edges.
+    /// The pinned Book mode keeps explicitly sized tables at container width.
+    pub(super) fn native_width(
+        tracks: Option<&Self>,
+        style: &Style,
+        available: u32,
+        font: f32,
+        border_width: u32,
+        spacing: u32,
+        web: bool,
+    ) -> u32 {
+        let outer = |width: u32| {
+            let width = width.saturating_add(border_width);
+            if style.border_collapse {
+                width
+            } else {
+                intrinsic_width(width, style, font)
+            }
+        };
+        let min = tracks.map_or(1, |t| {
+            let text = t
+                .columns
+                .iter()
+                .fold(0u32, |sum, c| sum.saturating_add(c.min.max(1)));
+            outer(text.saturating_add(spacing))
+        });
+        let preferred = match style
+            .image_width
+            .and_then(|width| width.pixels(available, font))
+        {
+            Some(width) if web => {
+                let width = width.max(0.0) as u32;
+                if style.box_sizing == crate::book_style::BoxSizing::BorderBox {
+                    width
+                } else {
+                    outer(width)
+                }
+            }
+            Some(_) => available,
+            None => tracks.map_or(available, |t| {
+                let content = available.saturating_sub(border_width.saturating_add(spacing));
+                let natural = t.columns.iter().fold(spacing, |sum, col| {
+                    let percent = (u64::from(content) * u64::from(col.percent) / 100) as u32;
+                    sum.saturating_add(col.max.max(col.fixed).max(percent).max(1))
+                });
+                outer(natural)
+            }),
+        };
+        let bound = if web {
+            let maximum = style
+                .image_max_width
+                .and_then(|width| width.pixels(available, font))
+                .map_or(available, |width| width.max(0.0) as u32);
+            let minimum = style
+                .min_width
+                .map_or(0, |width| width.box_pixels(available, font) as u32);
+            preferred.min(maximum).max(minimum)
+        } else {
+            preferred
+        };
+        bound.max(min).min(available)
     }
 
     /// Simple CSS grids use the same measured column tracks as HTML tables.
@@ -217,7 +330,9 @@ impl TableWidths {
             let mut tracks: Vec<_> = (0..columns).map(|_| Column::default()).collect();
             for (owner, (cell, min, max)) in demands {
                 let style = &styles[owner];
-                tracks[usize::from(cell.column)].observe(style, min, max, font, width);
+                let track = &mut tracks[usize::from(cell.column)];
+                track.observe(style, min, max, font);
+                track.prefer_hint(style, font, width, false);
             }
             out.insert(
                 key,

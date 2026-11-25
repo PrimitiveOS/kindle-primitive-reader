@@ -159,6 +159,22 @@ chapters = {
 <p id="pair-end">The latch faces east.</p>
 </aside>
 <p id="pair-key">The workshop closed before dusk.</p>""",
+    "inline-epub-list-root": """<p>The guide lists the latch<a id="root-epub-ref" href="#root-epub-note" epub:type="noteref"><sup>7</sup></a>.</p>
+<p style="page-break-before:always">The source entry follows.</p>
+<ol start="7" style="margin:0;padding:0 0 0 40px">
+ <li id="root-epub-note" epub:type="footnote"><p id="root-epub-first">Latch record.</p><p id="root-epub-second">The brass pin stayed. <a href="#root-epub-ref">Return to latch</a>.</p></li>
+</ol>""",
+    "inline-wiki-list-root": """<p>The catalog lists the register<a id="cite_ref_register" href="#cite_note_register">[IX]</a>.</p>
+<p style="page-break-before:always">The register page comes next.</p>
+<ol class="references" start="9" style="list-style-type:upper-roman;margin:0;padding:0 0 0 40px">
+ <li id="cite_note_register"><span class="mw-cite-backlink"><a href="#cite_ref_register">Hidden register backlink</a></span><p id="root-wiki-first">Register note.</p><p id="root-wiki-second">The date is missing. <a href="#cite_ref_register">Return to register</a>.</p></li>
+</ol>""",
+    "inline-list-root-exceptions": """<p>The ledger lists two dates<a id="root-none-ref" href="#root-none-note" epub:type="noteref">1</a> and <a id="root-solo-ref" href="#root-solo-note" epub:type="noteref">2</a>.</p>
+<p style="page-break-before:always">Both source notes appear together.</p>
+<ol style="margin:0;padding:0 0 0 40px">
+ <li id="root-none-note" epub:type="footnote" style="list-style-type:none"><p id="root-none-first">Date unknown.</p><p id="root-none-second">The entry was undated.</p></li>
+ <li id="root-solo-note" epub:type="footnote" value="42"><p id="root-solo-first">Only the afternoon is known.</p></li>
+</ol>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)

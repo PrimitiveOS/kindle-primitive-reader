@@ -46,6 +46,7 @@ const MAX_SELECTORS_PER_RULE: usize = 24;
 const MAX_SELECTOR_STEPS: usize = 8;
 #[cfg(feature = "kindle")]
 mod embedded_inventory;
+pub(crate) mod table_hints;
 #[cfg(feature = "kindle")]
 pub(crate) use embedded_inventory::MAX_INVENTORY_SHEETS;
 
@@ -341,6 +342,8 @@ pub(crate) struct Style {
     pub text_rise: TextRise,
     pub decoration: TextDecoration,
     pub(crate) link_ink: Option<u8>,
+    pub(crate) ignore_table_hints: bool,
+    pub(crate) native_table_widths: bool,
     pub page_breaks: crate::publisher_breaks::Rules,
     pub orphans: u8,
     pub widows: u8,
@@ -392,6 +395,8 @@ impl Default for Style {
             text_rise: TextRise::default(),
             decoration: TextDecoration::default(),
             link_ink: None,
+            ignore_table_hints: false,
+            native_table_widths: false,
             page_breaks: Default::default(),
             orphans: 1,
             widows: 1,
@@ -749,6 +754,8 @@ impl BookStyle {
         let defaults = Style {
             font_weights: self.font_weights.clone(),
             cjk_tailored: self.layout_tweaks.cjk_tailored,
+            ignore_table_hints: !self.author_inline || self.layout_tweaks.ignore_table_hints,
+            native_table_widths: self.layout_tweaks.native_table_widths,
             ..Style::default()
         };
         let mut result: Vec<Style> = Vec::with_capacity(elements.len());
@@ -832,6 +839,11 @@ impl BookStyle {
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
             let mut winners: Winners = [None; 53];
             let accept_fit = fit_content && element.tag == "p";
+            if !style.ignore_table_hints
+                && let Some(hints) = &element.table_hints
+            {
+                hints.cascade(&mut winners);
+            }
             for (origin, rules) in [
                 (CascadeOrigin::User, &self.user_rules),
                 (CascadeOrigin::Author, &self.rules),
@@ -1388,6 +1400,7 @@ struct Compound {
     ids: Vec<String>,
     first_child: bool,
     first_of_type: bool,
+    odd_child: Option<bool>,
     relation: Relation,
 }
 
@@ -1402,6 +1415,7 @@ impl Compound {
             && self.ids.is_empty()
             && !self.first_child
             && !self.first_of_type
+            && self.odd_child.is_none()
     }
 
     fn matches(&self, element: &Element) -> bool {
@@ -1414,6 +1428,7 @@ impl Compound {
             && (!self.is_link || (element.tag == "a" && element.has_href))
             && (!self.first_child || element.previous_sibling.is_none())
             && (!self.first_of_type || element.first_of_type)
+            && self.odd_child.is_none_or(|odd| odd == element.odd_sibling)
             && self
                 .tag
                 .as_ref()
@@ -1473,19 +1488,38 @@ impl Selector {
                     specificity.1 = specificity.1.saturating_add(1);
                 }
                 Token::Colon => {
-                    let Token::Ident(name) = input.next_including_whitespace()? else {
-                        return Err(ParseError::unexpected_token());
-                    };
-                    if name.eq_ignore_ascii_case("first-of-type") {
-                        compound.first_of_type = true;
-                    } else if name.eq_ignore_ascii_case("link")
-                        || name.eq_ignore_ascii_case("any-link")
-                    {
-                        compound.is_link = true;
-                    } else if name.eq_ignore_ascii_case("first-child") {
-                        compound.first_child = true;
-                    } else {
-                        return Err(ParseError::unexpected_token());
+                    match input.next_including_whitespace()? {
+                        Token::Ident(name) if name.eq_ignore_ascii_case("first-of-type") => {
+                            compound.first_of_type = true;
+                        }
+                        Token::Ident(name)
+                            if name.eq_ignore_ascii_case("link")
+                                || name.eq_ignore_ascii_case("any-link") =>
+                        {
+                            compound.is_link = true;
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("first-child") => {
+                            compound.first_child = true;
+                        }
+                        Token::Function(name) if name.eq_ignore_ascii_case("nth-child") => {
+                            let odd = input.parse_nested_block(|input| {
+                                let name = input
+                                    .expect_ident()
+                                    .map_err(|_| ParseError::unexpected_token())?;
+                                if name.eq_ignore_ascii_case("odd") {
+                                    Ok(true)
+                                } else if name.eq_ignore_ascii_case("even") {
+                                    Ok(false)
+                                } else {
+                                    Err(ParseError::unexpected_token())
+                                }
+                            })?;
+                            if compound.odd_child.is_some_and(|old| old != odd) {
+                                return Err(ParseError::unexpected_token());
+                            }
+                            compound.odd_child = Some(odd);
+                        }
+                        _ => return Err(ParseError::unexpected_token()),
                     }
                     specificity.1 = specificity.1.saturating_add(1);
                 }

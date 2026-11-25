@@ -339,6 +339,7 @@ enum Screen {
     FootnoteTweaks,
     StylePreset,
     ImageStyles,
+    TableStyles,
     InPageFootnoteSize(style_tweaks::NoteSizeScope),
     StyleFiles,
     StyleReview,
@@ -563,6 +564,7 @@ impl Screen {
             Self::FootnoteTweaks => "Footnote options",
             Self::StylePreset => "Style tweak",
             Self::ImageStyles => "Images",
+            Self::TableStyles => "Tables",
             Self::InPageFootnoteSize(style_tweaks::NoteSizeScope::Book) => "In-page footnote size",
             Self::InPageFootnoteSize(style_tweaks::NoteSizeScope::Default) => {
                 "Default footnote size"
@@ -2691,6 +2693,7 @@ impl Reader {
                 | Screen::FootnoteTweaks
                 | Screen::StylePreset
                 | Screen::ImageStyles
+                | Screen::TableStyles
                 | Screen::InPageFootnoteSize(_)
                 | Screen::StyleFiles
                 | Screen::StyleReview
@@ -3613,6 +3616,7 @@ impl Reader {
             | Screen::FootnoteTweaks
             | Screen::StylePreset
             | Screen::ImageStyles
+            | Screen::TableStyles
             | Screen::InPageFootnoteSize(_)
             | Screen::StyleFiles
             | Screen::StyleReview
@@ -10120,6 +10124,7 @@ impl App for Reader {
                     | Screen::ParagraphSpacing
                     | Screen::LinkStyles
                     | Screen::ImageStyles
+                    | Screen::TableStyles
                     | Screen::StyleFiles
                     | Screen::StyleClear => self.show(Screen::StyleTweaks),
                     Screen::StyleReview => self.show(if self.style_view.editor.is_some() {

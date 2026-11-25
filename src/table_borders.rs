@@ -2,11 +2,13 @@
 //! column tracks and row starts as text, links and selections.
 use crate::{
     book_style::{
-        Style,
+        CssLength, Style,
         borders::{Border, Pattern},
     },
+    publisher_padding::BoxArea,
     source::Source,
     table_layout::{Cell, TableKey},
+    vertical_padding::Fill,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -47,6 +49,7 @@ fn edges(style: &Style, font: f32) -> [Stroke; 4] {
 struct Table {
     element: usize,
     active: bool,
+    backgrounds: bool,
     rows: usize,
     collapsed: bool,
     border: [Stroke; 4],
@@ -64,6 +67,7 @@ pub(crate) struct Borders {
     pub cells: HashMap<Cell, CellBorder>,
     table: HashMap<TableKey, Table>,
     outer: HashMap<usize, ([Stroke; 4], u32, u32)>,
+    shaded_cells: Vec<(usize, Cell, u8)>,
 }
 impl Borders {
     pub(crate) fn read(source: &Source, styles: &[Style], font: f32) -> Option<Self> {
@@ -108,14 +112,27 @@ impl Borders {
                 && styles[idx].background.is_some()
                 && has_padding(idx)
         };
-        let separate_padding = |index: usize| {
+        let separate_geometry = |index: usize| {
             !styles[index].border_collapse
                 && source.elements[index].tag == "table"
-                && has_padding(index)
+                && (has_padding(index)
+                    || styles[index].border_spacing != [CssLength::Pixels(1.); 2]
+                        && styles[index]
+                            .border_spacing
+                            .iter()
+                            .any(|side| side.pixels(100, font) > 0.))
+        };
+        let has_background = |index: usize| {
+            !styles[index].flow.suppressed
+                && styles[index].background.is_some()
+                && matches!(
+                    source.elements[index].tag.as_str(),
+                    "table" | "thead" | "tbody" | "tfoot" | "tr" | "th" | "td"
+                )
         };
         if flow.cells().is_empty()
             || !styles.iter().enumerate().any(|(index, s)| {
-                s.borders.is_some() || separate_padding(index) || shaded_cell(index)
+                s.borders.is_some() || separate_geometry(index) || has_background(index)
             })
         {
             return None;
@@ -136,7 +153,8 @@ impl Borders {
                     "table" => {
                         let t = table.entry(cell.table).or_insert_with(|| Table {
                             element: i,
-                            active: separate_padding(i),
+                            active: separate_geometry(i),
+                            backgrounds: false,
                             padding: [0, 0],
                             rows: 0,
                             collapsed: styles[i].border_collapse,
@@ -164,10 +182,12 @@ impl Borders {
                         });
                         t.rows = t.rows.max(cell.after_row);
                         t.active |= shaded_cell(element);
-                        t.active |= [Some(i), Some(element), row, group]
+                        let owners = [Some(i), Some(element), row, group];
+                        t.active |= owners
                             .into_iter()
                             .flatten()
                             .any(|elem| styles[elem].borders.is_some());
+                        t.backgrounds |= owners.into_iter().flatten().any(has_background);
                         if let Some(r) = row {
                             rows.insert((cell.table, cell.row), (r, group));
                         }
@@ -179,7 +199,7 @@ impl Borders {
                 current = source.elements[i].parent;
             }
         }
-        table.retain(|_, t| t.active);
+        table.retain(|_, t| t.active || t.backgrounds);
         if table.is_empty() {
             return None;
         }
@@ -217,10 +237,23 @@ impl Borders {
         }
         let mut cells = HashMap::new();
         let mut outer = HashMap::new();
+        let mut shaded_cells = Vec::new();
         for &(element, cell) in flow.cells() {
             let Some(t) = table.get(&cell.table) else {
                 continue;
             };
+            let (row, group) = hierarchy[&cell];
+            if styles[element].flow.painted
+                && let Some(gray) = [Some(element), row, group]
+                    .into_iter()
+                    .flatten()
+                    .find_map(|i| has_background(i).then_some(styles[i].background).flatten())
+            {
+                shaded_cells.push((element, cell, gray));
+            }
+            if !t.active {
+                continue;
+            }
             let mut border = edges(&styles[element], font);
             let leading = if cell.rtl {
                 cell.columns - cell.column - cell.span
@@ -294,7 +327,14 @@ impl Borders {
             cells,
             table,
             outer,
+            shaded_cells,
         })
+    }
+    pub(crate) fn has_geometry(&self) -> bool {
+        !self.cells.is_empty()
+    }
+    pub(crate) fn tracks(&self, cell: Cell) -> bool {
+        self.table.contains_key(&cell.table)
     }
     pub(crate) fn resolve_padding(
         &mut self,
@@ -363,64 +403,111 @@ impl Positions {
             .and_modify(|y| *y = y.max(end))
             .or_insert(end);
     }
-    pub fn finish(
-        self,
-        borders: &Borders,
-        boxes: &[crate::publisher_padding::BoxArea],
-        styles: &[Style],
-        backgrounds: &mut Vec<crate::vertical_padding::Fill>,
-    ) -> Vec<Frame> {
-        let mut frames = Vec::new();
-        for (cell, spec) in &borders.cells {
-            let Some(rows) = self.rows.get(&cell.table) else {
-                continue;
-            };
-            let Some(&top) = rows.get(&cell.row) else {
-                continue;
-            };
-            let end = rows
-                .range(cell.after_row..)
-                .next()
-                .map_or(self.bottom[&cell.table], |(_, v)| *v);
-            let t = &borders.table[&cell.table];
-            let above = spec.spacing[1]
-                + if cell.row == 0 && !t.collapsed {
-                    t.border[0].width + t.padding[0]
+    fn extent(
+        &self,
+        table: TableKey,
+        first: usize,
+        after: usize,
+        spec: &Table,
+    ) -> Option<Range<f32>> {
+        let rows = self.rows.get(&table)?;
+        let top = *rows.get(&first)?;
+        let bottom = rows
+            .range(after..)
+            .next()
+            .map_or(self.bottom[&table], |(_, v)| *v);
+        if spec.active && !spec.collapsed {
+            let before = spec.spacing[1]
+                + if first == 0 {
+                    spec.border[0].width + spec.padding[0]
                 } else {
                     0
                 };
-            let below = if cell.after_row == t.rows && !t.collapsed {
-                t.spacing[1] + t.border[2].width + t.padding[1]
+            let after = if after == spec.rows {
+                spec.spacing[1] + spec.border[2].width + spec.padding[1]
             } else {
                 0
             };
-            let bounds = boxes[spec.element];
-            if styles[spec.element].flow.painted
-                && let Some(gray) = styles[spec.element].background
-                && styles[spec.element]
-                    .vertical_padding
-                    .iter()
-                    .any(|side| *side != crate::book_style::CssLength::default())
-            {
-                backgrounds.push(crate::vertical_padding::Fill::cell(
-                    spec.element,
-                    bounds,
-                    top + above as f32,
-                    end - below as f32,
-                    gray,
-                ));
+            Some(top + before as f32..bottom - after as f32)
+        } else {
+            Some(top..bottom)
+        }
+    }
+
+    pub(crate) fn backgrounds(
+        &self,
+        borders: &Borders,
+        boxes: Option<&[BoxArea]>,
+        styles: &[Style],
+        width: u32,
+        font: f32,
+        out: &mut Vec<Fill>,
+    ) {
+        for (&id, spec) in &borders.table {
+            let style = &styles[spec.element];
+            let Some(color) = style.background.filter(|_| style.flow.painted) else {
+                continue;
+            };
+            let Some((_, &top)) = self.rows.get(&id).and_then(BTreeMap::first_key_value) else {
+                continue;
+            };
+            let outer = boxes.map_or(0..width, |b| {
+                let root = b[spec.element];
+                root.outer_x..root.outer_x + root.outer_width
+            });
+            out.push(Fill::rectangle(
+                spec.element,
+                outer,
+                top,
+                self.bottom[&id],
+                color,
+            ));
+        }
+        // Rows and groups paint through their cells, leaving separate-border
+        // spacing clear. A row-spanning cell keeps its originating fill.
+        for &(element, cell, color) in &borders.shaded_cells {
+            let Some(y) = self.extent(
+                cell.table,
+                cell.row,
+                cell.after_row,
+                &borders.table[&cell.table],
+            ) else {
+                continue;
+            };
+            match boxes {
+                Some(b) => out.push(Fill::cell(element, b[element], y.start, y.end, color)),
+                None => {
+                    let (x, w) = cell.bounds(width, (font * 0.22).round() as u32);
+                    out.push(Fill::rectangle(element, x..x + w, y.start, y.end, color));
+                }
             }
+        }
+    }
+
+    pub fn finish(self, borders: &Borders, boxes: &[BoxArea]) -> Vec<Frame> {
+        let mut frames = Vec::new();
+        for (cell, spec) in &borders.cells {
+            let Some(y) = self.extent(
+                cell.table,
+                cell.row,
+                cell.after_row,
+                &borders.table[&cell.table],
+            ) else {
+                continue;
+            };
+            let bounds = boxes[spec.element];
             Frame::push(
                 &mut frames,
                 bounds.outer_x,
                 bounds.outer_width,
-                top + above as f32,
-                end - below as f32,
+                y.start,
+                y.end,
                 spec.edges,
             );
         }
         for (id, t) in &borders.table {
-            if !t.collapsed
+            if t.active
+                && !t.collapsed
                 && let Some(rows) = self.rows.get(id)
                 && let Some((_, &top)) = rows.first_key_value()
             {
@@ -629,12 +716,143 @@ mod flow_tests {
             positions.record(cell, 0., 100.);
         }
         let mut backgrounds = Vec::new();
-        let frames = positions.finish(&borders, &boxes, &styles, &mut backgrounds);
+        positions.backgrounds(&borders, Some(&boxes), &styles, 600, 40., &mut backgrounds);
+        let frames = positions.finish(&borders, &boxes);
         assert!(backgrounds.is_empty());
         assert_eq!(frames.len(), 1);
         let mut pixels = vec![255; 600 * 100];
         frames[0].paint(&mut pixels, 600, &(0..600), &(0.0..100.0));
-        assert!(pixels[..300].iter().all(|&value| value == 255));
-        assert!(pixels[300..600].contains(&0));
+        let edge = boxes[visible].outer_x as usize;
+        assert!(pixels[..edge].iter().all(|&value| value == 255));
+        assert_eq!(pixels[edge], 0);
+    }
+
+    #[test]
+    fn reading_style_table_stripes_and_borders_preserve_anchors_and_cascade() {
+        use crate::{Anchor, Book, Engine, Probe, Settings, user_styles};
+
+        const ROWS: [(&str, u8); 13] = [
+            ("Head row", 221),
+            ("Body first", 238),
+            ("Own background", 170),
+            ("Body third", 238),
+            ("Body fourth", 204),
+            ("New group", 238),
+            ("Foot row", 238),
+            ("Direct first", 238),
+            ("Direct second", 204),
+            ("Publisher left", 238),
+            ("Publisher right", 238),
+            ("Single column", 238),
+            ("Second solo", 204),
+        ];
+        let settings = Settings {
+            width: 640,
+            height: 880,
+            margin: 40,
+            font_size: 22.,
+            ..Settings::default()
+        };
+        let open = |data: &user_styles::Data| {
+            Probe::from_book_with_rules(
+                Book::open(&crate::test_fixture("table-style-presets.xhtml")).unwrap(),
+                Engine::Parley,
+                &[
+                    crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+                    crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+                ],
+                settings,
+                0,
+                None,
+                &crate::user_hyphenation::Rules::default(),
+                &data.snapshot(1).unwrap(),
+            )
+            .unwrap()
+        };
+        let area = |probe: &Probe, word: &str| {
+            let mut matches = probe.matches(word);
+            assert_eq!(matches.len(), 1, "{word}");
+            let start = matches.pop().unwrap();
+            let end = Anchor {
+                offset: start.offset + word.len(),
+                ..start.clone()
+            };
+            let text = probe.select_range(&start, &end).unwrap();
+            assert_eq!(text.text, word);
+            assert_eq!(probe.page_for(&start), Some(0));
+            let rectangles = probe.selection_rects(0, &text);
+            assert_eq!(rectangles.len(), 1, "{word}");
+            rectangles[0]
+        };
+        let sample =
+            |frame: &[u8], x: i32, y: i32| frame[y as usize * settings.width as usize + x as usize];
+        let mut data = user_styles::Data::default();
+        let original = open(&data);
+        let mut frames = Vec::new();
+        for (name, stripe, force) in [
+            ("original", false, false),
+            ("striped", true, false),
+            ("combined", true, true),
+            ("borders", false, true),
+        ] {
+            data.choose(1, "table_row_odd_even", Some(stripe)).unwrap();
+            data.choose(1, "table_force_border", Some(force)).unwrap();
+            let mut probe = open(&data);
+            let frame = probe.capture(0).unwrap();
+            assert!(probe.matches("Hidden row").is_empty());
+            assert_eq!(probe.coverage(), original.coverage());
+            for (word, expected) in ROWS {
+                assert_eq!(probe.matches(word), original.matches(word));
+                let rect = area(&probe, word);
+                let y = rect.y + rect.height / 2;
+                let x = rect.x + rect.width + 8;
+                if stripe {
+                    assert_eq!(sample(&frame, x, y), expected, "{name} {word}");
+                }
+                if !force {
+                    let original = area(&original, word);
+                    assert_eq!((rect.x, rect.y), (original.x, original.y), "{name} {word}");
+                }
+                if matches!(word, "Publisher left" | "Single column") {
+                    let edge = if word == "Publisher left" {
+                        102
+                    } else if force {
+                        0
+                    } else {
+                        255
+                    };
+                    assert_eq!(sample(&frame, 40, y), edge, "{name} {word}");
+                }
+            }
+            let right = area(&probe, "Publisher right");
+            assert_eq!(
+                sample(&frame, right.x - 11, right.y + right.height / 2),
+                255
+            );
+            #[cfg(feature = "kindle")]
+            if let Some(dir) = std::env::var_os("READER_TABLE_STYLE_CAPTURES") {
+                let dir = std::path::PathBuf::from(dir);
+                std::fs::create_dir_all(&dir).unwrap();
+                primitive_app::write_png(
+                    &dir.join(format!("reader-table-style-{name}.png")),
+                    settings.width,
+                    settings.height,
+                    &frame,
+                )
+                .unwrap();
+            }
+            frames.push(frame);
+        }
+        assert!(frames.windows(2).all(|pair| pair[0] != pair[1]));
+
+        let legacy: user_styles::Data =
+            serde_json::from_str(r#"{"version":1,"global":["table-visible-borders"],"books":{}}"#)
+                .unwrap();
+        let mut probe = open(&legacy);
+        let row = area(&probe, "Publisher left");
+        assert_eq!(
+            sample(&probe.capture(0).unwrap(), 40, row.y + row.height / 2),
+            0
+        );
     }
 }

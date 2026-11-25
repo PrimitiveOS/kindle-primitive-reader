@@ -160,8 +160,10 @@ pub(crate) struct Element {
     pub list_kind: Option<crate::list_marker::MarkerKind>,
     pub id: Option<String>,
     pub inline_style: Option<String>,
+    pub(crate) table_hints: Option<crate::book_style::table_hints::TableHints>,
     pub parent: Option<usize>,
     pub previous_sibling: Option<usize>,
+    pub odd_sibling: bool,
     pub first_of_type: bool,
     pub selector_only: bool,
     pub anonymous: bool,
@@ -534,6 +536,12 @@ impl Source {
             let tag = node.tag_name();
             let first_of_type =
                 structural_element && seen_types.insert((parent, tag.namespace(), tag.name()));
+            // CRE inserts an implicit tbody for consecutive direct table rows.
+            let direct_row =
+                tag.name() == "tr" && parent.is_some_and(|i| elements[i].tag == "table");
+            let odd_sibling = previous_sibling
+                .filter(|&i| !direct_row || elements[i].tag == "tr")
+                .is_none_or(|i| !elements[i].odd_sibling);
             element_ids.insert(node.id(), elements.len());
             if extraction.origins {
                 element_origins.push(node_origins.get(&node.id()).copied());
@@ -563,8 +571,14 @@ impl Source {
                 } else {
                     node.attribute("style").map(str::to_owned)
                 },
+                table_hints: if selector_only {
+                    None
+                } else {
+                    crate::book_style::table_hints::TableHints::read(node)
+                },
                 parent,
                 previous_sibling,
+                odd_sibling,
                 first_of_type,
                 selector_only,
                 anonymous,

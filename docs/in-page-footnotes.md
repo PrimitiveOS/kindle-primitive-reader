@@ -217,11 +217,9 @@ and backlinks keep their targets.
 Formatting applies to supported horizontal in-page notes. Inline and
 standalone pictures can flow with the surrounding note text. Tables, ruby,
 inline boxes, preformatted blocks, and authored page breaks inside a note
-keep their original layout. Reader also keeps the block layout when the
-note’s own container is a list item. In that case, KOReader flattens the
-paragraphs and moves the generated marker to the start of the shared
-line, outside searchable text. The original backlink still resolves.
-[Stock inside-marker rendering](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L3915-L3935)
+keep their original layout. When the note itself is a list item, its
+generated marker moves inside the first line. The marker follows the
+publisher's numbering and stays outside search results and selected text.
 If the chapter cannot fit the joined notes, Reader retries the original
 layout. The publication stays unchanged.
 Reader stores this option with the edition's existing style settings.
@@ -261,6 +259,28 @@ paragraphs and child item, and the child's backlink in both locations.
 [KOReader nested list before](screenshots/stock-note-inline-nested-before.png) ·
 [KOReader nested list after](screenshots/stock-note-inline-nested-after.png) ·
 [KOReader original nested list](screenshots/stock-note-inline-nested-original.png)
+
+The pinned `inline-root-epub` and `inline-root-wiki` replays exercise
+numbered EPUB and Wikipedia note containers. Their two source paragraphs
+start at y=72 and y=112 before flattening and share y=72 afterward. The
+body text stays at y=32. The generated EPUB `7.` and Wikipedia
+`IX.` move from the gutter into the note line. The replays verify the
+canonical backlink and confirm the number stays out of search. The Reader
+simulator also checks selection from both original paragraphs, the
+unnumbered style, and an explicit `42.` on a single-paragraph note.
+[Reader EPUB marker before](screenshots/reader-note-inline-root-epub-before.png) ·
+[Reader EPUB marker after](screenshots/reader-note-inline-root-epub-after.png) ·
+[Reader EPUB original](screenshots/reader-note-inline-root-epub-original.png) ·
+[KOReader EPUB marker before](screenshots/stock-note-inline-root-epub-before.png) ·
+[KOReader EPUB marker after](screenshots/stock-note-inline-root-epub-after.png) ·
+[KOReader EPUB original](screenshots/stock-note-inline-root-epub-original.png) ·
+[Reader Wikipedia marker before](screenshots/reader-note-inline-root-wiki-before.png) ·
+[Reader Wikipedia marker after](screenshots/reader-note-inline-root-wiki-after.png) ·
+[Reader Wikipedia original](screenshots/reader-note-inline-root-wiki-original.png) ·
+[KOReader Wikipedia marker before](screenshots/stock-note-inline-root-wiki-before.png) ·
+[KOReader Wikipedia marker after](screenshots/stock-note-inline-root-wiki-after.png) ·
+[KOReader Wikipedia original](screenshots/stock-note-inline-root-wiki-original.png) ·
+[Stock inside-marker renderer](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L3915-L3935)
 
 The pinned `inline-image` replay joins a legend with a paragraph containing
 a linked diagram. Its caption moves from y=112 to the legend's line at
@@ -325,8 +345,8 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
 ```
 
 Pass `cosmetic`, `wikipedia`, `inline-all`, `inline-list`, `inline-nested`,
-`inline-image`, or `inline-block-image` as the fifth argument to select an
-advanced style replay.
+`inline-root-epub`, `inline-root-wiki`, `inline-image`, or
+`inline-block-image` as the fifth argument to select an advanced style replay.
 
 Run the combined note flow checks with the same stock runtime and scratch
 paths.

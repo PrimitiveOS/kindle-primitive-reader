@@ -123,6 +123,7 @@ impl CssTables {
                             row,
                             after_row: row + 1,
                             fractions: None,
+                            css_fractions: None,
                             column: column as u8,
                             span: 1,
                             columns: columns as u8,

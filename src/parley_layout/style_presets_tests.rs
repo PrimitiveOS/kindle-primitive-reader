@@ -49,6 +49,112 @@ fn capture(probe: &mut Probe, name: &str) {
 }
 
 #[test]
+fn reading_style_table_width_presets_keep_cells_spans_and_their_source_anchors() {
+    use crate::PublisherRenderMode::{Book as BookMode, Web};
+
+    let path = crate::test_fixture("field-notes-epub3.epub");
+    let markup = include_str!("../../tests/fixtures/table-width-tweaks.xhtml");
+    let ids = [
+        "table_full_width",
+        "table_td_width_auto",
+        "table_margin_left_right_auto",
+        "table_no_presentational_hints",
+    ];
+    let phrases = [
+        ("map", "Pier map"),
+        ("beacon", "Beacon"),
+        ("north", "North"),
+        ("tide", "Low tide"),
+        ("bell", "Bell"),
+        ("east", "East"),
+        ("horn", "Horn"),
+        ("south", "South"),
+        ("ferry", "Ferry"),
+        ("west", "West"),
+        ("wharf", "Wharf"),
+        ("cedar", "Cedar"),
+        ("birch", "Birch"),
+        ("willow", "Willow"),
+        ("alder", "Alder"),
+    ];
+    let mut source_positions = Vec::new();
+    let mut measure = |probe: &mut Probe, mode: &str, choice: &str| {
+        let mut x = Vec::new();
+        let mut anchors = Vec::new();
+        for (id, phrase) in phrases {
+            let start = probe.fragment(id).unwrap();
+            let end = crate::Anchor {
+                offset: start.offset + phrase.len(),
+                ..start.clone()
+            };
+            let selection = probe.select_range(&start, &end).unwrap();
+            assert_eq!(selection.text, phrase);
+            assert_eq!(probe.page_for(&start), Some(0));
+            let rects = probe.selection_rects(0, &selection);
+            assert_eq!(rects.len(), 1, "{mode}/{choice}/{id}");
+            let rect = rects[0];
+            let tap = probe.word_at(0, rect.x as f32 + 3., (rect.y + rect.height / 2) as f32);
+            assert_eq!(tap.unwrap().start, start, "{mode}/{choice}/{id}");
+            anchors.push(start);
+            x.push(rect.x);
+        }
+        if source_positions.is_empty() {
+            source_positions = anchors;
+        } else {
+            assert_eq!(anchors, source_positions);
+        }
+        capture(probe, &format!("reader-table-width-{mode}-{choice}.png"));
+        eprintln!("{mode}/{choice}: {x:?}");
+        x
+    };
+    for (mode, label) in [(BookMode, "book"), (Web, "web")] {
+        let settings = mode.apply(Settings {
+            width: 617,
+            height: 900,
+            margin: 30,
+            font_size: 30.0,
+            ..Settings::default()
+        });
+        let mut sample = |choice, enabled: &[usize]| {
+            let mut data = user_styles::Data::default();
+            for &index in enabled {
+                data.choose(1, ids[index], Some(true)).unwrap();
+            }
+            let style = data.snapshot(1).unwrap();
+            measure(
+                &mut open(&path, settings, Some(markup.into()), &style),
+                label,
+                choice,
+            )
+        };
+        let base = sample("publisher", &[]);
+        let full = sample("full", &[0]);
+        let full_auto = sample("full-auto", &[0, 1]);
+        let auto = sample("auto", &[1]);
+        let auto_center = sample("auto-center", &[1, 2]);
+        let center = sample("center", &[2]);
+        let all = sample("all", &[0, 1, 2]);
+        let no_hints = sample("auto-no-html", &[1, 3]);
+        assert_eq!(base[1], full[1]);
+        assert!(full[2] - base[2] > 260);
+        assert_eq!(center[1] - base[1], center[2] - base[2]);
+        assert!(center[1] - base[1] > 130);
+        assert_eq!(base[4], auto[4]);
+        assert!(base[5] - auto[5] > 180);
+        assert_eq!(auto_center[4] - auto[4], auto_center[5] - auto[5]);
+        assert!(auto_center[4] - auto[4] > 130);
+        assert_eq!(full_auto[5], full[5]);
+        assert!(full_auto[7] < full[7] - 50);
+        assert_eq!(&base[8..11], &auto[8..11]);
+        assert!(base[14] > auto[14] + 50 && auto[14] > settings.margin as i32 + 160);
+        assert_eq!(no_hints[14], auto[14]);
+        assert!(no_hints[12] < auto[12] - 20);
+        assert_eq!(full_auto, all);
+        assert_eq!(base, sample("restored", &[]));
+    }
+}
+
+#[test]
 fn reading_style_paragraph_spacing_respects_siblings_and_authored_web_overrides() {
     let path = crate::test_fixture("field-notes-epub3.epub");
     let markup = include_str!("../../tests/fixtures/reading-paragraph-spacing.xhtml");

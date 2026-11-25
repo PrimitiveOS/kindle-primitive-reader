@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head>
+<title>Table style presets</title>
+<style>
+body, p { margin: 0; padding: 0; }
+table { width: 100%; }
+td, th { text-align: left; padding: 2px 5px; }
+th { background: #ddd; }
+caption { text-align: left; }
+.hide { display: none; }
+.publisher-row { background: #888 !important; }
+.cell-fill { background: #aaa; }
+.keep-border { border: 3px solid #666; border-collapse: separate; border-spacing: 9px 5px; }
+.keep-border td { border: 2px solid #777; }
+</style>
+</head>
+<body>
+<p>Harbor tables</p>
+<table>
+<thead>
+<tr><th>Head row</th><th>Head detail</th></tr>
+</thead>
+<tbody>
+<tr class="publisher-row"><td>Body first</td><td class="cell-fill">Own background</td></tr>
+<tr class="hide"><td>Hidden row</td><td>Hidden detail</td></tr>
+<tr><td>Body third</td><td>Shallow water</td></tr>
+<tr><td>Body fourth</td><td>Deep water</td></tr>
+</tbody>
+<tbody>
+<tr><td>New group</td><td>North dock</td></tr>
+</tbody>
+<tfoot>
+<tr><td>Foot row</td><td>South dock</td></tr>
+</tfoot>
+</table>
+<table>
+<caption>Direct caption</caption>
+<tr><td>Direct first</td><td>East dock</td></tr>
+<tr><td>Direct second</td><td>West dock</td></tr>
+</table>
+<table class="keep-border">
+<tr><td>Publisher left</td><td>Publisher right</td></tr>
+</table>
+<table>
+<tr><td>Single column</td></tr>
+<tr><td>Second solo</td></tr>
+</table>
+<p>End of tables</p>
+</body>
+</html>

@@ -114,6 +114,14 @@ impl<'a> TableFlow<'a> {
         if styles.len() != source.elements.len() {
             return Err("The table styles do not match the chapter".into());
         }
+        let use_css_columns = styles.first().is_some_and(|style| style.ignore_table_hints);
+        let effective = |cell: Cell| {
+            if use_css_columns {
+                cell.css_columns()
+            } else {
+                cell
+            }
+        };
         if source.table_cells.is_empty()
             || !styles.iter().zip(&source.elements).any(|(style, element)| {
                 style.flow.suppressed
@@ -131,7 +139,30 @@ impl<'a> TableFlow<'a> {
                     )
             })
         {
-            return Ok(Self::identity(source));
+            if !use_css_columns
+                || source
+                    .table_cells
+                    .iter()
+                    .all(|&(_, cell)| cell == effective(cell))
+            {
+                return Ok(Self::identity(source));
+            }
+            let mut flow = Self::identity(source);
+            flow.remapped = Some(
+                source
+                    .table_cells
+                    .iter()
+                    .map(|&(_, cell)| (cell, Some(effective(cell))))
+                    .collect(),
+            );
+            flow.cells = Cow::Owned(
+                source
+                    .table_cells
+                    .iter()
+                    .map(|&(element, cell)| (element, effective(cell)))
+                    .collect(),
+            );
+            return Ok(flow);
         }
         let mut groups: HashMap<_, Vec<_>> = HashMap::new();
         for &(element, cell) in &source.table_cells {
@@ -188,12 +219,17 @@ impl<'a> TableFlow<'a> {
             let columns_hidden = hidden_columns.contains(&table);
             if !removed && !columns_hidden {
                 for (element, cell) in entries {
-                    out.push((element, cell));
-                    remapped.insert(cell, Some(cell));
+                    let resolved = effective(cell);
+                    out.push((element, resolved));
+                    remapped.insert(cell, Some(resolved));
                 }
                 continue;
             }
-            if columns_hidden && entries.iter().any(|(_, cell)| cell.fractions.is_some()) {
+            if columns_hidden
+                && entries
+                    .iter()
+                    .any(|&(_, cell)| effective(cell).fractions.is_some())
+            {
                 return Err(TableFlowError::HintReprojection.into());
             }
             let mut grouped = BTreeMap::<usize, Vec<_>>::new();
@@ -238,7 +274,7 @@ impl<'a> TableFlow<'a> {
                         after_row,
                         column: column as u8,
                         fractions: None,
-                        ..old
+                        ..effective(old)
                     };
                     projected.push((element, old, cell));
                     column += span;
@@ -247,12 +283,12 @@ impl<'a> TableFlow<'a> {
             }
             for (element, old, mut cell) in projected {
                 cell.columns = columns as u8;
-                if old.fractions.is_some() {
+                if effective(old).fractions.is_some() {
                     if (old.column, old.span, old.columns) != (cell.column, cell.span, cell.columns)
                     {
                         return Err(TableFlowError::HintReprojection.into());
                     }
-                    cell.fractions = old.fractions;
+                    cell.fractions = effective(old).fractions;
                 }
                 remapped.insert(old, Some(cell));
                 out.push((element, cell));

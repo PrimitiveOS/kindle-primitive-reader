@@ -2,6 +2,38 @@
 
 ## Current Mac simulator checkpoint
 
+**Table styles** add full-width, intrinsic, and centered layouts, plus
+alternating row backgrounds and a stock-priority border preset. The HTML
+presentation switch suppresses supported legacy attributes while preserving
+CSS, row and column spans, and link targets.
+[Table settings and native comparisons](table-style-tweaks.md)
+
+**Numbered notes** flatten explicit EPUB and Wikipedia list-root
+paragraphs while painting one marker at the start. The marker stays
+outside searchable source text. The Mac and pinned KOReader replays
+check decimal and Roman numbers, the note strip, and original backlinks.
+[Note comparison and screenshots](in-page-footnotes.md#inline-all-footnote-content)
+
+The full Mac run passed 1,638 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. The standard run skipped
+73 opt-in cases. The separate 33 focused checks passed, and the Reader
+and stock replays reproduced 33 published screenshots.
+
+The four original EPUB, PDF, AZW3, and MOBI documents opened through
+the picker, turned a page, and resumed with unchanged source bytes.
+The original EPUB footnote replay verified 65 bands and 63 canonical
+anchors across eight composed chapters.
+
+The locally staged ARMHF executable is stripped and statically linked.
+It contains 39,486,548 bytes with SHA-256
+`62a294d2ce7055ce39831a156591f93d9203a3a81e272f2588324b0d814ad836`.
+The 32 staged files total 49,093,143 bytes. The project licenses, SQLite
+and dictionary notices, embedded Launcher icon, and OCR model passed
+inspection. Foreground Kindle testing and Store publication remain
+pending.
+
+## Link and image styles, standalone artwork, and hyphenation checkpoint
+
 **Link styles** expose all four pairs for ink, weight, slant, and
 underlining. The pinned replays check nested text and named anchors,
 and the renders measure black at gray 0 and blue at gray 63. Styling

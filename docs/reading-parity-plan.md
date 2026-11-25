@@ -55,15 +55,13 @@ controls are typography and style tweaks. The audited SDL fullscreen row
 belongs to the host window and is unavailable in KOReader’s Kindle menu.
 [Control matrix](koreader-sdl-reference-controls.json)
 
-The current Mac comparison covers the link-style pairs, separate-line
-and vertically centered image styles, standalone artwork in footnote
-strips, and Estonian and Finnish hyphenation. Additional rich-note
-layouts, publisher table styles, multilingual line fitting, and foreground
-Kindle verification remain open.
-[Link styles](link-style-presets.md) ·
-[Image styles](image-style-tweaks.md) ·
-[Artwork in notes](in-page-footnotes.md#inline-all-footnote-content) ·
-[Hyphenation](multilingual-hyphenation.md)
+The current Mac comparison covers table width, centering, HTML presentation,
+row shading, borders, and numbered EPUB and Wikipedia notes. The table and
+note groups remain partial in the stock menu inventory while cell alignment,
+additional publisher hints, and rich notes with tables or ruby are open.
+Foreground Kindle verification is still pending.
+[Table comparison](table-style-tweaks.md) ·
+[Numbered notes](in-page-footnotes.md#inline-all-footnote-content)
 
 The [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The

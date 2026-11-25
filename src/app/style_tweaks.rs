@@ -46,6 +46,15 @@ const LINE_HEIGHT: i32 = 48;
 // Use the same wrap in both orientations so that an open draft keeps its line.
 const COLUMNS: usize = 40;
 const PARAGRAPH_SPACING: &str = "paragraph-spacing";
+const TABLE_STYLES: [&str; 7] = [
+    "table_no_presentational_hints",
+    "table_full_width",
+    "table_td_width_auto",
+    "table_margin_left_right_auto",
+    "table_row_odd_even",
+    "table_force_border",
+    "table-visible-borders",
+];
 
 fn note_format(preset: &str) -> Option<DocumentFormat> {
     match preset {
@@ -159,6 +168,7 @@ impl Reader {
             Some(preset) if preset.group == PARAGRAPH_SPACING => Screen::ParagraphSpacing,
             Some(preset) if preset.group.starts_with("link-") => Screen::LinkStyles,
             Some(preset) if image_preset(&preset) => Screen::ImageStyles,
+            Some(preset) if TABLE_STYLES.contains(&preset.id) => Screen::TableStyles,
             _ => Screen::StyleTweaks,
         }
     }
@@ -464,6 +474,12 @@ impl Reader {
                         }
                         continue;
                     }
+                    if TABLE_STYLES.contains(&p.id) {
+                        if p.id == TABLE_STYLES[0] {
+                            items.push(Item::new("Tables", Action::Show(Screen::TableStyles)));
+                        }
+                        continue;
+                    }
                     if advanced_note(p.id) {
                         continue;
                     }
@@ -538,6 +554,11 @@ impl Reader {
                 .filter(|preset| image_preset(preset))
                 .map(|preset| preset_item(*preset, data, &b))
                 .collect(),
+            Screen::TableStyles => TABLE_STYLES
+                .iter()
+                .filter_map(|id| user_styles::preset(id))
+                .map(|preset| preset_item(preset, data, &b))
+                .collect(),
             Screen::FootnoteTweaks => PRESETS
                 .iter()
                 .copied()
@@ -589,6 +610,9 @@ impl Reader {
                 let description = match p.id {
                     "link-black" => "Use black ink for links and anchors",
                     "link-blue" => "Use the Kindle grayscale shade for blue links",
+                    "table_no_presentational_hints" => {
+                        "Use stylesheet rules without layout hints from HTML attributes"
+                    }
                     "paragraph_web_browser_style" => {
                         "Use block paragraphs with no default first-line indent"
                     }

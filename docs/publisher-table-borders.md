@@ -17,6 +17,22 @@ The authored table uses a 4 px dark gray outer line and 2 px cell lines. The sep
 
 Reader caps stroke width and table spacing at 64 px. Tables that do not fit the horizontal layout continue using the narrow-screen text view. CSS relief patterns such as groove and ridge, full CSS text color inheritance and entirely empty source rows remain outside this implementation.
 
+## Table style tweaks
+
+In **Appearance › Style tweaks › Tables, links, images › Tables**, the two controls can work together.
+
+- **Alternate background color of table rows** paints odd rows `#eee` and even rows `#ccc`. Row groups restart the sequence. Source rows hidden by CSS still count, and consecutive rows directly under a table form an implicit group in the stock parser. Row colors override a publisher color on the same row. A cell's own background stays above the row, and the separate-border gaps stay clear.
+- **Show borders on all tables** supplies black 1 px solid collapsed borders where the publisher leaves a declaration open. Publisher borders, separate layout and spacing still apply when declared. The grid includes one-column tables. Saved **Force table borders (legacy)** choices keep the stronger overrides used by earlier Reader builds.
+
+The native Mac rehearsal invokes each KOReader control, checks the affected pixel values and restores the original frame after both controls are turned off. The Reader replay verifies the same row colors and preserved author border, checks source anchors and selections across all four modes, and loads a saved legacy choice. Font sizing, row height and the default caption tint still differ between the two engines. [Pinned stock styles](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L634-L648) · [CREngine cell fill rules](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L10269-L10275) · [Specimen](../tests/fixtures/table-style-presets.xhtml) · [Native replay](../scripts/koreader-table-style-presets-check.lua)
+
+| Mode | Reader on the Mac | KOReader on the Mac |
+| --- | --- | --- |
+| Original | [Page](screenshots/reader-table-style-original.png) | [Page](screenshots/stock-table-style-original.png) |
+| Alternate rows | [Page](screenshots/reader-table-style-striped.png) | [Page](screenshots/stock-table-style-striped.png) |
+| Borders | [Page](screenshots/reader-table-style-borders.png) | [Page](screenshots/stock-table-style-borders.png) |
+| Both | [Page](screenshots/reader-table-style-combined.png) | [Page](screenshots/stock-table-style-combined.png) |
+
 ## Original EPUB comparison
 
 On an original three-column table with 1 px solid rules, the installed KOReader and Reader located the same five passages before and after changing the rules. Transparent borders preserved all five positions in both engines. Hidden borders moved the start of every selection left exactly 1 px. Both engines restored the original positions and grayscale frames after resetting the styles. No publication text or screenshots from this book are included here.

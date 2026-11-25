@@ -1,0 +1,30 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head><title>Harbor table presentation</title>
+<style type="text/css">
+  p { text-align:start; text-indent:0; }
+  .kept { background-color:#e6e6e6; text-align:left; padding:4px; }
+</style>
+</head>
+<body>
+<p>Harbor readings</p>
+<table id="legacy" width="84%" align="center" cellspacing="10" cellpadding="12"
+    border="3" bordercolor="#222222" frame="hsides">
+  <colgroup><col width="55%"/><col style="width:28%"/><col/></colgroup>
+  <tbody>
+    <tr align="right" bgcolor="#cccccc">
+      <td id="dock">North dock</td>
+      <td id="rings"><a href="#end">Mooring rings</a></td>
+      <td id="wind">Wind</td>
+    </tr>
+    <tr>
+      <td id="merged" class="kept" colspan="2" width="85%" bgcolor="#aaaaaa">Morning watch</td>
+      <td id="calm">Calm</td>
+    </tr>
+  </tbody>
+</table>
+<table id="css-only" style="width:70%;border-collapse:collapse">
+  <tbody><tr><td id="css-cell" class="kept">CSS table</td><td>East gate</td></tr></tbody>
+</table>
+<p id="end">Return to the harbor.</p>
+</body>
+</html>

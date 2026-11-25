@@ -122,6 +122,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
             | Screen::MenuActivationSettings
             | Screen::StyleTweaks
             | Screen::ParagraphSpacing
+            | Screen::TableStyles
             | Screen::StylePreset
             | Screen::StyleFiles
             | Screen::StyleReview

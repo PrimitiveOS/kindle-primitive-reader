@@ -208,6 +208,7 @@ impl Screen {
                 | Self::FootnoteTweaks
                 | Self::StylePreset
                 | Self::ImageStyles
+                | Self::TableStyles
                 | Self::InPageFootnoteSize(_)
                 | Self::StyleFiles
                 | Self::StyleReview

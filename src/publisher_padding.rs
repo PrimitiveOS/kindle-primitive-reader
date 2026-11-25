@@ -234,6 +234,12 @@ pub(crate) fn layout_with_flow(
     mut measure: impl FnMut(&crate::source::Block) -> (u32, u32),
 ) -> Option<Vec<BoxArea>> {
     let block_width = settings.block_width;
+    let stock_native = matches!(
+        settings.publisher_render_mode,
+        Some(crate::PublisherRenderMode::Book | crate::PublisherRenderMode::Web)
+    ) || styles
+        .first()
+        .is_some_and(|style| style.native_table_widths);
     // Text-box candidates already exclude floats. During line layout, a sized
     // box clears active footprints before using its own column geometry.
     let constrained = block_width == BlockWidthMode::PublisherWithConstraints;
@@ -265,6 +271,7 @@ pub(crate) fn layout_with_flow(
         Vec::new()
     };
     if flow.is_identity()
+        && (!stock_native || flow.cells().is_empty())
         && borders.is_none()
         && !width_candidates.contains(&TextBoxCandidate::Simple)
         && !wrapper_candidates.contains(&true)
@@ -304,8 +311,14 @@ pub(crate) fn layout_with_flow(
         });
     }
     let mut cells = vec![None; owners.len()];
+    let mut native_grids = vec![None; owners.len()];
     for &(element, cell) in flow.cells() {
         cells[element] = Some(cell);
+        if matches!(cell.table, crate::table_layout::TableKey::Native(_))
+            && let Some(table) = tables[element]
+        {
+            native_grids[table] = Some(cell);
+        }
     }
     let mut widths = crate::table_widths::TableWidths::collect(
         source,
@@ -317,6 +330,7 @@ pub(crate) fn layout_with_flow(
         font,
         width,
         borders,
+        stock_native,
         &mut measure,
     );
     let mut css_widths =
@@ -333,6 +347,7 @@ pub(crate) fn layout_with_flow(
     } else {
         Vec::new()
     };
+    let mut sized_tables = vec![false; styles.len()];
     let mut boxes: Vec<BoxArea> = Vec::with_capacity(styles.len());
     for (idx, element) in source.elements.iter().enumerate() {
         let table = tables[idx];
@@ -372,8 +387,38 @@ pub(crate) fn layout_with_flow(
         {
             area = inset;
         }
+        if stock_native
+            && let Some(grid) = native_grids[idx]
+            && area.width as f32 / f32::from(grid.columns) >= 2.5 * font
+        {
+            let (space, count) = borders.map_or((0, 0), |b| b.spacing_for_table(idx));
+            let edges = borders.and_then(|b| b.outer_edges(idx));
+            let stroke = edges.map_or(0, |edges| edges[1].width + edges[3].width);
+            let style = &styles[idx];
+            let width = crate::table_widths::TableWidths::native_width(
+                widths.get(&idx),
+                style,
+                area.width,
+                font * style.size_scale,
+                stroke,
+                space.saturating_mul(count),
+                settings.publisher_render_mode == Some(crate::PublisherRenderMode::Web),
+            )
+            .max(u32::from(grid.columns));
+            let remainder = area.width - width;
+            let inset = match style.horizontal_margin {
+                [BoxMargin::Auto, BoxMargin::Auto] => remainder / 2,
+                [BoxMargin::Auto, _] => remainder,
+                [_, BoxMargin::Auto] => 0,
+                [_, _] if grid.rtl => remainder,
+                _ => 0,
+            };
+            area = BoxArea::new(area.x + inset, width, area.cell);
+            sized_tables[idx] = true;
+        }
         if let Some(cell) = cells[idx]
-            && area.width as f32 / f32::from(cell.columns) >= 2.5 * font
+            && (table.is_some_and(|table| sized_tables[table])
+                || area.width as f32 / f32::from(cell.columns) >= 2.5 * font)
         {
             if let crate::table_layout::TableKey::Css(key) = cell.table {
                 if let (Some(grid), Some(tracks)) = (flow.css_grid(key), css_widths.get_mut(&key)) {
@@ -413,13 +458,15 @@ pub(crate) fn layout_with_flow(
         {
             area.pad(&styles[idx].padding, font);
         }
-        if let Some(tracks) = widths.get_mut(&idx)
-            && area.width >= 32
+        if (sized_tables[idx] || !stock_native && area.width >= 32)
+            && let Some(tracks) = widths.get_mut(&idx)
         {
             let (space, n) = borders.map_or((0, 0), |b| b.spacing_for_table(idx));
             let available = area.width
                 - space.min(area.width.saturating_sub(n.saturating_sub(1)) / n.max(1)) * n;
-            tracks.resolve(available);
+            if native_grids[idx].is_some_and(|grid| available >= u32::from(grid.columns)) {
+                tracks.resolve(available);
+            }
         }
         boxes.push(area);
     }

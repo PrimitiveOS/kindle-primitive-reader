@@ -165,6 +165,7 @@ fn child_menu(action: &Action) -> Option<Screen> {
             | Screen::FootnoteTweaks
             | Screen::InPageFootnoteSize(_)
             | Screen::ImageStyles
+            | Screen::TableStyles
             | Screen::TypographyRules
             | Screen::TypographyLanguages(_)
             | Screen::FontRendering(_)

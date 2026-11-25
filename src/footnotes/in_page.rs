@@ -1253,6 +1253,139 @@ mod tests {
     }
 
     #[test]
+    fn whole_note_inline_list_roots_keep_generated_markers_outside_canonical_text() {
+        use crate::user_styles::{
+            EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT, WIKIPEDIA_FOOTNOTES,
+        };
+        let cases = [
+            (
+                19,
+                EPUB_FOOTNOTES,
+                "epub",
+                "7.",
+                "The guide lists the latch",
+                "root-epub-ref",
+                "root-epub-first",
+                "Latch record.",
+                "The brass pin stayed.",
+                "Return to latch",
+            ),
+            (
+                20,
+                WIKIPEDIA_FOOTNOTES,
+                "wiki",
+                "IX.",
+                "The catalog lists the register",
+                "cite_ref_register",
+                "root-wiki-first",
+                "Register note.",
+                "The date is missing.",
+                "Return to register",
+            ),
+        ];
+        for (chapter, style, family, marker, body, reference, first, intro, tail, backlink) in cases
+        {
+            let mut before = advanced_note_layout(chapter, &[style]);
+            let mut joined = advanced_note_layout(chapter, &[style, INLINE_ALL_FOOTNOTE_CONTENT]);
+            let source = before.fragment(first).unwrap();
+            let reference_anchor = before.fragment(reference).unwrap();
+            let page = before.page_for(&reference_anchor).unwrap();
+            let original = before.page_for(&source).unwrap();
+            assert!(original > page);
+            assert_eq!(joined.page_for(&reference_anchor), Some(page));
+            assert_eq!(joined.page_for(&source), Some(original));
+            assert_eq!(joined.fragment(first), Some(source.clone()));
+            assert_eq!(before.coverage(), joined.coverage());
+            assert_eq!(
+                phrase_rects(&before, page, body),
+                phrase_rects(&joined, page, body)
+            );
+            assert!(
+                phrase_rects(&before, page, intro)[0].y < phrase_rects(&before, page, tail)[0].y
+            );
+            for current in [page, original] {
+                let first = phrase_rects(&joined, current, intro)[0];
+                let second = phrase_rects(&joined, current, tail)[0];
+                assert!(first.y == second.y && first.x < second.x);
+                let link = phrase_rects(&joined, current, backlink)[0];
+                assert_eq!(
+                    joined
+                        .link_at(
+                            current,
+                            (link.x + 4) as f32,
+                            (link.y + link.height / 2) as f32
+                        )
+                        .unwrap()
+                        .fragment
+                        .as_deref(),
+                    Some(reference)
+                );
+            }
+            let combined = joined_note_text(&joined, &source);
+            assert_eq!(
+                combined,
+                format!("{marker}\u{a0}{intro} {tail} {backlink}.")
+            );
+            assert!(joined.matches(&format!("{marker} {intro}")).is_empty());
+            assert!(joined.matches("Hidden register backlink").is_empty());
+            let tail_anchor = joined.matches(tail).remove(0);
+            let range = joined
+                .select_range(
+                    &source,
+                    &joined.anchor(tail_anchor.block, tail_anchor.offset + tail.len()),
+                )
+                .unwrap();
+            assert_eq!(range.text, format!("{intro}\n{tail}"));
+            capture(
+                &mut before,
+                page,
+                &format!("reader-note-inline-root-{family}-before.png"),
+            );
+            capture(
+                &mut joined,
+                page,
+                &format!("reader-note-inline-root-{family}-after.png"),
+            );
+            capture(
+                &mut joined,
+                original,
+                &format!("reader-note-inline-root-{family}-original.png"),
+            );
+        }
+    }
+
+    #[test]
+    fn whole_note_inline_list_root_respects_none_and_explicit_ordinals() {
+        use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
+        let joined = advanced_note_layout(21, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        let unnumbered = joined.fragment("root-none-first").unwrap();
+        let solo = joined.fragment("root-solo-first").unwrap();
+        assert_eq!(
+            joined_note_text(&joined, &unnumbered),
+            "Date unknown. The entry was undated."
+        );
+        assert_eq!(
+            joined_note_text(&joined, &solo),
+            "42.\u{a0}Only the afternoon is known."
+        );
+        assert!(joined.matches("42. Only").is_empty());
+    }
+
+    fn joined_note_text<'a>(probe: &'a Probe, anchor: &crate::Anchor) -> &'a str {
+        let crate::Renderer::Parley(layout) = &probe.renderer else {
+            unreachable!();
+        };
+        let page = probe.page_for(anchor).unwrap();
+        let (bounds, _) = probe.page_parts(page).next().unwrap();
+        layout
+            .paragraphs_in(bounds)
+            .filter_map(|paragraph| paragraph.joined_note.as_ref())
+            .find(|note| note.pieces.iter().any(|piece| piece.block == anchor.block))
+            .map(|note| note.text.as_str())
+            .expect("the canonical paragraph joins the note layout")
+    }
+
+    #[test]
     fn whole_note_inline_keeps_unsupported_note_contents_ordinary() {
         use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
         let ordinary = advanced_note_layout(12, &[]);

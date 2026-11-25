@@ -34,7 +34,7 @@ a copy of KOReader's stylesheet catalog.
 | Space and pagination | Remove horizontal or vertical padding; ignore authored forced breaks; protect widows and orphans. Implicit spine/chapter boundaries remain. |
 | Links | Pairs for black or blue ink, bold or normal weight, italic or upright text, and underlines. [Link style options](link-style-presets.md) |
 | Images | Full-width image lines, centered inline alignment, and aspect-preserving fit. [Image style options](image-style-tweaks.md) |
-| Tables | Visible table borders. |
+| Tables | Ignore HTML presentation, full or intrinsic widths, centered small tables, row backgrounds, and two border presets. [Table style options](table-style-tweaks.md) |
 | Fonts | Inherit reading font sizes/family; preserve monospace code elements when inheriting the reading family. |
 
 Explicit reader-wide alignment and font override still control the final text

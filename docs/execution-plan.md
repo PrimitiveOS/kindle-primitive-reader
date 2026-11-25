@@ -45,8 +45,8 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
-The latest Mac workflow pass covers link and image styles, standalone
-artwork in footnote strips, and Estonian and Finnish hyphenation. The
+The latest Mac workflow pass covers six table style controls and numbered
+EPUB and Wikipedia footnotes. The
 [implementation checklist](reading-parity-plan.md#execution-checklist) tracks
 remaining layout, language, gesture, and Kindle checks. The
 [simulator review](simulation-review.md) records this checkpoint.

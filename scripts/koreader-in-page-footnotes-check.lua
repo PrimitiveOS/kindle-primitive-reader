@@ -14,7 +14,7 @@ local source, cache, font, captures = assert(arg[1]), assert(arg[2]), assert(arg
 local width, height, margin = 720, 480, 32
 local fb2 = arg[5] == "fb2"
 local classic = arg[5] == "classic"
-local wikipedia = arg[5] == "wikipedia"
+local wikipedia = arg[5] == "wikipedia" or arg[5] == "inline-root-wiki"
 local tweak_id = fb2 and "footnote-inpage_fb2"
     or classic and "footnote-inpage_classic_classnames"
     or wikipedia and "footnote-inpage_wikipedia" or "footnote-inpage_epub"
@@ -150,6 +150,69 @@ local function width_in_canonical_note(view_, text)
     local boxes = assert(view_:getWordBoxesFromPositions(hit.start, hit["end"], true))
     assert(#boxes >= 1, text)
     return boxes[#boxes].x1 - boxes[1].x0, boxes[1].x0
+end
+
+if arg[5] == "inline-root-epub" or arg[5] == "inline-root-wiki" then
+    controller:onReadSettings(Settings:wrap({}))
+    local option = assert(find_tweak(menu.style_tweaks.sub_item_table, "inpage_footnote_all_inline"))
+    local prefix = "stock-note-" .. arg[5] .. "-"
+    local body = wikipedia and "The catalog lists the register" or "The guide lists the latch"
+    local intro = wikipedia and "Register note." or "Latch record."
+    local tail = wikipedia and "The date is missing." or "The brass pin stayed."
+    local target = wikipedia and "cite_ref_register" or "root-epub-ref"
+    local marker = wikipedia and "IX." or "7."
+    local function measure(phase, shared_line)
+        local view = open(assert(controller:getCssText()))
+        local reference, body_y = position(view, body)
+        assert(capture(view, reference, prefix .. phase))
+        local original, intro_y = position(view, intro)
+        local text, tail_y = position(view, tail)
+        assert(text == original and original > reference)
+        assert(shared_line and intro_y == tail_y or not shared_line and intro_y < tail_y)
+        local _, intro_x = width_in_canonical_note(view, intro)
+        local _, tail_x = width_in_canonical_note(view, tail)
+        local frame = BB.new(width, height, BB.TYPE_BB8)
+        view:drawCurrentPage(frame, false, false, false, false)
+        local marker_x
+        for x = margin, intro_x - 1 do
+            for y = intro_y, intro_y + 28 do
+                if frame:getPixel(x, y):getColor8().a < 180 then
+                    marker_x = x
+                    break
+                end
+            end
+            if marker_x then break end
+        end
+        frame:free()
+        assert(marker_x and not view:findAllText(marker .. " " .. intro, false, false, 8, true, 0, 255))
+        local backlink = false
+        for _, link in ipairs(view:getPageLinks(true)) do
+            if link.section:sub(-#target) == target then
+                for _, segment in ipairs(link.segments) do
+                    local x = math.floor((segment.x0 + segment.x1) / 2)
+                    local y = math.floor((segment.y0 + segment.y1) / 2)
+                    backlink = backlink or view:getLinkFromPosition(x, y) == link.section
+                end
+            end
+        end
+        assert(backlink)
+        print(("Inside marker %s x=%d, text x=%d/%d, y=%d/%d"):format(
+            marker, marker_x, intro_x, tail_x, intro_y, tail_y))
+        if shared_line then
+            assert(tail_x > intro_x)
+            assert(not capture(view, original, prefix .. "original"))
+        end
+        view:close()
+        return body_y, marker_x, intro_x
+    end
+    assert(not option.checked_func())
+    local plain_y, plain_marker, plain_text = measure("before", false)
+    option.callback()
+    assert(option.checked_func())
+    local body_y, inside_marker, inside_text = measure("after", true)
+    assert(body_y == plain_y and inside_marker > plain_marker and inside_text > plain_text)
+    print("Pinned note-root marker moves inside and retains its canonical backlink")
+    return
 end
 
 if arg[5] == "inline-image" or arg[5] == "inline-block-image" then

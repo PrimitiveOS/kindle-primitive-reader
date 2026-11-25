@@ -21,6 +21,7 @@ pub(crate) struct Cell {
     pub row: usize,
     pub after_row: usize,
     fractions: Option<(u16, u16)>,
+    css_fractions: Option<(u16, u16)>,
     pub column: u8,
     pub span: u8,
     pub columns: u8,
@@ -131,6 +132,7 @@ fn table_cells(
                     span: span as u8,
                     columns: 0,
                     fractions: None,
+                    css_fractions: None,
                     rtl,
                 },
             ));
@@ -138,16 +140,19 @@ fn table_cells(
         }
         columns = columns.max(column);
     }
-    if columns < 2 {
+    if columns == 0 {
         return None;
     }
-    let edges = column_edges(table, columns);
+    let edges = column_edges(table, columns, true);
+    let css_edges = edges
+        .as_ref()
+        .and_then(|_| column_edges(table, columns, false));
     for (_, cell) in &mut cells {
         cell.columns = columns as u8;
         let start = usize::from(cell.column);
-        cell.fractions = edges
-            .as_ref()
-            .map(|edges| (edges[start], edges[start + usize::from(cell.span)]));
+        let range = |edges: &[u16]| (edges[start], edges[start + usize::from(cell.span)]);
+        cell.fractions = edges.as_deref().map(range);
+        cell.css_fractions = css_edges.as_deref().map(range);
     }
     Some(cells)
 }
@@ -165,29 +170,39 @@ fn percent(width: &str) -> Option<f32> {
     (n.is_finite() && n > 0.0 && n <= 100.0).then_some(n)
 }
 
-fn column_width(node: Node<'_, '_>) -> Option<f32> {
+fn column_width(node: Node<'_, '_>, include_html: bool) -> Option<f32> {
     let style = node.attribute("style").unwrap_or_default();
     style
         .split(';')
         .filter_map(|d| d.split_once(':'))
         .filter(|(name, _)| name.trim().eq_ignore_ascii_case("width"))
-        .filter_map(|(_, v)| percent(v))
+        .filter_map(|(_, v)| percent(v.split('!').next().unwrap_or_default()))
         .last()
-        .or_else(|| node.attribute("width").and_then(percent))
+        .or_else(|| {
+            include_html
+                .then(|| node.attribute("width").and_then(percent))
+                .flatten()
+        })
 }
 
-fn column_edges(table: Node<'_, '_>, count: usize) -> Option<Vec<u16>> {
+fn column_edges(table: Node<'_, '_>, count: usize, include_html: bool) -> Option<Vec<u16>> {
     let mut hinted = Vec::with_capacity(count);
     for node in table.children().filter(Node::is_element) {
         if node.has_tag_name("col") {
-            add_column(&mut hinted, node, None, count);
+            add_column(&mut hinted, node, None, count, include_html);
         } else if node.has_tag_name("colgroup") {
             let mut children = node.children().filter(|n| n.has_tag_name("col")).peekable();
             if children.peek().is_none() {
-                add_column(&mut hinted, node, None, count);
+                add_column(&mut hinted, node, None, count, include_html);
             } else {
                 for child in children {
-                    add_column(&mut hinted, child, column_width(node), count);
+                    add_column(
+                        &mut hinted,
+                        child,
+                        column_width(node, include_html),
+                        count,
+                        include_html,
+                    );
                 }
             }
         }
@@ -215,12 +230,23 @@ fn add_column(
     node: Node<'_, '_>,
     inherited: Option<f32>,
     count: usize,
+    include_html: bool,
 ) {
     let fill = span_attribute(node, "span").max(1).min(count - out.len());
-    out.resize(out.len() + fill, column_width(node).or(inherited));
+    out.resize(
+        out.len() + fill,
+        column_width(node, include_html).or(inherited),
+    );
 }
 
 impl Cell {
+    fn css_columns(self) -> Self {
+        Self {
+            fractions: self.css_fractions,
+            ..self
+        }
+    }
+
     pub(crate) fn has_column_tracks(self) -> bool {
         self.fractions.is_some()
     }

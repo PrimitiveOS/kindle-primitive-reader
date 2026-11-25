@@ -107,6 +107,8 @@ pub(crate) struct LayoutTweaks {
     pub(crate) paragraph_spacing: ParagraphSpacing,
     pub(crate) full_width_images: bool,
     pub(crate) link_ink: Option<LinkInk>,
+    pub(crate) ignore_table_hints: bool,
+    pub(crate) native_table_widths: bool,
 }
 
 #[repr(u8)]
@@ -226,6 +228,12 @@ impl Snapshot {
         if layout.full_width_images {
             digest.consume(b"\0full-width-images");
         }
+        if layout.ignore_table_hints {
+            digest.consume(b"\0ignore-table-hints");
+        }
+        if layout.native_table_widths {
+            digest.consume(b"\0native-table-widths");
+        }
         Ok(Self {
             css: css.into(),
             digest: digest.finalize().0,
@@ -318,11 +326,13 @@ impl Snapshot {
 #[derive(Clone, Copy)]
 pub(crate) enum Effect {
     Css(&'static str),
+    NativeTableWidth(&'static str),
     TailorCjk,
     Monochrome,
     BrowserParagraphs,
     ParagraphSpacing(ParagraphSpacing),
     LinkInk(LinkInk),
+    IgnoreTableHints,
     InPageEpubFootnotes,
     FullWidthImages,
     InPageClassicFootnotes,
@@ -651,8 +661,56 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("img {vertical-align:middle;}"),
     },
     Preset {
+        id: "table_no_presentational_hints",
+        title: "Ignore HTML table presentation",
+        group: "table-presentation",
+        priority: 0,
+        effect: Effect::IgnoreTableHints,
+    },
+    Preset {
+        id: "table_row_odd_even",
+        title: "Alternate background color of table rows",
+        group: "table-row-colors",
+        priority: 0,
+        effect: Effect::Css(
+            "tr:nth-child(odd) {background-color:#eee !important;} tr:nth-child(even) {background-color:#ccc !important;}",
+        ),
+    },
+    Preset {
+        id: "table_force_border",
+        title: "Show borders on all tables",
+        group: "tables",
+        priority: 0,
+        effect: Effect::Css(
+            "table,tcaption,tr,th,td {border:black solid 1px;border-collapse:collapse;}",
+        ),
+    },
+    Preset {
+        id: "table_full_width",
+        title: "Full-width tables",
+        group: "table-full-width",
+        priority: 2,
+        effect: Effect::NativeTableWidth("table {width:100% !important;}"),
+    },
+    Preset {
+        id: "table_td_width_auto",
+        title: "Ignore publisher table and cell widths",
+        group: "table-publisher-widths",
+        priority: 0,
+        effect: Effect::NativeTableWidth("table, td, th {width:auto !important;}"),
+    },
+    Preset {
+        id: "table_margin_left_right_auto",
+        title: "Center small tables",
+        group: "table-alignment",
+        priority: 3,
+        effect: Effect::NativeTableWidth(
+            "table {margin-left:auto !important;margin-right:auto !important;}",
+        ),
+    },
+    Preset {
         id: "table-visible-borders",
-        title: "Show table borders",
+        title: "Force table borders (legacy)",
         group: "tables",
         priority: 0,
         effect: Effect::Css(
@@ -779,6 +837,7 @@ impl Data {
                 | Effect::FullWidthImages
                 | Effect::ParagraphSpacing(_)
                 | Effect::LinkInk(_)
+                | Effect::IgnoreTableHints
         ) {
             if enabled {
                 if matches!(target.effect, Effect::ExtendNote(_)) {
@@ -830,6 +889,11 @@ impl Data {
                     css.push_str(snippet);
                     css.push('\n');
                 }
+                Effect::NativeTableWidth(snippet) => {
+                    layout.native_table_widths = true;
+                    css.push_str(snippet);
+                    css.push('\n');
+                }
                 Effect::TailorCjk => layout.cjk_tailored = true,
                 Effect::Monochrome => layout.monochrome = true,
                 Effect::BrowserParagraphs => layout.browser_paragraphs = true,
@@ -839,6 +903,7 @@ impl Data {
                     css.push_str("img {width:100% !important;}\n");
                 }
                 Effect::LinkInk(ink) => layout.link_ink = Some(ink),
+                Effect::IgnoreTableHints => layout.ignore_table_hints = true,
                 Effect::InPageEpubFootnotes => {
                     notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
                     notes.explicit_epub = true;

@@ -134,10 +134,12 @@ fn user_rules_remain_effective_without_author_css_and_never_mutate_source() {
 
 #[test]
 fn every_published_preset_changes_its_supported_computed_property_through_user_origin() {
-    let markup = r#"<html><body style="font-size:150%;font-family:monospace"><p id="p" style="text-indent:2em!important;padding:8px!important;text-align:right!important;break-before:page!important;break-after:page!important;orphans:1;widows:1">Paragraph <a id="a" href="x" style="font-weight:300!important">link</a></p><p id="following" style="text-indent:2em!important">Following paragraph</p><h1 id="h" style="text-align:left!important">Heading</h1><img id="i" src="x" style="width:72px!important"/><table id="t"><tr><td>Cell</td></tr></table><code id="code">code</code></body></html>"#;
+    let markup = r#"<html><body style="font-size:150%;font-family:monospace"><p id="p" style="text-indent:2em!important;padding:8px!important;text-align:right!important;break-before:page!important;break-after:page!important;orphans:1;widows:1">Paragraph <a id="a" href="x" style="font-weight:300!important">link</a></p><p id="following" style="text-indent:2em!important">Following paragraph</p><h1 id="h" style="text-align:left!important">Heading</h1><img id="i" src="x" style="width:72px!important"/><table id="t"><tr id="r"><td>Cell</td></tr></table><code id="code">code</code></body></html>"#;
     for preset in crate::user_styles::PRESETS {
-        let crate::user_styles::Effect::Css(css) = preset.effect else {
-            continue;
+        let css = match preset.effect {
+            crate::user_styles::Effect::Css(css)
+            | crate::user_styles::Effect::NativeTableWidth(css) => css,
+            _ => continue,
         };
         let markup = match preset.id {
             "link-underline" => markup.replace(
@@ -206,9 +208,38 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
                     .unwrap()
                     .pixels(1000, 42.)
             ),
-            "table-visible-borders" => {
+            "table_force_border" | "table-visible-borders" => {
                 assert!(at(&source, &before, "t").borders.is_none());
                 assert!(at(&source, &after, "t").borders.is_some());
+                assert!(at(&source, &after, "t").border_collapse);
+            }
+            "table_row_odd_even" => {
+                assert_eq!(at(&source, &before, "r").background, None);
+                assert_eq!(at(&source, &after, "r").background, Some(238));
+            }
+            "table_full_width" => {
+                assert!(at(&source, &before, "t").image_width.is_none());
+                assert!(matches!(
+                    at(&source, &after, "t").image_width,
+                    Some(ImageLength::Fraction(1.0))
+                ));
+            }
+            "table_td_width_auto" => {
+                assert!(at(&source, &before, "t").image_width.is_none());
+                assert!(matches!(
+                    at(&source, &after, "t").image_width,
+                    Some(ImageLength::Auto)
+                ));
+            }
+            "table_margin_left_right_auto" => {
+                assert!(matches!(
+                    at(&source, &before, "t").horizontal_margin,
+                    [BoxMargin::Length(_), BoxMargin::Length(_)]
+                ));
+                assert!(matches!(
+                    at(&source, &after, "t").horizontal_margin,
+                    [BoxMargin::Auto, BoxMargin::Auto]
+                ));
             }
             "image_valign_middle" => {
                 assert_eq!(

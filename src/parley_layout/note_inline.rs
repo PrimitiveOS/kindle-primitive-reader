@@ -49,10 +49,18 @@ pub(super) fn plan<'a>(
     for group in owners.chunk_by(|left, right| left == right) {
         let end = start + group.len();
         if let Some(element) = group[0]
-            && (2..=MAX_BLOCKS).contains(&group.len())
-            && let Some(fragment) = join(source, styles, flow, start..end, element)?
+            && group.len() <= MAX_BLOCKS
         {
-            fragments.insert(start, fragment);
+            let marker = source.blocks[start..end]
+                .iter()
+                .filter_map(|block| block.list_item)
+                .find(|item| item.element == element)
+                .and_then(|item| styles[element].marker.label(flow.ordinal(item)?));
+            if (group.len() > 1 || marker.is_some())
+                && let Some(fragment) = join(source, styles, flow, start..end, element, marker)?
+            {
+                fragments.insert(start, fragment);
+            }
         }
         start = end;
     }
@@ -65,6 +73,7 @@ fn join<'a>(
     flow: &'a ChapterFlow,
     indices: Range<usize>,
     element: usize,
+    mut marker: Option<String>,
 ) -> crate::Result<Option<Fragment<'a>>> {
     let end_index = indices.end;
     if styles[source.blocks[indices.start].element].flow.suppressed {
@@ -77,13 +86,10 @@ fn join<'a>(
     let mut runs = Vec::new();
     let mut images = Vec::new();
     let mut artwork_blocks = 0;
+    let mut inside_marker = false;
     for block in &source.blocks[indices] {
         let style = &styles[block.element];
-        // Descendant list items become inline text. A list item that is
-        // itself the note container keeps its block and marker semantics.
-        let list_root = block.list_item.is_some_and(|item| item.element == element);
         if block.table_cell.is_some()
-            || list_root
             || !block.ruby.is_empty()
             || style.preformatted_spaces
             || style.page_breaks != Default::default()
@@ -104,6 +110,20 @@ fn join<'a>(
             )
         }) {
             return Ok(None);
+        }
+        // Keep the note container's marker once, at the start of the shaped
+        // paragraph. It doesn't own a canonical span or add searchable text.
+        if let Some(label) = marker.take()
+            && crate::list_marker::authored_prefix(input.text, &label).is_none()
+        {
+            joined.text.push_str(&label);
+            joined.text.push('\u{a0}');
+            runs.push(StyledText {
+                bytes: 0..joined.text.len(),
+                element,
+                language: block.language,
+            });
+            inside_marker = true;
         }
         if joined.text.len() + 1 + input.text.len().max(1) > MAX_BYTES {
             return Ok(None);
@@ -139,15 +159,14 @@ fn join<'a>(
         }
     }
     Ok(
-        (!joined.pieces.is_empty() && joined.pieces.len() + artwork_blocks > 1).then_some(
-            Fragment {
+        (!joined.pieces.is_empty() && (inside_marker || joined.pieces.len() + artwork_blocks > 1))
+            .then_some(Fragment {
                 element,
                 end_index,
                 runs,
                 images,
                 layout: Arc::new(joined),
-            },
-        ),
+            }),
     )
 }
 

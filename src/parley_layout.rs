@@ -603,7 +603,7 @@ impl ParleyChapter {
             styles,
             outer_width,
             settings.font_size,
-            borders.as_ref(),
+            borders.as_ref().filter(|b| b.has_geometry()),
             &table_flow,
             settings,
             |block| {
@@ -1508,6 +1508,8 @@ impl ParleyChapter {
                 if following != Some(c) {
                     y += borders.as_ref().unwrap().vertical(c).1 as f32;
                 }
+            }
+            if let Some(c) = cell.filter(|&c| borders.as_ref().is_some_and(|b| b.tracks(c))) {
                 positions.record(c, start_of_cell, (y - gap).max(start_of_cell));
             }
             if padding.after_grid > 0 {
@@ -1550,9 +1552,18 @@ impl ParleyChapter {
                 |element| fitted_padding_elements.contains(&element),
             );
         }
-        if let (Some(b), Some(boxes)) = (&borders, &publisher_boxes) {
-            chapter.table_frames =
-                positions.finish(b, boxes, styles, &mut chapter.padded_backgrounds);
+        if let Some(b) = &borders {
+            positions.backgrounds(
+                b,
+                publisher_boxes.as_deref(),
+                styles,
+                outer_width,
+                settings.font_size,
+                &mut chapter.padded_backgrounds,
+            );
+            if let Some(boxes) = &publisher_boxes {
+                chapter.table_frames = positions.finish(b, boxes);
+            }
             chapter.padded_backgrounds.sort_by_key(|f| f.element);
         }
         chapter.padded_backgrounds.extend(float_fills);
@@ -5055,6 +5066,9 @@ mod word_expansion_cases;
 mod cjk_width_tests;
 #[cfg(test)]
 mod style_presets_tests;
+
+#[cfg(test)]
+mod table_presentation_tests;
 
 #[cfg(test)]
 mod publisher_padding_tests;

@@ -250,6 +250,38 @@ fn reading_style_link_menu_saves_independent_pairs_and_the_open_passage() {
 }
 
 #[test]
+fn table_presentational_hints_menu_keeps_the_reading_place_and_saved_choices() {
+    let f = Fixture::new();
+    let path = f.root.join("Harbor table presentation.xhtml");
+    fs::copy(
+        crate::test_fixture("table-presentational-hints.xhtml"),
+        &path,
+    )
+    .unwrap();
+    let mut app = open(&f);
+    app.open_path(&path).unwrap();
+    let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
+    let anchor = app.current_history_location();
+    let preset = "table_no_presentational_hints";
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "Tables");
+    assert_eq!(app.screen, Screen::TableStyles);
+    tap_contents_item(&mut app, "Ignore HTML table presentation");
+    tap_contents_item(&mut app, "Use on all books");
+    assert_eq!(app.style_preset_parent(), Screen::TableStyles);
+    app.show(Screen::TableStyles);
+    capture_viewport(&app, &mut canvas, "reader-table-style-controls.png", false);
+    let id = app.active.as_ref().unwrap().id;
+    assert!(app.style_store.data.enabled(id, preset));
+    assert_eq!(app.current_history_location(), anchor);
+    app.save().unwrap();
+    let mut reopened = open(&f);
+    reopened.open_path(&path).unwrap();
+    assert!(reopened.style_store.data.enabled(id, preset));
+    assert_eq!(reopened.current_history_location(), anchor);
+}
+
+#[test]
 fn styles_live_defaults_and_book_overrides_survive_profiles_defaults_restart_and_source_selections()
 {
     let f = Fixture::new();
