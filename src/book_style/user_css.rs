@@ -182,7 +182,11 @@ pub(super) fn apply_reset(
             style.loose_nonbreaking = value.loose_nonbreaking;
         }
         8 => style.word_break = value.word_break,
-        53 => style.inline_nowrap = value.inline_nowrap,
+        53 => {
+            style.inline_nowrap = value.inline_nowrap;
+            style.preformatted_spaces = value.preformatted_spaces;
+            style.white_space = value.white_space;
+        }
         9 => style.hyphens = value.hyphens,
         10 => style.writing_mode = value.writing_mode,
         13 => style.image_align = value.image_align,

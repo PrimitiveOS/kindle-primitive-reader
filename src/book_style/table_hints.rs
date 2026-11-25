@@ -1,7 +1,7 @@
 //! HTML table presentation declared separately from publisher CSS.
 use super::{
     Alignment, BoxMargin, CascadeOrigin, CssLength, Declaration, ImageLength, Parser, Property,
-    Side, Winners, background, borders, choose,
+    Side, WhiteSpace, Winners, background, borders, choose,
 };
 use roxmltree::Node;
 
@@ -129,7 +129,7 @@ impl TableHints {
             }
         }
         if cell && node.has_attribute("nowrap") {
-            set(Property::NoWrap(true));
+            set(Property::WhiteSpace(WhiteSpace::NoWrap));
         }
 
         // Width, pattern, and color participate in the same per-edge cascade as CSS.

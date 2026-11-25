@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::book_style::{
     CssLength, ImageLength, LigatureExtras, RubyPosition, Style, TextDecoration, TextTransform,
-    VariantCaps, VariantEastAsian, VariantNumeric, VariantPosition,
+    VariantCaps, VariantEastAsian, VariantNumeric, VariantPosition, WhiteSpace,
 };
 use crate::comic::ImagePage;
 use crate::epub::Book;
@@ -3951,17 +3951,27 @@ fn shape_paragraph(
     builder.push_default(StyleProperty::FontWeight(weight(style)));
     builder.push_default(StyleProperty::FontStyle(style.font_style));
     builder.push_default(StyleProperty::Locale(language));
-    // These ranges come only from the ODT adapter's explicit whitespace
-    // elements; use source spaces/tabs and retain break opportunities.
-    for run in block
-        .styled_text
-        .iter()
-        .filter(|run| run.preserve_whitespace)
-    {
-        builder.push(
-            StyleProperty::WhiteSpaceCollapse(parley::WhiteSpaceCollapse::BreakSpaces),
-            run.bytes.clone(),
-        );
+    // This cannot restore whitespace removed during source extraction. ODT's
+    // explicit whitespace runs keep their existing break-spaces behavior.
+    let base_break_spaces = style.white_space == WhiteSpace::BreakSpaces;
+    if base_break_spaces {
+        builder.push_default(StyleProperty::WhiteSpaceCollapse(
+            parley::WhiteSpaceCollapse::BreakSpaces,
+        ));
+    }
+    for run in block.styled_text.iter() {
+        let break_spaces =
+            run.preserve_whitespace || styles[run.element].white_space == WhiteSpace::BreakSpaces;
+        if break_spaces != base_break_spaces {
+            builder.push(
+                StyleProperty::WhiteSpaceCollapse(if break_spaces {
+                    parley::WhiteSpaceCollapse::BreakSpaces
+                } else {
+                    parley::WhiteSpaceCollapse::Preserve
+                }),
+                run.bytes.clone(),
+            );
+        }
     }
 
     let line_break_for = |style: &Style, language| {

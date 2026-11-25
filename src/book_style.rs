@@ -489,6 +489,27 @@ pub(crate) enum RubyPosition {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum WhiteSpace {
+    #[default]
+    Normal,
+    NoWrap,
+    Pre,
+    PreWrap,
+    PreLine,
+    BreakSpaces,
+}
+
+impl WhiteSpace {
+    fn nowrap(self) -> bool {
+        matches!(self, Self::NoWrap | Self::Pre)
+    }
+
+    fn preserves_spaces(self) -> bool {
+        matches!(self, Self::Pre | Self::PreWrap | Self::BreakSpaces)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LigatureExtras {
     pub(crate) contextual: Option<bool>,
     pub(crate) discretionary: Option<bool>,
@@ -619,9 +640,10 @@ pub(crate) struct Style {
     pub(crate) loose_nonbreaking: bool,
     pub word_break: WordBreak,
     pub(crate) inline_nowrap: bool,
+    pub(crate) white_space: WhiteSpace,
     pub hyphens: Hyphens,
     pub writing_mode: WritingMode,
-    /// HTML pre ancestry only; nowrap does not preserve ordinary spaces.
+    /// Whether spacing-sensitive rendering is requested by HTML pre or CSS.
     pub preformatted_spaces: bool,
 }
 
@@ -697,6 +719,7 @@ impl Default for Style {
             loose_nonbreaking: false,
             word_break: WordBreak::Normal,
             inline_nowrap: false,
+            white_space: WhiteSpace::Normal,
             hyphens: Hyphens::Auto,
             writing_mode: WritingMode::Horizontal,
             preformatted_spaces: false,
@@ -1383,7 +1406,11 @@ impl BookStyle {
                         style.loose_nonbreaking = *loose;
                     }
                     Property::WordBreak(breaking) => style.word_break = *breaking,
-                    Property::NoWrap(nowrap) => style.inline_nowrap = *nowrap,
+                    Property::WhiteSpace(mode) => {
+                        style.inline_nowrap = mode.nowrap();
+                        style.preformatted_spaces = mode.preserves_spaces();
+                        style.white_space = *mode;
+                    }
                     Property::Border(side, value)
                         if matches!(
                             element.tag.as_str(),
@@ -2312,7 +2339,7 @@ fn choose<'a>(
             Property::LetterSpacing(_) => LETTER_SPACING,
             Property::LineBreak(_, _) => 7,
             Property::WordBreak(_) => 8,
-            Property::NoWrap(_) => 53,
+            Property::WhiteSpace(_) => 53,
             Property::Hyphens(_) => 9,
             Property::WritingMode(_) => 10,
             Property::Width(ImageLength::FitContent) if !accept_fit => continue,
@@ -2447,7 +2474,7 @@ enum Property {
     LetterSpacing(CssLength),
     LineBreak(Option<LineBreak>, bool),
     WordBreak(WordBreak),
-    NoWrap(bool),
+    WhiteSpace(WhiteSpace),
     CaptionBottom(bool),
     Hyphens(Hyphens),
     WritingMode(WritingMode),
@@ -2998,13 +3025,17 @@ impl<'i> DeclarationParser<'i> for Properties {
                         _ => return Err(ParseError::unexpected_token()),
                     },
                 ),
-                "white-space" => {
-                    Property::NoWrap(match input.expect_ident()?.to_ascii_lowercase().as_str() {
-                        "normal" => false,
-                        "nowrap" => true,
+                "white-space" => Property::WhiteSpace(
+                    match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "normal" => WhiteSpace::Normal,
+                        "nowrap" => WhiteSpace::NoWrap,
+                        "pre" => WhiteSpace::Pre,
+                        "pre-wrap" => WhiteSpace::PreWrap,
+                        "pre-line" => WhiteSpace::PreLine,
+                        "break-spaces" => WhiteSpace::BreakSpaces,
                         _ => return Err(ParseError::unexpected_token()),
-                    })
-                }
+                    },
+                ),
                 "word-break" => {
                     Property::WordBreak(match input.expect_ident()?.to_ascii_lowercase().as_str() {
                         "normal" => WordBreak::Normal,

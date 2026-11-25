@@ -56,26 +56,9 @@ fn legacy_locale(tag: &Language) -> &str {
 /// The personal dictionaries shared by the corresponding built-in patterns.
 /// Keep the old exact tag for scripts that cannot use those patterns.
 pub(crate) fn locale(tag: &Language) -> &str {
-    if matches!(tag.script(), None | Some("Latn")) {
-        match crate::typography_language::canonical_dictionary_language(tag.language()) {
-            "en" => {
-                return if tag.region() == Some("GB") {
-                    "en-GB"
-                } else {
-                    "en-US"
-                };
-            }
-            "pt" => {
-                return if tag.region() == Some("BR") {
-                    "pt-BR"
-                } else {
-                    "pt-PT"
-                };
-            }
-            _ => {}
-        }
-    }
-    legacy_locale(tag)
+    crate::hyphenation::Dictionary::for_language(Some(*tag))
+        .map(crate::hyphenation::Dictionary::personal_key)
+        .unwrap_or_else(|| legacy_locale(tag))
 }
 
 fn letters(word: &str) -> Option<String> {

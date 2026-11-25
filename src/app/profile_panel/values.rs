@@ -14,6 +14,7 @@ impl Reader {
         let Some(profile) = self.profiles.get(index) else {
             return Vec::new();
         };
+        let language = self.controls.interface_language;
         let selection = profile.selection();
         let general = matches!(self.screen, Screen::ReadingProfileValues(_));
         let margins = matches!(self.screen, Screen::ReadingProfileMargins(_));
@@ -38,11 +39,12 @@ impl Reader {
                     field.display(value)
                 };
                 if !field.included_in(&selection) {
-                    detail.push_str(" · Excluded");
+                    detail.push_str(" · ");
+                    detail.push_str(language.reading_profile_text("Excluded"));
                 }
                 Some(
                     Item::new(
-                        field.label(),
+                        language.reading_profile_text(field.label()),
                         Action::Show(Screen::NumberingValue(NumberField::ProfileValue(
                             index, field,
                         ))),
@@ -58,11 +60,12 @@ impl Reader {
                 |spacing| format!("{}% / {}%", spacing.scaling, spacing.minimum),
             );
             if !selection.contains(&Field::WordSpacing) {
-                detail.push_str(" · Excluded");
+                detail.push_str(" · ");
+                detail.push_str(language.reading_profile_text("Excluded"));
             }
             items.push(
                 Item::new(
-                    "Word spacing",
+                    language.reading_profile_text("Word spacing"),
                     Action::Show(Screen::NumberingValue(NumberField::WordSpacing(
                         word_spacing::Draft::profile(index, pair),
                     ))),
@@ -74,36 +77,42 @@ impl Reader {
             if margins {
                 items.push(
                     Item::new(
-                        "Link top and bottom",
+                        language.reading_profile_text("Link top and bottom"),
                         Action::ToggleProfileMarginLink(index),
                     )
-                    .detail(if linked { "Linked" } else { "Independent" }),
+                    .detail(language.reading_profile_text(if linked {
+                        "Linked"
+                    } else {
+                        "Independent"
+                    })),
                 );
             } else if general {
                 items.push(
                     Item::new(
-                        "Page margins",
+                        language.reading_profile_text("Page margins"),
                         Action::Show(Screen::ReadingProfileMargins(index)),
                     )
                     .detail(if selection.contains(&Field::Margins) {
-                        "Left, right, top and bottom"
+                        language.reading_profile_text("Left, right, top and bottom")
                     } else {
-                        "Excluded"
+                        language.reading_profile_text("Excluded")
                     }),
                 );
                 items.push(
                     Item::new(
-                        "Font rendering",
+                        language.reading_profile_text("Font rendering"),
                         Action::Show(Screen::ReadingProfileFontRendering(index)),
                     )
-                    .detail("Weight, contrast, hinting and kerning"),
+                    .detail(language.reading_profile_text("Weight, contrast, hinting and kerning")),
                 );
                 items.push(
                     Item::new(
-                        "Book rendering",
+                        language.reading_profile_text("Book rendering"),
                         Action::Show(Screen::ReadingProfileBookRendering(index)),
                     )
-                    .detail("Page mode, alignment, styles and images"),
+                    .detail(
+                        language.reading_profile_text("Page mode, alignment, styles and images"),
+                    ),
                 );
             }
         }

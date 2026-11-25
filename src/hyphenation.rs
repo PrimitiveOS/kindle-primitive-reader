@@ -113,6 +113,54 @@ pub(crate) enum Dictionary {
 }
 
 impl Dictionary {
+    /// Stable personal-rule key for this actual pattern dictionary.
+    pub(crate) fn personal_key(self) -> &'static str {
+        match self {
+            Self::American => "en-US",
+            Self::British => "en-GB",
+            Self::Spanish => "es",
+            Self::Italian => "it",
+            Self::Portuguese => "pt-PT",
+            Self::PortugueseBrazil => "pt-BR",
+            Self::Estonian => "et",
+            Self::Finnish => "fi",
+            Self::Danish => "da",
+            Self::Dutch => "nl",
+            Self::French => "fr",
+            Self::German => "de",
+            Self::Bulgarian => "bg",
+            Self::Galician => "gl",
+            Self::Irish => "ga",
+            Self::Ukrainian => "uk",
+            Self::Polish => "pl",
+            Self::Russian => "ru",
+            Self::RussianEnglishBritish => "ru-GB",
+            Self::RussianEnglishAmerican => "ru-US",
+            Self::Swedish => "sv",
+            Self::Catalan => "ca",
+            Self::Turkish => "tr",
+            Self::Croatian => "hr",
+            Self::Norwegian => "no",
+            Self::Lithuanian => "lt",
+            Self::Icelandic => "is",
+            Self::Occitan => "oc",
+            Self::Welsh => "cy",
+            Self::Piedmontese => "pms",
+            Self::Romansh => "rm",
+            Self::Basque => "eu",
+            Self::Friulian => "fur",
+            Self::Esperanto => "eo",
+            Self::Georgian => "ka",
+            Self::Greek => "el",
+            Self::Hungarian => "hu",
+            Self::Malayalam => "ml",
+            Self::Latin => "la",
+            Self::LiturgicalLatin => "la-x-liturgic",
+            Self::Slovak => "sk",
+            Self::Slovenian => "sl",
+        }
+    }
+
     pub(crate) fn for_language(lang: Option<Language>) -> Option<Self> {
         let lang = lang?;
         let primary = crate::typography_language::canonical_dictionary_language(lang.language());

@@ -230,15 +230,28 @@ impl Reader {
         let (width, height) = self.reading_viewport().dimensions();
         Some(Sheet::centered(
             Rect::new(0, 0, width as i32, height as i32),
-            "Apply reading profile?",
+            self.controls
+                .interface_language
+                .reading_profile_text("Apply reading profile?"),
             profile.name(),
-            "Apply",
+            self.controls
+                .interface_language
+                .reading_profile_text("Apply"),
         ))
     }
 
     pub(in crate::app) fn draw_opening_ask(&self, canvas: &mut Canvas) {
         if let Some(sheet) = self.opening_ask_sheet() {
             sheet.draw(canvas, None);
+            let language = self.controls.interface_language;
+            if !language.is_english() {
+                canvas.button(
+                    sheet.button(SheetAction::Cancel),
+                    language.reading_profile_text("Cancel"),
+                    false,
+                    false,
+                );
+            }
         }
     }
 
@@ -320,6 +333,7 @@ const SAVE: Rect = Rect::new(656, 937, 362, 100);
 
 impl Reader {
     pub(super) fn opening_delay_items(&self, index: usize) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let current = self
             .profiles
             .get(index)
@@ -327,13 +341,13 @@ impl Reader {
             .map(|execution| execution.timing);
         let choice = |label, timing, detail| {
             Item::new(
-                label,
+                language.reading_profile_text(label),
                 Action::OpeningProfileRule(index, Command::SetTiming(timing)),
             )
             .detail(if current == Some(timing) {
-                "Selected"
+                language.reading_profile_text("Selected")
             } else {
-                detail
+                language.reading_profile_text(detail)
             })
         };
         let custom = current
@@ -343,7 +357,7 @@ impl Reader {
             choice("Prompt", Timing::Prompt, "Apply during opening"),
             choice("Default", Timing::Default, "Apply just after opening"),
             Item::new(
-                "Custom",
+                language.reading_profile_text("Custom"),
                 Action::Show(Screen::ReadingProfileOpening(index, Page::CustomDelay)),
             )
             .detail(custom),
@@ -369,11 +383,12 @@ impl Reader {
         ) {
             return;
         }
+        let language = self.controls.interface_language;
         let place = |rect| self.navigation_layout().centered(rect);
         canvas.popup(place(PANEL));
         canvas.text(
             place(Rect::new(246, 626, 772, 80)),
-            "Custom delay",
+            language.reading_profile_text("Custom delay"),
             primitive_ui::TextStyle::new(48).bold(),
         );
         canvas.text(
@@ -386,8 +401,18 @@ impl Reader {
         if let Some(notice) = &self.notice {
             canvas.text(place(Rect::new(246, 881, 772, 54)), notice, CAPTION);
         }
-        canvas.button(place(CANCEL), "Cancel", false, false);
-        canvas.button(place(SAVE), "Set delay", true, false);
+        canvas.button(
+            place(CANCEL),
+            language.reading_profile_text("Cancel"),
+            false,
+            false,
+        );
+        canvas.button(
+            place(SAVE),
+            language.reading_profile_text("Set delay"),
+            true,
+            false,
+        );
     }
 
     pub(in crate::app) fn opening_delay_input(&mut self, input: Input) -> Option<Change> {

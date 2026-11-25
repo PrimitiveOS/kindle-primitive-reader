@@ -294,6 +294,18 @@ rules; other rendering modes and actual Kindle appearance remain unverified.
 
 ## Paragraph spacing and browser defaults
 
+Horizontal Parley layout recognizes inherited publisher and user CSS
+`white-space` values `normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line` and
+`break-spaces`. The modes control wrapping of text and line breaks already
+retained by Reader; `break-spaces` also permits wrapping at retained spaces and
+tabs. Existing explicit ODT whitespace runs retain their established behavior.
+This is a partial implementation: EPUB/XHTML whitespace previously collapsed
+during source extraction cannot be restored, and retained explicit ODT spaces
+are not recollapsed for `pre-line` or `normal`. Vertical and Blitz rendering
+remain unsupported. Source text, copying and saved anchors do not change;
+this addition has not yet been built or tested.
+[Pinned CRE white-space values](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L2800-L2809)
+
 In horizontal Parley text, publisher and user CSS can set `text-align-last`
 or its EPUB alias to `auto`, `start`, `end`, `left`, `right`, `center` or
 `justify`. The setting inherits and accepts standard initial, inherit and
