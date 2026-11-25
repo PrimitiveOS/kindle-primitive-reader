@@ -3413,9 +3413,113 @@ fn contextual_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<O
     Some(Some(visual.into_owned()))
 }
 
+// Pseudo styles use the same source byte ranges as the existing first-line
+// measure/replay passes. Restrict this path to ASCII so casing is one-to-one.
+fn pseudo_ascii_transformed(
+    block: &LayoutBlock<'_>,
+    styles: &[Style],
+    pass: first_line::Pass,
+) -> Option<String> {
+    if !block.text.is_ascii() {
+        return None;
+    }
+    let locale_sensitive = |language: Option<Language>| {
+        language.is_some_and(|language| {
+            [
+                "tr", "tur", "az", "aze", "crh", "lt", "lit", "nl", "nld", "dut",
+            ]
+            .iter()
+            .any(|tag| language.language().eq_ignore_ascii_case(tag))
+        })
+    };
+    if locale_sensitive(block.language)
+        || block.styled_text.iter().any(|run| {
+            locale_sensitive(run.language) || run.language.or(block.language) != block.language
+        })
+    {
+        return None;
+    }
+    let base = styles.get(block.element)?;
+    let first_end = pass.styled_end(block.text);
+    if first_end > block.text.len() || !block.text.is_char_boundary(first_end) {
+        return None;
+    }
+    let mut modes = vec![base.text_transform; block.text.len()];
+    if let Some(line) = base.first_line.as_ref().filter(|_| first_end > 0) {
+        modes[..first_end].fill(line.apply(base).text_transform);
+    }
+    let first_style = |style: &Style| {
+        style
+            .first_line
+            .as_deref()
+            .filter(|line| line.host == block.element)
+            .map(|line| line.apply(style))
+    };
+    let mut previous_end = 0;
+    for run in block.styled_text.iter() {
+        if run.bytes.start < previous_end
+            || run.bytes.start > run.bytes.end
+            || run.bytes.end > modes.len()
+        {
+            return None;
+        }
+        let style = styles.get(run.element)?;
+        modes[run.bytes.clone()].fill(style.text_transform);
+        let first_part = run.bytes.start..run.bytes.end.min(first_end);
+        if !first_part.is_empty() {
+            let transformed = first_style(style).map_or(style.text_transform, |s| s.text_transform);
+            modes[first_part].fill(transformed);
+        }
+        previous_end = run.bytes.end;
+    }
+    if let Some(letter) = &block.first_letter {
+        if letter.bytes.start > letter.bytes.end || letter.bytes.end > modes.len() {
+            return None;
+        }
+        let style = styles.get(letter.owner)?;
+        modes[letter.bytes.clone()].fill(letter.rule.apply(style).text_transform);
+        let first_part = letter.bytes.start..letter.bytes.end.min(first_end);
+        if !first_part.is_empty() {
+            let first = first_style(style);
+            modes[first_part].fill(
+                letter
+                    .rule
+                    .apply(first.as_ref().unwrap_or(style))
+                    .text_transform,
+            );
+        }
+    }
+    if modes.iter().all(|mode| *mode == TextTransform::None) {
+        return None;
+    }
+    let mut starts = vec![false; modes.len()];
+    if modes.contains(&TextTransform::Capitalize) {
+        for range in crate::selection::word_ranges(block.text) {
+            if let Some(start) = starts.get_mut(range.start) {
+                *start = true;
+            }
+        }
+    }
+    let mut text = block.text.as_bytes().to_vec();
+    for (index, byte) in text.iter_mut().enumerate() {
+        *byte = match modes[index] {
+            TextTransform::None => *byte,
+            TextTransform::Uppercase => byte.to_ascii_uppercase(),
+            TextTransform::Lowercase => byte.to_ascii_lowercase(),
+            TextTransform::Capitalize if starts[index] => byte.to_ascii_uppercase(),
+            TextTransform::Capitalize => *byte,
+        };
+    }
+    String::from_utf8(text).ok()
+}
+
 // A same-length visual copy keeps every canonical byte boundary intact. Avoid
 // synthetic/projection paths until a general many-to-many mapping is available.
-fn bounded_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<String> {
+fn bounded_transformed(
+    block: &LayoutBlock<'_>,
+    styles: &[Style],
+    pass: first_line::Pass,
+) -> Option<String> {
     if block.text.len() > MAX_TEXT_BYTES
         || !matches!(
             &block.styled_text,
@@ -3425,10 +3529,11 @@ fn bounded_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<Stri
         || !block.images.is_empty()
         || !block.ruby.is_empty()
         || !block.bidi_controls.is_empty()
-        || block.first_letter.is_some()
-        || styles.get(block.element)?.first_line.is_some()
     {
         return None;
+    }
+    if block.first_letter.is_some() || styles.get(block.element)?.first_line.is_some() {
+        return pseudo_ascii_transformed(block, styles, pass);
     }
     if let Some(result) = contextual_transformed(block, styles) {
         return result;
@@ -3637,7 +3742,7 @@ fn shape_paragraph(
     }
     relaxed_nonbreaking.sort_unstable();
     relaxed_nonbreaking.dedup();
-    let visual_text = bounded_transformed(block, styles);
+    let visual_text = bounded_transformed(block, styles, pass);
     let layout_text = visual_text.as_deref().unwrap_or(block.text);
     // Transformations may change byte positions, so only pass boundaries when
     // the layout is using the unchanged visible source text.

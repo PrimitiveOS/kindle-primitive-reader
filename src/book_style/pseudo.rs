@@ -3,8 +3,8 @@ pub(crate) mod quotes;
 
 use super::{
     BookStyle, BoxMargin, CascadeOrigin, CssLength, CssResult, Display, Element, Family,
-    LigatureExtras, Priority, Property, Rule, Size, Style, TextDecoration, VariantCaps,
-    VariantEastAsian, VariantNumeric, VariantPosition, Weight, flow,
+    LigatureExtras, Priority, Property, Rule, Size, Style, TextDecoration, TextTransform,
+    VariantCaps, VariantEastAsian, VariantNumeric, VariantPosition, Weight, flow,
 };
 use cssparser::{Parser, Token};
 use parley::{FontStyle, FontWeight, GenericFamily};
@@ -246,6 +246,7 @@ struct Typography {
     variant_position: Option<VariantPosition>,
     variant_historical: Option<bool>,
     optical_sizing: Option<bool>,
+    text_transform: Option<TextTransform>,
     dpi: u16,
 }
 
@@ -318,6 +319,9 @@ impl Typography {
         if let Some(value) = self.optical_sizing {
             style.optical_sizing = value;
         }
+        if let Some(value) = self.text_transform {
+            style.text_transform = value;
+        }
         style.flow = flow::resolve(base.flow, style.display, style.visibility);
         style
     }
@@ -356,6 +360,7 @@ pub(crate) struct FirstLine {
     variant_position: VariantPosition,
     variant_historical: bool,
     optical_sizing: bool,
+    text_transform: TextTransform,
     root_scale: f32,
     decoration: TextDecoration,
 }
@@ -378,6 +383,7 @@ impl FirstLine {
             variant_position: style.variant_position,
             variant_historical: style.variant_historical,
             optical_sizing: style.optical_sizing,
+            text_transform: style.text_transform,
             root_scale,
             decoration: style.decoration,
         }
@@ -399,6 +405,7 @@ impl FirstLine {
         style.variant_position = self.variant_position;
         style.variant_historical = self.variant_historical;
         style.optical_sizing = self.optical_sizing;
+        style.text_transform = self.text_transform;
         style.decoration = style.decoration.including(self.decoration);
         style
     }
@@ -473,6 +480,7 @@ impl FirstLine {
             variant_position: inherited_variant!(super::VARIANT_POSITION, variant_position),
             variant_historical: inherited_variant!(super::VARIANT_HISTORICAL, variant_historical),
             optical_sizing: inherited_variant!(super::OPTICAL_SIZING, optical_sizing),
+            text_transform: inherited_variant!(super::TEXT_TRANSFORM, text_transform),
             root_scale: self.root_scale,
             decoration: self.decoration.including(style.decoration),
         }
@@ -576,6 +584,7 @@ fn property_slot(property: &Property) -> Option<usize> {
         Property::VariantPosition(_) | Property::Reset(super::VARIANT_POSITION, _) => 18,
         Property::VariantHistorical(_) | Property::Reset(super::VARIANT_HISTORICAL, _) => 19,
         Property::OpticalSizing(_) | Property::Reset(super::OPTICAL_SIZING, _) => 20,
+        Property::TextTransform(_) | Property::Reset(super::TEXT_TRANSFORM, _) => 21,
         _ => return None,
     })
 }
@@ -600,7 +609,7 @@ pub(super) fn accepts_user_declaration(target: Target, property: &Property) -> b
                 })
         }
         (Target::Generated(_), _) => {
-            property_slot(property).is_some_and(|slot| slot <= 8 || slot >= 13)
+            property_slot(property).is_some_and(|slot| slot <= 8 || (13..=20).contains(&slot))
         }
         (Target::FirstLine, _) => is_first_line_typography(property),
         (
@@ -635,6 +644,7 @@ fn is_first_line_typography(property: &Property) -> bool {
             | Property::VariantPosition(_)
             | Property::VariantHistorical(_)
             | Property::OpticalSizing(_)
+            | Property::TextTransform(_)
             | Property::Reset(
                 super::COMMON_LIGATURES
                     | super::LIGATURE_EXTRAS
@@ -643,13 +653,14 @@ fn is_first_line_typography(property: &Property) -> bool {
                     | super::VARIANT_EAST_ASIAN
                     | super::VARIANT_POSITION
                     | super::VARIANT_HISTORICAL
-                    | super::OPTICAL_SIZING,
+                    | super::OPTICAL_SIZING
+                    | super::TEXT_TRANSFORM,
                 _,
             )
     )
 }
 
-const SLOTS: usize = 21;
+const SLOTS: usize = 22;
 type Winners<'a> = [Option<(Priority, &'a Property)>; SLOTS];
 
 pub(super) struct Rules<'a> {
@@ -763,6 +774,9 @@ impl<'a> Rules<'a> {
                     let Some(slot) = property_slot(&decl.property) else {
                         continue;
                     };
+                    if matches!(target, Target::Generated(_)) && slot == 21 {
+                        continue;
+                    }
                     let priority = super::cascade_priority(
                         *origin,
                         decl.important,
@@ -948,6 +962,7 @@ impl<'a> Rules<'a> {
                 Property::VariantPosition(value) => style.variant_position = Some(*value),
                 Property::VariantHistorical(value) => style.variant_historical = Some(*value),
                 Property::OpticalSizing(value) => style.optical_sizing = Some(*value),
+                Property::TextTransform(value) => style.text_transform = Some(*value),
                 Property::Reset(key, super::user_css::Reset::Initial) => match *key {
                     super::COMMON_LIGATURES => style.common_ligatures = Some(true),
                     super::LIGATURE_EXTRAS => style.ligature_extras = Some(Default::default()),
@@ -961,6 +976,7 @@ impl<'a> Rules<'a> {
                     }
                     super::VARIANT_HISTORICAL => style.variant_historical = Some(false),
                     super::OPTICAL_SIZING => style.optical_sizing = Some(true),
+                    super::TEXT_TRANSFORM => style.text_transform = Some(TextTransform::None),
                     _ => {}
                 },
                 _ => (),

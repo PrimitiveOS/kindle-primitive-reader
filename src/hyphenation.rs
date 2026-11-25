@@ -381,23 +381,42 @@ fn opportunities_text_with_override(
         let Some(head) = spans.next() else {
             continue;
         };
+        if head.bytes.start > range.start {
+            continue;
+        }
+        let locale = dictionary(&styles[head.element], head.hyphenation_language);
+        if (algorithmic && !allows_user_rules(&styles[head.element]))
+            || (!algorithmic && locale.is_none())
+        {
+            continue;
+        }
+        let mut covered = head.bytes.end.min(range.end);
+        let valid = spans.all(|span| {
+            if span.bytes.start > covered
+                || if algorithmic {
+                    !allows_user_rules(&styles[span.element])
+                } else {
+                    dictionary(&styles[span.element], span.hyphenation_language) != locale
+                }
+            {
+                return false;
+            }
+            covered = covered.max(span.bytes.end.min(range.end));
+            true
+        });
+        if !valid || covered != range.end {
+            continue;
+        }
         let emit = |offset| {
             if breaks.len() < MAX_BREAKS {
                 breaks.push(range.start + offset);
             }
         };
         if algorithmic {
-            if allows_user_rules(&styles[head.element])
-                && spans.all(|span| allows_user_rules(&styles[span.element]))
-            {
-                let limits = settings.hyphenation_limits.unwrap_or(ALGORITHMIC_LIMITS);
-                algorithmic::breaks(word, limits, emit);
-            }
-        } else if let Some(locale) = dictionary(&styles[head.element], head.hyphenation_language)
+            let limits = settings.hyphenation_limits.unwrap_or(ALGORITHMIC_LIMITS);
+            algorithmic::breaks(word, limits, emit);
+        } else if let Some(locale) = locale
             && locale != Dictionary::Greek
-            && spans.all(|span| {
-                dictionary(&styles[span.element], span.hyphenation_language) == Some(locale)
-            })
         {
             let limits = settings
                 .hyphenation_limits
@@ -898,13 +917,19 @@ pub(crate) fn with_user_rules_text(
         };
         let loc = crate::user_hyphenation::locale(&language);
         let allowed = allows_user_rules;
-        if !allowed(&styles[run.element])
+        let mut covered = run.bytes.end.min(range.end);
+        if run.bytes.start > range.start
+            || !allowed(&styles[run.element])
             || !spans.all(|s| {
-                allowed(&styles[s.element])
+                let valid = s.bytes.start <= covered
+                    && allowed(&styles[s.element])
                     && s.language
                         .as_ref()
-                        .is_some_and(|l| crate::user_hyphenation::locale(l) == loc)
+                        .is_some_and(|l| crate::user_hyphenation::locale(l) == loc);
+                covered = covered.max(s.bytes.end.min(range.end));
+                valid
             })
+            || covered != range.end
         {
             continue;
         }

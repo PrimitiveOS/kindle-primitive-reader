@@ -269,7 +269,16 @@ impl Reader {
                     .as_ref()
                     .is_some_and(|lang| locale(lang) == language)
         };
-        (allowed(run) && spans.all(allowed)).then_some((word, language))
+        let mut covered = run.bytes.end.min(end);
+        (run.bytes.start <= start
+            && allowed(run)
+            && spans.all(|span| {
+                let valid = span.bytes.start <= covered && allowed(span);
+                covered = covered.max(span.bytes.end.min(end));
+                valid
+            })
+            && covered == end)
+            .then_some((word, language))
     }
 
     pub(super) fn begin_hyphenation(&mut self) -> Result<()> {

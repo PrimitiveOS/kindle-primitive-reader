@@ -136,6 +136,10 @@ the original grapheme's byte range. Layout paints a hyphen only at a fitted
 line break. Searching or selecting a split word returns its original text
 and coordinates. Publisher CSS, soft hyphens, limits, and user exceptions use
 the existing rules. These dictionaries apply to horizontal reflowable text.
+If projected text does not have continuous styled-run coverage across a word,
+Reader skips automatic, algorithmic, and personal-rule candidates, and does
+not offer personal-rule editing for that word, rather than guessing its
+language or publisher policy. Behavioral verification remains pending.
 
 ## Mac comparison
 

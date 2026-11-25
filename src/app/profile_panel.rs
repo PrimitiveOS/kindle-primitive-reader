@@ -216,16 +216,23 @@ impl Reader {
         let Some(profile) = self.profiles.get(index) else {
             return Vec::new();
         };
+        let language = self.controls.interface_language;
         let mut items = vec![
-            Item::new("Select all", Action::SetReadingProfileFields(true)),
-            Item::new("Clear all", Action::SetReadingProfileFields(false)),
+            Item::new(
+                language.reading_profile_text("Select all"),
+                Action::SetReadingProfileFields(true),
+            ),
+            Item::new(
+                language.reading_profile_text("Clear all"),
+                Action::SetReadingProfileFields(false),
+            ),
         ];
-        items.extend(
-            profile
-                .available()
-                .into_iter()
-                .map(|field| Item::new(field.label(), Action::ToggleReadingProfileField(field))),
-        );
+        items.extend(profile.available().into_iter().map(|field| {
+            Item::new(
+                language.reading_profile_text(field.label()),
+                Action::ToggleReadingProfileField(field),
+            )
+        }));
         items
     }
 
@@ -272,7 +279,14 @@ impl Reader {
     pub(super) fn draw_profile_field_controls(&self, canvas: &mut Canvas) {
         if matches!(self.screen, Screen::ReadingProfileFields(_)) {
             let (_, cancel) = field_buttons(self.navigation_layout());
-            canvas.button(cancel, "Cancel", false, false);
+            canvas.button(
+                cancel,
+                self.controls
+                    .interface_language
+                    .reading_profile_text("Cancel"),
+                false,
+                false,
+            );
         }
     }
 
@@ -555,8 +569,22 @@ impl Reader {
         if let Screen::ConfirmProfile(index, confirm) = self.screen
             && let Some(profile) = self.profiles.get(index)
         {
-            profile_confirmation_sheet(self.navigation_layout(), profile.name(), confirm)
-                .draw(canvas, None);
+            let language = self.controls.interface_language;
+            let sheet = profile_confirmation_sheet_language(
+                self.navigation_layout(),
+                profile.name(),
+                confirm,
+                language,
+            );
+            sheet.draw(canvas, None);
+            if !language.is_english() {
+                canvas.button(
+                    sheet.button(SheetAction::Cancel),
+                    language.reading_profile_text("Cancel"),
+                    false,
+                    false,
+                );
+            }
         }
     }
 
@@ -610,6 +638,20 @@ fn field_buttons(layout: NavigationLayout) -> (Rect, Rect) {
 }
 
 fn profile_confirmation_sheet(layout: NavigationLayout, name: &str, confirm: Confirm) -> Sheet<'_> {
+    profile_confirmation_sheet_language(
+        layout,
+        name,
+        confirm,
+        super::interface_language::InterfaceLanguage::English,
+    )
+}
+
+fn profile_confirmation_sheet_language(
+    layout: NavigationLayout,
+    name: &str,
+    confirm: Confirm,
+    language: super::interface_language::InterfaceLanguage,
+) -> Sheet<'_> {
     let short_edge = layout.width.min(layout.height);
     let view = Rect::new(
         (layout.width - short_edge) / 2,
@@ -618,8 +660,18 @@ fn profile_confirmation_sheet(layout: NavigationLayout, name: &str, confirm: Con
         layout.height,
     );
     match confirm {
-        Confirm::Replace => Sheet::centered(view, "Replace this profile?", name, "Replace"),
-        Confirm::Delete => Sheet::centered(view, "Delete this profile?", name, "Delete profile"),
+        Confirm::Replace => Sheet::centered(
+            view,
+            language.reading_profile_text("Replace this profile?"),
+            name,
+            language.reading_profile_text("Replace"),
+        ),
+        Confirm::Delete => Sheet::centered(
+            view,
+            language.reading_profile_text("Delete this profile?"),
+            name,
+            language.reading_profile_text("Delete profile"),
+        ),
     }
 }
 
