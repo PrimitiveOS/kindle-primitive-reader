@@ -48,19 +48,20 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 318 of 540 in-scope reading-control rows have
-an implemented workflow, 171 are partial, 44 are gaps, and 7 need audit.
+**Pinned control inventory:** 326 of 539 in-scope reading-control rows have
+an implemented workflow, 163 are partial, 44 are gaps, and 6 need audit.
 The 44 gaps cover interface-language choices. The largest groups of partial
-controls are typography and style tweaks. [Control matrix](koreader-sdl-reference-controls.json)
+controls are typography and style tweaks. The audited SDL fullscreen row
+belongs to the host window and is unavailable in KOReader’s Kindle menu.
+[Control matrix](koreader-sdl-reference-controls.json)
 
-The Mac replay now covers Book details edits that update the active EPUB
-header, inline layout for single-level text lists in notes, and Spanish,
-Italian, and European Portuguese dictionaries. Complex note layouts,
-immediate charging events, broader dictionaries, and complete gesture
-sampling remain open.
-[Top header and Book details](top-status-header.md) ·
+The Mac replay now covers menu-edge holds, repeated areas in zoomed
+fixed pages, nested text lists in inline notes, and CJK grid, paragraph
+indentation, and black-and-white presets. Fixed text reflow, other rich
+notes, additional paragraph layout options, and hardware verification
+remain open. [Menu pager](menu-pager.md) · [Page overlap](scroll-page-overlap.md) ·
 [Inline notes](in-page-footnotes.md#inline-all-footnote-content) ·
-[Multilingual hyphenation](multilingual-hyphenation.md)
+[Reading styles](reading-style-presets.md)
 
 The [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The

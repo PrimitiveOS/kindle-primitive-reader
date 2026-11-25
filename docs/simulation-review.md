@@ -2,6 +2,50 @@
 
 ## Current Mac simulator checkpoint
 
+**Menu paging** goes straight to the first or last page on a held arrow
+in settings lists and Documents. A tap or physical page key moves one
+page. The stock replay verifies the two edge destinations and disabled
+arrows. Reader commits the hold when the reader lifts their finger.
+[Menu comparison and screenshots](menu-pager.md)
+
+**Fixed-page overlap** marks the repeated part of the previous viewport
+when a page turn pans inside a zoomed PDF or DjVu page. Free swipes and
+page changes clear the cue. The reference dashed PDF cue matches all
+3,792 pixels of the pinned native marker, and both simulators exercise
+continuous EPUB overlap. Fixed text reflow remains open.
+[Overlap comparison and screenshots](scroll-page-overlap.md)
+
+**Inline notes** flatten nested text lists and multi-paragraph list items
+without losing source spans, selection, or backlinks. Illustrated notes
+keep their ordinary layout. The stock replay checks the flattened geometry
+and resolves the backlink from the canonical note.
+[Footnote comparison and screenshots](in-page-footnotes.md#inline-all-footnote-content)
+
+**Reading styles** add a centered CJK grid that follows the character-width
+setting, a preset for unindenting consecutive paragraphs, and a black-and-white
+preset for supported borders and publisher backgrounds. Simulators compare
+the same CJK specimen at 100% and 125% and the border and fill colors.
+[Reading style comparisons](reading-style-presets.md)
+
+The full Mac run passed 1,612 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. The standard run skipped
+73 opt-in tests. The 41 focused checks passed. The Reader simulator and
+pinned KOReader replays reproduced 26 new screenshots.
+
+The four original EPUB, PDF, AZW3, and MOBI documents opened through
+the regular picker, turned a page, and resumed with matching source
+bytes. The separate original EPUB note test verified 65 bands and 63
+anchors across eight composed chapters.
+
+The locally staged ARMHF executable is stripped and statically linked.
+It contains 39,228,772 bytes with SHA-256
+`3ccce5cd07924109bcb69c170bc6ef3dab4873cb8059007df08d623c873c4d63`.
+The 31 staged files total 48,833,303 bytes. The project and dependency
+notices, Launcher icon, and OCR model passed inspection. Foreground
+Kindle verification and Store publication remain pending.
+
+## Book details, inline lists, and multilingual hyphenation checkpoint
+
 **Book details** saves title and author edits for the open reflowable book.
 The optional header reflects the edit on return without moving the page
 or changing the pixels below the header. Reset restores imported or
