@@ -128,6 +128,20 @@ impl Reader {
             ));
             items.push(Item::new("Latest saved mark", Action::LatestSavedMark));
         }
+        if self
+            .open_book_id()
+            .and_then(|id| self.library.state(id))
+            .is_some_and(|state| !state.bookmarks.is_empty())
+        {
+            items.push(Item::new(
+                "Previous page bookmark",
+                Action::PageBookmark(Direction::Previous),
+            ));
+            items.push(Item::new(
+                "Next page bookmark",
+                Action::PageBookmark(Direction::Next),
+            ));
+        }
         if let Some(book) = self
             .active
             .as_ref()

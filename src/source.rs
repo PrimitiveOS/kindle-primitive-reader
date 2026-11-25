@@ -10,6 +10,7 @@ pub(crate) const SOURCE_ATTRIBUTE: &str = "data-primos-source";
 #[cfg(test)]
 mod flow_metadata_tests;
 mod numeric_references;
+pub(crate) mod pre_line_projection;
 pub(crate) mod raw_whitespace;
 #[cfg(feature = "kindle")]
 mod selection_html;

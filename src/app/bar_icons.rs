@@ -17,6 +17,14 @@ pub(super) const CODE: Icon = line(&["M9 6 L3 12 L9 18 M15 6 L21 12 L15 18"]);
 pub(super) const TEXT: Icon = line(&["M4 19 L9 6 L14 19 M6.5 14 H11.5 M16 19 L19 11 L22 19"]);
 pub(super) const EXIT: Icon = line(&["M14 5 H19 V19 H14", "M4 12 H15 M11 8 L15 12 L11 16"]);
 pub(super) const BOOKMARK: Icon = line(&["M7 4 H17 V20 L12 16 L7 20 Z"]);
+const PAGE_BOOKMARK_PREVIOUS: Icon = Icon {
+    stroke: &["M8 8 L4 12 L8 16"],
+    fill: &["M13 5 H19 V19 L16 16 L13 19 Z"],
+};
+const PAGE_BOOKMARK_NEXT: Icon = Icon {
+    stroke: &["M16 8 L20 12 L16 16"],
+    fill: &["M5 5 H11 V19 L8 16 L5 19 Z"],
+};
 pub(super) const PAGE: Icon = line(&["M5 4 H19 V20 H5 Z", "M8 9 H16 M8 13 H16 M8 17 H13"]);
 const GRID: Icon = line(&[
     "M4 4 H10 V10 H4 Z M14 4 H20 V10 H14 Z",
@@ -112,6 +120,10 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Chapter(super::chapter_navigation::Direction::Next) => LAST_PAGE,
         Action::SavedMark(super::chapter_navigation::Direction::Previous) => super::skim::MARK_BACK,
         Action::SavedMark(super::chapter_navigation::Direction::Next) => super::skim::MARK_FORWARD,
+        Action::PageBookmark(super::chapter_navigation::Direction::Previous) => {
+            PAGE_BOOKMARK_PREVIOUS
+        }
+        Action::PageBookmark(super::chapter_navigation::Direction::Next) => PAGE_BOOKMARK_NEXT,
         Action::SavedMarkEdge(super::chapter_navigation::Direction::Previous) => MARK_FIRST,
         Action::SavedMarkEdge(super::chapter_navigation::Direction::Next) => MARK_LAST,
         Action::LatestSavedMark => MARK_LATEST,

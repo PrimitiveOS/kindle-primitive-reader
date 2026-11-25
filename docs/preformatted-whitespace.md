@@ -1,7 +1,10 @@
 # Preformatted whitespace
 
 The local Reader build enables a bounded horizontal layout for simple source
-blocks with `white-space: pre`, `pre-wrap` or `break-spaces`. It preserves
+blocks with `white-space: pre`, `pre-wrap` or `break-spaces`. A bounded
+`pre-line` subset is also supported when the raw text has no tabs, carriage
+returns, form feeds, repeated or line-edge spaces, or final newline; more
+complex collapsing retains the canonical fallback. It preserves
 verified spaces, tabs and line breaks while keeping existing canonical source
 identities. This implementation has not yet been behaviorally tested in the
 simulator or on Kindle and must not be treated as validated or released.

@@ -724,6 +724,7 @@ enum Action {
     SetMenuActivation(reading_bars::ActivationOption),
     Chapter(chapter_navigation::Direction),
     SavedMark(chapter_navigation::Direction),
+    PageBookmark(chapter_navigation::Direction),
     SavedMarkEdge(chapter_navigation::Direction),
     LatestSavedMark,
     ChapterLevel(chapter_navigation::LevelSetting),
@@ -4778,6 +4779,7 @@ impl Reader {
             Action::SetMenuActivation(option) => self.change_menu_activation(option)?,
             Action::Chapter(direction) => self.jump_chapter(direction)?,
             Action::SavedMark(direction) => self.jump_saved_mark(direction, false)?,
+            Action::PageBookmark(direction) => self.jump_page_bookmark(direction)?,
             Action::SavedMarkEdge(direction) => self.jump_saved_mark(direction, true)?,
             Action::LatestSavedMark => {
                 let action = self.latest_bookmark_action().ok_or("No saved marks")?;

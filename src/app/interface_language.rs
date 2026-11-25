@@ -43,6 +43,8 @@ const NAVIGATION_LABELS: &[(&str, &str)] = &[
     ("Preview more links", "Xem trước thêm liên kết"),
     ("Previous saved mark", "Dấu đã lưu trước"),
     ("Next saved mark", "Dấu đã lưu tiếp"),
+    ("Previous page bookmark", "Dấu trang trước"),
+    ("Next page bookmark", "Dấu trang tiếp"),
     ("First saved mark", "Dấu đã lưu đầu tiên"),
     ("Last saved mark", "Dấu đã lưu cuối cùng"),
     ("Latest saved mark", "Dấu mới lưu nhất"),
@@ -3621,6 +3623,11 @@ impl InterfaceLanguage {
             "Read here" => "Đọc tại đây",
             "No earlier saved mark" => "Không có dấu đã lưu trước đó",
             "No later saved mark" => "Không có dấu đã lưu tiếp theo",
+            "No earlier page bookmark" => "Không có dấu trang trước đó",
+            "No later page bookmark" => "Không có dấu trang tiếp theo",
+            "Too many bookmarks to search; open Bookmarks" => {
+                "Quá nhiều dấu trang; hãy mở Dấu trang"
+            }
             "Saved mark location is unavailable" => "Vị trí dấu đã lưu không khả dụng",
             _ => english,
         }

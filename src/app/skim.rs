@@ -1,5 +1,6 @@
 //! Transient page preview over the current reading view.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use primitive_app::{App, Change};
@@ -707,7 +708,7 @@ impl Reader {
 
     fn skim_mark(&mut self, direction: Direction, boundary: bool) -> Change {
         let before = self.current_position();
-        let Some(target) = self.skim_mark_destination(direction, boundary) else {
+        let Some(target) = self.skim_mark_destination(direction, boundary, false, None) else {
             return self.report(match direction {
                 Direction::Previous => "No earlier saved mark",
                 Direction::Next => "No later saved mark",
@@ -727,12 +728,37 @@ impl Reader {
         direction: Direction,
         boundary: bool,
     ) -> crate::Result<()> {
-        let Some(target) = self.skim_mark_destination(direction, boundary) else {
+        self.jump_mark_with_filter(direction, boundary, false)
+    }
+
+    pub(super) fn jump_page_bookmark(&mut self, direction: Direction) -> crate::Result<()> {
+        self.jump_mark_with_filter(direction, false, true)
+    }
+
+    fn jump_mark_with_filter(
+        &mut self,
+        direction: Direction,
+        boundary: bool,
+        page_bookmarks_only: bool,
+    ) -> crate::Result<()> {
+        let limit_hit = Cell::new(false);
+        let target =
+            self.skim_mark_destination(direction, boundary, page_bookmarks_only, Some(&limit_hit));
+        if limit_hit.get() {
+            return Err(self
+                .controls
+                .interface_language
+                .skim_text("Too many bookmarks to search; open Bookmarks")
+                .into());
+        }
+        let Some(target) = target else {
             let language = self.controls.interface_language;
             return Err(language
-                .skim_text(match direction {
-                    Direction::Previous => "No earlier saved mark",
-                    Direction::Next => "No later saved mark",
+                .skim_text(match (direction, page_bookmarks_only) {
+                    (Direction::Previous, true) => "No earlier page bookmark",
+                    (Direction::Next, true) => "No later page bookmark",
+                    (Direction::Previous, false) => "No earlier saved mark",
+                    (Direction::Next, false) => "No later saved mark",
                 })
                 .into());
         };
@@ -762,29 +788,43 @@ impl Reader {
         &self,
         direction: Direction,
         boundary: bool,
+        page_bookmarks_only: bool,
+        limit_hit: Option<&Cell<bool>>,
     ) -> Option<ReadingPosition> {
         let current = self.current_position()?;
         let state = self.library.state(self.open_book_id()?)?;
+        if page_bookmarks_only && state.bookmarks.len() > 512 {
+            if let Some(flag) = limit_hit {
+                flag.set(true);
+            }
+            return None;
+        }
         let reflow = self.active.as_ref();
         let saved_positions = state
             .bookmarks
             .iter()
             .map(|bookmark| bookmark.position.clone());
-        let reflow_marks = state.highlights.iter().filter_map(|mark| {
-            let anchor = &mark.selection.start;
-            Some(ReadingPosition {
-                chapter: reflow?.reading.probe.chapter_index(&anchor.chapter)?,
-                page: 0,
-                anchor: Some(anchor.clone()),
-            })
-        });
+        let reflow_marks = state
+            .highlights
+            .iter()
+            .filter(|_| !page_bookmarks_only)
+            .filter_map(|mark| {
+                let anchor = &mark.selection.start;
+                Some(ReadingPosition {
+                    chapter: reflow?.reading.probe.chapter_index(&anchor.chapter)?,
+                    page: 0,
+                    anchor: Some(anchor.clone()),
+                })
+            });
         let fixed_marks = state
             .pdf_highlights
             .iter()
             .filter(|mark| {
-                self.fixed
-                    .as_ref()
-                    .is_some_and(|book| mark.page < book.reading.count())
+                !page_bookmarks_only
+                    && self
+                        .fixed
+                        .as_ref()
+                        .is_some_and(|book| mark.page < book.reading.count())
             })
             .map(|mark| ReadingPosition {
                 chapter: 0,
@@ -797,27 +837,66 @@ impl Reader {
             .chain(fixed_marks)
             .filter_map(|mut position| {
                 let key = if let Some(book) = reflow {
-                    let chapter = position
-                        .anchor
-                        .as_ref()
-                        .and_then(|anchor| book.reading.probe.chapter_index(&anchor.chapter))
-                        .unwrap_or(position.chapter);
+                    let chapter = if page_bookmarks_only {
+                        match &position.anchor {
+                            Some(anchor) if anchor.book == book.reading.probe.book => {
+                                book.reading.probe.chapter_index(&anchor.chapter)?
+                            }
+                            Some(_) => return None,
+                            None => position.chapter,
+                        }
+                    } else {
+                        position
+                            .anchor
+                            .as_ref()
+                            .and_then(|anchor| book.reading.probe.chapter_index(&anchor.chapter))
+                            .unwrap_or(position.chapter)
+                    };
                     if chapter >= book.reading.probe.chapter_count()
                         || (direction == Direction::Previous && chapter > current.chapter)
                         || (direction == Direction::Next && chapter < current.chapter)
                     {
                         return None;
                     }
-                    reflow_mark_location(
-                        book,
-                        chapter,
-                        position.page,
-                        position.anchor.as_ref(),
-                        &mut layouts,
-                    )
+                    if page_bookmarks_only {
+                        let probe = if chapter == book.reading.chapter {
+                            &book.reading.probe
+                        } else {
+                            if !layouts.contains_key(&chapter) && layouts.len() >= 8 {
+                                if let Some(flag) = limit_hit {
+                                    flag.set(true);
+                                }
+                                return None;
+                            }
+                            layouts
+                                .entry(chapter)
+                                .or_insert_with(|| book.reading.config.chapter(chapter).ok())
+                                .as_ref()?
+                        };
+                        if let Some(anchor) = &position.anchor {
+                            let page = probe.page_for(anchor)?;
+                            (chapter, page, anchor.block, anchor.offset)
+                        } else {
+                            if position.page >= probe.page_count() {
+                                return None;
+                            }
+                            (chapter, position.page, 0, 0)
+                        }
+                    } else {
+                        reflow_mark_location(
+                            book,
+                            chapter,
+                            position.page,
+                            position.anchor.as_ref(),
+                            &mut layouts,
+                        )
+                    }
                 } else {
                     let fixed = self.fixed.as_ref()?;
-                    if position.page >= fixed.reading.count() {
+                    if position.page >= fixed.reading.count()
+                        || (page_bookmarks_only
+                            && (position.chapter != 0 || position.anchor.is_some()))
+                    {
                         return None;
                     }
                     (0, position.page, 0, 0)

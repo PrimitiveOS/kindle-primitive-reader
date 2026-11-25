@@ -2000,10 +2000,51 @@ fn toc_entry(base: &str, href: Option<&str>, node: Node<'_, '_>, depth: usize) -
 
 fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
     let mut bytes = read_entry(archive, path, MAX_XML)?;
-    if bytes.starts_with(b"\xef\xbb\xbf") {
-        bytes.drain(..3);
-    }
-    crate::epub_xml::prepare(String::from_utf8(bytes)?, MAX_XML)
+    let text = if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+        let (encoding, label) = if bytes.starts_with(&[0xff, 0xfe]) {
+            (encoding_rs::UTF_16LE, "utf-16le")
+        } else {
+            (encoding_rs::UTF_16BE, "utf-16be")
+        };
+        let decoded = encoding
+            .decode_without_bom_handling_and_without_replacement(&bytes[2..])
+            .ok_or("The EPUB XML contains invalid UTF-16")?;
+        if decoded.contains('\0') {
+            return Err("The EPUB XML contains binary characters".into());
+        }
+        if decoded.starts_with("<?xml")
+            && decoded
+                .as_bytes()
+                .get(5)
+                .is_some_and(u8::is_ascii_whitespace)
+        {
+            let end = decoded
+                .find("?>")
+                .ok_or("The EPUB XML declaration is incomplete")?
+                + 2;
+            if end > 1024 {
+                return Err("The EPUB XML declaration is too long".into());
+            }
+            let declaration = &decoded[..end];
+            Document::parse(&format!("{declaration}<root/>"))
+                .map_err(|_| "The EPUB XML declaration is invalid")?;
+            if let Some(declared) =
+                loose::declared_encoding(declaration.as_bytes(), loose::Format::Fb2)
+                && declared != "utf-16"
+                && declared != label
+            {
+                return Err("The EPUB XML encoding conflicts with its byte order".into());
+            }
+        }
+        decoded.into_owned()
+    } else {
+        // Keep the existing UTF-8 text and source-revision behavior exactly.
+        if bytes.starts_with(b"\xef\xbb\xbf") {
+            bytes.drain(..3);
+        }
+        String::from_utf8(bytes)?
+    };
+    crate::epub_xml::prepare(text, MAX_XML)
 }
 
 fn read_entry(archive: &mut Archive, path: &str, max_bytes: usize) -> Result<Vec<u8>> {

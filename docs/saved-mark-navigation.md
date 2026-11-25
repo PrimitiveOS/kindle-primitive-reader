@@ -12,6 +12,26 @@ Bookmark Browser's Filters screen offers **Show current page in results** when o
 
 Reference: pinned KOReader [`ReaderBookmark` previous/next/first/last bookmarked-page helpers](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L512-L547) select annotations on strictly earlier or later pages, including highlights unless the page-bookmark-only option is set. KOReader's [`getLatestBookmark`](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L619-L628) chooses by recorded annotation time. Reader independently reuses its existing Skim ordering and latest-mark selector; it does not copy upstream source.
 
+When the open book has page bookmarks, the Navigation grid also offers
+**Previous page bookmark** and **Next page bookmark**. They use the same
+strict page ordering and history behavior, but skip highlights and their notes.
+The existing saved-mark actions and Skim continue to include both bookmarks and
+highlights. The bookmark-only actions verify reflow anchors against the current
+source before ranking, skip unresolvable entries, and check anchorless legacy
+pages are in range; no saved mark is changed. KOReader's previous/next helpers expose the analogous
+`page_bookmark_only` parameter; Reader exposes it as separate actions rather
+than claiming that KOReader has the same menu. These actions require simulator
+and Kindle validation.
+
+To bound foreground work, bookmark-only navigation checks at most 512 saved
+bookmarks and loads at most eight distinct noncurrent chapter layouts per
+attempt. If either limit would be exceeded, it reports that the bookmark list
+should be used instead; it never jumps using an incomplete set. Layouts are
+reused within the attempt. These limits are a temporary Reader constraint,
+not KOReader parity. A follow-up should move source verification into a
+bounded cancellable background search so books beyond these limits can still
+use bookmark-only navigation without blocking the reading interface.
+
 KOReader's [current-document mark list](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L675-L705) and [highlight filters](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L960-L980) motivated the Current book source.
 
 The shortcut follows the intent of KOReader's [Current page bookmark-list command](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L1008-L1022); its filtered fallback, reflow chapter limit and separate cross-book browser are Reader-specific behavior.

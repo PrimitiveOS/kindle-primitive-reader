@@ -47,6 +47,26 @@ pub(in crate::parley_layout) struct Prepared {
     binding: SourceBinding,
 }
 
+fn supported_raw_mode(style: &Style) -> bool {
+    match style.white_space {
+        WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::BreakSpaces => {
+            style.preformatted_spaces
+        }
+        WhiteSpace::PreLine => !style.preformatted_spaces,
+        WhiteSpace::Normal | WhiteSpace::NoWrap => false,
+    }
+}
+
+/// Only install pre-line when its authored text is already equal to the
+/// displayed whitespace. More complex collapsing needs its own projection.
+fn pre_line_identity(raw: &str) -> bool {
+    !raw.ends_with('\n')
+        && !raw.chars().any(|ch| matches!(ch, '\t' | '\r' | '\u{c}'))
+        && raw
+            .split('\n')
+            .all(|line| !line.starts_with(' ') && !line.ends_with(' ') && !line.contains("  "))
+}
+
 impl Plan {
     pub(in crate::parley_layout) fn new(
         block: &LayoutBlock<'_>,
@@ -63,11 +83,7 @@ impl Plan {
             || styles.get(block.element)?.first_line.is_some()
             || styles.get(block.element)?.generated.is_some()
             || styles.get(block.element)?.text_transform != TextTransform::None
-            || !styles.get(block.element)?.preformatted_spaces
-            || !matches!(
-                styles.get(block.element)?.white_space,
-                WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::BreakSpaces
-            )
+            || !supported_raw_mode(styles.get(block.element)?)
         {
             return None;
         }
@@ -92,7 +108,7 @@ impl Plan {
                 || !style.flow.painted
                 || (run.element != block.element
                     && style.display != crate::book_style::flow::Display::Inline)
-                || !style.preformatted_spaces
+                || !supported_raw_mode(style)
                 || style.white_space != owner_style.white_space
                 || style.text_transform != TextTransform::None
                 || style.generated.is_some()
@@ -120,6 +136,9 @@ impl Plan {
             }
         }
         let raw = bound.raw();
+        if owner_style.white_space == WhiteSpace::PreLine && !pre_line_identity(raw) {
+            return None;
+        }
         let mut runs = Vec::with_capacity(bound.style_runs().len());
         let mut previous_raw = 0;
         for raw_run in bound.style_runs() {
@@ -136,7 +155,7 @@ impl Plan {
                 || !style.flow.painted
                 || (raw_run.element != block.element
                     && style.display != crate::book_style::flow::Display::Inline)
-                || !style.preformatted_spaces
+                || !supported_raw_mode(style)
                 || style.white_space != owner_style.white_space
                 || style.text_transform != TextTransform::None
                 || style.generated.is_some()
@@ -255,7 +274,7 @@ impl Plan {
             || !self.binding.matches(block)
             || block.key != self.block
             || block.element != self.owner
-            || !style.preformatted_spaces
+            || !supported_raw_mode(style)
             || style.white_space != self.white_space
             || style.generated.is_some()
             || style.text_transform != TextTransform::None

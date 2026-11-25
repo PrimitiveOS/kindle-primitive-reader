@@ -462,7 +462,7 @@ fn decode_document(bytes: &[u8], format: Format) -> Result<Cow<'_, str>> {
     Ok(text)
 }
 
-fn declared_encoding(bytes: &[u8], format: Format) -> Option<String> {
+pub(crate) fn declared_encoding(bytes: &[u8], format: Format) -> Option<String> {
     if format == Format::Text {
         return None;
     }
