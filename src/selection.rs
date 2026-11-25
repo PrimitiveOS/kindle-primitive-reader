@@ -346,7 +346,7 @@ impl Probe {
                     layout: &paragraph.layout,
                     x: paragraph.x,
                     y: paragraph.y,
-                    placed_boxes: false,
+                    placed_boxes: paragraph.inline_text.is_some(),
                 };
                 for piece in &note.pieces {
                     let Some(index) = self.selection_block(piece.block) else {
@@ -361,7 +361,8 @@ impl Probe {
                     };
                     for local in view.layout_spans(span).unwrap_or_default() {
                         let start = piece.joined.start;
-                        geometry.append(
+                        geometry.append_flow(
+                            paragraph,
                             start + local.start..start + local.end,
                             &page,
                             self.settings,
@@ -396,30 +397,7 @@ impl Probe {
                     || !self.source.blocks[index].images.is_empty(),
             };
             for span in layout_spans {
-                if let Some(boxed) = &paragraph.inline_text {
-                    for part in boxed.layout_spans(&span) {
-                        outer.append(part, &page, self.settings, &columns, &mut rects);
-                    }
-                    for child in &boxed.boxes {
-                        if let Some(part) = child.local_span(&span) {
-                            Geometry {
-                                layout: &child.layout,
-                                x: paragraph.x + child.x,
-                                y: paragraph.y + child.y,
-                                placed_boxes: false,
-                            }
-                            .append(
-                                part,
-                                &page,
-                                self.settings,
-                                &columns,
-                                &mut rects,
-                            );
-                        }
-                    }
-                } else {
-                    outer.append(span, &page, self.settings, &columns, &mut rects);
-                }
+                outer.append_flow(paragraph, span, &page, self.settings, &columns, &mut rects);
             }
         }
         rects
@@ -505,6 +483,35 @@ struct Geometry<'a> {
 }
 
 impl Geometry<'_> {
+    fn append_flow(
+        &self,
+        paragraph: &crate::parley_layout::Paragraph,
+        span: Range<usize>,
+        page: &Range<f32>,
+        settings: Settings,
+        columns: &Range<usize>,
+        rects: &mut Vec<HighlightRect>,
+    ) {
+        let Some(boxed) = &paragraph.inline_text else {
+            self.append(span, page, settings, columns, rects);
+            return;
+        };
+        for part in boxed.layout_spans(&span) {
+            self.append(part, page, settings, columns, rects);
+        }
+        for child in &boxed.boxes {
+            if let Some(part) = child.local_span(&span) {
+                Geometry {
+                    layout: &child.layout,
+                    x: self.x + child.x,
+                    y: self.y + child.y,
+                    placed_boxes: false,
+                }
+                .append(part, page, settings, columns, rects);
+            }
+        }
+    }
+
     fn append(
         &self,
         span: Range<usize>,

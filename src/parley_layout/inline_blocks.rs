@@ -16,6 +16,8 @@ use parley::{
 use std::ops::Range;
 
 pub(super) mod generated;
+pub(super) mod initial;
+pub(super) mod note_table;
 
 pub(super) const MAX_CHAPTER_BOXES: usize = 256;
 const MAX_PARAGRAPH_BOXES: usize = 16;
@@ -26,6 +28,7 @@ pub(crate) struct InlineText {
     segments: Vec<Segment>,
     pub(crate) boxes: Vec<TextBox>,
     generated: bool,
+    detached_initial: bool,
 }
 
 struct Segment {
@@ -119,6 +122,7 @@ impl InlineText {
         output: &mut Line,
         line: &parley::Line<'_, PaintBrush>,
         view: &Projection<'_>,
+        first_line: bool,
     ) -> Result<()> {
         let range = line.text_range();
         let mut spans: Vec<_> = self
@@ -130,25 +134,18 @@ impl InlineText {
                 Some(start..start + clipped.len())
             })
             .collect();
+        if self.detached_initial && first_line {
+            let initial = &self.boxes[0];
+            spans.push(initial.source.clone());
+            output.missing_glyphs += initial.missing_glyphs();
+        }
         for item in line.items() {
             if let PositionedLayoutItem::InlineBox(item) = item {
                 let child = &mut self.boxes[item.id as usize];
                 child.x = item.x + child.margin[3] + child.padding[3];
                 child.y = item.y + child.margin[0] + child.padding[0];
                 spans.push(child.source.clone());
-                output.missing_glyphs += child
-                    .layout
-                    .lines()
-                    .flat_map(|line| line.items())
-                    .filter_map(|item| match item {
-                        PositionedLayoutItem::GlyphRun(run) => Some(
-                            run.positioned_glyphs()
-                                .filter(|glyph| glyph.id == 0)
-                                .count(),
-                        ),
-                        _ => None,
-                    })
-                    .sum::<usize>();
+                output.missing_glyphs += child.missing_glyphs();
             }
         }
         spans.sort_unstable_by_key(|span| span.start);
@@ -174,9 +171,29 @@ impl InlineText {
         });
         Ok(())
     }
+
+    pub(super) fn initial_bounds(&self) -> Option<Range<f32>> {
+        self.detached_initial
+            .then(|| self.boxes[0].painted_bounds().1)
+    }
 }
 
 impl TextBox {
+    fn missing_glyphs(&self) -> usize {
+        self.layout
+            .lines()
+            .flat_map(|line| line.items())
+            .filter_map(|item| match item {
+                PositionedLayoutItem::GlyphRun(run) => Some(
+                    run.positioned_glyphs()
+                        .filter(|glyph| glyph.id == 0)
+                        .count(),
+                ),
+                _ => None,
+            })
+            .sum()
+    }
+
     pub(crate) fn hit(&self, x: f32, y: f32) -> bool {
         (self.x - self.padding[3]..self.x + self.size[0] + self.padding[1]).contains(&x)
             && (self.y - self.padding[0]..self.y + self.size[1] + self.padding[2]).contains(&y)
@@ -286,6 +303,7 @@ pub(super) fn plan(
     let mut plan = Plan {
         text: InlineText {
             generated: false,
+            detached_initial: false,
             text: String::new(),
             segments: Vec::new(),
             boxes: Vec::new(),

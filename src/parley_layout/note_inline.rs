@@ -1,5 +1,9 @@
 //! One layout paragraph may reference several immutable source blocks.
-use std::{collections::BTreeMap, ops::Range, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Range,
+    sync::Arc,
+};
 
 use crate::{
     Line, Source,
@@ -8,6 +12,7 @@ use crate::{
     flow_view::{ChapterFlow, LayoutImage, LayoutRuby},
     footnotes::in_page::Targets,
     source::StyledText,
+    table_layout::{Cell, TableKey},
 };
 
 const MAX_BLOCKS: usize = 64;
@@ -23,7 +28,14 @@ pub(super) struct Fragment<'a> {
     // The box uses the joined paragraph's offset and the original image's owner.
     pub(super) images: Vec<(usize, LayoutImage<'a>)>,
     pub(super) ruby: Vec<LayoutRuby<'a>>,
+    pub(super) table: Option<Table>,
     pub(super) layout: Arc<JoinedNote>,
+}
+
+pub(super) struct Table {
+    pub(super) key: TableKey,
+    pub(super) element: usize,
+    pub(super) cells: Vec<(usize, Range<usize>)>,
 }
 
 pub(crate) struct JoinedNote {
@@ -42,6 +54,7 @@ pub(super) fn plan<'a>(
     styles: &[Style],
     flow: &'a ChapterFlow,
     targets: &Targets,
+    note_tables: &HashMap<TableKey, usize>,
 ) -> crate::Result<BTreeMap<usize, Fragment<'a>>> {
     let owners: Vec<_> = source
         .blocks
@@ -61,7 +74,15 @@ pub(super) fn plan<'a>(
                 .find(|item| item.element == element)
                 .and_then(|item| styles[element].marker.label(flow.ordinal(item)?));
             if (group.len() > 1 || marker.is_some())
-                && let Some(fragment) = join(source, styles, flow, start..end, element, marker)?
+                && let Some(fragment) = join(
+                    source,
+                    styles,
+                    flow,
+                    start..end,
+                    element,
+                    marker,
+                    note_tables,
+                )?
             {
                 fragments.insert(start, fragment);
             }
@@ -78,6 +99,7 @@ fn join<'a>(
     indices: Range<usize>,
     element: usize,
     mut marker: Option<String>,
+    note_tables: &HashMap<TableKey, usize>,
 ) -> crate::Result<Option<Fragment<'a>>> {
     let end_index = indices.end;
     if styles[source.blocks[indices.start].element].flow.suppressed {
@@ -92,13 +114,26 @@ fn join<'a>(
     let mut ruby = Vec::new();
     let mut artwork_blocks = 0;
     let mut inside_marker = false;
+    let has_table = source.blocks[indices.clone()]
+        .iter()
+        .any(|block| block.table_cell.is_some());
+    let mut table: Option<Table> = None;
+    let mut closed_table = false;
+    let mut seen_cells = Vec::<Cell>::new();
     for block in &source.blocks[indices] {
         let style = &styles[block.element];
-        if block.table_cell.is_some()
-            || style.preformatted_spaces
+        let table_root =
+            std::iter::successors(Some(block.element), |&index| source.elements[index].parent)
+                .find(|&index| source.elements[index].tag == "table");
+        if style.preformatted_spaces
             || style.page_breaks != Default::default()
             || style.writing_mode == crate::book_style::WritingMode::VerticalRl
             || crate::publisher_padding::paragraph_is_rtl(block.direction, &block.text)
+            || table_root.is_some() && block.table_cell.is_none()
+            || has_table
+                && (!block.images.is_empty()
+                    || !block.ruby.is_empty()
+                    || source.elements[block.element].tag == "caption")
         {
             return Ok(None);
         }
@@ -140,6 +175,36 @@ fn join<'a>(
         }
         let offset = joined.text.len();
         joined.text.push_str(input.text);
+        if let Some(cell) = block.table_cell {
+            if closed_table
+                || !note_tables.contains_key(&cell.table)
+                || input.text.is_empty()
+                || !matches!(source.elements[block.element].tag.as_str(), "td" | "th")
+                || cell.after_row > cell.row + 1
+                || seen_cells.len() >= 12
+                || seen_cells.contains(&cell)
+            {
+                return Ok(None);
+            }
+            if table.is_none() {
+                let Some(root) = table_root else {
+                    return Ok(None);
+                };
+                table = Some(Table {
+                    key: cell.table,
+                    element: root,
+                    cells: Vec::new(),
+                });
+            }
+            let group = table.as_mut().unwrap();
+            if group.key != cell.table {
+                return Ok(None);
+            }
+            seen_cells.push(cell);
+            group.cells.push((block.element, offset..joined.text.len()));
+        } else if table.is_some() {
+            closed_table = true;
+        }
         runs.extend(input.styled_text.iter().map(|run| StyledText {
             bytes: offset + run.bytes.start..offset + run.bytes.end,
             element: run.element,
@@ -166,6 +231,16 @@ fn join<'a>(
             });
         }
     }
+    if let Some(table) = &table
+        && source
+            .table_cells
+            .iter()
+            .filter(|(_, cell)| cell.table == table.key)
+            .count()
+            != table.cells.len()
+    {
+        return Ok(None);
+    }
     Ok(
         (!joined.pieces.is_empty() && (inside_marker || joined.pieces.len() + artwork_blocks > 1))
             .then_some(Fragment {
@@ -174,6 +249,7 @@ fn join<'a>(
                 runs,
                 images,
                 ruby,
+                table,
                 layout: Arc::new(joined),
             }),
     )
@@ -210,29 +286,35 @@ impl JoinedNote {
     }
 
     pub(super) fn project_line(&self, line: &mut Line, bytes: Range<usize>) {
+        self.project_ranges(line, &[bytes]);
+    }
+
+    pub(super) fn project_ranges(&self, line: &mut Line, ranges: &[Range<usize>]) {
         let mut spans = Vec::new();
         for piece in &self.pieces {
-            let start = bytes.start.max(piece.joined.start);
-            let end = bytes.end.min(piece.joined.end);
-            if start >= end {
-                continue;
-            }
-            let origin = piece.joined.start;
-            let local = start - origin..end - origin;
-            if let Some(projected) = &piece.projected {
-                spans.extend(projected.runs().iter().filter_map(|run| {
-                    let start = local.start.max(run.layout.start);
-                    let end = local.end.min(run.layout.end);
-                    (start < end && !run.source.is_empty()).then(|| {
-                        let bias = run.source.start;
-                        (
-                            piece.block,
-                            bias + (start - run.layout.start)..bias + (end - run.layout.start),
-                        )
-                    })
-                }));
-            } else {
-                spans.push((piece.block, local));
+            for bytes in ranges {
+                let start = bytes.start.max(piece.joined.start);
+                let end = bytes.end.min(piece.joined.end);
+                if start >= end {
+                    continue;
+                }
+                let origin = piece.joined.start;
+                let local = start - origin..end - origin;
+                if let Some(projected) = &piece.projected {
+                    spans.extend(projected.runs().iter().filter_map(|run| {
+                        let start = local.start.max(run.layout.start);
+                        let end = local.end.min(run.layout.end);
+                        (start < end && !run.source.is_empty()).then(|| {
+                            let bias = run.source.start;
+                            (
+                                piece.block,
+                                bias + (start - run.layout.start)..bias + (end - run.layout.start),
+                            )
+                        })
+                    }));
+                } else {
+                    spans.push((piece.block, local));
+                }
             }
         }
         line.set_joined_sources(spans);

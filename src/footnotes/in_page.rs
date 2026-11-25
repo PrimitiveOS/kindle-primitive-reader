@@ -1,5 +1,5 @@
 //! Source-space pagination for supported EPUB and FictionBook notes.
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::ops::Range;
 
 use crate::epub::{Book, Destination};
@@ -8,6 +8,7 @@ use crate::user_styles::{FootnoteSize, NoteExtension, NoteFormatting, Snapshot};
 use crate::{
     Line, Settings, Source,
     publisher_breaks::{self, BoxRules, Edge},
+    table_layout::TableKey,
 };
 
 pub(crate) struct Part {
@@ -21,6 +22,11 @@ pub(crate) struct Page {
     pub canonical_note_group: Option<usize>,
 }
 
+pub(crate) enum TableCopy {
+    Grid(Range<f32>),
+    Inline,
+}
+
 const MAX_LINES: usize = 16_384;
 const MAX_NOTES: usize = 32;
 const MAX_REFERENCES: usize = 128;
@@ -32,6 +38,7 @@ pub(crate) fn paginate(
     source: &Source,
     lines: &[Line],
     artwork_bottoms: &BTreeMap<usize, f32>,
+    table_extents: &HashMap<TableKey, TableCopy>,
     breaks: &[BoxRules],
     settings: Settings,
 ) -> Option<Vec<Page>> {
@@ -40,8 +47,8 @@ pub(crate) fn paginate(
     if lines.len() > MAX_LINES || gap == 0 || gap >= height {
         return None;
     }
-    let (notes, references) = discover(chapter, targets, source, lines)?;
-    let groups = line_groups(lines, &notes, artwork_bottoms, height)?;
+    let (notes, references, tables) = discover(chapter, targets, source, lines, table_extents)?;
+    let groups = line_groups(lines, &notes, artwork_bottoms, tables, height)?;
     let extents: Vec<_> = groups.iter().map(|group| group.extent.clone()).collect();
     let edges = publisher_breaks::in_page_note_boundaries(&extents, breaks)?;
     let notes: Vec<_> = notes
@@ -147,6 +154,7 @@ fn line_groups(
     lines: &[Line],
     notes: &[Range<usize>],
     artwork_bottoms: &BTreeMap<usize, f32>,
+    tables: Vec<LineGroup>,
     max_extent: u32,
 ) -> Option<Vec<LineGroup>> {
     let boundaries: BTreeSet<_> = notes
@@ -154,6 +162,8 @@ fn line_groups(
         .flat_map(|note| [note.start, note.end])
         .collect();
     let mut groups: Vec<LineGroup> = Vec::with_capacity(lines.len());
+    let mut tables = tables.into_iter().peekable();
+    let mut pending_table: Option<LineGroup> = None;
     for (index, line) in lines.iter().enumerate() {
         let extent = line.top..line.bottom;
         if !line.top.is_finite()
@@ -169,21 +179,38 @@ fn line_groups(
             ..extent
                 .end
                 .max(artwork_bottoms.get(&index).copied().unwrap_or(extent.end));
+        if tables
+            .peek()
+            .is_some_and(|table| table.lines.start == index)
+        {
+            pending_table = tables.next();
+        }
+        let group = if let Some(table) = &mut pending_table {
+            table.extent.start = table.extent.start.min(extent.start);
+            table.extent.end = table.extent.end.max(extent.end);
+            if table.lines.end > index + 1 {
+                continue;
+            }
+            pending_table.take()?
+        } else {
+            LineGroup {
+                lines: index..index + 1,
+                extent,
+            }
+        };
         // Glyph extents can overlap after line spacing by a pixel or more.
         // Cut between whole bands so both paint and source hit testing agree.
         if let Some(previous) = groups.last_mut()
-            && previous.extent.end > extent.start + 0.01
+            && previous.extent.end > group.extent.start + 0.01
         {
-            if boundaries.contains(&index) {
+            if boundaries.contains(&group.lines.start) {
                 return None;
             }
-            previous.lines.end = index + 1;
-            previous.extent.end = previous.extent.end.max(extent.end);
+            previous.lines.end = group.lines.end;
+            previous.extent.start = previous.extent.start.min(group.extent.start);
+            previous.extent.end = previous.extent.end.max(group.extent.end);
         } else {
-            groups.push(LineGroup {
-                lines: index..index + 1,
-                extent,
-            });
+            groups.push(group);
         }
     }
     groups
@@ -238,6 +265,27 @@ const CLASSIC_NOTE_CLASSES: &[&str] = &[
 impl Targets {
     pub(crate) fn inlines_all(&self) -> bool {
         self.formatting.inline_all
+    }
+
+    /// Only a complete native table contained in one note can be copied as a
+    /// unit. Tables in the body retain the ordinary chapter fallback.
+    pub(crate) fn native_tables(&self, source: &Source) -> HashMap<TableKey, usize> {
+        let mut ownership = HashMap::new();
+        for &(element, cell) in &source.table_cells {
+            let owner = self.ancestry[element];
+            ownership
+                .entry(cell.table)
+                .and_modify(|previous| {
+                    if *previous != owner {
+                        *previous = None;
+                    }
+                })
+                .or_insert(owner);
+        }
+        ownership
+            .into_iter()
+            .filter_map(|(key, note)| Some((key, note?)))
+            .collect()
     }
 
     pub(crate) fn inline_part(&self, source: &Source, mut element: usize) -> Option<usize> {
@@ -520,7 +568,8 @@ fn discover(
     targets: &Targets,
     source: &Source,
     lines: &[Line],
-) -> Option<(Vec<Range<usize>>, References)> {
+    table_extents: &HashMap<TableKey, TableCopy>,
+) -> Option<(Vec<Range<usize>>, References, Vec<LineGroup>)> {
     let blocks: BTreeMap<_, _> = source
         .blocks
         .iter()
@@ -529,15 +578,29 @@ fn discover(
     let mut regions = vec![None::<Range<usize>>; targets.roots.len()];
     let mut checked_directions = BTreeSet::new();
     let mut block_lines = BTreeMap::<_, Vec<_>>::new();
+    let mut tables = HashMap::<TableKey, LineGroup>::new();
     for (index, line) in lines.iter().enumerate() {
         let block = blocks.get(&line.block)?;
-        if block.table_cell.is_some()
-            || (checked_directions.insert(line.block)
-                && crate::publisher_padding::paragraph_is_rtl(block.direction, &block.text))
+        let owner = targets.ancestry[block.element];
+        if let Some(cell) = block.table_cell
+            && let TableCopy::Grid(extent) = table_extents.get(&cell.table)?
+        {
+            owner?;
+            let table = tables.entry(cell.table).or_insert_with(|| LineGroup {
+                lines: index..index,
+                extent: extent.clone(),
+            });
+            if table.lines.end != index {
+                return None;
+            }
+            table.lines.end += 1;
+        }
+        if checked_directions.insert(line.block)
+            && crate::publisher_padding::paragraph_is_rtl(block.direction, &block.text)
         {
             return None;
         }
-        if let Some(id) = targets.ancestry[block.element] {
+        if let Some(id) = owner {
             let region = regions[id].get_or_insert(index..index);
             if region.end != index {
                 return None;
@@ -590,7 +653,9 @@ fn discover(
             used.insert(id);
         }
     }
-    (used.len() == targets.roots.len()).then_some((regions, references))
+    let mut tables: Vec<_> = tables.into_values().collect();
+    tables.sort_unstable_by_key(|table| table.lines.start);
+    (used.len() == targets.roots.len()).then_some((regions, references, tables))
 }
 
 #[derive(Default)]
@@ -747,6 +812,10 @@ mod tests {
     }
 
     fn advanced_note_layout(chapter: usize, presets: &[&str]) -> Probe {
+        advanced_note_layout_at(chapter, presets, settings(false))
+    }
+
+    fn advanced_note_layout_at(chapter: usize, presets: &[&str], settings: Settings) -> Probe {
         let mut data = crate::user_styles::Data::default();
         for preset in presets {
             data.choose(1, preset, Some(true)).unwrap();
@@ -754,7 +823,7 @@ mod tests {
         Probe::layout_opened_book(
             &mut Some(Book::open(&test_fixture("in-page-footnotes.epub")).unwrap()),
             Engine::Parley,
-            crate::PublisherRenderMode::Book.apply(settings(false)),
+            crate::PublisherRenderMode::Book.apply(settings),
             chapter,
             None,
             &Default::default(),
@@ -772,6 +841,116 @@ mod tests {
         let start = probe.matches(phrase).remove(0);
         let end = probe.anchor(start.block, start.offset + phrase.len());
         probe.selection_rects(page, &probe.select_range(&start, &end).unwrap())
+    }
+
+    #[test]
+    fn whole_note_inline_tables_keep_the_grid_or_shape_one_painted_row() {
+        use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
+        let mut band = advanced_note_layout(24, &[EPUB_FOOTNOTES]);
+        let mut inline = advanced_note_layout(24, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        let reference = band.fragment("grid-ref").unwrap();
+        let first = band.fragment("grid-first").unwrap();
+        let original = band.page_for(&first).unwrap();
+        let page = band.page_for(&reference).unwrap();
+        assert!(original > page);
+        for (probe, flattened) in [(&band, false), (&inline, true)] {
+            let pages = probe.in_page_notes.as_ref().unwrap();
+            assert!(pages[page].separator.is_some());
+            assert_eq!(probe.page_for(&first), Some(original));
+            let crate::Renderer::Parley(layout) = &probe.renderer else {
+                unreachable!()
+            };
+            assert_eq!(layout.note_table_extents.len(), 1);
+            let table = layout.note_table_extents.values().next().unwrap();
+            if let TableCopy::Grid(extent) = table {
+                assert!(!flattened);
+                for current in [page, original] {
+                    assert!(
+                        pages[current]
+                            .parts
+                            .iter()
+                            .any(|part| part.source.start <= extent.start
+                                && extent.end <= part.source.end)
+                    );
+                }
+            } else {
+                assert!(flattened);
+            }
+            for current in [page, original] {
+                let names = ["Shoal ledger", "Deep chart", "Ferry count"];
+                let cells = names.map(|text| {
+                    let rects = phrase_rects(probe, current, text);
+                    assert_eq!(rects.len(), 1, "{text}");
+                    rects[0]
+                });
+                assert_eq!(cells[0].y, cells[1].y);
+                assert!(cells[0].x < cells[1].x);
+                if flattened {
+                    assert_eq!(cells[1].y, cells[2].y);
+                    assert!(cells[1].x < cells[2].x);
+                } else {
+                    assert!(cells[1].y < cells[2].y);
+                    assert_eq!(cells[0].x, cells[2].x);
+                }
+                let x = (cells[0].x + 4) as f32;
+                let y = (cells[0].y + cells[0].height / 2) as f32;
+                assert_eq!(probe.word_at(current, x, y).unwrap().text, "Shoal");
+                assert_eq!(
+                    probe.link_at(current, x, y).unwrap().fragment.as_deref(),
+                    Some("grid-ref")
+                );
+            }
+        }
+        assert_eq!(band.coverage(), inline.coverage());
+        for phrase in ["Shoal ledger", "Deep chart", "Ferry count", "Grid ends."] {
+            assert_eq!(band.matches(phrase), inline.matches(phrase));
+        }
+        let last = band.matches("Ferry count").remove(0);
+        let end = band.anchor(last.block, last.offset + "Ferry count".len());
+        assert_eq!(
+            inline.select_range(&first, &end).unwrap().text,
+            "Shoal ledger\nDeep chart\nFerry count"
+        );
+        for (probe, current, file) in [
+            (&mut band, page, "reader-note-inline-table-before.png"),
+            (&mut inline, page, "reader-note-inline-table-after.png"),
+        ] {
+            let frame = capture(probe, current, file);
+            assert!(frame.contains(&0xdd));
+            assert!(
+                frame
+                    .chunks_exact(probe.settings.width as usize)
+                    .any(|row| {
+                        row.windows(150)
+                            .any(|run| run.iter().all(|&gray| gray == 0))
+                    })
+            );
+        }
+        capture(
+            &mut inline,
+            original,
+            "reader-note-inline-table-original.png",
+        );
+    }
+
+    #[test]
+    fn whole_note_inline_tables_restore_the_grid_when_the_compact_row_is_too_wide() {
+        use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
+        let narrow = Settings {
+            width: 318,
+            ..settings(false)
+        };
+        let mut grid = advanced_note_layout_at(24, &[EPUB_FOOTNOTES], narrow);
+        let mut inline =
+            advanced_note_layout_at(24, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT], narrow);
+        let page = grid.page_for(&grid.fragment("grid-ref").unwrap()).unwrap();
+        assert!(
+            grid.in_page_notes.as_ref().unwrap()[page]
+                .separator
+                .is_some()
+        );
+        assert_eq!(grid.capture(page).unwrap(), inline.capture(page).unwrap());
+        assert_eq!(grid.matches("Shoal ledger"), inline.matches("Shoal ledger"));
     }
 
     #[test]
@@ -1462,7 +1641,7 @@ mod tests {
     }
 
     #[test]
-    fn advanced_note_wikipedia_owns_list_items_and_restores_ordinary_fallback() {
+    fn advanced_note_wikipedia_owns_list_items_and_their_native_table() {
         use crate::user_styles::WIKIPEDIA_FOOTNOTES;
         let ordinary = advanced_note_layout(10, &[]);
         let mut probe = advanced_note_layout(10, &[WIKIPEDIA_FOOTNOTES]);
@@ -1513,16 +1692,25 @@ mod tests {
         capture(&mut probe, page, "reader-wikipedia-note-band.png");
         capture(&mut probe, canonical, "reader-wikipedia-note-canonical.png");
 
-        let mut unsupported = advanced_note_layout(11, &[WIKIPEDIA_FOOTNOTES]);
-        let mut normal = advanced_note_layout(11, &[]);
-        assert!(unsupported.in_page_notes.is_none());
-        assert_eq!(
-            unsupported.matches("Table return"),
-            normal.matches("Table return")
-        );
-        assert_eq!(unsupported.matches("Table return").len(), 1);
-        assert_eq!(unsupported.page_count(), normal.page_count());
-        assert_eq!(unsupported.capture(0).unwrap(), normal.capture(0).unwrap());
+        let table_note = advanced_note_layout(11, &[WIKIPEDIA_FOOTNOTES]);
+        let normal = advanced_note_layout(11, &[]);
+        let page = table_note
+            .page_for(&table_note.fragment("fallback-ref").unwrap())
+            .unwrap();
+        let separator = table_note.in_page_notes.as_ref().unwrap()[page]
+            .separator
+            .unwrap()
+            + table_note.settings.top_margin();
+        assert!(table_note.matches("Table return").is_empty());
+        assert_eq!(normal.matches("Table return").len(), 1);
+        for phrase in ["Inshore readings", "Offshore readings"] {
+            assert_eq!(normal.matches(phrase), table_note.matches(phrase));
+            assert!(
+                phrase_rects(&table_note, page, phrase)
+                    .iter()
+                    .any(|rect| rect.y > separator as i32)
+            );
+        }
     }
 
     #[test]

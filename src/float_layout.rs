@@ -1,4 +1,6 @@
 //! Source-owned float footprints for the opt-in horizontal Parley provider.
+pub(crate) mod tables;
+
 use crate::{
     FloatMode, Settings,
     book_style::{ImageLength, Style, WritingMode, flow::Display},
@@ -45,6 +47,7 @@ pub(crate) struct Spec {
 pub(crate) struct Plan {
     pub floats: Vec<Option<Spec>>,
     pub clears: Vec<Clear>,
+    pub tables: tables::Candidates,
 }
 
 impl Plan {
@@ -72,16 +75,23 @@ impl Plan {
 
         let width = settings.text_width();
         let float_limit = (settings.text_height() / 2) as f32;
+        let tables = tables::Candidates::new(source, styles, &spans);
         let mut floats = vec![None; source.blocks.len()];
         let mut clears = vec![Clear::default(); source.blocks.len()];
         for (owner, ((node, style), span)) in
             source.elements.iter().zip(styles).zip(&spans).enumerate()
         {
             let Some((first, last)) = *span else { continue };
-            if node.selector_only || node.anonymous || style.display != Display::Block {
+            if node.selector_only
+                || node.anonymous
+                || !matches!(style.display, Display::Block | Display::Table)
+            {
                 continue;
             }
             clears[first].0 |= style.clear.0;
+            if style.display != Display::Block {
+                continue;
+            }
             let Some(side) = style.float_side else {
                 continue;
             };
@@ -132,10 +142,11 @@ impl Plan {
                 scope_end: spans[parent].map_or(last, |span| span.1),
             });
         }
-        floats
-            .iter()
-            .any(Option::is_some)
-            .then_some(Self { floats, clears })
+        (floats.iter().any(Option::is_some) || !tables.is_empty()).then_some(Self {
+            floats,
+            clears,
+            tables,
+        })
     }
 }
 
@@ -326,6 +337,23 @@ pub(crate) struct Contour {
 }
 
 impl Contour {
+    pub(crate) fn left_initial(width: u32, edge: u32, height: f32) -> Self {
+        let mut boxes = [None; EXACT_CONTOURS];
+        boxes[0] = Some(Footprint {
+            side: Side::Left,
+            edge,
+            top: 0.0,
+            bottom: height,
+            scope_end: usize::MAX,
+        });
+        Self {
+            boxes,
+            origin: 0.0,
+            width,
+            min_width: 0.0,
+        }
+    }
+
     pub(crate) fn for_line(self, mut local_y: f64, strut: f32) -> (f64, f32, f32) {
         loop {
             let (start, end, next) = bounds(

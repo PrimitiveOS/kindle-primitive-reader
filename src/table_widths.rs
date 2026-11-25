@@ -78,6 +78,13 @@ pub(super) struct TableWidths {
     has_nowrap: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum NativeMode {
+    Book,
+    Web,
+    Float,
+}
+
 impl TableWidths {
     pub(super) fn collect(
         source: &Source,
@@ -227,7 +234,8 @@ impl TableWidths {
     }
 
     /// Size the whole native table before applying cell spacing and track edges.
-    /// The pinned Book mode keeps explicitly sized tables at container width.
+    /// Book keeps normal explicitly sized tables at container width. The
+    /// surrounding float establishes an explicit width even in Book mode.
     pub(super) fn native_width(
         tracks: Option<&Self>,
         style: &Style,
@@ -235,7 +243,7 @@ impl TableWidths {
         font: f32,
         border_width: u32,
         spacing: u32,
-        web: bool,
+        mode: NativeMode,
     ) -> u32 {
         let outer = |width: u32| {
             let width = width.saturating_add(border_width);
@@ -255,10 +263,13 @@ impl TableWidths {
         let declared = style
             .image_width
             .and_then(|width| width.pixels(available, font));
+        let enforce_width = mode != NativeMode::Book;
         let preferred = match declared {
-            Some(width) if web => {
+            Some(width) if enforce_width => {
                 let width = width.max(0.0) as u32;
-                if style.box_sizing == crate::book_style::BoxSizing::BorderBox {
+                if style.box_sizing == crate::book_style::BoxSizing::BorderBox
+                    || (mode == NativeMode::Float && !style.box_sizing_explicit)
+                {
                     width
                 } else {
                     outer(width)
@@ -274,7 +285,7 @@ impl TableWidths {
                 outer(natural)
             }),
         };
-        let bound = if web {
+        let bound = if enforce_width {
             let maximum = style
                 .image_max_width
                 .and_then(|width| width.pixels(available, font))
@@ -286,7 +297,10 @@ impl TableWidths {
         } else {
             preferred
         };
-        if web && declared.is_some_and(|width| width > 0.) && tracks.is_some_and(|t| t.has_nowrap) {
+        if enforce_width
+            && declared.is_some_and(|width| width > 0.)
+            && tracks.is_some_and(|t| t.has_nowrap)
+        {
             // A publisher-sized table stays constrained; a nowrap cell can
             // fall back to natural breaks when the tracks cannot honor its min.
             bound.min(available)

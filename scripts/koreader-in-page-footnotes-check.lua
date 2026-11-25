@@ -502,6 +502,103 @@ if arg[5] == "inline-ruby" or narrow_ruby then
     return
 end
 
+if arg[5] == "inline-table" then
+    controller:onReadSettings(Settings:wrap({}))
+    local option = assert(find_tweak(menu.style_tweaks.sub_item_table, "inpage_footnote_all_inline"))
+    local function geometry(view, phrase)
+        local page, y = position(view, phrase)
+        local hit = view:findAllText(phrase, false, false, 8, true, 0, 255)[1]
+        local box = view:getWordBoxesFromPositions(hit.start, hit["end"], true)[1]
+        assert(box.y0 == y)
+        return page, box, hit.start
+    end
+    local function draw(view, page)
+        view:gotoPage(page)
+        local frame = BB.new(width, height, BB.TYPE_BB8)
+        view:drawCurrentPage(frame, false, false, false, false)
+        return frame
+    end
+    local function outlined_rows(frame, first, last)
+        local x0, x1, y0, y1
+        for y = first, last do
+            local start
+            for x = margin, width - margin do
+                local dark = x < width - margin and frame:getPixel(x, y):getColor8().a < 32
+                if dark and not start then start = x end
+                if not dark and start then
+                    if x - start >= 150 then
+                        if not y0 then x0, x1, y0 = start, x, y end
+                        if start == x0 and x == x1 then y1 = y end
+                    end
+                    start = nil
+                end
+            end
+        end
+        assert(y0 and y1 and y1 - y0 > 20)
+        return x0, x1, y0, y1 + 1
+    end
+    local function raster(frame, x0, x1, y0, y1)
+        local data = {}
+        for y = y0, y1 - 1 do
+            for x = x0, x1 - 1 do data[#data + 1] = string.char(frame:getPixel(x, y):getColor8().a) end
+        end
+        return table.concat(data)
+    end
+    local function measure(phase, inline)
+        local view = open(assert(controller:getCssText()))
+        local reference, body = geometry(view, "The crossing report")
+        local original, head = geometry(view, "Grid begins")
+        local first_page, first, first_pointer = geometry(view, "Shoal ledger")
+        local second_page, second, second_pointer = geometry(view, "Deep chart")
+        local last_page, last, last_pointer = geometry(view, "Ferry count")
+        local tail_page, tail = geometry(view, "Grid ends")
+        assert(original > reference and original == first_page and original == second_page)
+        assert(original == last_page and original == tail_page)
+        assert(first.x0 < second.x0 and first.y0 == second.y0)
+        if inline then
+            assert(head.y0 == first.y0 and first.y0 == last.y0 and tail.y0 == last.y0)
+            assert(head.x0 < first.x0 and second.x0 < last.x0 and last.x0 < tail.x0)
+            assert(not capture(view, original, "stock-note-inline-table-original"))
+        else
+            assert(head.y0 < first.y0 and first.y0 < last.y0 and last.y0 < tail.y0)
+            assert(first.x0 == last.x0)
+        end
+        local separator = assert(capture(view, reference, "stock-note-inline-table-" .. phase))
+        local canonical_frame = draw(view, original)
+        local ref_frame = draw(view, reference)
+        local x0, x1, y0, y1 = outlined_rows(canonical_frame, head.y0, tail.y1)
+        local a, b, c, d = outlined_rows(ref_frame, separator + 1, height - margin - 1)
+        assert(x0 == a and x1 == b and y1 - y0 == d - c)
+        local canonical_pixels = raster(canonical_frame, x0, x1, y0, y1)
+        assert(canonical_pixels:find(string.char(221), 1, true) and canonical_pixels:find(string.char(238), 1, true))
+        assert(canonical_pixels == raster(ref_frame, a, b, c, d))
+        canonical_frame:free()
+        ref_frame:free()
+        local x = first.x0 + 6
+        local y = math.floor((first.y0 + first.y1) / 2)
+        assert(view:getLinkFromPosition(x, y + c - y0) == "")
+        local copied = view:getTextFromPositions(x, y + c - y0, x, y + c - y0, false, false)
+        assert(not copied or not copied.text:find("Shoal", 1, true))
+        view:gotoPage(original)
+        assert(view:getLinkFromPosition(x, y):match(" grid%-ref$"))
+        local selected = assert(view:getTextFromPositions(x, y, x, y, false, false))
+        assert(selected.text:find("Shoal", 1, true))
+        print(("table=%.0fx%.0f canonical=(%d,%d) strip=(%d,%d)"):format(x1-x0, y1-y0, x0, y0, a, c))
+        view:close()
+        return table.concat({body.y0, first_pointer, second_pointer, last_pointer}, "|")
+    end
+    assert(not option.checked_func())
+    local before = measure("before", false)
+    option.callback()
+    assert(option.checked_func())
+    assert(measure("after", true) == before)
+    option.callback()
+    assert(not option.checked_func())
+    assert(measure("restored", false) == before)
+    print("Pinned EPUB note keeps the rendered table and its source-cell addresses")
+    return
+end
+
 if arg[5] == "cosmetic" then
     controller:onReadSettings(Settings:wrap({}))
     local option = assert(find_tweak(menu.style_tweaks.sub_item_table,

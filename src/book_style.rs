@@ -346,6 +346,7 @@ pub(crate) struct Style {
     pub(crate) ignore_table_hints: bool,
     pub(crate) native_table_widths: bool,
     pub(crate) generated: Option<Arc<pseudo::Pair>>,
+    pub(crate) first_letter: Option<Arc<pseudo::FirstLetter>>,
     pub page_breaks: crate::publisher_breaks::Rules,
     pub orphans: u8,
     pub widows: u8,
@@ -375,6 +376,7 @@ pub(crate) struct Style {
     pub min_width: Option<CssLength>,
     pub min_height: Option<ImageLength>,
     pub box_sizing: BoxSizing,
+    pub box_sizing_explicit: bool,
     pub image_align: parley::VerticalAlign,
     pub(crate) table_valign_explicit: bool,
     pub(crate) image_full_line: bool,
@@ -404,6 +406,7 @@ impl Default for Style {
             ignore_table_hints: false,
             native_table_widths: false,
             generated: None,
+            first_letter: None,
             page_breaks: Default::default(),
             orphans: 1,
             widows: 1,
@@ -433,6 +436,7 @@ impl Default for Style {
             min_width: None,
             min_height: None,
             box_sizing: BoxSizing::default(),
+            box_sizing_explicit: false,
             image_align: parley::VerticalAlign::BASELINE,
             table_valign_explicit: false,
             image_full_line: false,
@@ -796,6 +800,7 @@ impl BookStyle {
             }
             let mut style = parent.clone();
             style.generated = None;
+            style.first_letter = None;
             if element.tag == "a" {
                 style.link_ink = self.layout_tweaks.link_ink.map(|ink| ink as u8);
             }
@@ -831,6 +836,7 @@ impl BookStyle {
             style.min_width = None;
             style.min_height = None;
             style.box_sizing = BoxSizing::default();
+            style.box_sizing_explicit = false;
             let table_valign_element = matches!(
                 element.tag.as_str(),
                 "td" | "th" | "tr" | "thead" | "tbody" | "tfoot"
@@ -959,7 +965,10 @@ impl BookStyle {
                     Property::Visibility(visibility) => style.visibility = *visibility,
                     Property::Float(side) => style.float_side = *side,
                     Property::Clear(clear) => style.clear = *clear,
-                    Property::BoxSizing(sizing) => style.box_sizing = *sizing,
+                    Property::BoxSizing(sizing) => {
+                        style.box_sizing = *sizing;
+                        style.box_sizing_explicit = true;
+                    }
                     Property::Family(families) => {
                         style.font_family = families
                             .iter()
@@ -1161,7 +1170,7 @@ impl BookStyle {
                         }
                     }
                     Property::MinHeight(value) => style.min_height = Some(*value),
-                    Property::GeneratedContent(_) => (),
+                    Property::GeneratedContent(_) | Property::InitialLetter(_) => (),
                     Property::VerticalAlign(value) => {
                         style.image_align = *value;
                         style.table_valign_explicit = table_valign_element;
@@ -1235,7 +1244,8 @@ impl BookStyle {
             let root_scale = result
                 .first()
                 .map_or(style.size_scale, |root| root.size_scale);
-            style.generated = pseudo_rules.for_element(elements, index, &style, root_scale);
+            (style.generated, style.first_letter) =
+                pseudo_rules.for_element(elements, index, &style, root_scale);
             result.push(style);
         }
         result
@@ -1436,7 +1446,7 @@ type Specificity = (u8, u8, u8);
 struct Selector {
     steps: Vec<Compound>,
     specificity: Specificity,
-    pseudo: Option<pseudo::Side>,
+    pseudo: Option<pseudo::Target>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1550,7 +1560,7 @@ impl Selector {
                     let doubled = input.try_parse(Parser::expect_colon).is_ok();
                     let token = input.next_including_whitespace()?.clone();
                     if let Token::Ident(name) = &token
-                        && let Some(side) = pseudo::Side::parse(name)
+                        && let Some(side) = pseudo::Target::parse(name)
                     {
                         if compound.is_empty() {
                             compound.universal = true;
@@ -1921,7 +1931,8 @@ fn choose<'a>(
             Property::PaddingBoth(_)
             | Property::Margins(_)
             | Property::FontSource(_)
-            | Property::GeneratedContent(_) => {
+            | Property::GeneratedContent(_)
+            | Property::InitialLetter(_) => {
                 continue;
             }
         };
@@ -1932,6 +1943,7 @@ fn choose<'a>(
     }
 }
 
+#[derive(Clone, Copy)]
 enum Size {
     Parent(f32),
     Root(f32),
@@ -1964,6 +1976,7 @@ impl Weight {
 
 enum Property {
     GeneratedContent(Vec<pseudo::ContentPart>),
+    InitialLetter(Option<pseudo::InitialLetter>),
     Display(Display),
     Visibility(Visibility),
     Reset(usize, user_css::Reset),
@@ -2032,6 +2045,9 @@ impl<'i> DeclarationParser<'i> for Properties {
             input.reset(&before);
             let property = match name.to_ascii_lowercase().as_ref() {
                 "content" => Property::GeneratedContent(pseudo::parse_content(input)?),
+                "initial-letter" | "-webkit-initial-letter" => {
+                    Property::InitialLetter(pseudo::parse_initial_letter(input)?)
+                }
                 "display" => Property::Display(
                     Display::parse(&input.expect_ident()?.to_ascii_lowercase())
                         .ok_or_else(ParseError::unexpected_token)?,

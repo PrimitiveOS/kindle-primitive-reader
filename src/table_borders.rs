@@ -434,7 +434,7 @@ impl Positions {
         self.captions.insert(table, span);
     }
 
-    fn outer_extent(&self, table: TableKey) -> Option<Range<f32>> {
+    pub(crate) fn outer_extent(&self, table: TableKey) -> Option<Range<f32>> {
         let top = *self.rows.get(&table)?.first_key_value()?.1;
         let bottom = self.bottom[&table];
         Some(self.captions.get(&table).map_or(top..bottom, |caption| {
@@ -782,6 +782,7 @@ mod flow_tests {
             Some(&borders),
             &flow,
             crate::Settings::default(),
+            None,
             |_| (40, 80),
         )
         .unwrap();

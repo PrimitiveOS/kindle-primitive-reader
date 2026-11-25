@@ -33,6 +33,7 @@ Set `READER_TABLE_CAPTION_CAPTURES` and run the `table_caption` Rust test
 filter to reproduce the Reader captures. The native replay takes the EPUB
 specimen, a cache directory, Noto Sans Regular and a capture directory.
 
-Nested and repaired CSS grids, vertical writing, and chapters using float
-geometry keep their existing source layout. A joined whole note takes
-precedence only when its block range intersects a captioned table.
+Nested and repaired CSS grids and vertical writing keep their existing
+source layout. The caption moves with a supported floating table.
+A joined whole note takes precedence when its block range intersects a
+captioned table. [Floating tables](floating-tables.md)

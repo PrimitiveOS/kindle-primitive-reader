@@ -198,6 +198,7 @@ impl ChapterFlow {
             text,
             styled_text,
             generated: &[],
+            first_letter: None,
             images: Images {
                 source: &block.images,
                 projected: projected.map(OwnedProjection::images),
@@ -221,6 +222,7 @@ pub(crate) struct LayoutBlock<'a> {
     pub text: &'a str,
     pub styled_text: StyledRuns<'a>,
     pub(crate) generated: &'a [crate::book_style::pseudo::Run<'a>],
+    pub(crate) first_letter: Option<crate::book_style::pseudo::LetterRun<'a>>,
     pub images: Images<'a>,
     pub ruby: Rubies<'a>,
 }
@@ -240,6 +242,7 @@ impl<'a> LayoutBlock<'a> {
             text: &source.text,
             styled_text: StyledRuns::Original(&source.styled_text),
             generated: &[],
+            first_letter: None,
             images: Images {
                 source: &source.images,
                 projected: None,
@@ -268,6 +271,7 @@ impl<'a> LayoutBlock<'a> {
             text,
             styled_text: StyledRuns::Projected(runs),
             generated: &[],
+            first_letter: None,
             images: Images {
                 source: &[],
                 projected: None,

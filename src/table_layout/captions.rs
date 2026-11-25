@@ -39,12 +39,10 @@ impl Plan {
         flow: &TableFlow<'_>,
         styles: &[Style],
         column_for: impl Fn(&Block) -> Option<Cell>,
-        enabled: bool,
         joined: &[Range<usize>],
     ) -> Self {
         let mut plan = Self::default();
-        if !enabled
-            || flow.cells().is_empty()
+        if flow.cells().is_empty()
             || !source.elements.iter().zip(styles).any(|(element, style)| {
                 element.tag == "caption"
                     && style.display == Display::TableCaption
@@ -317,7 +315,6 @@ mod tests {
                 &flow,
                 &styles,
                 |block| flow.block_cell(block),
-                true,
                 joined,
             )
         };

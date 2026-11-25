@@ -1574,6 +1574,7 @@ impl Probe {
                             &source,
                             &lines,
                             &artwork,
+                            &layout.note_table_extents,
                             &publisher_edges,
                             settings,
                         )

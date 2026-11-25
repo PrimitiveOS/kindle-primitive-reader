@@ -61,6 +61,7 @@ impl<'a> Plan<'a> {
                     segments: Vec::new(),
                     boxes: Vec::new(),
                     generated: true,
+                    detached_initial: false,
                 },
                 runs: Vec::new(),
                 typography: Vec::new(),

@@ -152,10 +152,10 @@ in `ol.references` displays that numbered item in the page band. Direct
 children marked `noprint` or `mw-cite-backlink` are omitted. Nested text and
 other links in the reference stay selectable. The original list stays
 accessible through source links, including after saving and reopening.
-The tests use an authored EPUB with the Wikipedia reference markup. A
-chapter with an unsupported reference table returns to its ordinary layout,
-including its backlinks. Local Wikipedia exports with different structures
-can still be read with ordinary layout.
+The tests use an authored EPUB with the Wikipedia reference markup and a
+supported two-column table. The table appears in the band and supplies
+canonical cell selections. Other Wikipedia export structures can use
+ordinary layout, including their original backlinks.
 [Pinned KOReader selectors](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L945-L960) ·
 [Reader controls](screenshots/advanced-note-options.png) ·
 [Reader reference band](screenshots/reader-wikipedia-note-band.png) ·
@@ -216,8 +216,9 @@ and backlinks keep their targets.
 
 Formatting applies to supported horizontal in-page notes. Inline and
 standalone pictures and ruby annotations can flow with the surrounding
-note text. Tables, inline boxes, preformatted blocks, and authored page
-breaks inside a note keep their original layout. When the note itself is a
+note text. A supported compact table becomes a single inline row. Rich
+inline boxes, preformatted blocks, and authored page breaks keep their
+original layout. When the note itself is a
 list item, its generated marker moves inside the first line. The marker follows the
 publisher's numbering and stays outside search results and selected text.
 If the chapter cannot fit the joined notes, Reader retries the original
@@ -338,6 +339,31 @@ annotation keeps its spacing.
 [KOReader ruby after](screenshots/stock-note-inline-ruby-after.png) ·
 [KOReader original ruby note](screenshots/stock-note-inline-ruby-original.png)
 
+The `inline-table` replay starts with two columns and a second row spanning
+both columns. KOReader copies the entire 244 × 80 px grid to the reference
+strip, including its padding, backgrounds and borders. The inline switch
+places the three cells in one 358 × 44 px ruled box between the surrounding
+note text. Native source pointers and the original first-cell backlink stay
+stable. Both painted copies match their original table raster. KOReader
+links from the original, and Reader supports links and selection in both
+locations.
+
+Reader keeps a supported note-owned grid together in the band, with its
+native tracks, full extent and original cell anchors. The flat mode handles
+a collapsed grid of up to 12 directly authored text-only cells, with
+column spans in the source. Cell padding, dividers, the outer border and
+backgrounds move with the inline row. The 296 × 29 px Reader row has the
+same raster in the original and the strip. A row too wide for the reading
+area keeps the original grid. Row spans, media, captions and multiple
+tables can use the ordinary grid layout. Oversized bands retain ordinary
+chapter pagination.
+[Reader grid](screenshots/reader-note-inline-table-before.png) ·
+[Reader flattened grid](screenshots/reader-note-inline-table-after.png) ·
+[Reader original flattened note](screenshots/reader-note-inline-table-original.png) ·
+[KOReader grid](screenshots/stock-note-inline-table-before.png) ·
+[KOReader flattened grid](screenshots/stock-note-inline-table-after.png) ·
+[KOReader original flattened note](screenshots/stock-note-inline-table-original.png)
+
 ## Replay on macOS
 
 Run the Reader tests on the [deterministic authored EPUB](../tests/fixtures/in-page-footnotes.epub).
@@ -368,7 +394,7 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
 
 Pass `cosmetic`, `wikipedia`, `inline-all`, `inline-list`, `inline-nested`,
 `inline-root-epub`, `inline-root-wiki`, `inline-ruby`, `inline-ruby-narrow`,
-`inline-image`, or `inline-block-image` as the fifth argument to select an
+`inline-image`, `inline-block-image`, or `inline-table` as the fifth argument to select an
 advanced style replay.
 
 Run the combined note flow checks with the same stock runtime and scratch

@@ -49,6 +49,100 @@ fn capture(probe: &mut Probe, name: &str) {
 }
 
 #[test]
+fn list_marker_presets_change_only_their_list_kind_and_keep_source_anchors() {
+    use crate::list_marker::MarkerKind::{Circle, Disc, Square};
+
+    let settings = crate::PublisherRenderMode::Book.apply(Settings {
+        width: 617,
+        height: 720,
+        margin: 30,
+        font_size: 30.,
+        ..Settings::default()
+    });
+    let path = crate::test_fixture("field-notes-epub3.epub");
+    let chapter = include_str!("../../tests/fixtures/list-marker-presets.xhtml");
+    let mut expected = None;
+    let mut destinations = Vec::new();
+    let mut frames = Vec::new();
+    for mask in [0, 1, 3, 2, 0] {
+        let mut choices = user_styles::Data::default();
+        for (bit, preset) in [(1, "ul_li_type_disc"), (2, "ol_li_type_decimal")] {
+            if mask & bit != 0 {
+                choices.choose(1, preset, Some(true)).unwrap();
+            }
+        }
+        let mut probe = open(
+            &path,
+            settings,
+            Some(chapter.into()),
+            &choices.snapshot(1).unwrap(),
+        );
+        let Renderer::Parley(layout) = &probe.renderer else {
+            unreachable!();
+        };
+        let bullets: Vec<_> = layout
+            .markers
+            .iter()
+            .filter_map(|marker| match marker.paint {
+                MarkerPaint::Shape(kind) => Some(kind),
+                _ => None,
+            })
+            .collect();
+        if mask & 1 == 0 {
+            assert_eq!(bullets, [Circle, Square, Circle]);
+        } else {
+            assert_eq!(bullets, [Disc; 4]);
+        }
+        assert_eq!(layout.markers.len() - bullets.len(), 3);
+        let mut anchors = Vec::new();
+        for phrase in [
+            "Ring lantern",
+            "Quiet bell",
+            "Inner watch",
+            "Coast watch",
+            "Harbor patrol",
+        ] {
+            let start = probe.matches(phrase).pop().unwrap();
+            let end = crate::Anchor {
+                offset: start.offset + phrase.len(),
+                ..start.clone()
+            };
+            let selection = probe.select_range(&start, &end).unwrap();
+            assert_eq!(selection.text, phrase);
+            let page = probe.page_for(&start).unwrap();
+            assert_eq!(page, 0);
+            let rect = probe.selection_rects(page, &selection)[0];
+            if phrase == "Harbor patrol" {
+                destinations.push(probe.link_at(page, rect.x as f32 + 4., rect.y as f32 + 5.));
+            }
+            anchors.push(start);
+        }
+        if let Some(expected) = &expected {
+            assert_eq!(expected, &anchors);
+        } else {
+            expected = Some(anchors);
+        }
+        assert!(probe.matches("13. Harbor patrol").is_empty());
+        assert!(probe.matches("7. Inner watch").is_empty());
+        frames.push(probe.capture(0).unwrap());
+        if mask == 0 {
+            capture(&mut probe, "reader-list-marker-publisher.png");
+        } else if mask == 3 {
+            capture(&mut probe, "reader-list-marker-forced.png");
+        }
+    }
+    assert_eq!(frames[0], frames[4]);
+    for frame in &frames[1..4] {
+        assert_ne!(*frame, frames[0]);
+    }
+    assert_ne!(frames[1], frames[2]);
+    assert_ne!(frames[2], frames[3]);
+    assert!(
+        destinations[0].is_some() && destinations.iter().all(|target| *target == destinations[0])
+    );
+}
+
+#[test]
 fn reading_style_table_width_presets_keep_cells_spans_and_their_source_anchors() {
     use crate::PublisherRenderMode::{Book as BookMode, Web};
 

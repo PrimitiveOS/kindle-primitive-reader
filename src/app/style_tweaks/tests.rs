@@ -395,6 +395,7 @@ fn pseudo_generated_menu_keeps_the_reading_place_and_source_selection() {
         r##"<html><head><style>
         .labeled::before { content: "Notice: "; }
         .labeled::after { content: " [end]"; }
+        .labeled::first-letter { font-size:160%; font-weight:bold; }
         </style></head><body><p class="labeled">
         <a href="#destination" id="passage">Harbor lights</a></p>
         <p id="destination">Boats head home.</p></body></html>"##,
@@ -437,6 +438,22 @@ fn pseudo_generated_menu_keeps_the_reading_place_and_source_selection() {
     let back = app.navigation_layout().back();
     tap(&mut app, back);
     assert_eq!(app.screen, Screen::PseudoElementStyles);
+    tap_contents_item(&mut app, "Disable first-letter pseudo elements");
+    tap_contents_item(&mut app, "On for this book");
+    let plain = capture(&mut app);
+    assert_ne!(plain, after);
+    assert_ne!(plain, before);
+    assert_eq!(selection(&app), passage);
+    assert_eq!(app.current_history_location(), origin);
+    let book = app.open_book_id().unwrap();
+    for preset in [
+        "no_pseudo_element_before_after",
+        "no_pseudo_element_first_letter",
+    ] {
+        assert!(app.style_store.data.enabled(book, preset));
+    }
+    tap(&mut app, back);
+    assert_eq!(app.screen, Screen::PseudoElementStyles);
     capture_viewport(
         &app,
         &mut canvas,
@@ -450,7 +467,47 @@ fn pseudo_generated_menu_keeps_the_reading_place_and_source_selection() {
     adopt(&mut reopened, ReadingViewport::PORTRAIT, 1);
     assert_eq!(selection(&reopened), passage);
     assert_eq!(reopened.current_history_location(), origin);
-    assert_eq!(capture(&mut reopened), after);
+    assert_eq!(capture(&mut reopened), plain);
+}
+
+#[test]
+fn list_marker_preferences_apply_independently_and_restore_the_reading_place() {
+    let f = Fixture::new();
+    let path = f.root.join("Harbor watch lists.xhtml");
+    fs::copy(crate::test_fixture("list-marker-presets.xhtml"), &path).unwrap();
+    let mut app = open(&f);
+    app.open_path(&path).unwrap();
+    let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
+    let body = capture(&mut app);
+    let origin = app.current_history_location();
+    let book = app.open_book_id().unwrap();
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "List items");
+    assert_eq!(app.screen, Screen::ListItemStyles);
+    tap_contents_item(&mut app, "Force bullets with unordered lists");
+    tap_contents_item(&mut app, "Use on all books");
+    let bullets = capture(&mut app);
+    assert_ne!(bullets, body);
+    let back = app.navigation_layout().back();
+    tap(&mut app, back);
+    assert_eq!(app.screen, Screen::ListItemStyles);
+    tap_contents_item(&mut app, "Force decimal numbers with ordered lists");
+    tap_contents_item(&mut app, "On for this book");
+    let combined = capture(&mut app);
+    assert_ne!(combined, bullets);
+    assert!(app.style_store.data.enabled(book, "ul_li_type_disc"));
+    assert!(app.style_store.data.enabled(book, "ol_li_type_decimal"));
+    assert_eq!(app.current_history_location(), origin);
+    tap(&mut app, back);
+    assert_eq!(app.screen, Screen::ListItemStyles);
+    capture_viewport(&app, &mut canvas, "reader-list-item-controls.png", false);
+    app.save().unwrap();
+
+    let mut reopened = open(&f);
+    reopened.open_path(&path).unwrap();
+    adopt(&mut reopened, ReadingViewport::PORTRAIT, 1);
+    assert_eq!(reopened.current_history_location(), origin);
+    assert_eq!(capture(&mut reopened), combined);
 }
 
 #[test]

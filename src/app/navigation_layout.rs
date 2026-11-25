@@ -210,6 +210,7 @@ impl Screen {
                 | Self::ImageStyles
                 | Self::TableStyles
                 | Self::PseudoElementStyles
+                | Self::ListItemStyles
                 | Self::InPageFootnoteSize(_)
                 | Self::StyleFiles
                 | Self::StyleReview

@@ -114,6 +114,33 @@ impl Origins {
         self.complete
     }
 
+    /// The first retained, nonempty original text node, stopping at a hard break.
+    /// Keep the original node boundary even when neighboring style runs can merge.
+    pub(crate) fn first_text(
+        &self,
+        mut suppressed: impl FnMut(usize) -> bool,
+    ) -> Option<(usize, Range<usize>)> {
+        let mut first: Option<(usize, Range<usize>)> = None;
+        for event in &self.events {
+            if suppressed(event.element()) {
+                continue;
+            }
+            match event {
+                Event::TextNode { .. } if first.is_some() => break,
+                Event::Break { .. } => break,
+                Event::Text { bytes, element } => {
+                    if let Some((_, range)) = &mut first {
+                        range.end = bytes.end;
+                    } else {
+                        first = Some((*element, bytes.clone()));
+                    }
+                }
+                _ => (),
+            }
+        }
+        first
+    }
+
     fn push(&mut self, event: Event, budget: &mut Budget) {
         if !self.complete {
             return;

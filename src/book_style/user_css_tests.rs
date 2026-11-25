@@ -129,12 +129,25 @@ fn pseudo_generated_user_css_accepts_supported_rules_and_rejects_inert_declarati
     for (css, detail) in [
         ("p{content:'Inert'}", "needs a before/after"),
         ("p, p::before{content:'Mixed'}", "needs a before/after"),
+        (
+            "p::first-letter{content:'Replacement'}",
+            "needs a before/after",
+        ),
+        ("p{initial-letter:3 2}", "needs a first-letter"),
+        ("p::before{initial-letter:3 2}", "needs a first-letter"),
         ("p::before{display:block}", "Unsupported declaration"),
         ("p::before{padding-left:4px}", "Unsupported declaration"),
+        ("p::before{margin-right:4px}", "Unsupported declaration"),
+        ("p::first-letter{float:right}", "Unsupported declaration"),
     ] {
         let error = validate_user_css(css).unwrap_err().to_string();
         assert!(error.contains(detail), "{error}");
     }
+    let (_, with_initial) = styles(
+        markup,
+        "#target::first-letter {font-weight:700;float:left;initial-letter:3 2;margin-right:4px}",
+    );
+    assert!(at(&source, &with_initial, "target").first_letter.is_some());
 }
 
 #[test]
@@ -185,6 +198,11 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
             "td_vertical_align_none" => markup.replace(
                 "<td>Cell</td>",
                 "<td id='td' style='vertical-align:middle!important'>Cell</td><th id='th' style='vertical-align:bottom!important'>Header</th>",
+            ),
+            "ul_li_type_disc" | "ol_li_type_decimal" => markup.replace(
+                "</body>",
+                "<ul><li id='ul' style='list-style-type:circle!important'>Bell</li></ul>\
+                 <ol type='I'><li id='ol' style='list-style-type:upper-roman!important'>Light</li></ol></body>",
             ),
             _ => markup.into(),
         };
@@ -256,6 +274,20 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
                 assert_eq!(
                     at(&source, &after, "th").image_align,
                     parley::VerticalAlign::BOTTOM
+                );
+            }
+            "ul_li_type_disc" | "ol_li_type_decimal" => {
+                use crate::list_marker::MarkerKind::{Circle, Decimal, Disc, UpperRoman};
+                let (id, initial, changed, other) = if preset.id == "ul_li_type_disc" {
+                    ("ul", Circle, Disc, "ol")
+                } else {
+                    ("ol", UpperRoman, Decimal, "ul")
+                };
+                assert_eq!(at(&source, &before, id).marker, initial);
+                assert_eq!(at(&source, &after, id).marker, changed);
+                assert_eq!(
+                    at(&source, &after, other).marker,
+                    at(&source, &before, other).marker
                 );
             }
             "table_force_border" | "table-visible-borders" => {

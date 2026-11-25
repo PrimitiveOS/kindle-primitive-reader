@@ -109,7 +109,10 @@ pub(super) fn apply_reset(
         42 => style.image_max_width = value.image_max_width,
         43 => style.image_max_height = value.image_max_height,
         50 => style.min_width = value.min_width,
-        51 => style.box_sizing = value.box_sizing,
+        51 => {
+            style.box_sizing = value.box_sizing;
+            style.box_sizing_explicit = value.box_sizing_explicit;
+        }
         52 => style.min_height = value.min_height,
         0 => style.font_family = value.font_family.clone(),
         1 => style.size_scale = value.size_scale,
@@ -153,7 +156,8 @@ pub(super) fn decoration(reset: Reset, parent: TextDecoration) -> TextDecoration
 }
 
 struct StrictProperties {
-    generated_only: bool,
+    pseudo_only: bool,
+    first_letter_only: bool,
 }
 impl<'i> DeclarationParser<'i> for StrictProperties {
     type Declaration = Declaration;
@@ -171,8 +175,9 @@ impl<'i> DeclarationParser<'i> for StrictProperties {
         let property_name = property_name.as_str();
         if matches!(
             property_name,
-            "margin" | "margin-top" | "margin-bottom" | "float" | "clear"
-        ) || !self.generated_only && matches!(property_name, "display" | "visibility")
+            "margin" | "margin-top" | "margin-bottom" | "clear"
+        ) || property_name == "float" && !self.first_letter_only
+            || !self.pseudo_only && matches!(property_name, "display" | "visibility")
         {
             return Err(error(
                 input,
@@ -245,28 +250,46 @@ impl<'i> QualifiedRuleParser<'i> for StrictSheet {
         let mut declarations = Vec::new();
         let mut count = 0;
         let location = input.current_source_location();
-        let has_generated = selectors.iter().any(|selector| selector.pseudo.is_some());
-        let generated_only = selectors.iter().all(|selector| selector.pseudo.is_some());
-        for result in RuleBodyParser::new(input, &mut StrictProperties { generated_only }) {
+        let pseudo_only = selectors.iter().all(|selector| selector.pseudo.is_some());
+        let before_after_only = selectors
+            .iter()
+            .all(|selector| matches!(selector.pseudo, Some(pseudo::Target::Generated(_))));
+        let first_letter_only = selectors
+            .iter()
+            .all(|selector| matches!(selector.pseudo, Some(pseudo::Target::FirstLetter)));
+        for result in RuleBodyParser::new(
+            input,
+            &mut StrictProperties {
+                pseudo_only,
+                first_letter_only,
+            },
+        ) {
             let declaration = result.map_err(|(e, _, location)| match e.kind {
                 ParseErrorKind::Custom(text) if text.starts_with("Line ") => {
                     ParseError::custom(text)
                 }
                 other => ParseError::custom(message(location, other)),
             })?;
-            if matches!(declaration.property, Property::GeneratedContent(_)) && !generated_only {
+            if matches!(declaration.property, Property::GeneratedContent(_)) && !before_after_only {
                 return Err(ParseError::custom(message(
                     location,
                     "The content property needs a before/after pseudo-element selector",
                 )));
             }
-            if has_generated
-                && (pseudo::property_slot(&declaration.property).is_none()
-                    || matches!(declaration.property, Property::Display(value) if !matches!(value, Display::Inline | Display::None)))
+            if matches!(declaration.property, Property::InitialLetter(_)) && !first_letter_only {
+                return Err(ParseError::custom(message(
+                    location,
+                    "The initial-letter property needs a first-letter pseudo-element selector",
+                )));
+            }
+            if selectors
+                .iter()
+                .filter_map(|selector| selector.pseudo)
+                .any(|target| !pseudo::accepts_user_declaration(target, &declaration.property))
             {
                 return Err(ParseError::custom(message(
                     location,
-                    "Unsupported declaration for an inline before/after pseudo-element",
+                    "Unsupported declaration for this pseudo-element",
                 )));
             }
             count += 1;

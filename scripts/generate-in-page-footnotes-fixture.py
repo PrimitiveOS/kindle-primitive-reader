@@ -190,6 +190,17 @@ chapters = {
  <p><ruby>anchor chain<rt>visible hint</rt></ruby></p>
  <p><ruby>mooring rope<rt style="visibility:hidden">paint mask</rt></ruby></p>
 </aside>""",
+    "inline-table": """<p>The crossing report has a grid<a id="grid-ref" epub:type="noteref" href="#grid-note"><sup>9</sup></a>.</p>
+<p style="page-break-before:always">The reference ledger follows.</p>
+<aside id="grid-note" epub:type="footnote">
+ <p id="grid-head">Grid begins.</p>
+ <table id="grid-table" style="border-collapse:collapse; border:2px solid black; background:#eee">
+  <tr><td id="grid-first" style="border:1px solid black;padding:3px"><a href="#grid-ref" role="doc-backlink">Shoal ledger</a></td>
+      <th id="grid-second" style="border:1px solid black;padding:3px;background:#ddd">Deep chart</th></tr>
+  <tr><td id="grid-span" colspan="2" style="padding:3px">Ferry count</td></tr>
+ </table>
+ <p id="grid-tail"><a href="#grid-ref" role="doc-backlink">Grid ends.</a></p>
+</aside>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)

@@ -2,6 +2,46 @@
 
 ## Current Mac simulator checkpoint
 
+**Floating tables** wrap surrounding text around the captioned grid. Book
+and Web tests cover publisher sizing, physical left and right in RTL, CSS
+and HTML precedence, clearance, and a full-width table’s caption hit.
+[Floating table comparison and screenshots](floating-tables.md)
+
+**Publisher initials** preserve the original text-node range, including
+punctuation and combining marks. The pinned replay covers inline styling,
+left floats and sinking initials. Reader verifies the unstyled original
+text and the independence of the two pseudo-element settings.
+[Initials comparison and screenshots](first-letter.md)
+
+**Tables in note bands** retain borders, fills, spans, and source links.
+Supported compact tables form a ruled row in joined notes. The test follows
+the same linked cells in the original note and the bottom band.
+[Footnote comparison and screenshots](in-page-footnotes.md#inline-all-footnote-content)
+
+**List item styles** independently force discs and decimal markers. The
+Mac app verifies a saved global option and per-book override. Both replayed
+pages retain the nested and explicitly set source ordinals.
+[List item comparison and screenshots](list-marker-presets.md)
+
+The full Mac suite passed 1,668 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. It skipped 73 opt-in cases.
+All 42 focused checks passed. The simulator and pinned native replays
+reproduced 22 published screenshots.
+
+The original EPUB, PDF, AZW3, and MOBI files opened through the picker,
+turned a page, and resumed with identical source bytes. The original EPUB
+note comparison covered 14 chapters, composed eight chapters with 68 note
+bands, and preserved all 63 checked source anchors.
+
+The staged ARMHF executable is stripped and statically linked. It contains
+39,852,340 bytes with SHA-256
+`65f4ac8ab1607f4320f73b15daf30c143ee33157596b79649a0f5fb7a982e133`.
+The 33 staged files total 49,460,966 bytes. Project and dictionary licenses,
+SQLite notices, the Launcher icon, and the OCR model passed inspection.
+Foreground Kindle testing and Store publication remain pending.
+
+## Table captions, ruby footnotes, and generated text checkpoint
+
 **Table captions** follow inherited CSS or the legacy HTML bottom hint within
 native horizontal grids. The Mac and pinned native checks cover late captions,
 caption borders and spacing, preserved links, and source locations across pages.

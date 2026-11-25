@@ -47,6 +47,7 @@ const LINE_HEIGHT: i32 = 48;
 const COLUMNS: usize = 40;
 const PARAGRAPH_SPACING: &str = "paragraph-spacing";
 const PSEUDO_ELEMENTS: &str = "pseudo-elements";
+const LIST_MARKER: &str = "list-marker-";
 const TABLE_STYLES: [&str; 8] = [
     "table_no_presentational_hints",
     "table_full_width",
@@ -171,7 +172,10 @@ impl Reader {
             Some(preset) if preset.group.starts_with("link-") => Screen::LinkStyles,
             Some(preset) if image_preset(&preset) => Screen::ImageStyles,
             Some(preset) if TABLE_STYLES.contains(&preset.id) => Screen::TableStyles,
-            Some(preset) if preset.group == PSEUDO_ELEMENTS => Screen::PseudoElementStyles,
+            Some(preset) if preset.group.starts_with(PSEUDO_ELEMENTS) => {
+                Screen::PseudoElementStyles
+            }
+            Some(preset) if preset.group.starts_with(LIST_MARKER) => Screen::ListItemStyles,
             _ => Screen::StyleTweaks,
         }
     }
@@ -483,11 +487,20 @@ impl Reader {
                         }
                         continue;
                     }
-                    if p.group == PSEUDO_ELEMENTS {
+                    if p.group.starts_with(PSEUDO_ELEMENTS) {
                         if p.id == "no_pseudo_element_before_after" {
                             items.push(Item::new(
                                 "Pseudo-elements",
                                 Action::Show(Screen::PseudoElementStyles),
+                            ));
+                        }
+                        continue;
+                    }
+                    if p.group.starts_with(LIST_MARKER) {
+                        if p.id == "ul_li_type_disc" {
+                            items.push(Item::new(
+                                "List items",
+                                Action::Show(Screen::ListItemStyles),
                             ));
                         }
                         continue;
@@ -573,7 +586,12 @@ impl Reader {
                 .collect(),
             Screen::PseudoElementStyles => PRESETS
                 .iter()
-                .filter(|preset| preset.group == PSEUDO_ELEMENTS)
+                .filter(|preset| preset.group.starts_with(PSEUDO_ELEMENTS))
+                .map(|preset| preset_item(*preset, data, &b))
+                .collect(),
+            Screen::ListItemStyles => PRESETS
+                .iter()
+                .filter(|preset| preset.group.starts_with(LIST_MARKER))
                 .map(|preset| preset_item(*preset, data, &b))
                 .collect(),
             Screen::FootnoteTweaks => PRESETS
@@ -633,6 +651,9 @@ impl Reader {
                     "td_vertical_align_none" => "Align body cells to the row’s first text baseline",
                     "no_pseudo_element_before_after" => {
                         "Hide generated text before or after the original content"
+                    }
+                    "no_pseudo_element_first_letter" => {
+                        "Suppress the publisher’s first-letter styling"
                     }
                     "paragraph_web_browser_style" => {
                         "Use block paragraphs with no default first-line indent"

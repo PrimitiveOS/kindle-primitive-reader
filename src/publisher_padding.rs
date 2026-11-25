@@ -219,6 +219,7 @@ pub(crate) fn layout(
         borders,
         &crate::table_layout::TableFlow::identity(source),
         Settings::default(),
+        None,
         measure,
     )
 }
@@ -231,6 +232,7 @@ pub(crate) fn layout_with_flow(
     borders: Option<&crate::table_borders::Borders>,
     flow: &crate::table_layout::TableFlow<'_>,
     settings: Settings,
+    floated_tables: Option<&crate::float_layout::tables::Candidates>,
     mut measure: impl FnMut(&crate::source::Block) -> (u32, u32),
 ) -> Option<Vec<BoxArea>> {
     let block_width = settings.block_width;
@@ -407,18 +409,30 @@ pub(crate) fn layout_with_flow(
             && let Some(grid) = native_grids[idx]
             && area.width as f32 / f32::from(grid.columns) >= 2.5 * font
         {
+            use crate::table_widths::{NativeMode, TableWidths};
             let (space, count) = borders.map_or((0, 0), |b| b.spacing_for_table(idx));
             let edges = borders.and_then(|b| b.outer_edges(idx));
             let stroke = edges.map_or(0, |edges| edges[1].width + edges[3].width);
             let style = &styles[idx];
-            let width = crate::table_widths::TableWidths::native_width(
+            let floating = area.cell.is_none()
+                && area.x == 0
+                && area.width == width
+                && floated_tables.is_some_and(|candidates| candidates.contains(idx));
+            let mode = if floating {
+                NativeMode::Float
+            } else if settings.publisher_render_mode == Some(crate::PublisherRenderMode::Web) {
+                NativeMode::Web
+            } else {
+                NativeMode::Book
+            };
+            let width = TableWidths::native_width(
                 widths.get(&idx),
                 style,
                 area.width,
                 font * style.size_scale,
                 stroke,
                 space.saturating_mul(count),
-                settings.publisher_render_mode == Some(crate::PublisherRenderMode::Web),
+                mode,
             )
             .max(u32::from(grid.columns));
             let remainder = area.width - width;
@@ -552,6 +566,7 @@ mod tests {
             None,
             &flow,
             Settings::default(),
+            None,
             |block| {
                 assert!(!styles[block.element].flow.suppressed);
                 measured += 1;

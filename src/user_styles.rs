@@ -110,6 +110,7 @@ pub(crate) struct LayoutTweaks {
     pub(crate) ignore_table_hints: bool,
     pub(crate) native_table_widths: bool,
     pub(crate) disable_generated_content: bool,
+    pub(crate) disable_first_letter: bool,
 }
 
 #[repr(u8)]
@@ -238,6 +239,9 @@ impl Snapshot {
         if layout.disable_generated_content {
             digest.consume(b"\0disable-generated-content");
         }
+        if layout.disable_first_letter {
+            digest.consume(b"\0disable-first-letter");
+        }
         Ok(Self {
             css: css.into(),
             digest: digest.finalize().0,
@@ -338,6 +342,7 @@ pub(crate) enum Effect {
     LinkInk(LinkInk),
     IgnoreTableHints,
     DisableGeneratedContent,
+    DisableFirstLetter,
     InPageEpubFootnotes,
     FullWidthImages,
     InPageClassicFootnotes,
@@ -673,6 +678,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::DisableGeneratedContent,
     },
     Preset {
+        id: "no_pseudo_element_first_letter",
+        title: "Disable first-letter pseudo elements",
+        group: "pseudo-elements-first-letter",
+        priority: 0,
+        effect: Effect::DisableFirstLetter,
+    },
+    Preset {
         id: "table_no_presentational_hints",
         title: "Ignore HTML table presentation",
         group: "table-presentation",
@@ -742,6 +754,20 @@ pub(crate) const PRESETS: &[Preset] = &[
         group: "font-size",
         priority: 0,
         effect: Effect::Css("* {font-size:inherit !important;}"),
+    },
+    Preset {
+        id: "ul_li_type_disc",
+        title: "Force bullets with unordered lists",
+        group: "list-marker-disc",
+        priority: 0,
+        effect: Effect::Css("ul > li {list-style-type:disc !important;}"),
+    },
+    Preset {
+        id: "ol_li_type_decimal",
+        title: "Force decimal numbers with ordered lists",
+        group: "list-marker-decimal",
+        priority: 0,
+        effect: Effect::Css("ol > li {list-style-type:decimal !important;}"),
     },
     Preset {
         id: "pure_black_and_white",
@@ -924,6 +950,7 @@ impl Data {
                 Effect::LinkInk(ink) => layout.link_ink = Some(ink),
                 Effect::IgnoreTableHints => layout.ignore_table_hints = true,
                 Effect::DisableGeneratedContent => layout.disable_generated_content = true,
+                Effect::DisableFirstLetter => layout.disable_first_letter = true,
                 Effect::InPageEpubFootnotes => {
                     notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
                     notes.explicit_epub = true;

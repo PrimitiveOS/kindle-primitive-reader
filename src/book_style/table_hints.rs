@@ -1,7 +1,7 @@
 //! HTML table presentation declared separately from publisher CSS.
 use super::{
     Alignment, BoxMargin, CascadeOrigin, CssLength, Declaration, ImageLength, Parser, Property,
-    Winners, background, borders, choose,
+    Side, Winners, background, borders, choose,
 };
 use roxmltree::Node;
 
@@ -104,6 +104,13 @@ impl TableHints {
         if root && word(node, "align").as_deref() == Some("center") {
             for side in 0..2 {
                 set(Property::HorizontalMargin(side, Some(BoxMargin::Auto)));
+            }
+        }
+        if root && let Some(alignment) = node.attribute("align") {
+            if alignment.eq_ignore_ascii_case("left") {
+                set(Property::Float(Some(Side::Left)));
+            } else if alignment.eq_ignore_ascii_case("right") {
+                set(Property::Float(Some(Side::Right)));
             }
         }
         if tag == "caption"
@@ -210,6 +217,57 @@ impl TableHints {
 mod tests {
     use super::*;
     use crate::{Settings, book_style::BookStyle, source::Source, table_layout::TableFlow};
+
+    #[test]
+    fn table_float_hints_yield_to_css_and_the_presentation_toggle() {
+        let source = Source::parse(
+            r#"<html><body dir="rtl">
+            <table id="left" align="LEFT"><tr><td id="cell">West</td></tr></table>
+            <table id="right" align="right"><tr><td>East</td></tr></table>
+            <table id="normal" align="left" style="float:none"><tr><td>Center</td></tr></table>
+            <table id="opposite" align="right" style="float:left"><tr><td>Shore</td></tr></table>
+            <table id="centered" align="center"><tr><td>Harbor</td></tr></table>
+            </body></html>"#,
+        )
+        .unwrap();
+        let path = crate::test_fixture("field-notes-epub3.epub");
+        let mut book = crate::Book::open(&path).unwrap();
+        let href = book.chapters[0].href.clone();
+        let mut fonts =
+            crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+        let styles = BookStyle::load(&mut book, &href, &source, &mut fonts);
+        let original = styles.compute(&source.elements);
+        let mut choices = crate::user_styles::Data::default();
+        choices
+            .choose(1, "table_no_presentational_hints", Some(true))
+            .unwrap();
+        let filtered = styles
+            .with_user_css(&choices.snapshot(1).unwrap())
+            .unwrap()
+            .compute(&source.elements);
+        let index = |id: &str| {
+            source
+                .elements
+                .iter()
+                .position(|element| element.id.as_deref() == Some(id))
+                .unwrap()
+        };
+        for (id, publisher, without_hint) in [
+            ("left", Some(Side::Left), None),
+            ("right", Some(Side::Right), None),
+            ("normal", None, None),
+            ("opposite", Some(Side::Left), Some(Side::Left)),
+            ("centered", None, None),
+            ("cell", None, None),
+        ] {
+            assert_eq!(original[index(id)].float_side, publisher, "{id}");
+            assert_eq!(filtered[index(id)].float_side, without_hint, "{id}");
+        }
+        assert!(matches!(
+            original[index("centered")].horizontal_margin,
+            [BoxMargin::Auto, BoxMargin::Auto]
+        ));
+    }
 
     #[test]
     fn table_caption_side_resolves_html_hints_inheritance_and_publisher_resets() {
