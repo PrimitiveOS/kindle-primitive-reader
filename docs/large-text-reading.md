@@ -41,5 +41,7 @@ incomplete code units, invalid Unicode scalars and NUL characters. BOM-less
 UTF-32 detection is not implemented. Previously readable encodings retain
 their conversion path and saved identities. UTF-32 behavior and real-book
 compatibility have not yet been tested in simulation or on Kindle.
+The separate BOM-less UTF-16 XML-declaration fallback applies to HTML, XML and
+FB2 rather than plain text. [Encoding limits](local-html-resources.md)
 [KOReader text reader](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L1164-L1245) ·
 [KOReader text import modes](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L2398-L2412)

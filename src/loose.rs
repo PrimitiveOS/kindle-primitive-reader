@@ -388,6 +388,43 @@ fn decode_document(bytes: &[u8], format: Format) -> Result<Cow<'_, str>> {
         }
         return Ok(Cow::Owned(decoded));
     }
+    // CREngine recognizes this XML declaration signature without a BOM.
+    // These byte sequences previously reached the NUL-character rejection;
+    // leave already readable input and all plain-text detection untouched.
+    if matches!(format, Format::Html | Format::Fb2) {
+        let utf16 = if bytes.starts_with(b"<\0?\0x\0") {
+            Some((encoding_rs::UTF_16LE, "utf-16le"))
+        } else if bytes.starts_with(b"\0<\0?\0x") {
+            Some((encoding_rs::UTF_16BE, "utf-16be"))
+        } else {
+            None
+        };
+        if let Some((encoding, endian_label)) = utf16 {
+            let decoded = encoding
+                .decode_without_bom_handling_and_without_replacement(bytes)
+                .ok_or("The document contains invalid UTF-16")?;
+            if decoded.contains('\0') {
+                return Err("The document contains binary characters".into());
+            }
+            let end = decoded
+                .find("?>")
+                .ok_or("The XML declaration is incomplete")?;
+            if end + 2 > 1024 || !decoded.starts_with("<?xml") {
+                return Err("The XML declaration is invalid or too long".into());
+            }
+            let declaration = &decoded[..end + 2];
+            Xml::parse(&format!("{declaration}<html/>"))
+                .map_err(|_| "The XML declaration is invalid")?;
+            let declaration_lower = declaration.to_ascii_lowercase();
+            if let Some(label) = attribute_value(&declaration_lower[5..], "encoding")
+                && label != "utf-16"
+                && label != endian_label
+            {
+                return Err("The XML encoding conflicts with its UTF-16 byte order".into());
+            }
+            return Ok(Cow::Owned(decoded.into_owned()));
+        }
+    }
     // Only consult the HTML tokenizer when the old decoding path would fail;
     // successful documents retain their existing text and saved identities.
     let html_fallback = || {

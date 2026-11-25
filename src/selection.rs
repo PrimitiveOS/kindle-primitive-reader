@@ -39,28 +39,43 @@ pub struct HighlightRect {
 }
 
 impl Probe {
-    /// Convert two raw-bearing anchors into an exact quote while retaining the
-    /// raw endpoints in Reader's selection value. Cross-block ranges require
-    /// verified raw endpoint layouts; mixed raw/canonical endpoints are rejected.
+    /// Build an exact selection with at least one raw endpoint. Mixed raw and
+    /// ordinary endpoints are supported across distinct verified blocks.
     #[allow(dead_code)]
     pub(crate) fn select_raw_anchors(
         &self,
         first: &Anchor,
         second: &Anchor,
     ) -> Option<TextSelection> {
-        let wrap = |anchor: &Anchor| {
-            let caret = anchor.raw_caret.clone()?;
-            let mut canonical = anchor.clone();
-            canonical.raw_caret = None;
+        let verify = |anchor: &Anchor| {
+            if anchor.illustration.is_some() {
+                return None;
+            }
+            if let Some(caret) = &anchor.raw_caret {
+                let mut canonical = anchor.clone();
+                canonical.raw_caret = None;
+                self.validate_raw_whitespace_anchor(&crate::source::raw_whitespace::RawAnchor {
+                    canonical,
+                    caret: caret.clone(),
+                })?;
+                Some(anchor.clone())
+            } else {
+                let (index, offset) = self.project_anchor(anchor)?;
+                Some(self.anchor(self.source.blocks[index].key, offset))
+            }
+        };
+        let first = verify(first)?;
+        let second = verify(second)?;
+        if first.block != second.block {
+            return self.select_raw_across_blocks(first, second);
+        }
+        let wrap = |anchor: Anchor| {
+            let mut canonical = anchor;
+            let caret = canonical.raw_caret.take()?;
             Some(crate::source::raw_whitespace::RawAnchor { canonical, caret })
         };
         let first_raw = wrap(first)?;
         let second_raw = wrap(second)?;
-        self.validate_raw_whitespace_anchor(&first_raw)?;
-        self.validate_raw_whitespace_anchor(&second_raw)?;
-        if first_raw.canonical.block != second_raw.canonical.block {
-            return self.select_raw_across_blocks(first_raw, second_raw);
-        }
         let selection = self.select_raw_whitespace(&first_raw, &second_raw)?;
         let unwrap = |raw: crate::source::raw_whitespace::RawAnchor| {
             let mut anchor = raw.canonical;
@@ -74,15 +89,11 @@ impl Probe {
         })
     }
 
-    /// Cross-block quotes require a verified raw layout at both endpoints;
-    /// intermediate blocks follow their installed raw or normal projection.
-    fn select_raw_across_blocks(
-        &self,
-        first: crate::source::raw_whitespace::RawAnchor,
-        second: crate::source::raw_whitespace::RawAnchor,
-    ) -> Option<TextSelection> {
-        let a = self.selection_block(first.canonical.block)?;
-        let b = self.selection_block(second.canonical.block)?;
+    /// Each endpoint and intermediate block must use its installed raw or
+    /// ordinary projection; an ambiguous layout rejects the entire range.
+    fn select_raw_across_blocks(&self, first: Anchor, second: Anchor) -> Option<TextSelection> {
+        let a = self.selection_block(first.block)?;
+        let b = self.selection_block(second.block)?;
         let (first_index, last_index, start, end) = if a < b {
             (a, b, first, second)
         } else {
@@ -111,7 +122,9 @@ impl Probe {
                 return None;
             }
         }
-        if !raw_blocks.contains(&first_index) || !raw_blocks.contains(&last_index) {
+        if raw_blocks.contains(&first_index) != start.raw_caret.is_some()
+            || raw_blocks.contains(&last_index) != end.raw_caret.is_some()
+        {
             return None;
         }
         let mut quote = String::new();
@@ -120,12 +133,12 @@ impl Probe {
             let part = if raw_blocks.contains(&index) {
                 let raw = block.raw_whitespace.as_ref()?.bind(&block.text)?;
                 let from = if index == first_index {
-                    start.caret.raw_offset
+                    start.raw_caret.as_ref()?.raw_offset
                 } else {
                     0
                 };
                 let to = if index == last_index {
-                    end.caret.raw_offset
+                    end.raw_caret.as_ref()?.raw_offset
                 } else {
                     raw.raw().len()
                 };
@@ -133,7 +146,17 @@ impl Probe {
             } else {
                 let view = self.reading_flow.view(&self.source, block).ok()?;
                 let mut text = String::new();
-                for range in view.layout_spans(0..block.text.len())? {
+                let from = if index == first_index {
+                    start.offset
+                } else {
+                    0
+                };
+                let to = if index == last_index {
+                    end.offset
+                } else {
+                    block.text.len()
+                };
+                for range in view.layout_spans(from..to)? {
                     text.push_str(view.text().get(range)?);
                 }
                 text
@@ -155,14 +178,9 @@ impl Probe {
             }
             quote.push_str(&part);
         }
-        let into_anchor = |raw: crate::source::raw_whitespace::RawAnchor| {
-            let mut anchor = raw.canonical;
-            anchor.raw_caret = Some(raw.caret);
-            anchor
-        };
         Some(TextSelection {
-            start: into_anchor(start),
-            end: into_anchor(end),
+            start,
+            end,
             text: quote,
         })
     }
@@ -315,7 +333,51 @@ impl Probe {
 
     pub(crate) fn word_in(&self, range: Range<f32>, x: f32, y: f32) -> Option<TextSelection> {
         if !self.is_vertical() {
-            self.selection_point(range.clone(), x, y)?;
+            let point = self.selection_point(range.clone(), x, y)?;
+            if let Renderer::Parley(renderer) = &self.renderer {
+                for paragraph in renderer.paragraphs_in(point.page.clone()) {
+                    if paragraph.raw_binding.is_none()
+                        || !paragraph.hit_columns().contains(&point.x)
+                        || !(point.inside_columns || paragraph.allows_margin_hits())
+                    {
+                        continue;
+                    }
+                    let local_x = point.x - paragraph.x;
+                    let local_y = point.y - paragraph.y;
+                    if !(0.0..paragraph.layout.height()).contains(&local_y) {
+                        continue;
+                    }
+                    let block = &self.source.blocks[self.selection_block(paragraph.key)?];
+                    if !paragraph.is_verified_raw(block) {
+                        return None;
+                    }
+                    let (cluster, _) =
+                        Cluster::from_point_exact(&paragraph.layout, local_x, local_y)?;
+                    let line = cluster.line();
+                    let metrics = line.metrics();
+                    let ink = (paragraph.y + metrics.content_block_min_coord)
+                        ..(paragraph.y + metrics.content_block_max_coord);
+                    if ink.end <= point.page.start
+                        || ink.start >= point.page.end
+                        || (renderer.uses_float_geometry() && !ink.contains(&point.y))
+                    {
+                        return None;
+                    }
+                    let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+                    let word = word_range(bound.raw(), cluster.text_range().start)?;
+                    use crate::source::raw_whitespace::CaretAffinity;
+                    let start =
+                        self.raw_whitespace_anchor(block.key, word.start, CaretAffinity::After)?;
+                    let end =
+                        self.raw_whitespace_anchor(block.key, word.end, CaretAffinity::Before)?;
+                    let attach = |raw: crate::source::raw_whitespace::RawAnchor| {
+                        let mut anchor = raw.canonical;
+                        anchor.raw_caret = Some(raw.caret);
+                        anchor
+                    };
+                    return self.select_raw_anchors(&attach(start), &attach(end));
+                }
+            }
         }
         let (key, offset) = self.source_at(range, x, y)?;
         let block = &self.source.blocks[self.selection_block(key)?];
@@ -572,11 +634,16 @@ impl Probe {
         let Renderer::Parley(renderer) = &self.renderer else {
             return Vec::new();
         };
-        let (Some(start), Some(end)) = (&selection.start.raw_caret, &selection.end.raw_caret)
-        else {
-            return Vec::new();
-        };
-        let (start, end) = (start.raw_offset, end.raw_offset);
+        let start = selection
+            .start
+            .raw_caret
+            .as_ref()
+            .map_or(selection.start.offset, |caret| caret.raw_offset);
+        let end = selection
+            .end
+            .raw_caret
+            .as_ref()
+            .map_or(selection.end.offset, |caret| caret.raw_offset);
         let mut rects = Vec::new();
         for paragraph in renderer.paragraphs_in(page.clone()) {
             let Some(index) = self.selection_block(paragraph.key) else {
@@ -600,6 +667,11 @@ impl Probe {
                 if !paragraph.is_verified_raw(block) {
                     return Vec::new();
                 }
+                if (index == first && selection.start.raw_caret.is_none())
+                    || (index == last && selection.end.raw_caret.is_none())
+                {
+                    return Vec::new();
+                }
                 let Some(raw) = block
                     .raw_whitespace
                     .as_ref()
@@ -613,13 +685,17 @@ impl Probe {
                     geometry.append(from..to, &page, self.settings, &columns, &mut rects);
                 }
             } else {
-                if index == first || index == last {
+                if (index == first && selection.start.raw_caret.is_some())
+                    || (index == last && selection.end.raw_caret.is_some())
+                {
                     return Vec::new();
                 }
                 let Ok(view) = self.reading_flow.view(&self.source, block) else {
                     return Vec::new();
                 };
-                let Some(spans) = view.layout_spans(0..block.text.len()) else {
+                let from = if index == first { start } else { 0 };
+                let to = if index == last { end } else { block.text.len() };
+                let Some(spans) = view.layout_spans(from..to) else {
                     return Vec::new();
                 };
                 for span in spans {

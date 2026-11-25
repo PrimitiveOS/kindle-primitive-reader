@@ -64,6 +64,15 @@ pinned CREngine resolves non-container HTML resources against
 the document directory; Reader applies the narrower boundaries above.
 [KOReader resource resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L995-L1011)
 
+HTML, XML and FB2 can also use strict BOM-less UTF-16LE or UTF-16BE when the
+file begins with an XML declaration in that byte order. The declaration must be
+well formed, end within 1,024 decoded bytes and either omit its encoding or
+declare matching `utf-16`, `utf-16le` or `utf-16be`. Incomplete units, invalid
+surrogates, NULs and conflicting declarations are rejected. Plain text and
+UTF-16 documents without this opening signature are not detected by this
+fallback. Formerly readable documents retain their conversion and anchors.
+Real-book, simulator and Kindle verification remain open. [KOReader UTF-16 signature detection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L6109-L6121)
+
 For standalone HTML that would otherwise fail decoding, a bounded scan of the
 first 1,024 bytes also recognizes supported legacy `http-equiv="Content-Type"`
 charset declarations. Existing successful input, BOM and XML-declaration

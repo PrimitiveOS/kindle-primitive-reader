@@ -90,8 +90,8 @@ impl Reader {
                 "Swipe vertically for one row, horizontally or use page buttons for a screen.",
                 "Swipe along the top or left edge to change the grid columns or rows.",
                 "Tap or drag the ribbon to browse. Hold it to open the book map.",
-                "The handle is browsing; the caret is reading. Squares show fixed-page history.",
-                "Fixed-page ribbon: gray highlight, black note, tall bookmark. Icons mark thumbnails.",
+                "The handle is browsing; the caret is reading. Squares show page or chapter history.",
+                "Ribbon: gray highlight, black note, tall bookmark. Reflow marks show starting chapters.",
                 "Page-number mode saves per book. Set as default applies when no choice is saved.",
             ]
             .into_iter()

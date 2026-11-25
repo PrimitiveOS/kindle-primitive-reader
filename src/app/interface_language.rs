@@ -3617,11 +3617,11 @@ impl InterfaceLanguage {
             "Tap or drag the ribbon to browse. Hold it to open the book map." => {
                 "Chạm hoặc kéo thanh để duyệt. Giữ thanh để mở sơ đồ sách."
             }
-            "The handle is browsing; the caret is reading. Squares show fixed-page history." => {
-                "Nút kéo là vị trí đang duyệt; mũi tên là vị trí đọc. Ô vuông là lịch sử trang cố định."
+            "The handle is browsing; the caret is reading. Squares show page or chapter history." => {
+                "Nút kéo là vị trí đang duyệt; mũi tên là vị trí đọc. Ô vuông là lịch sử trang hoặc chương."
             }
-            "Fixed-page ribbon: gray highlight, black note, tall bookmark. Icons mark thumbnails." => {
-                "Thanh trang cố định: xám là tô sáng, đen là ghi chú, vạch cao là dấu trang. Biểu tượng đánh dấu ảnh thu nhỏ."
+            "Ribbon: gray highlight, black note, tall bookmark. Reflow marks show starting chapters." => {
+                "Thanh duyệt: xám là tô sáng, đen là ghi chú, vạch cao là dấu trang. Sách dàn trang lại hiện chương bắt đầu."
             }
             "Page-number mode saves per book. Set as default applies when no choice is saved." => {
                 "Chế độ số trang lưu theo sách. Mặc định áp dụng khi sách chưa có lựa chọn riêng."

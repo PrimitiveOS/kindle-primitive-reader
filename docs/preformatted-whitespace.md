@@ -119,10 +119,11 @@ in search-result invalidation. This path is inactive while the raw layout gate
 is off; search fails rather than guessing if a required map is missing.
 Reader's selection value can carry a verified raw quote and raw endpoints,
 including through the reading-session quote API. Within one section it can
-also assemble cross-block quotes and geometry when both endpoint layouts are
-verified, using each intermediate block's installed projection. Chapters with
-joined notes, mixed raw/canonical endpoints and cross-section raw selections
-remain unsupported. The active renderer has not yet installed raw layouts.
+also assemble cross-block quotes and geometry when endpoint layouts are
+verified, including mixed raw and ordinary endpoints in different blocks,
+using each intermediate block's installed projection. Chapters with joined
+notes, mixed endpoints in one block and cross-section raw selections remain
+unsupported. The active renderer has not yet installed raw layouts.
 
 This stage does **not** change rendering, copying, selection, source revisions,
 existing anchors or saved state. It does not yet implement preformatted EPUB

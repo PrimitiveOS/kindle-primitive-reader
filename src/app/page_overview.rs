@@ -763,25 +763,25 @@ impl Reader {
         for offset in ticks {
             canvas.fill(Rect::new(track.x + 10 + offset, center - 10, 2, 20), 85);
         }
+        // 1 = highlight, 2 = note, 4 = bookmark. Coalesce nearby positions
+        // to bound the marker count by available ribbon width.
+        let mut saved = BTreeMap::<i32, u8>::new();
+        let mut mark_page = |page: usize, flags: u8| {
+            if page >= count {
+                return;
+            }
+            let portion = page as f64 / count.saturating_sub(1).max(1) as f64;
+            let portion = if layout.navigation.mirrored {
+                1.0 - portion
+            } else {
+                portion
+            };
+            let offset = (portion * (track.w - 20).max(0) as f64).round() as i32;
+            *saved.entry(offset / 5 * 5).or_default() |= flags;
+        };
         if let Some(fixed) = self.fixed.as_ref().filter(|_| overview.chapter.is_none())
             && let Some(state) = self.library.state(fixed.id)
         {
-            // 1 = highlight, 2 = note, 4 = bookmark. Coalesce nearby pages
-            // to bound the marker count by available ribbon width.
-            let mut saved = BTreeMap::<i32, u8>::new();
-            let mut mark_page = |page: usize, flags: u8| {
-                if page >= count {
-                    return;
-                }
-                let portion = page as f64 / count.saturating_sub(1).max(1) as f64;
-                let portion = if layout.navigation.mirrored {
-                    1.0 - portion
-                } else {
-                    portion
-                };
-                let offset = (portion * (track.w - 20).max(0) as f64).round() as i32;
-                *saved.entry(offset / 5 * 5).or_default() |= flags;
-            };
             for bookmark in &state.bookmarks {
                 if bookmark.position.chapter == 0 && bookmark.position.anchor.is_none() {
                     mark_page(bookmark.position.page, 4);
@@ -803,17 +803,45 @@ impl Reader {
                     mark_page(page, flags);
                 }
             }
-            for (offset, flags) in saved {
-                let x = track.x + 10 + offset;
-                if flags & 1 != 0 {
-                    canvas.fill(Rect::new(x - 2, center - 5, 5, 10), 85);
+        } else if let Some(active) = self.active.as_ref().filter(|_| overview.chapter.is_some())
+            && let Some(state) = self.library.state(active.id)
+        {
+            let probe = &active.reading.probe;
+            let chapter_for = |anchor: &Anchor| {
+                if anchor.raw_caret.is_some() || anchor.book != probe.book {
+                    return None;
                 }
-                if flags & 2 != 0 {
-                    canvas.fill(Rect::new(x - 2, center - 5, 5, 10), 0);
+                probe.chapter_index(&anchor.chapter)
+            };
+            for bookmark in &state.bookmarks {
+                let chapter = match &bookmark.position.anchor {
+                    Some(anchor) => chapter_for(anchor),
+                    None => Some(bookmark.position.chapter),
+                };
+                if let Some(chapter) = chapter {
+                    mark_page(chapter, 4);
                 }
-                if flags & 4 != 0 {
-                    canvas.fill(Rect::new(x - 2, center - 13, 5, 26), 0);
+            }
+            for highlight in &state.highlights {
+                if let Some(chapter) = chapter_for(&highlight.selection.start) {
+                    let noted = highlight
+                        .note
+                        .as_ref()
+                        .is_some_and(|note| !note.trim().is_empty());
+                    mark_page(chapter, 1 | if noted { 2 } else { 0 });
                 }
+            }
+        }
+        for (offset, flags) in saved {
+            let x = track.x + 10 + offset;
+            if flags & 1 != 0 {
+                canvas.fill(Rect::new(x - 2, center - 5, 5, 10), 85);
+            }
+            if flags & 2 != 0 {
+                canvas.fill(Rect::new(x - 2, center - 5, 5, 10), 0);
+            }
+            if flags & 4 != 0 {
+                canvas.fill(Rect::new(x - 2, center - 13, 5, 26), 0);
             }
         }
         let portion = selected as f64 / count.saturating_sub(1).max(1) as f64;
@@ -826,7 +854,7 @@ impl Reader {
         canvas.fill(Rect::new(x, center - 15, 20, 30), 0);
 
         // The scrub handle is the browsed location; these separate marks keep
-        // the reading location and recent fixed-page history visible while
+        // the reading location and recent history visible while
         // browsing without changing either one.
         let marker_offset = |position: usize| {
             let fraction = position as f64 / count.saturating_sub(1).max(1) as f64;
@@ -837,13 +865,34 @@ impl Reader {
             };
             (fraction * (track.w - 20).max(0) as f64).round() as i32
         };
-        if self.fixed.is_some() && overview.chapter.is_none() {
+        if (self.fixed.is_some() && overview.chapter.is_none())
+            || (self.active.is_some() && overview.chapter.is_some())
+        {
             let mut history = BTreeMap::<i32, u8>::new();
             for (locations, flag) in [(&self.back, 1), (&self.forward, 2)] {
                 for location in locations.iter().rev().take(3) {
                     let position = &location.position;
-                    if position.chapter == 0 && position.page < count {
-                        let bucket = marker_offset(position.page) / 18 * 18;
+                    let coordinate = if overview.chapter.is_none() {
+                        (position.chapter == 0).then_some(position.page)
+                    } else {
+                        let probe = &self
+                            .active
+                            .as_ref()
+                            .expect("Open reflow book")
+                            .reading
+                            .probe;
+                        match &position.anchor {
+                            Some(anchor)
+                                if anchor.raw_caret.is_none() && anchor.book == probe.book =>
+                            {
+                                probe.chapter_index(&anchor.chapter)
+                            }
+                            Some(_) => None,
+                            None => Some(position.chapter),
+                        }
+                    };
+                    if let Some(coordinate) = coordinate.filter(|&coordinate| coordinate < count) {
+                        let bucket = marker_offset(coordinate) / 18 * 18;
                         *history.entry(bucket).or_default() |= flag;
                     }
                 }

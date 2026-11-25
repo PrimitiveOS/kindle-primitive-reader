@@ -3143,7 +3143,11 @@ fn valid_highlight(mark: &Highlight) -> bool {
                         && start.raw_sha256 == end.raw_sha256
                         && start.raw_offset < end.raw_offset)),
         ),
-        _ => Some(false),
+        _ => Some(
+            selection.start.chapter == selection.end.chapter
+                && selection.start.revision == selection.end.revision
+                && selection.start.block < selection.end.block,
+        ),
     };
     valid_anchor(&selection.start)
         && valid_anchor(&selection.end)
