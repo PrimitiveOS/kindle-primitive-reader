@@ -88,7 +88,11 @@ impl Plan {
         let owner_style = styles.get(block.element)?;
         for run in originals {
             let style = styles.get(run.element)?;
-            if !style.preformatted_spaces
+            if style.flow.suppressed
+                || !style.flow.painted
+                || (run.element != block.element
+                    && style.display != crate::book_style::flow::Display::Inline)
+                || !style.preformatted_spaces
                 || style.white_space != owner_style.white_space
                 || style.text_transform != TextTransform::None
                 || style.generated.is_some()
@@ -99,6 +103,22 @@ impl Plan {
             }
         }
         let bound = block.raw_whitespace.as_ref()?.bind(block.text)?;
+        for &element in bound.elements() {
+            let style = styles.get(element)?;
+            if style.flow.suppressed
+                || !style.flow.painted
+                || style.display != crate::book_style::flow::Display::Inline
+                || style.white_space != owner_style.white_space
+                || style.writing_mode != owner_style.writing_mode
+                || style.direction != owner_style.direction
+                || style.text_transform != TextTransform::None
+                || style.generated.is_some()
+                || style.first_letter.is_some()
+                || style.first_line.is_some()
+            {
+                return None;
+            }
+        }
         let raw = bound.raw();
         let mut runs = Vec::with_capacity(bound.style_runs().len());
         let mut previous_raw = 0;
@@ -112,7 +132,11 @@ impl Plan {
                 return None;
             }
             let style = styles.get(raw_run.element)?;
-            if !style.preformatted_spaces
+            if style.flow.suppressed
+                || !style.flow.painted
+                || (raw_run.element != block.element
+                    && style.display != crate::book_style::flow::Display::Inline)
+                || !style.preformatted_spaces
                 || style.white_space != owner_style.white_space
                 || style.text_transform != TextTransform::None
                 || style.generated.is_some()

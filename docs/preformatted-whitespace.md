@@ -9,7 +9,9 @@ simulator or on Kindle and must not be treated as validated or released.
 A snapshot is captured for direct text and a bounded set of inline elements
 when the concatenated text normalizes to the canonical block exactly. Inline
 style runs retain each source text node’s owner, including whitespace at
-inline boundaries; each run keeps its computed style and language. Explicit
+inline boundaries; each run keeps its computed style and language. Hidden,
+unpainted, direction-changing or reclassified descendants, including empty
+elements and explicit breaks, use the canonical fallback. Explicit
 `<br>` elements map to verified canonical newlines. Comments and processing instructions are ignored. Each block is limited to
 64 KiB and 4,096 mapping records; chapter metadata budgets are 768 KiB for
 preferred `<pre>` content and 256 KiB for other content. The ordinary layout

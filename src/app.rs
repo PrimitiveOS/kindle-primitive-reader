@@ -106,6 +106,7 @@ mod reading_viewport_stage;
 mod reflow_book_map_exit;
 mod reflow_book_map_history;
 mod reflow_book_map_marks;
+mod reflow_book_map_raw_counts;
 mod result_context;
 mod saved_highlight_popup;
 mod search_chapter_scope;
@@ -1028,6 +1029,7 @@ pub struct Reader {
     overview: Option<PageOverview>,
     overview_raw: Option<page_overview::RawVerification>,
     book_map_raw_history: Option<reflow_book_map_history::Verification>,
+    book_map_raw_counts: Option<reflow_book_map_raw_counts::Verification>,
     skim: Option<skim::Session>,
     staged_viewport: Option<(
         primitive_app::viewport::Viewport,
@@ -1297,6 +1299,7 @@ impl Reader {
             overview: None,
             overview_raw: None,
             book_map_raw_history: None,
+            book_map_raw_counts: None,
             skim: None,
             library_viewport: crate::session::ReadingViewport::PORTRAIT,
             staged_viewport: None,
@@ -2267,6 +2270,7 @@ impl Reader {
         if screen != Screen::BookMap {
             self.fixed_map_help = false;
             self.book_map_raw_history = None;
+            self.book_map_raw_counts = None;
         }
         if !matches!(screen, Screen::PageOverview | Screen::BookMap) {
             self.ribbon_maps.clear();
@@ -2528,6 +2532,7 @@ impl Reader {
         self.screen = screen;
         if screen == Screen::BookMap {
             self.start_book_map_raw_history();
+            self.start_book_map_raw_counts();
         }
         self.sync_alternative_contents();
         self.prepare_content_dpi_editor();
@@ -4191,7 +4196,14 @@ impl Reader {
             return Vec::new();
         };
         let reading = &active.reading;
-        let counts = reflow_book_map_marks::collect(reading, state);
+        let mut counts = reflow_book_map_marks::collect(reading, state);
+        if let Some(raw) = &self.book_map_raw_counts {
+            for (count, extra) in counts.iter_mut().zip(raw.counts()) {
+                count.bookmarks = count.bookmarks.saturating_add(extra.bookmarks);
+                count.highlights = count.highlights.saturating_add(extra.highlights);
+                count.notes = count.notes.saturating_add(extra.notes);
+            }
+        }
         let history = reflow_book_map_history::collect(
             reading,
             &self.back,
@@ -10424,6 +10436,7 @@ impl App for Reader {
             self.cancel_screen_page_jump();
             self.overview_raw = None;
             self.book_map_raw_history = None;
+            self.book_map_raw_counts = None;
         }
         if matches!(
             input,
@@ -10494,6 +10507,7 @@ impl App for Reader {
             }
             if input == Input::Wake && self.screen == Screen::BookMap {
                 self.start_book_map_raw_history();
+                self.start_book_map_raw_counts();
             }
             let progress_changed = if input == Input::Wake {
                 self.reset_footer_initial_position();
@@ -11226,6 +11240,11 @@ impl App for Reader {
                     .as_ref()
                     .and_then(reflow_book_map_history::Verification::deadline),
             )
+            .chain(
+                self.book_map_raw_counts
+                    .as_ref()
+                    .and_then(reflow_book_map_raw_counts::Verification::deadline),
+            )
             .chain(self.spelling_lookup.as_ref().map(|job| job.deadline))
             .chain(self.cjk_selection_lookup.as_ref().map(|job| job.deadline))
             .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
@@ -11256,6 +11275,9 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if let Some(change) = self.poll_book_map_raw_counts(now) {
+            return change;
+        }
         if let Some(change) = self.poll_book_map_raw_history(now) {
             return change;
         }
@@ -11499,6 +11521,7 @@ impl App for Reader {
         self.finish_interrupted_scroll();
         self.overview_raw = None;
         self.book_map_raw_history = None;
+        self.book_map_raw_counts = None;
         self.embedded_font_report = None;
         self.eager_typography.cancel();
         self.screen_page_worker.cancel();
@@ -11518,6 +11541,7 @@ impl App for Reader {
     fn storage_returned(&mut self) -> io::Result<()> {
         self.overview_raw = None;
         self.book_map_raw_history = None;
+        self.book_map_raw_counts = None;
         self.gestures.multiswipes.clear_contact();
         self.finish_interrupted_scroll();
         self.embedded_font_report = None;
@@ -11581,6 +11605,7 @@ impl App for Reader {
         }
         if self.screen == Screen::BookMap {
             self.start_book_map_raw_history();
+            self.start_book_map_raw_counts();
         }
         Ok(())
     }

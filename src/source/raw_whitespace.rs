@@ -67,6 +67,7 @@ pub(crate) struct Snapshot {
     block_key: usize,
     raw: String,
     style_runs: Vec<RawStyleRun>,
+    elements: Vec<usize>,
     text: Vec<TextSpan>,
     gaps: Vec<WhitespaceGap>,
     canonical_sha256: [u8; 32],
@@ -143,6 +144,10 @@ impl Bound<'_> {
 
     pub(crate) fn style_runs(&self) -> &[RawStyleRun] {
         &self.snapshot.style_runs
+    }
+
+    pub(crate) fn elements(&self) -> &[usize] {
+        &self.snapshot.elements
     }
 
     pub(crate) fn text_spans(&self) -> &[TextSpan] {
@@ -380,6 +385,7 @@ pub(super) fn capture(
 ) -> Option<Snapshot> {
     let mut raw = String::new();
     let mut style_runs: Vec<RawStyleRun> = Vec::new();
+    let mut elements = Vec::new();
     let mut hard_breaks = Vec::new();
     for (index, child) in node.descendants().skip(1).enumerate() {
         if index >= MAX_RECORDS {
@@ -411,6 +417,7 @@ pub(super) fn capture(
                 }
             }
         } else if child.is_element() {
+            elements.push(*element_ids.get(&child.id())?);
             if child.has_tag_name("br") {
                 if child.children().next().is_some() || raw.len() >= MAX_BLOCK_BYTES {
                     return None;
@@ -536,6 +543,11 @@ pub(super) fn capture(
     let bytes = std::mem::size_of::<Snapshot>()
         .checked_add(raw.len())?
         .checked_add(
+            elements
+                .capacity()
+                .checked_mul(std::mem::size_of::<usize>())?,
+        )?
+        .checked_add(
             style_runs
                 .capacity()
                 .checked_mul(std::mem::size_of::<RawStyleRun>())?,
@@ -555,6 +567,7 @@ pub(super) fn capture(
         block_key: node.range().start,
         raw: raw.to_owned(),
         style_runs,
+        elements,
         text,
         gaps,
         canonical_sha256: digest(&SHA256, canonical.as_bytes())

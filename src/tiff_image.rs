@@ -144,7 +144,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         || !(fill_order == 1 || (bits < 8 && fill_order == 2))
         || !matches!(compression, 1 | 2 | 3 | 4 | 5 | 7 | 8 | 32946 | 32773)
         || (matches!(compression, 2 | 3 | 4) && (!matches!(photometric, 0 | 1) || samples != 1 || bits != 1 || predictor != 1))
-        || (compression == 7 && (!matches!((photometric, samples), (1, 1) | (6, 3)) || bits != 8 || predictor != 1 || [280, 281, 301, 318, 319, 340, 341, 342, 513, 514, 34675].iter().any(|&tag| image.has_tag(tag))))
+        || (compression == 7 && (!matches!((photometric, samples), (0 | 1, 1) | (6, 3)) || bits != 8 || predictor != 1 || [280, 281, 301, 318, 319, 340, 341, 342, 513, 514, 34675].iter().any(|&tag| image.has_tag(tag))))
         || (compression == 3 && fax_options > 1)
         || (compression == 4 && fax_options != 0)
         || !matches!(orientation, 1..=8)
@@ -591,8 +591,8 @@ fn validate_jpeg_tables(tables: &[u8]) -> Result<(), TiffError> {
     Ok(())
 }
 
-/// Require baseline JFIF YCbCr with sampling matching the TIFF metadata.
-fn validate_ycbcr_jfif(
+/// Require baseline YCbCr with sampling matching the TIFF metadata.
+fn validate_ycbcr_jpeg(
     input: &[u8],
     width: u32,
     rows: usize,
@@ -668,8 +668,7 @@ fn validate_ycbcr_jfif(
                 frame = true;
             }
             0xda => {
-                if !jfif
-                    || !frame
+                if !frame
                     || payload.len() != 10
                     || payload[0] != 3
                     || payload[1] != 1
@@ -731,7 +730,7 @@ fn unpack_tiff_jpeg(
         input
     };
     if let Some(sampling) = sampling {
-        validate_ycbcr_jfif(input, width, rows, sampling)?;
+        validate_ycbcr_jpeg(input, width, rows, sampling)?;
     }
     let reader = crate::image_reader(input).map_err(|_| TiffError::Strips)?;
     if reader.format() != Some(image::ImageFormat::Jpeg) {

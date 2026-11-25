@@ -36,7 +36,8 @@ and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.p
 ## Self-contained JPEG grayscale scans
 
 A TIFF compression-7 page can use self-contained, 8-bit unsigned BlackIsZero
-grayscale JPEG strips with no alpha or predictor. Reader rejects
+or WhiteIsZero grayscale JPEG strips with no alpha or predictor. WhiteIsZero
+is inverted after JPEG decoding. Reader rejects
 the TIFF ICC profile tag and nondefault sample/transfer metadata,
 requires each JPEG decoder's L8 output to match the TIFF width and that strip's
 exact row count, and fully decodes through the existing image reader before applying TIFF
@@ -62,15 +63,16 @@ internal allocations have not been behaviorally verified or compared with
 KOReader, the simulator or Kindle.
 
 As a narrower color candidate, 8-bit YCbCr TIFF JPEG strips can render when
-each reconstructed JPEG has one baseline interleaved JFIF scan, component IDs
-1/2/3 and 1×1, 2×1 or 2×2 sampling matching the TIFF metadata. TIFF custom
+each reconstructed JPEG has one baseline interleaved scan, component IDs
+1/2/3 and 1×1, 2×1 or 2×2 sampling matching the TIFF metadata. A valid JFIF
+marker is accepted but is not required when TIFF declares YCbCr. TIFF custom
 coefficients, reference ranges or non-centered positioning are rejected.
 Embedded JPEG ICC/Exif and other application metadata are rejected; an Adobe
 marker is accepted only for YCbCr. The JPEG RGB8 output is converted using
 Reader's existing grayscale weighting, with decoded strip plus output capped
 at 32 MiB. It is not color-managed, JPEG decoder internal allocations still
 need audit, and exact color/KOReader/simulator/device behavior is unverified.
-Non-JFIF, progressive/multiscan and ambiguous or mismatched streams remain
+Other application markers, progressive/multiscan and ambiguous or mismatched streams remain
 unsupported.
 
 ## CCITT 1D, Group 3 and Group 4 scans
