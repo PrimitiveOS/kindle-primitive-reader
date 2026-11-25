@@ -97,17 +97,36 @@ struct Request {
     publication: u64,
     stop_anchor: Option<Anchor>,
     flow: FlowConfig,
+    raw_layout: Option<crate::session::SearchLayoutRecipe>,
     cancelled: Arc<AtomicBool>,
     output: mpsc::Sender<Result<Option<SearchHit>>>,
 }
 
-fn load_text(path: &Path, ci: usize, flow: &FlowConfig) -> Result<ChapterText> {
-    // Owned source and font-free CSS leave the storage lease. Matching never
-    // holds the device storage lock or registers publisher font resources.
-    Ok(with_storage(|| {
+fn load_text(
+    path: &Path,
+    ci: usize,
+    flow: &FlowConfig,
+    raw_layout: Option<&crate::session::SearchLayoutRecipe>,
+    cancelled: &AtomicBool,
+) -> Result<ChapterText> {
+    // Canonical search remains font-free. If raw layout is enabled, shape the
+    // exact chapter separately; matching itself runs outside the storage lease.
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Search was cancelled".into());
+    }
+    let chapter = with_storage(|| {
         let mut book = Book::open(path).map_err(io::Error::other)?;
         ChapterText::read_with_flow(&mut book, ci, flow).map_err(io::Error::other)
-    })?)
+    })?;
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Search was cancelled".into());
+    }
+    if let Some(recipe) = raw_layout {
+        let probe = recipe.chapter(ci, cancelled)?;
+        chapter.with_verified_raw_layout(&probe)
+    } else {
+        Ok(chapter)
+    }
 }
 
 impl Request {
@@ -116,7 +135,13 @@ impl Request {
             Some(anchor) => {
                 self.engine
                     .scan(self.chapter, anchor, &self.cancelled, self.chapters, |ci| {
-                        load_text(&self.path, ci, &self.flow)
+                        load_text(
+                            &self.path,
+                            ci,
+                            &self.flow,
+                            self.raw_layout.as_ref(),
+                            &self.cancelled,
+                        )
                     })
             }
             None => self.engine.scan_edge(
@@ -125,7 +150,15 @@ impl Request {
                 self.stop_anchor.as_ref(),
                 &self.cancelled,
                 self.chapters,
-                |ci| load_text(&self.path, ci, &self.flow),
+                |ci| {
+                    load_text(
+                        &self.path,
+                        ci,
+                        &self.flow,
+                        self.raw_layout.as_ref(),
+                        &self.cancelled,
+                    )
+                },
             ),
         };
         if !self.cancelled.load(Ordering::Relaxed) {
@@ -193,11 +226,12 @@ enum AllEvent {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 struct ReflowContext {
     edition: u64,
     publication: u64,
     flow: FlowConfig,
+    raw_layout: Option<crate::session::SearchLayoutRecipe>,
 }
 struct PendingAll {
     cancel: Arc<AtomicBool>,
@@ -554,6 +588,8 @@ impl Reader {
                 base_stylesheet: active.reading.config.settings.base_stylesheet,
                 user_styles: active.reading.config.user_styles.clone(),
             },
+            raw_layout: crate::parley_layout::RAW_LAYOUT_ENABLED
+                .then(|| active.reading.config.search_layout_recipe()),
         })
     }
 
@@ -811,6 +847,7 @@ impl Reader {
                 None
             },
             flow: context.flow.clone(),
+            raw_layout: context.raw_layout.clone(),
             cancelled: Arc::clone(&cancelled),
             output: tx,
         };
@@ -901,7 +938,13 @@ impl Reader {
                         break;
                     }
                     let results = search.step_loaded(
-                        load_text(&path, ci, &context.flow)?,
+                        load_text(
+                            &path,
+                            ci,
+                            &context.flow,
+                            context.raw_layout.as_ref(),
+                            &cancelled,
+                        )?,
                         chapters,
                         &cancelled,
                     )?;

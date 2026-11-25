@@ -24,6 +24,15 @@ drawings in documents that already opened are not added by this fallback.
 Exact KOReader BMP/GIF behavior, real-document rendering, simulation and
 Kindle verification remain open.
 
+If both earlier conversions find no readable content, an additional candidate
+fallback can load local PNG, JPEG, BMP or first-frame GIF images referenced by
+legacy `w:pict` and `v:imagedata` relationship IDs. It uses the same validated
+package relationships, blocked-target and resource limits as other Word
+images. External targets, embedded objects and VML effects are not rendered.
+Previously successful text and image-only conversions retain their XHTML and
+anchors. KOReader VML parity and this fallback's real-document, simulator and
+Kindle behavior are unverified.
+
 Numbered and bulleted Word paragraphs currently lose their list markers.
 KOReader reads the numbering part and renders nested list structures. Reader
 cannot simply add those structures to its generated XHTML: its existing saved

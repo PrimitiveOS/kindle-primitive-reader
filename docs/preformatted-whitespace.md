@@ -112,8 +112,11 @@ the raw blocks actually accepted by a shaped chapter. The map checks book,
 chapter, source revision, effective stylesheet configuration, line metadata
 and raw fingerprints against the worker's source. Raw results carry exact
 grapheme-checked endpoints; a raw nearby-search boundary without a verified
-layout fails closed. The active UI workers do not yet supply these maps, and
-search fails rather than guessing if raw layout is enabled without one.
+layout fails closed. The UI workers have a staged Send-safe layout recipe that
+reconstructs a chapter in the worker, checks cancellation around source reads
+and during layout, and supplies the map. Its full layout inputs are included
+in search-result invalidation. This path is inactive while the raw layout gate
+is off; search fails rather than guessing if a required map is missing.
 Reader's selection value can carry a verified raw quote and raw endpoints,
 including through the reading-session quote API. Within one section it can
 also assemble cross-block quotes and geometry when both endpoint layouts are

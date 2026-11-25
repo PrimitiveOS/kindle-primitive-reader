@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::fixed_book_map::MapWindow;
 use super::navigation_layout::NavigationLayout;
-use super::{Action, LIST_X, LIST_Y, OVERVIEW_PAGES, Reader, Screen, fixed_page_label};
+use super::{Action, LIST_X, LIST_Y, OVERVIEW_PAGES, Reader, Screen, bar_icons, fixed_page_label};
 use crate::generated_contents::OutlineTarget;
 use crate::library::{PageBrowserGrid, PageBrowserNumbers};
 use crate::session::{PageThumbnail, page_thumbnail};
@@ -419,6 +419,78 @@ impl Reader {
             self.notice.as_deref().unwrap_or(&section),
             CAPTION,
         );
+        // Limit the map to the visible thumbnail window. The value records
+        // whether any visible highlight on that page also has a note.
+        let mut highlighted_pages = BTreeMap::<usize, bool>::new();
+        let end = overview.first.saturating_add(overview.tiles.len());
+        if let Some(book) = self.fixed.as_ref().filter(|_| overview.chapter.is_none())
+            && let Some(state) = self.library.state(book.id)
+        {
+            for mark in &state.pdf_highlights {
+                let noted = mark
+                    .note
+                    .as_ref()
+                    .is_some_and(|note| !note.trim().is_empty());
+                for page in
+                    std::iter::once(mark.page).chain(mark.continuation.iter().map(|part| part.page))
+                {
+                    if (overview.first..end).contains(&page) && page < overview.count {
+                        *highlighted_pages.entry(page).or_default() |= noted;
+                    }
+                }
+            }
+        } else if let Some(active) = self.active.as_ref()
+            && let Some(chapter) = overview.chapter
+            && let Some(state) = self.library.state(active.id)
+        {
+            let probe = overview
+                .preview
+                .as_deref()
+                .or_else(|| (active.reading.chapter == chapter).then_some(&active.reading.probe));
+            if let Some(probe) = probe {
+                // Page-local geometry handles half-open end anchors accurately.
+                // Limit expensive checks on books with many large selections.
+                let mut checks = 0usize;
+                'marks: for mark in &state.highlights {
+                    let selection = &mark.selection;
+                    if selection.start.raw_caret.is_some()
+                        || selection.end.raw_caret.is_some()
+                        || probe.chapter_index(&selection.start.chapter) != Some(chapter)
+                        || probe.chapter_index(&selection.end.chapter) != Some(chapter)
+                    {
+                        continue;
+                    }
+                    let (Some(first), Some(last)) = (
+                        probe.page_for(&selection.start),
+                        probe.page_for(&selection.end),
+                    ) else {
+                        continue;
+                    };
+                    if first > last {
+                        continue;
+                    }
+                    let noted = mark
+                        .note
+                        .as_ref()
+                        .is_some_and(|note| !note.trim().is_empty());
+                    for page in first.max(overview.first)..last.saturating_add(1).min(end) {
+                        if highlighted_pages
+                            .get(&page)
+                            .is_some_and(|&existing| existing || !noted)
+                        {
+                            continue;
+                        }
+                        if checks == 512 {
+                            break 'marks;
+                        }
+                        checks += 1;
+                        if !probe.selection_rects(page, selection).is_empty() {
+                            *highlighted_pages.entry(page).or_default() |= noted;
+                        }
+                    }
+                }
+            }
+        }
         for (index, tile) in overview.tiles.iter().enumerate() {
             let rect = layout.tile(index);
             canvas.card(rect);
@@ -490,6 +562,21 @@ impl Reader {
                 );
             }
             self.draw_overview_bookmark(canvas, rect, overview.chapter, page);
+            if let Some(&noted) = highlighted_pages.get(&page) {
+                let size = (rect.h / 3).min(rect.w / 3).min(54);
+                let inset = (rect.h / 12).min(18);
+                let badge = Rect::new(rect.x + inset, rect.y + inset, size, size);
+                canvas.panel(badge, 5, 1, 255);
+                canvas.icon(
+                    badge.inset(4),
+                    if noted {
+                        bar_icons::EDIT
+                    } else {
+                        bar_icons::HIGHLIGHT
+                    },
+                    0,
+                );
+            }
             layout.draw_label(canvas, rect, &label, Some(page) == current);
         }
         if overview.first != 0 {

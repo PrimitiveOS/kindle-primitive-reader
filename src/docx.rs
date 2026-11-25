@@ -37,6 +37,7 @@ const OFFICE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/
 const STRICT_OFFICE_REL: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships/";
 const DRAWING_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const STRICT_DRAWING_NS: &str = "http://purl.oclc.org/ooxml/drawingml/main";
+const VML_NS: &str = "urn:schemas-microsoft-com:vml";
 const REL_ATTR_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const STRICT_REL_ATTR_NS: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships";
 const CORE_REL: &str =
@@ -168,8 +169,9 @@ fn open_word(
         &main_relations.images,
         docm.then_some((&types, &blocked)),
         false,
+        false,
     )?;
-    let output = match convert_main_with_images(&main, &styles, images) {
+    let output = match convert_main_with_images(&main, &styles, images, false) {
         Ok(output) => output,
         Err(error) if error.downcast_ref::<NoReadableContent>().is_some() => {
             // Only previously rejected image-only documents take this path;
@@ -181,10 +183,31 @@ fn open_word(
                 &main_relations.images,
                 docm.then_some((&types, &blocked)),
                 true,
+                false,
             )?;
-            let output = convert_main_with_images(&main, &styles, images)?;
-            resources = extended_resources;
-            output
+            match convert_main_with_images(&main, &styles, images, false) {
+                Ok(output) => {
+                    resources = extended_resources;
+                    output
+                }
+                Err(error) if error.downcast_ref::<NoReadableContent>().is_some() => {
+                    // This third path is limited to previously rejected image-only
+                    // documents, so existing drawing and text anchors stay stable.
+                    let (images, vml_resources) = read_images(
+                        &mut archive,
+                        &parts,
+                        &main,
+                        &main_relations.images,
+                        docm.then_some((&types, &blocked)),
+                        true,
+                        true,
+                    )?;
+                    let output = convert_main_with_images(&main, &styles, images, true)?;
+                    resources = vml_resources;
+                    output
+                }
+                Err(error) => return Err(error),
+            }
         }
         Err(error) => return Err(error),
     };
@@ -309,13 +332,17 @@ fn read_images<R: Read + Seek>(
     relationships: &BTreeMap<String, String>,
     docm_policy: Option<(&ContentTypes, &BTreeSet<String>)>,
     extended: bool,
+    vml: bool,
 ) -> Result<(BTreeMap<String, String>, BTreeMap<String, Vec<u8>>)> {
     let xml = xml(main)?;
     let mut images = BTreeMap::new();
     let mut resources = BTreeMap::new();
     let mut remaining = MAX_IMAGE_TOTAL;
-    for node in xml.descendants().filter(|node| drawing_blip(*node)) {
-        let Some(id) = rel_attribute(node, "embed") else {
+    for node in xml.descendants().filter(|node| {
+        drawing_blip(*node)
+            || (vml && vml_image(*node) && node.ancestors().any(|parent| word(parent, "pict")))
+    }) {
+        let Some(id) = rel_attribute(node, if vml_image(node) { "id" } else { "embed" }) else {
             continue;
         };
         if images.contains_key(id) {
@@ -384,6 +411,10 @@ fn read_images<R: Read + Seek>(
 
 fn drawing_blip(node: Node<'_, '_>) -> bool {
     node.has_tag_name((DRAWING_NS, "blip")) || node.has_tag_name((STRICT_DRAWING_NS, "blip"))
+}
+
+fn vml_image(node: Node<'_, '_>) -> bool {
+    node.has_tag_name((VML_NS, "imagedata"))
 }
 
 fn rel_attribute<'a>(node: Node<'a, '_>, name: &str) -> Option<&'a str> {
@@ -816,6 +847,7 @@ struct Output {
     has_text: bool,
     images: BTreeMap<String, String>,
     bookmarks: BTreeSet<String>,
+    vml: bool,
 }
 
 impl fmt::Write for Output {
@@ -832,6 +864,7 @@ fn convert_main_with_images(
     text: &str,
     styles: &Styles,
     images: BTreeMap<String, String>,
+    vml: bool,
 ) -> Result<Output> {
     let document = xml(text)?;
     let root = document.root_element();
@@ -853,6 +886,7 @@ fn convert_main_with_images(
     }
     let mut output = Output {
         images,
+        vml,
         ..Output::default()
     };
     (|| -> fmt::Result {
@@ -1012,6 +1046,16 @@ impl Output {
             } else if word(item, "drawing") {
                 for image in item.descendants().filter(|node| drawing_blip(*node)) {
                     if let Some(name) = rel_attribute(image, "embed")
+                        .and_then(|id| self.images.get(id))
+                        .cloned()
+                    {
+                        write!(self, "<img src=\"{name}\" alt=\"\"/>")?;
+                        self.has_text = true;
+                    }
+                }
+            } else if self.vml && word(item, "pict") {
+                for image in item.descendants().filter(|node| vml_image(*node)) {
+                    if let Some(name) = rel_attribute(image, "id")
                         .and_then(|id| self.images.get(id))
                         .cloned()
                     {

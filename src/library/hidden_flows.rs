@@ -11,7 +11,7 @@ pub(crate) struct FlowPoint {
     pub hidden: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct HiddenFlows {
     pub enabled: bool,

@@ -215,6 +215,67 @@ pub(crate) struct BookConfig {
     pub(crate) eager_layouts: screen_pages::eager::Cached,
 }
 
+/// Send-safe snapshot of the inputs that decide a chapter's raw layout. Rc
+/// caches are recreated inside the worker rather than shared across threads.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SearchLayoutRecipe {
+    viewport: ReadingViewport,
+    user_styles: crate::user_styles::Snapshot,
+    user_hyphenation: crate::user_hyphenation::Rules,
+    engine: Engine,
+    book: std::path::PathBuf,
+    fonts: Vec<std::path::PathBuf>,
+    settings: Settings,
+    scroll: bool,
+    facing_pages: bool,
+    hide_nonlinear: bool,
+    hidden_flows: crate::library::hidden_flows::HiddenFlows,
+}
+
+impl SearchLayoutRecipe {
+    pub(crate) fn chapter(
+        &self,
+        index: usize,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<Probe> {
+        let check = || -> Result<()> {
+            if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                Err("Search was cancelled".into())
+            } else {
+                Ok(())
+            }
+        };
+        check()?;
+        let config = BookConfig {
+            viewport: self.viewport,
+            user_styles: self.user_styles.clone(),
+            user_hyphenation: std::rc::Rc::new(self.user_hyphenation.clone()),
+            engine: self.engine,
+            book: self.book.clone(),
+            fonts: self.fonts.clone(),
+            settings: self.settings,
+            scroll: self.scroll,
+            facing_pages: self.facing_pages,
+            hide_nonlinear: self.hide_nonlinear,
+            hidden_flows: std::rc::Rc::new(self.hidden_flows.clone()),
+            chapter_offsets: Default::default(),
+            quote_prefixes: Default::default(),
+            screen_pages: Default::default(),
+            eager_layouts: Default::default(),
+        };
+        let probe = with_storage(|| {
+            check().map_err(io::Error::other)?;
+            let sources = screen_pages::ScreenPageSources::read(&config);
+            let book = Book::open(&config.book).map_err(io::Error::other)?;
+            config
+                .layout_chapter_cancellable(book, index, sources, &check)
+                .map_err(io::Error::other)
+        })?;
+        check()?;
+        Ok(probe)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct FacingGeometry {
     width: u32,
@@ -231,6 +292,22 @@ impl FacingGeometry {
 }
 
 impl BookConfig {
+    pub(crate) fn search_layout_recipe(&self) -> SearchLayoutRecipe {
+        SearchLayoutRecipe {
+            viewport: self.viewport,
+            user_styles: self.user_styles.clone(),
+            user_hyphenation: self.user_hyphenation.as_ref().clone(),
+            engine: self.engine,
+            book: self.book.clone(),
+            fonts: self.fonts.clone(),
+            settings: self.settings,
+            scroll: self.scroll,
+            facing_pages: self.facing_pages,
+            hide_nonlinear: self.hide_nonlinear,
+            hidden_flows: self.hidden_flows.as_ref().clone(),
+        }
+    }
+
     /// Keep a prepared layout's measurements separate until its frame commits.
     /// Only actual typography changes request a fresh background count.
     pub(crate) fn prepare_page_layout(&mut self, previous: &Self) {
@@ -326,16 +403,28 @@ impl BookConfig {
 
     fn layout_chapter(
         &self,
-        mut book: Book,
+        book: Book,
         index: usize,
         sources: Option<screen_pages::ScreenPageSources>,
     ) -> Result<Probe> {
+        self.layout_chapter_cancellable(book, index, sources, &|| Ok(()))
+    }
+
+    fn layout_chapter_cancellable(
+        &self,
+        mut book: Book,
+        index: usize,
+        sources: Option<screen_pages::ScreenPageSources>,
+        check_cancelled: &dyn Fn() -> Result<()>,
+    ) -> Result<Probe> {
+        check_cancelled()?;
         let eligible = sources.is_some() && book.supports_screen_page_count();
         let quote_stamp = if self.engine == Engine::Parley {
             self.quote_prefixes.prepare(&self.book, &mut book)?
         } else {
             None
         };
+        check_cancelled()?;
         self.chapter_offsets
             .get_or_init(|| book.chapter_offsets().unwrap_or_default());
         let facing = self.requested_facing_geometry();
@@ -372,7 +461,7 @@ impl BookConfig {
         settings.validate()?;
         let narrow = facing.is_some();
         let mut opened = Some(book);
-        let mut probe = match Probe::layout_opened_book(
+        let mut probe = match Probe::layout_opened_book_cancellable(
             &mut opened,
             self.engine,
             settings,
@@ -381,16 +470,18 @@ impl BookConfig {
             &self.user_hyphenation,
             &user_styles,
             || crate::font_context(&self.fonts),
+            check_cancelled,
         ) {
             Ok(probe) if !narrow || !probe.requests_vertical => Ok(probe),
             Err(error) if !narrow => Err(error),
             _ => {
+                check_cancelled()?;
                 // A vertical source needs the full viewport even when the
                 // narrow attempt already fell back to horizontal rendering.
                 if opened.is_none() {
                     opened = Some(Book::open(&self.book).map_err(|e| e.to_string())?);
                 }
-                Probe::layout_opened_book(
+                Probe::layout_opened_book_cancellable(
                     &mut opened,
                     self.engine,
                     full,
@@ -399,9 +490,11 @@ impl BookConfig {
                     &self.user_hyphenation,
                     &user_styles,
                     || crate::font_context(&self.fonts),
+                    check_cancelled,
                 )
             }
         }?;
+        check_cancelled()?;
         if let (Some(stamp), Some(book)) = (quote_stamp, opened.as_mut()) {
             self.quote_prefixes.save(&self.book, book, stamp)?;
         }
