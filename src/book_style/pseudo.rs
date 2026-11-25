@@ -245,6 +245,7 @@ struct Typography {
     variant_east_asian: Option<VariantEastAsian>,
     variant_position: Option<VariantPosition>,
     variant_historical: Option<bool>,
+    optical_sizing: Option<bool>,
     dpi: u16,
 }
 
@@ -314,6 +315,9 @@ impl Typography {
         if let Some(value) = self.variant_historical {
             style.variant_historical = value;
         }
+        if let Some(value) = self.optical_sizing {
+            style.optical_sizing = value;
+        }
         style.flow = flow::resolve(base.flow, style.display, style.visibility);
         style
     }
@@ -351,6 +355,7 @@ pub(crate) struct FirstLine {
     variant_east_asian: VariantEastAsian,
     variant_position: VariantPosition,
     variant_historical: bool,
+    optical_sizing: bool,
     root_scale: f32,
     decoration: TextDecoration,
 }
@@ -372,6 +377,7 @@ impl FirstLine {
             variant_east_asian: style.variant_east_asian,
             variant_position: style.variant_position,
             variant_historical: style.variant_historical,
+            optical_sizing: style.optical_sizing,
             root_scale,
             decoration: style.decoration,
         }
@@ -392,6 +398,7 @@ impl FirstLine {
         style.variant_east_asian = self.variant_east_asian;
         style.variant_position = self.variant_position;
         style.variant_historical = self.variant_historical;
+        style.optical_sizing = self.optical_sizing;
         style.decoration = style.decoration.including(self.decoration);
         style
     }
@@ -465,6 +472,7 @@ impl FirstLine {
             variant_east_asian: inherited_variant!(super::VARIANT_EAST_ASIAN, variant_east_asian),
             variant_position: inherited_variant!(super::VARIANT_POSITION, variant_position),
             variant_historical: inherited_variant!(super::VARIANT_HISTORICAL, variant_historical),
+            optical_sizing: inherited_variant!(super::OPTICAL_SIZING, optical_sizing),
             root_scale: self.root_scale,
             decoration: self.decoration.including(style.decoration),
         }
@@ -567,6 +575,7 @@ fn property_slot(property: &Property) -> Option<usize> {
         Property::VariantEastAsian(_) | Property::Reset(super::VARIANT_EAST_ASIAN, _) => 17,
         Property::VariantPosition(_) | Property::Reset(super::VARIANT_POSITION, _) => 18,
         Property::VariantHistorical(_) | Property::Reset(super::VARIANT_HISTORICAL, _) => 19,
+        Property::OpticalSizing(_) | Property::Reset(super::OPTICAL_SIZING, _) => 20,
         _ => return None,
     })
 }
@@ -625,6 +634,7 @@ fn is_first_line_typography(property: &Property) -> bool {
             | Property::VariantEastAsian(_)
             | Property::VariantPosition(_)
             | Property::VariantHistorical(_)
+            | Property::OpticalSizing(_)
             | Property::Reset(
                 super::COMMON_LIGATURES
                     | super::LIGATURE_EXTRAS
@@ -632,13 +642,14 @@ fn is_first_line_typography(property: &Property) -> bool {
                     | super::VARIANT_NUMERIC
                     | super::VARIANT_EAST_ASIAN
                     | super::VARIANT_POSITION
-                    | super::VARIANT_HISTORICAL,
+                    | super::VARIANT_HISTORICAL
+                    | super::OPTICAL_SIZING,
                 _,
             )
     )
 }
 
-const SLOTS: usize = 20;
+const SLOTS: usize = 21;
 type Winners<'a> = [Option<(Priority, &'a Property)>; SLOTS];
 
 pub(super) struct Rules<'a> {
@@ -936,6 +947,7 @@ impl<'a> Rules<'a> {
                 Property::VariantEastAsian(value) => style.variant_east_asian = Some(*value),
                 Property::VariantPosition(value) => style.variant_position = Some(*value),
                 Property::VariantHistorical(value) => style.variant_historical = Some(*value),
+                Property::OpticalSizing(value) => style.optical_sizing = Some(*value),
                 Property::Reset(key, super::user_css::Reset::Initial) => match *key {
                     super::COMMON_LIGATURES => style.common_ligatures = Some(true),
                     super::LIGATURE_EXTRAS => style.ligature_extras = Some(Default::default()),
@@ -948,6 +960,7 @@ impl<'a> Rules<'a> {
                         style.variant_position = Some(VariantPosition::Normal)
                     }
                     super::VARIANT_HISTORICAL => style.variant_historical = Some(false),
+                    super::OPTICAL_SIZING => style.optical_sizing = Some(true),
                     _ => {}
                 },
                 _ => (),

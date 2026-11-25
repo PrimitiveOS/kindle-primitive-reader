@@ -970,23 +970,6 @@ fn word_breaks_with_limits(
         Dictionary::RussianEnglishAmerican => Some(&AMERICAN),
         _ => None,
     };
-    if matches!(locale, Dictionary::American | Dictionary::British) {
-        if word
-            .chars()
-            .all(|ch| ch.is_ascii_alphabetic() || ch == '\u{ad}')
-        {
-            pattern_breaks(
-                patterns.view(),
-                additional.map(Patterns::view),
-                word,
-                limits,
-                false,
-                false,
-                emit,
-            );
-        }
-        return;
-    }
     // CRE's dictionary lookup uses alphabetic runs, while ICU may keep
     // apostrophes and Catalan's middle dot inside a single selected word.
     // Split only the lookup input and retain the original UTF-8 offsets.
@@ -998,6 +981,15 @@ fn word_breaks_with_limits(
     let mut offset = 0;
     for part in word.split_inclusive(separators) {
         let text = part.trim_end_matches(separators);
+        if matches!(locale, Dictionary::American | Dictionary::British)
+            && !text
+                .chars()
+                .all(|ch| ch.is_ascii_alphabetic() || ch == '\u{ad}')
+        {
+            // Preserve the existing English script restriction per run.
+            offset += part.len();
+            continue;
+        }
         if matches!(
             locale,
             Dictionary::Latin

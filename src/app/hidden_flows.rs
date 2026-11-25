@@ -334,13 +334,22 @@ impl Reader {
                 "Start hidden flow",
             ),
         };
-        Sheet::centered(
+        let language = self.controls.interface_language;
+        let sheet = Sheet::centered(
             Rect::new(0, 0, WIDTH as i32, HEIGHT as i32),
-            title,
-            detail,
-            action,
-        )
-        .draw(canvas, None);
+            language.hidden_flow_text(title),
+            language.hidden_flow_text(detail),
+            language.hidden_flow_text(action),
+        );
+        sheet.draw(canvas, None);
+        if !language.is_english() {
+            canvas.button(
+                sheet.button(SheetAction::Cancel),
+                language.hidden_flow_text("Cancel"),
+                false,
+                false,
+            );
+        }
     }
 
     pub(super) fn flow_popup_input(&mut self, input: Input) -> Change {

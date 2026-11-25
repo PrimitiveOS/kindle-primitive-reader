@@ -568,6 +568,33 @@ const HIDDEN_FLOW_LABELS: &[(&str, &str)] = &[
     ("Start hidden flow", "Bắt đầu luồng ẩn"),
     ("Restart regular flow", "Bắt đầu lại luồng thường"),
     ("Location unavailable", "Vị trí không khả dụng"),
+    ("Clear inactive markers?", "Xóa dấu không hoạt động?"),
+    (
+        "Remove boundaries that currently have no effect. Other boundaries and your source book stay intact.",
+        "Xóa các ranh giới hiện không có tác dụng. Các ranh giới khác và sách nguồn giữ nguyên.",
+    ),
+    ("Clear inactive", "Xóa dấu không hoạt động"),
+    ("Clear custom hidden flows?", "Xóa luồng ẩn tùy chỉnh?"),
+    (
+        "Remove all custom flow boundaries for this book. You can create new boundaries from Page browser.",
+        "Xóa mọi ranh giới luồng tùy chỉnh của sách này. Có thể tạo ranh giới mới trong Duyệt trang.",
+    ),
+    ("Clear markers", "Xóa dấu"),
+    ("Flow boundary", "Ranh giới luồng"),
+    (
+        "Removing this marker joins the page to the preceding reading flow.",
+        "Xóa dấu này sẽ nối trang vào luồng đọc trước đó.",
+    ),
+    ("Remove marker", "Xóa dấu"),
+    (
+        "Resume the regular reading flow from this page.",
+        "Tiếp tục luồng đọc thường từ trang này.",
+    ),
+    (
+        "Skip this page and following pages during regular reading. Links and Contents can still open them.",
+        "Bỏ qua trang này và các trang sau khi đọc thường. Liên kết và Mục lục vẫn mở được các trang này.",
+    ),
+    ("Cancel", "Hủy"),
 ];
 
 // Fixed book-archive controls; filenames and source/destination paths stay untouched.

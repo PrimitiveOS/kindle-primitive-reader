@@ -161,9 +161,11 @@ pinned CRE engine, Reader requests the `opsz` axis at the effective font size
 in points only when render DPI is at least 100; `none` leaves the axis at the
 font's default. Horizontal text, inline styled runs, ruby and text list markers
 use this setting, while other font selection and variation axes are retained.
-Fonts without an optical-size axis ignore the request. Pseudo-element-specific
-declarations, vertical layout and Blitz remain unsupported. The setting does
-not modify source text or saved anchors and has not yet been built or tested.
+Horizontal first-letter, first-line and generated pseudo-elements may override
+the setting, and first-line descendants retain their explicit overrides. Fonts
+without an optical-size axis ignore the request. Vertical layout and Blitz
+remain unsupported. The setting does not modify source text or saved anchors
+and has not yet been built or tested.
 [Pinned CRE optical sizing](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L2433-L2439)
 
 The horizontal reader also accepts publisher and user CSS `letter-spacing`
