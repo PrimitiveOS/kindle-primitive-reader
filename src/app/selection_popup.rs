@@ -464,9 +464,8 @@ impl Reader {
         self.navigation_layout().back()
     }
 
-    fn copy_selection(&mut self) -> Result<()> {
-        let preserve_raw = if let (Some(selection), Some(active)) = (&self.selection, &self.active)
-        {
+    pub(super) fn selection_requires_exact_text(&self) -> Result<bool> {
+        if let (Some(selection), Some(active)) = (&self.selection, &self.active) {
             let raw = if crate::parley_layout::RAW_LAYOUT_ENABLED
                 && selection.start.chapter != selection.end.chapter
             {
@@ -486,10 +485,14 @@ impl Reader {
                     return Err("The selected text changed; select it again".into());
                 }
             }
-            raw
+            Ok(raw)
         } else {
-            false
-        };
+            Ok(false)
+        }
+    }
+
+    fn copy_selection(&mut self) -> Result<()> {
+        let preserve_raw = self.selection_requires_exact_text()?;
         let text = self
             .selection
             .as_ref()

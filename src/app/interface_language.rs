@@ -3088,6 +3088,7 @@ impl InterfaceLanguage {
             "Not selected" => "Chưa chọn",
             "No notes selected" => "Chưa chọn ghi chú nào",
             "Select all" => "Chọn tất cả",
+            "Select page" => "Chọn trang này",
             "Done" => "Xong",
             "Remove matching notes (this book)" => "Xóa ghi chú phù hợp (sách này)",
             "Bookmarks and highlights will remain" => "Dấu trang và đoạn tô sáng vẫn được giữ",

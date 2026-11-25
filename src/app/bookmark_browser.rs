@@ -21,6 +21,8 @@ use std::path::PathBuf;
 const CASE: Rect = Rect::new(40, 314, 386, 72);
 const FIRST_MARK: Rect = Rect::new(40, 147, 210, 70);
 const CONTROL_WIDTH: i32 = 386;
+// The selectable-note list starts with Select all, Clear selection and Done.
+const NOTE_SELECTION_CONTROL_ROWS: usize = 3;
 
 #[derive(Clone, Copy)]
 struct BrowserLayout(NavigationLayout);
@@ -50,6 +52,11 @@ impl BrowserLayout {
 
     fn last_mark(self) -> Rect {
         Rect::new(self.0.width - 250, FIRST_MARK.y, FIRST_MARK.w, FIRST_MARK.h)
+    }
+
+    fn select_note_page(self) -> Rect {
+        self.0
+            .horizontal(Rect::new(self.0.width - 560, 40, 260, 100))
     }
 }
 
@@ -199,6 +206,7 @@ pub(super) enum Command {
     ConfirmRemoveCurrentNotes,
     ToggleReviewedNote(usize),
     SetAllReviewedNotes(bool),
+    SelectReviewedNotePage,
     ToggleDefault(Source),
     OpenFolder(PathBuf, bool),
     ToggleBook(u64),
@@ -1014,6 +1022,28 @@ impl Reader {
                     item.selected = selected;
                 }
             }
+            Command::SelectReviewedNotePage => {
+                if self.screen != Screen::BookmarkBrowser(Page::SelectNotes) {
+                    return Err("Review the notes before selecting them".into());
+                }
+                let rows = self.list_geometry().rows;
+                let first = self.list_page.saturating_mul(rows);
+                let last = first.saturating_add(rows);
+                let pending = self
+                    .bookmark_browser
+                    .pending_note_removal
+                    .as_mut()
+                    .ok_or("Review the notes before selecting them")?;
+                let first_note = first.saturating_sub(NOTE_SELECTION_CONTROL_ROWS);
+                let last_note = last
+                    .saturating_sub(NOTE_SELECTION_CONTROL_ROWS)
+                    .min(pending.targets.len());
+                if first_note < last_note {
+                    for item in &mut pending.targets[first_note..last_note] {
+                        item.selected = true;
+                    }
+                }
+            }
             Command::ToggleDefault(source) => {
                 let browser = &mut self.bookmark_browser;
                 let previous = browser.default_source.clone();
@@ -1780,6 +1810,15 @@ impl Reader {
         let layout = BrowserLayout(self.navigation_layout());
         let language = self.controls.interface_language;
         match page {
+            Page::SelectNotes => {
+                canvas.button(
+                    layout.select_note_page(),
+                    language.bookmark_text("Select page"),
+                    false,
+                    false,
+                );
+                false
+            }
             Page::Colors => {
                 super::highlight_palette::draw(
                     canvas,
@@ -1968,6 +2007,11 @@ impl Reader {
         if matches!(input, Input::Tap(x, y) if layout.0.back().contains(x, y)) {
             self.back_from_bookmark_browser(page);
             return Some(Change::Partial);
+        }
+        if page == Page::SelectNotes
+            && matches!(input, Input::Tap(x, y) if layout.select_note_page().contains(x, y))
+        {
+            return Some(self.bookmark_change(Command::SelectReviewedNotePage));
         }
         if page == Page::Colors {
             if input == Input::PageBack {

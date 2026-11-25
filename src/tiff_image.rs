@@ -60,7 +60,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let samples = image.scalar(277, SHORT_ONLY, 1)?;
     if !matches!(
         (photometric, samples),
-        (0 | 1 | 3, 1) | (0 | 1, 2) | (2, 3 | 4) | (5, 4)
+        (0 | 1 | 3, 1) | (0 | 1 | 3, 2) | (2, 3 | 4) | (5, 4)
     ) {
         return Err(TiffError::Unsupported);
     }
@@ -86,9 +86,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         if !matches!(kind, 1 | 2) {
             return Err(TiffError::Unsupported);
         }
-        // Associated alpha with WhiteIsZero needs separate validation of the
-        // premultiplied sample convention; do not guess at that case.
-        if photometric == 0 && kind != 2 {
+        // Associated alpha with WhiteIsZero or indexed color needs separate
+        // validation of the premultiplied convention; do not guess at it.
+        if matches!(photometric, 0 | 3) && kind != 2 {
             return Err(TiffError::Unsupported);
         }
         if u64::from(pixel_count) * (u64::from(samples) + 1) > 32 * 1024 * 1024 {
@@ -240,17 +240,27 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         }
         let strip = unpacked.as_deref().unwrap_or(strip);
         if let Some(palette) = &palette_gray {
-            for row in strip.chunks_exact(row_bytes) {
-                for x in 0..width as usize {
-                    let offset = x * bits as usize;
-                    let byte = if fill_order == 1 {
-                        row[offset / 8]
-                    } else {
-                        row[offset / 8].reverse_bits()
-                    };
-                    let shift = 8 - bits as usize - offset % 8;
-                    let index = usize::from((byte >> shift) & ((1u16 << bits) - 1) as u8);
-                    pixels.push(palette[index]);
+            if alpha.is_some() {
+                // The supported two-sample palette mode is always 8-bit with
+                // unassociated alpha; apply the palette before blending.
+                pixels.extend(strip.chunks_exact(2).map(|pixel| {
+                    let gray = u32::from(palette[usize::from(pixel[0])]);
+                    let a = u32::from(pixel[1]);
+                    ((gray * a + 255 * (255 - a) + 127) / 255) as u8
+                }));
+            } else {
+                for row in strip.chunks_exact(row_bytes) {
+                    for x in 0..width as usize {
+                        let offset = x * bits as usize;
+                        let byte = if fill_order == 1 {
+                            row[offset / 8]
+                        } else {
+                            row[offset / 8].reverse_bits()
+                        };
+                        let shift = 8 - bits as usize - offset % 8;
+                        let index = usize::from((byte >> shift) & ((1u16 << bits) - 1) as u8);
+                        pixels.push(palette[index]);
+                    }
                 }
             }
         } else if let Some(alpha_kind) = alpha {

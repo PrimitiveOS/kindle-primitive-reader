@@ -244,8 +244,26 @@ impl Library {
         // the old path is interrupted. A failed save still leaves the old path live.
         let state = self.state_mut(plan.id).ok_or_else(changed_source)?;
         let previous_path = std::mem::replace(&mut state.path, plan.destination.clone());
-        if let Err(error) = self.save_with(save) {
+        let saved = if self.state_version.get() == 2 || self.recent.iter().any(raw_v2::book_has_raw)
+        {
+            self.persist()
+        } else {
+            self.save_with(save)
+        };
+        if let Err(error) = saved {
             self.state_mut(plan.id).unwrap().path = previous_path;
+            if !matches!(
+                crate::reading_backup::transaction_pending(&self.state_path),
+                Ok(false)
+            ) {
+                // The journal may have published the destination before a
+                // rollback failed. Keep both copies until startup recovery
+                // determines which path the restored state references.
+                output.committed = true;
+                return Err(io::Error::other(format!(
+                    "{error}; both book copies were retained because reader recovery is pending or uncertain"
+                )));
+            }
             return Err(error);
         }
         output.committed = true;

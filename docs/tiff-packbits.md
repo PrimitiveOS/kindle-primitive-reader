@@ -22,7 +22,7 @@ The latter also supports other compression and color modes, so this is a subset
 of KOReader's TIFF support, not complete TIFF parity. [KOReader TIFF provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L410-L415) · [Pinned MuPDF TIFF decoder](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L360-L369) · [PackBits filter](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L408-L418) · [TIFF 6.0 specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
 These additions have not yet been compared against KOReader or exercised on
-the simulator or Kindle. Associated-alpha white-is-zero grayscale, palette alpha, profiled or nonstandard CMYK, multi-page and tiled TIFFs and CCITT remain outside this decoder's support. [TIFF 6.0 LZW
+the simulator or Kindle. Associated-alpha white-is-zero grayscale and palette images, packed palette alpha, profiled or nonstandard CMYK, multi-page and tiled TIFFs and CCITT remain outside this decoder's support. [TIFF 6.0 LZW
 and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
 ## Image orientation
@@ -67,7 +67,7 @@ candidate. The
 combined decoded-strip and grayscale-output allocation is capped at 32 MiB,
 plus Deflate’s one-byte overflow sentinel; compressed input remains separately
 bounded. These alpha changes are not yet
-behaviorally tested. Associated-alpha white-is-zero grayscale, palette alpha, profiled or nonstandard CMYK, planar, tiled and
+behaviorally tested. Associated-alpha white-is-zero grayscale and palette images, packed palette alpha, profiled or nonstandard CMYK, planar, tiled and
 multi-page TIFFs remain unsupported.
 KOReader exposes TIFF via MuPDF, whose pinned loader accepts RGB photometric
 data and horizontal differencing; this limited subset is not full MuPDF
@@ -101,6 +101,13 @@ horizontal prediction; packed indices support either fill order in stored and
 PackBits strips. Reverse fill order with LZW or Deflate is still unsupported.
 Orientation and existing image limits apply. At most 256 grayscale palette
 entries are allocated in addition to the existing bounded strip buffers.
+
+Contiguous 8-bit palette images can also include one explicitly unassociated
+8-bit alpha sample. The palette color is converted to grayscale before
+compositing over white, using the existing strip, predictor and 32 MiB
+decoded-strip-plus-output limits. Associated alpha and packed 1-, 2- or 4-bit
+palette alpha remain unsupported. KOReader output comparison and behavioral,
+simulator and Kindle validation remain open.
 
 KOReader registers TIFF through MuPDF, whose pinned loader recognizes palette
 photometric data and reads the ColorMap. This is a limited local implementation,

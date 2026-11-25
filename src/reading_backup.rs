@@ -404,12 +404,19 @@ pub(crate) fn transaction<T>(
 /// recovered state with its potentially stale in-memory copy. Restart performs
 /// recovery before loading the library.
 pub(crate) fn require_no_pending(state: &Path) -> io::Result<()> {
+    if transaction_pending(state)? {
+        return Err(invalid(
+            "A reading-data recovery is pending; reopen Reader before saving",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn transaction_pending(state: &Path) -> io::Result<bool> {
     let directory = root(state)?.join(DIRECTORY);
     match fs::symlink_metadata(directory) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Ok(_) => Err(invalid(
-            "A reading-data recovery is pending; reopen Reader before saving",
-        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Ok(_) => Ok(true),
         Err(error) => Err(error),
     }
 }

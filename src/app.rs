@@ -7869,11 +7869,12 @@ impl Reader {
     }
 
     fn find_selection(&mut self, origin: SelectionSearchOrigin) -> Result<()> {
-        let query = self
-            .selected_passage()?
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let passage = self.selected_passage()?;
+        let query = if self.selection_requires_exact_text()? {
+            passage.trim().to_owned()
+        } else {
+            passage.split_whitespace().collect::<Vec<_>>().join(" ")
+        };
         if query.is_empty() {
             return Err("The selection has no searchable text".into());
         }

@@ -74,6 +74,10 @@ Reader to reopen before saving its in-memory state. While raw rendering is
 disabled, Reader refuses to open books containing any raw positions or marks
 instead of exposing incomplete legacy editing paths. Raw rendering, app-level
 raw restoration and v2 merging remain incomplete.
+Archive moves of a v2 or raw-bearing library use the journaled save. If a save
+fails and recovery is pending or cannot be inspected, Reader retains both the
+source and staged archive copy; cleanup is deferred until recovery determines
+which path the state references. This failure path has not been tested yet.
 The decoder also validates book identities, retained collection
 membership, position lists and mark limits without invoking v1 sanitization or
 checking whether each book file is present. Raw-bearing books are explicitly
