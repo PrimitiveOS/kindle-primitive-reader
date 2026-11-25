@@ -7,7 +7,7 @@ use crate::{
     },
     flow_projection::{Affinity, Projection},
     flow_view::LayoutBlock,
-    source::StyledText,
+    source::{Source, StyledText},
 };
 use std::ops::Range;
 
@@ -15,6 +15,14 @@ pub(crate) struct Plan<'a> {
     pub(crate) text: InlineText,
     pub(crate) runs: Vec<StyledText>,
     pub(crate) typography: Vec<Run<'a>>,
+    artwork_edges: Vec<ArtworkEdge>,
+}
+
+struct ArtworkEdge {
+    at: usize,
+    end: usize,
+    host: usize,
+    side: Side,
 }
 
 impl<'a> Plan<'a> {
@@ -30,6 +38,14 @@ impl<'a> Plan<'a> {
         {
             return None;
         }
+        Self::compose(block, view, styles).ok().flatten()
+    }
+
+    pub(in crate::parley_layout) fn compose(
+        block: &LayoutBlock<'_>,
+        view: &Projection<'_>,
+        styles: &'a [Style],
+    ) -> Result<Option<Self>, ()> {
         let before = Edge {
             at: 0,
             host: block.element,
@@ -51,9 +67,9 @@ impl<'a> Plan<'a> {
                 .as_ref()
                 .and_then(|pair| pair[edge.side as usize].as_ref());
             let Some(part) = part else { continue };
-            let at = view.project_nearest(edge.at, Affinity::After)?;
+            let at = view.project_nearest(edge.at, Affinity::After).ok_or(())?;
             if at < cursor || !block.text.is_char_boundary(at) {
-                return None;
+                return Err(());
             }
             let result = result.get_or_insert_with(|| Self {
                 text: InlineText {
@@ -65,6 +81,7 @@ impl<'a> Plan<'a> {
                 },
                 runs: Vec::new(),
                 typography: Vec::new(),
+                artwork_edges: Vec::new(),
             });
             result.append_source(block, cursor..at);
             cursor = at;
@@ -77,14 +94,68 @@ impl<'a> Plan<'a> {
                     style: &part.style,
                     host: Some(edge.host),
                 });
+                if !block.images.is_empty() {
+                    result.artwork_edges.push(ArtworkEdge {
+                        at,
+                        end,
+                        host: edge.host,
+                        side: edge.side,
+                    });
+                }
             }
         }
-        let mut result = result?;
-        if result.typography.is_empty() {
-            return None;
-        }
+        let Some(mut result) = result.filter(|plan| !plan.typography.is_empty()) else {
+            return Ok(None);
+        };
         result.append_source(block, cursor..block.text.len());
-        Some(result)
+        Ok(Some(result))
+    }
+
+    pub(in crate::parley_layout) fn source_parts(
+        &self,
+    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
+        self.text
+            .segments
+            .iter()
+            .map(|segment| (segment.source.clone(), segment.layout()))
+    }
+
+    pub(in crate::parley_layout) fn artwork_offset(
+        &self,
+        source: &Source,
+        element: usize,
+        visible_offset: usize,
+    ) -> usize {
+        let mut offset = 0;
+        for segment in &self.text.segments {
+            if visible_offset <= segment.source.start {
+                break;
+            }
+            offset = segment.offset + visible_offset.min(segment.source.end) - segment.source.start;
+        }
+        let first = self
+            .artwork_edges
+            .partition_point(|edge| edge.at < visible_offset);
+        for edge in &self.artwork_edges[first..] {
+            if edge.at != visible_offset {
+                break;
+            }
+            let precedes = match edge.side {
+                Side::Before => edge.host <= element,
+                Side::After => {
+                    edge.host < element
+                        && !std::iter::successors(Some(element), |&index| {
+                            source.elements[index].parent
+                        })
+                        .any(|index| index == edge.host)
+                }
+            };
+            if !precedes {
+                break;
+            }
+            offset = edge.end;
+        }
+        offset
     }
 
     fn append_source(&mut self, block: &LayoutBlock<'_>, source: Range<usize>) {

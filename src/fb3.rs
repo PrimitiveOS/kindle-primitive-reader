@@ -1,5 +1,6 @@
 //! Offline FictionBook 3 package importer. Parts stay inside the source ZIP.
 mod body;
+mod section_plan;
 #[cfg(test)]
 mod tests;
 

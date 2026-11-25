@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 mod css_flow_tests;
 mod hidden_flows;
 pub(crate) mod page_overlap;
+mod quote_prefixes;
 pub(crate) mod screen_pages;
 #[cfg(test)]
 mod viewport_tests;
@@ -209,6 +210,7 @@ pub(crate) struct BookConfig {
     pub(crate) hidden_flows: std::rc::Rc<crate::library::hidden_flows::HiddenFlows>,
     // Shared across chapter layouts, previews and font changes for the same open publication.
     pub(crate) chapter_offsets: std::rc::Rc<std::cell::OnceCell<Vec<u64>>>,
+    pub(crate) quote_prefixes: quote_prefixes::ForegroundQuotes,
     pub(crate) screen_pages: screen_pages::ScreenPages,
     pub(crate) eager_layouts: screen_pages::eager::Cached,
 }
@@ -292,6 +294,7 @@ impl BookConfig {
         });
         if probe.is_err() {
             self.screen_pages.reset();
+            self.quote_prefixes.clear();
         }
         let probe = probe?;
         eprintln!(
@@ -322,6 +325,11 @@ impl BookConfig {
         sources: Option<screen_pages::ScreenPageSources>,
     ) -> Result<Probe> {
         let eligible = sources.is_some() && book.supports_screen_page_count();
+        let quote_stamp = if self.engine == Engine::Parley {
+            self.quote_prefixes.prepare(&self.book, &mut book)?
+        } else {
+            None
+        };
         self.chapter_offsets
             .get_or_init(|| book.chapter_offsets().unwrap_or_default());
         let facing = self.requested_facing_geometry();
@@ -357,34 +365,40 @@ impl BookConfig {
         };
         settings.validate()?;
         let narrow = facing.is_some();
-        let mut probe = match Probe::from_book_with_rules(
-            book,
+        let mut opened = Some(book);
+        let mut probe = match Probe::layout_opened_book(
+            &mut opened,
             self.engine,
-            &self.fonts,
             settings,
             index,
             None,
             &self.user_hyphenation,
             &user_styles,
+            || crate::font_context(&self.fonts),
         ) {
             Ok(probe) if !narrow || !probe.requests_vertical => Ok(probe),
             Err(error) if !narrow => Err(error),
             _ => {
                 // A vertical source needs the full viewport even when the
                 // narrow attempt already fell back to horizontal rendering.
-                let book = Book::open(&self.book).map_err(|e| e.to_string())?;
-                Probe::from_book_with_rules(
-                    book,
+                if opened.is_none() {
+                    opened = Some(Book::open(&self.book).map_err(|e| e.to_string())?);
+                }
+                Probe::layout_opened_book(
+                    &mut opened,
                     self.engine,
-                    &self.fonts,
                     full,
                     index,
                     None,
                     &self.user_hyphenation,
                     &user_styles,
+                    || crate::font_context(&self.fonts),
                 )
             }
         }?;
+        if let (Some(stamp), Some(book)) = (quote_stamp, opened.as_mut()) {
+            self.quote_prefixes.save(&self.book, book, stamp)?;
+        }
         if eligible
             && !probe.is_vertical()
             && probe.in_page_notes.is_none()
@@ -1555,6 +1569,7 @@ impl Reading {
         });
         if candidate.is_err() {
             self.config.screen_pages.reset();
+            self.config.quote_prefixes.clear();
         }
         let (chapter, in_chapter, probe) = candidate?;
         let anchor = (0.0 < in_chapter && in_chapter < 1.0)
@@ -2196,6 +2211,7 @@ impl App for Reading {
 
     fn storage_returned(&mut self) -> io::Result<()> {
         self.config.eager_layouts = Default::default();
+        self.config.quote_prefixes.clear();
         self.config.screen_pages.reset();
         self.config.screen_pages.clear_typography();
         self.turns = PageTurns::new(Instant::now());
@@ -2418,6 +2434,7 @@ mod tests {
             user_hyphenation: Default::default(),
             user_styles: Default::default(),
             chapter_offsets: Default::default(),
+            quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
             engine: Engine::Parley,
@@ -3216,6 +3233,7 @@ mod tests {
             user_hyphenation: Default::default(),
             user_styles: Default::default(),
             chapter_offsets: Default::default(),
+            quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
             engine: Engine::Parley,

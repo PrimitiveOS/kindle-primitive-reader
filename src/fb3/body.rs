@@ -3,17 +3,18 @@ use std::fmt::Write as _;
 
 use roxmltree::Node;
 
-use super::{FB3_BODY_NS, child};
+use super::{
+    FB3_BODY_NS, child,
+    section_plan::{self, Piece},
+};
 use crate::Result;
 use crate::epub::{Book, Destination, TocEntry};
 use crate::loose::{CHAPTER_PATH, check_output, xml_text};
 
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
-const MAX_DEPTH: usize = 48;
+pub(super) const MAX_DEPTH: usize = 48;
 const MAX_TOC: usize = 512;
 const MAX_ID: usize = 256;
-// Leave room for generated layout text while retaining complete sections.
-const CHAPTER_TEXT_BUDGET: usize = 384 * 1024;
 
 pub(super) struct Converted {
     pub(super) chapters: Vec<(String, String)>,
@@ -26,50 +27,67 @@ pub(super) fn convert(
     language: Option<&str>,
     cover: Option<&str>,
     images: &BTreeMap<String, String>,
+    mut asset: impl FnMut(&str) -> Option<String>,
+) -> Result<Converted> {
+    // An output-budget retry starts conversion again. Keep each asset lookup
+    // stable and avoid repeating the caller's side effects across attempts.
+    let mut assets = BTreeMap::<String, Option<String>>::new();
+    let mut load = |path: &str| {
+        assets
+            .entry(path.to_owned())
+            .or_insert_with(|| asset(path))
+            .clone()
+    };
+    let groups = section_plan::chapters(root, false)?;
+    match convert_groups(groups, root, title, language, cover, images, &mut load) {
+        Err(error)
+            if error.to_string()
+                == "The converted document exceeds the one MiB layout input limit" =>
+        {
+            let groups = section_plan::chapters(root, true)?;
+            convert_groups(groups, root, title, language, cover, images, &mut load)
+        }
+        result => result,
+    }
+}
+
+fn convert_groups<'a, 'i>(
+    groups: Vec<Vec<Piece<'a, 'i>>>,
+    root: Node<'a, 'i>,
+    title: &str,
+    language: Option<&str>,
+    cover: Option<&str>,
+    images: &BTreeMap<String, String>,
     asset: impl FnMut(&str) -> Option<String>,
 ) -> Result<Converted> {
-    let mut groups = vec![Vec::new()];
-    let mut bytes = 0;
-    for node in root.children().filter(Node::is_element) {
-        let cost: usize = node
-            .descendants()
-            .filter(Node::is_text)
-            .filter_map(|node| node.text())
-            .map(str::len)
-            .sum();
-        if cost > CHAPTER_TEXT_BUDGET {
-            return Err("An FB3 section exceeds Reader's chapter text budget".into());
-        }
-        if bytes + cost > CHAPTER_TEXT_BUDGET {
-            groups.push(Vec::new());
-            bytes = 0;
-        }
-        groups
-            .last_mut()
-            .expect("the first chapter always exists")
-            .push(node);
-        bytes += cost;
-    }
-    if groups[0].is_empty() {
-        return Err("The FB3 has no reading sections".into());
-    }
     let mut ids = BTreeMap::new();
-    for (chapter, nodes) in groups.iter().enumerate() {
-        for node in nodes
-            .iter()
-            .flat_map(|node| node.descendants())
-            .filter(|node| {
-                node.is_element()
-                    && node
-                        .ancestors()
-                        .take_while(|ancestor| *ancestor != root)
-                        .all(retained)
-            })
-        {
+    for (chapter, pieces) in groups.iter().enumerate() {
+        let mut register = |node| {
             if let Some(id) = identifier(node) {
                 ids.entry(id)
                     .and_modify(|entry| *entry = None)
                     .or_insert(Some(chapter));
+            }
+        };
+        for piece in pieces {
+            match *piece {
+                Piece::Whole(node) => {
+                    for child in node.descendants().filter(|child| {
+                        child.is_element()
+                            && child
+                                .ancestors()
+                                .take_while(|ancestor| *ancestor != root)
+                                .all(retained)
+                    }) {
+                        register(child);
+                    }
+                }
+                Piece::Open {
+                    node,
+                    continued: false,
+                    ..
+                } => register(node),
+                Piece::Open { .. } | Piece::Close(_) => (),
             }
         }
     }
@@ -92,7 +110,7 @@ pub(super) fn convert(
     body.xhtml.push_str("</title></head><body>");
     let header = std::mem::take(&mut body.xhtml);
     let mut chapters = Vec::new();
-    for (index, nodes) in groups.into_iter().enumerate() {
+    for (index, pieces) in groups.into_iter().enumerate() {
         body.chapter = index;
         body.xhtml = header.clone();
         if index == 0
@@ -100,8 +118,25 @@ pub(super) fn convert(
         {
             body.image(source, "Cover", None, true)?;
         }
-        for node in nodes {
-            body.node(node, 0, 0)?;
+        let (mut depth, mut section_depth) = (0, 0);
+        for part in pieces {
+            match part {
+                Piece::Whole(node) => body.node(node, section_depth, depth)?,
+                Piece::Open {
+                    node,
+                    tag,
+                    continued,
+                } => {
+                    body.start(node, tag, section_depth, continued)?;
+                    depth += 1;
+                    section_depth += usize::from(tag == "section");
+                }
+                Piece::Close(tag) => {
+                    write!(body.xhtml, "</{tag}>")?;
+                    depth -= 1;
+                    section_depth -= usize::from(tag == "section");
+                }
+            }
         }
         body.xhtml.push_str("</body></html>");
         check_output(&body.xhtml)?;
@@ -131,7 +166,7 @@ fn chapter_path(index: usize) -> String {
     }
 }
 
-fn retained(node: Node<'_, '_>) -> bool {
+pub(super) fn retained(node: Node<'_, '_>) -> bool {
     node.tag_name().namespace() == Some(FB3_BODY_NS)
         && !matches!(
             node.tag_name().name(),
@@ -152,48 +187,69 @@ impl<F: FnMut(&str) -> Option<String>> Body<'_, F> {
         }
         let name = node.tag_name().name();
         let id = identifier(node).filter(|id| self.ids.get(id) == Some(&Some(self.chapter)));
-        let tag = match name {
-            "section" => "section",
-            "notebody" => "aside",
-            "notes" | "annotation" | "poem" | "stanza" | "title" | "div" => "div",
-            "epigraph" | "blockquote" => "blockquote",
-            "p" if node
-                .parent()
-                .is_some_and(|parent| parent.has_tag_name((FB3_BODY_NS, "title"))) =>
-            {
-                ["h1", "h2", "h3", "h4", "h5", "h6"][section_depth.min(5)]
-            }
-            "p" | "v" | "subscription" => "p",
-            "subtitle" => "h3",
-            "strong" | "em" | "sub" | "sup" | "code" | "pre" | "span" | "ol" | "ul" | "li"
-            | "table" | "thead" | "tbody" | "tfoot" | "th" | "tr" | "td" => name,
-            "underline" => "u",
-            "strikethrough" => "s",
-            "spacing" | "smallcaps" | "marker" => "span",
-            "a" | "note" => "a",
-            "img" => return self.element_image(node),
-            "br" => {
-                self.xhtml.push_str("<br");
-                if let Some(id) = id {
-                    self.attr("id", id)?;
+        let tag = if let Some(tag) = section_plan::wrappers(name) {
+            tag
+        } else {
+            match name {
+                "title" => "div",
+                "p" if node
+                    .parent()
+                    .is_some_and(|parent| parent.has_tag_name((FB3_BODY_NS, "title"))) =>
+                {
+                    ["h1", "h2", "h3", "h4", "h5", "h6"][section_depth.min(5)]
                 }
-                self.xhtml.push_str(" />");
-                return check_output(&self.xhtml);
-            }
-            _ => {
-                if let Some(id) = id {
-                    self.xhtml.push_str("<span");
-                    self.attr("id", id)?;
-                    self.xhtml.push_str("></span>");
+                "p" | "v" | "subscription" => "p",
+                "subtitle" => "h3",
+                "strong" | "em" | "sub" | "sup" | "code" | "pre" | "span" | "ol" | "ul" | "li"
+                | "table" | "thead" | "tbody" | "tfoot" | "th" | "tr" | "td" => name,
+                "underline" => "u",
+                "strikethrough" => "s",
+                "spacing" | "smallcaps" | "marker" => "span",
+                "a" | "note" => "a",
+                "img" => return self.element_image(node),
+                "br" => {
+                    self.xhtml.push_str("<br");
+                    if let Some(id) = id {
+                        self.attr("id", id)?;
+                    }
+                    self.xhtml.push_str(" />");
+                    return check_output(&self.xhtml);
                 }
-                for child in node.children() {
-                    self.node(child, section_depth, depth + 1)?;
+                _ => {
+                    if let Some(id) = id {
+                        self.xhtml.push_str("<span");
+                        self.attr("id", id)?;
+                        self.xhtml.push_str("></span>");
+                    }
+                    for child in node.children() {
+                        self.node(child, section_depth, depth + 1)?;
+                    }
+                    return Ok(());
                 }
-                return Ok(());
             }
         };
+        self.start(node, tag, section_depth, false)?;
+        let next_section = section_depth + usize::from(name == "section");
+        for child in node.children() {
+            self.node(child, next_section, depth + 1)?;
+        }
+        write!(self.xhtml, "</{tag}>")?;
+        check_output(&self.xhtml)
+    }
+
+    fn start(
+        &mut self,
+        node: Node<'_, '_>,
+        tag: &str,
+        section_depth: usize,
+        continued: bool,
+    ) -> Result<()> {
+        let name = node.tag_name().name();
+        let id = identifier(node)
+            .filter(|id| !continued && self.ids.get(id) == Some(&Some(self.chapter)));
         let mut generated = None;
-        if name == "section"
+        if !continued
+            && name == "section"
             && self.toc.len() < MAX_TOC
             && let Some(label) = section_title(node)
         {
@@ -262,12 +318,7 @@ impl<F: FnMut(&str) -> Option<String>> Body<'_, F> {
             self.attr("class", class)?;
         }
         self.xhtml.push('>');
-        let next_section = section_depth + usize::from(name == "section");
-        for child in node.children() {
-            self.node(child, next_section, depth + 1)?;
-        }
-        write!(self.xhtml, "</{tag}>")?;
-        check_output(&self.xhtml)
+        Ok(())
     }
 
     fn next_id(&mut self) -> String {

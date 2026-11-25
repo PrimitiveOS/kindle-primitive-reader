@@ -16,10 +16,15 @@ controls. [FictionBook 3 body schema](https://github.com/gribuser/FB3/blob/92bdc
 [Pinned CREngine FB3 adapter](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/fb3fmt.cpp#L5-L108) ·
 [Reader package importer](../src/fb3.rs)
 
-A large publication can use multiple reading sections. Reader groups
-complete top-level sections to stay within a 384 KiB original-text budget,
-and keeps linked notes, Contents and backlinks mapped across the resulting
-chapters. A single top-level section above that budget reports a size error.
+A large publication can use multiple reading sections. Reader keeps whole
+sections when they fit. It splits oversized sections, notes, and supported
+block containers between complete children. Each continuation reopens its
+surrounding structure so language and formatting still apply. Headings and
+IDs appear once, and Contents, notes, and backlinks point to the section
+containing the original destination. Planning first preserves the existing
+384 KiB text grouping. If converted markup exceeds its output limit, Reader
+retries with a 704 KiB source-markup planning budget. An indivisible block
+such as one paragraph or table that exceeds its budget reports a size error.
 Other limits include a 16 MiB ZIP, 512 parts, a 2 MiB body XML file, 48 levels
 of nesting, 1 MiB of converted markup per group, at most 2 MiB per image,
 and an 8 MiB image budget. The supported
@@ -56,9 +61,17 @@ alternate text where the example refers to an external image. The captures
 show each reader's first page of the book's text. [Reader capture](screenshots/reader-fb3-harbor-survey.png) ·
 [KOReader capture](screenshots/stock-fb3-harbor-survey.png)
 
+The longer continuation fixture has a nested section over the former
+single-section limit. Both readers find its headings and follow links in
+both directions across the split. These captures show the late passage,
+with each reader's own pagination and typography. [Reader continuation](screenshots/reader-fb3-harbor-continuation.png) ·
+[KOReader continuation](screenshots/stock-fb3-harbor-continuation.png)
+
 Run `cargo test --locked --features kindle --lib fb3` for the package,
 picker, grouping, and rendering regressions. The separate originals test
 uses `READER_FB3_ORIGINALS` with the three unchanged packages named
 `anatomy.fb3`, `part-names.fb3`, and `nightmare.fb3`. Set
-`READER_FB3_CAPTURES` to an existing directory for the authored screenshot.
+`READER_FB3_CAPTURES` to an existing directory for the opening and
+continuation screenshots. Pass both authored `.fb3` paths to the native
+comparator to capture the corresponding KOReader pages.
 [Reader tests](../src/fb3/tests.rs)

@@ -49,7 +49,7 @@ impl ScreenPageSources {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-struct FileStamp {
+pub(crate) struct FileStamp {
     len: u64,
     modified: SystemTime,
     #[cfg(unix)]
@@ -57,11 +57,11 @@ struct FileStamp {
 }
 
 impl FileStamp {
-    fn read(path: &Path) -> Option<Self> {
+    pub(crate) fn read(path: &Path) -> Option<Self> {
         Self::from_metadata(&fs::metadata(path).ok()?)
     }
 
-    fn from_metadata(metadata: &fs::Metadata) -> Option<Self> {
+    pub(crate) fn from_metadata(metadata: &fs::Metadata) -> Option<Self> {
         if !metadata.is_file() {
             return None;
         }
@@ -583,6 +583,7 @@ mod tests {
             hide_nonlinear: false,
             hidden_flows: Default::default(),
             chapter_offsets: Default::default(),
+            quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
         }

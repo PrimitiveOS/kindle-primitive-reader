@@ -259,7 +259,7 @@ fn quote_marks_prefix_uses_the_live_wikipedia_backlink_policy() {
         .unwrap();
     let settings = style_settings(BaseStylesheet::Traditional, None, true);
 
-    for (wikipedia, expected) in [(false, 1), (true, 2)] {
+    for (wikipedia, expected_odd) in [(false, true), (true, false)] {
         let mut preferences = user_styles::Data::default();
         if wikipedia {
             preferences
@@ -289,8 +289,288 @@ fn quote_marks_prefix_uses_the_live_wikipedia_backlink_policy() {
             style.compute_deferred_quotes(&source.elements, settings, targets.as_ref());
         let mut live = Depths::default();
         quotes.resolve(&source.elements, &mut styles, "en", true, &mut live);
-        let carried = prefix(&mut book, 1, settings, &user, None, "en");
-        assert_eq!(live.0.get("en"), Some(&expected));
-        assert_eq!(carried.0, live.0);
+        let carried = prefix(
+            &mut book,
+            1,
+            settings,
+            &user,
+            None,
+            "en",
+            &source.elements,
+            &|| Ok(()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(live.0.contains("en"), expected_odd);
+        assert_eq!(carried.depths.0, live.0);
+    }
+}
+
+const LONG_SPINE: &str = "quote-spine-long.epub";
+const LAST_CHAPTER: usize = 20;
+
+#[cfg(feature = "kindle")]
+#[test]
+fn quote_marks_stream_a_long_prefix_when_opened_directly() {
+    let mut book = Book::open(&crate::test_fixture(LONG_SPINE)).unwrap();
+    let bytes: usize = (0..LAST_CHAPTER)
+        .map(|index| book.chapter(index).unwrap().len())
+        .sum();
+    assert!(bytes > 512 * 1024);
+    assert_eq!(book.chapters.len(), LAST_CHAPTER + 1);
+    let mut active = Probe::from_book_with_rules(
+        long_snapshot(),
+        Engine::Parley,
+        &[crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        style_settings(BaseStylesheet::Traditional, None, true),
+        LAST_CHAPTER,
+        None,
+        &Default::default(),
+        &Default::default(),
+    )
+    .unwrap();
+    let off = open(LONG_SPINE, LAST_CHAPTER, None, true);
+    let inset = |phrase| {
+        let (anchor, painted) = position(&active, phrase);
+        let (ordinary, cleared) = position(&off, phrase);
+        assert_eq!(anchor, ordinary);
+        painted.x - cleared.x
+    };
+    let inner = inset("Case LongTail");
+    let outer = inset("Case RestoredDepth");
+    assert!(inner > 0 && outer > inner, "{inner} {outer}");
+    if let Some(dir) = std::env::var_os("READER_QUOTE_MARK_CAPTURES") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        image::GrayImage::from_raw(WIDTH, HEIGHT, active.capture(0).unwrap())
+            .unwrap()
+            .save(dir.join("reader-quote-marks-spine-long.png"))
+            .unwrap();
+    }
+}
+
+#[cfg(feature = "kindle")]
+fn snapshot_with_member(name: &str, replacement: &[u8]) -> Book {
+    use std::io::{Cursor, Read, Write};
+    let original = std::fs::read(crate::test_fixture(LONG_SPINE)).unwrap();
+    let mut input = zip::ZipArchive::new(Cursor::new(original)).unwrap();
+    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        let options =
+            zip::write::SimpleFileOptions::default().compression_method(entry.compression());
+        output.start_file(entry.name(), options).unwrap();
+        if entry.name() == name {
+            output.write_all(replacement).unwrap();
+        } else {
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).unwrap();
+            output.write_all(&bytes).unwrap();
+        }
+    }
+    Book::open_snapshot(output.finish().unwrap().into_inner().into()).unwrap()
+}
+
+#[cfg(feature = "kindle")]
+fn long_snapshot() -> Book {
+    Book::open_snapshot(
+        std::fs::read(crate::test_fixture(LONG_SPINE))
+            .unwrap()
+            .into(),
+    )
+    .unwrap()
+}
+
+#[cfg(feature = "kindle")]
+#[test]
+fn quote_marks_slow_foreground_keeps_the_legacy_prefix_window() {
+    let settings = style_settings(BaseStylesheet::Traditional, None, true);
+    let user = Default::default();
+    let slow_prefix = |book: &mut Book, chapter| {
+        book.quote_prefixes = Some(Box::new(Checkpoints::foreground()));
+        take_historical_items();
+        let incoming = scan_prefix(
+            book,
+            chapter,
+            settings,
+            &user,
+            None,
+            "en",
+            &[],
+            &|| Ok(()),
+            &|| true,
+        )
+        .unwrap();
+        (incoming, take_historical_items())
+    };
+    let mut book = long_snapshot();
+    let (incoming, items) = slow_prefix(&mut book, LEGACY_PREFIX_CHAPTERS);
+    assert_eq!(items, LEGACY_PREFIX_CHAPTERS);
+    assert!(incoming.unwrap().depths.0.contains("en"));
+
+    let (incoming, items) = slow_prefix(&mut book, LEGACY_PREFIX_CHAPTERS + 1);
+    assert_eq!(items, 0);
+    assert!(incoming.is_none());
+    assert_eq!(book.quote_prefixes.as_ref().unwrap().latest(), None);
+
+    let large_item = format!(
+        "<html><body><p>Large preceding XHTML</p><!--{}--></body></html>",
+        "p".repeat(500 * 1024),
+    );
+    let mut book = snapshot_with_member("chapter-01.xhtml", large_item.as_bytes());
+    let (incoming, items) = slow_prefix(&mut book, 3);
+    assert_eq!(items, 2);
+    assert!(incoming.is_none());
+    assert_eq!(book.quote_prefixes.as_ref().unwrap().latest(), Some(2));
+}
+
+#[cfg(feature = "kindle")]
+fn snapshot_prefix(
+    book: &mut Book,
+    chapter: usize,
+    user: &user_styles::Snapshot,
+    current: &[Element],
+) -> (Depths, usize) {
+    let attempts = std::cell::Cell::new(0);
+    let result = prefix(
+        book,
+        chapter,
+        style_settings(BaseStylesheet::Traditional, None, true),
+        user,
+        None,
+        "en",
+        current,
+        &|| {
+            attempts.set(attempts.get() + 1);
+            Ok(())
+        },
+    )
+    .unwrap();
+    (
+        result.map_or_else(Depths::default, |incoming| incoming.depths),
+        attempts.get(),
+    )
+}
+
+#[cfg(feature = "kindle")]
+#[test]
+fn quote_marks_keep_the_snapshot_witness_while_rewinding_and_advancing() {
+    let mut book = long_snapshot();
+    let user = Default::default();
+    for (chapter, checks) in [(20, 21), (1, 2), (2, 2), (10, 9), (20, 1), (11, 2)] {
+        let (depths, checked) = snapshot_prefix(&mut book, chapter, &user, &[]);
+        assert_eq!(checked, checks, "chapter {chapter}");
+        assert_eq!(depths.0, HashSet::from([Box::<str>::from("en")]));
+    }
+    let mut revised = snapshot_with_member("seed.css", b".seed::before { content: none; }");
+    assert_eq!(revised.revision(), book.revision());
+    let (depths, checked) = snapshot_prefix(&mut revised, 20, &user, &[]);
+    assert_eq!(checked, 21);
+    assert!(depths.0.is_empty());
+}
+
+#[cfg(feature = "kindle")]
+#[test]
+fn quote_marks_snapshot_retry_keeps_note_and_style_profiles_separate() {
+    let mut book = Book::open_snapshot(
+        std::fs::read(crate::test_fixture("quote-spine.epub"))
+            .unwrap()
+            .into(),
+    )
+    .unwrap();
+    let mut preferences = user_styles::Data::default();
+    preferences
+        .choose(1, user_styles::WIKIPEDIA_FOOTNOTES, Some(true))
+        .unwrap();
+    let wiki = preferences.snapshot(1).unwrap();
+    let ordinary = wiki.without_wikipedia_notes();
+    preferences
+        .choose(1, "no_pseudo_element_before_after", Some(true))
+        .unwrap();
+    let disabled = preferences.snapshot(1).unwrap();
+    for (profile, odd, checks) in [
+        (&wiki, false, 2),
+        (&ordinary, true, 2),
+        (&disabled, false, 2),
+        (&wiki, false, 1),
+        (&ordinary, true, 1),
+    ] {
+        let (depths, actual) = snapshot_prefix(&mut book, 1, profile, &[]);
+        assert_eq!(depths.0.contains("en"), odd);
+        assert_eq!(actual, checks);
+    }
+}
+
+#[cfg(feature = "kindle")]
+#[test]
+fn quote_marks_snapshot_cancel_and_bad_member_never_cache_partial_depths() {
+    let settings = style_settings(BaseStylesheet::Traditional, None, true);
+    let user = Default::default();
+    let mut book = long_snapshot();
+    let checks = std::cell::Cell::new(0);
+    let error = prefix(&mut book, 20, settings, &user, None, "en", &[], &|| {
+        checks.set(checks.get() + 1);
+        if checks.get() >= 2 {
+            return Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into());
+        }
+        Ok(())
+    })
+    .err()
+    .unwrap();
+    assert_eq!(
+        error.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::Interrupted
+    );
+    assert!(book.quote_prefixes.as_ref().unwrap().0.is_empty());
+    let (retried, checks) = snapshot_prefix(&mut book, 20, &user, &[]);
+    assert_eq!(checks, 21);
+    assert!(retried.0.contains("en"));
+
+    let mut broken = snapshot_with_member("chapter-02.xhtml", b"\xff");
+    for _ in 0..2 {
+        let (fallback, checks) = snapshot_prefix(&mut broken, 20, &user, &[]);
+        assert_eq!(checks, 4);
+        assert!(fallback.0.is_empty());
+        assert!(broken.quote_prefixes.as_ref().unwrap().0.is_empty());
+    }
+    // Cancellation observed at the read-failure boundary still aborts a worker.
+    let checks = std::cell::Cell::new(0);
+    assert!(
+        prefix(&mut broken, 20, settings, &user, None, "en", &[], &|| {
+            checks.set(checks.get() + 1);
+            if checks.get() >= 4 {
+                return Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into());
+            }
+            Ok(())
+        })
+        .is_err()
+    );
+    assert!(broken.quote_prefixes.as_ref().unwrap().0.is_empty());
+}
+
+#[cfg(feature = "kindle")]
+#[test]
+fn quote_marks_prune_large_language_sets_without_losing_requested_depths() {
+    let mut many = r#"<html><head><link rel="stylesheet" href="seed.css" /></head><body><p><span class="seed">English seed</span><span class="seed" xml:lang="fr">French seed</span>"#.to_string();
+    for index in 0..=MAX_CACHED_LANGUAGES {
+        many.push_str(&format!(
+            r#"<span class="seed" xml:lang="en-x-l{index}">Other seed</span>"#
+        ));
+    }
+    many.push_str("</p></body></html>");
+    let current = Source::parse(
+        r#"<html><body><p><q>English</q><q xml:lang="fr">French</q></p></body></html>"#,
+    )
+    .unwrap();
+    let mut book = snapshot_with_member("chapter-00.xhtml", many.as_bytes());
+    for chapter in [20, 1, 20] {
+        let (depths, checks) =
+            snapshot_prefix(&mut book, chapter, &Default::default(), &current.elements);
+        assert_eq!(checks, chapter + 1);
+        assert_eq!(
+            depths.0,
+            HashSet::from([Box::<str>::from("en"), Box::<str>::from("fr")])
+        );
+        assert!(book.quote_prefixes.as_ref().unwrap().0.is_empty());
     }
 }

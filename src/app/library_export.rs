@@ -646,6 +646,7 @@ impl Reader {
             user_styles: styles,
             user_hyphenation: self.user_hyphenation.clone(),
             chapter_offsets: Default::default(),
+            quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
             engine: Engine::Parley,

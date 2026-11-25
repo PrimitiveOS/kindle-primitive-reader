@@ -1251,6 +1251,30 @@ impl Probe {
         user_styles: &user_styles::Snapshot,
         load_fonts: impl Fn() -> Result<FontContext>,
     ) -> Result<Self> {
+        Self::layout_opened_book_cancellable(
+            opened,
+            engine,
+            settings,
+            chapter,
+            excerpt,
+            user_rules,
+            user_styles,
+            load_fonts,
+            &|| Ok(()),
+        )
+    }
+
+    fn layout_opened_book_cancellable(
+        opened: &mut Option<Book>,
+        engine: Engine,
+        settings: Settings,
+        chapter: usize,
+        excerpt: Option<String>,
+        user_rules: &user_hyphenation::Rules,
+        user_styles: &user_styles::Snapshot,
+        load_fonts: impl Fn() -> Result<FontContext>,
+        check_cancelled: &dyn Fn() -> Result<()>,
+    ) -> Result<Self> {
         let book = opened.as_mut().ok_or("Reading source is unavailable")?;
         if book.is_fixed_layout() {
             return Err("Open this fixed-layout EPUB in Reader".into());
@@ -1380,28 +1404,18 @@ impl Probe {
                     settings,
                     footnote_targets.as_ref(),
                 );
-                if !quote_plan.is_empty() {
-                    let quote_language = main_language.as_ref().map_or("en", |tag| tag.as_str());
-                    let mut quote_depths = if complete {
-                        book_style::pseudo::quotes::prefix(
-                            book,
-                            chapter,
-                            settings,
-                            user_styles,
-                            shaping_language,
-                            quote_language,
-                        )
-                    } else {
-                        Default::default()
-                    };
-                    quote_plan.resolve(
-                        &source.elements,
-                        &mut styles,
-                        quote_language,
-                        settings.typography.respect_embedded,
-                        &mut quote_depths,
-                    );
-                }
+                book_style::pseudo::quotes::render(
+                    book,
+                    complete.then_some(chapter),
+                    settings,
+                    user_styles,
+                    shaping_language,
+                    main_language.as_ref().map_or("en", |tag| tag.as_str()),
+                    &source.elements,
+                    &mut styles,
+                    quote_plan,
+                    check_cancelled,
+                )?;
                 reading_flow = flow_view::ChapterFlow::from_styles(&source, &styles)?;
                 #[cfg(feature = "kindle")]
                 {
@@ -1560,7 +1574,7 @@ impl Probe {
             Ok(pages) => pages,
             Err(_) if used_joined_notes => {
                 drop((renderer, lines, source, reading_flow));
-                return Self::layout_opened_book(
+                return Self::layout_opened_book_cancellable(
                     opened,
                     engine,
                     settings,
@@ -1569,6 +1583,7 @@ impl Probe {
                     user_rules,
                     &user_styles.without_inline_footnotes(),
                     load_fonts,
+                    check_cancelled,
                 );
             }
             Err(error) => return Err(error),
@@ -1618,8 +1633,16 @@ impl Probe {
             // Release the failed composition's glyph layouts and text
             // projections before laying out the ordinary chapter again.
             drop((renderer, lines, source, pages, reading_flow));
-            return Self::layout_opened_book(
-                opened, engine, settings, chapter, None, user_rules, &fallback, load_fonts,
+            return Self::layout_opened_book_cancellable(
+                opened,
+                engine,
+                settings,
+                chapter,
+                None,
+                user_rules,
+                &fallback,
+                load_fonts,
+                check_cancelled,
             );
         }
         Ok(Self {

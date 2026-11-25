@@ -218,30 +218,29 @@ impl Request {
         let mut chapters = Vec::with_capacity(self.spine.len());
         let mut pages = 0;
         let mut elements = 0;
+        check_cancelled(cancelled)?;
+        let mut book = Book::open_snapshot(archive)?;
+        if book.revision() != self.publication || !same_spine(&self.spine, &book.chapters) {
+            return Err("The EPUB edition or spine changed during whole-book preparation".into());
+        }
+        if !book.supports_eager_typography() {
+            return Err(
+                "This EPUB's archive or publisher font assets need chapter-first rendering".into(),
+            );
+        }
+        if book
+            .chapter_offsets()?
+            .last()
+            .is_none_or(|&bytes| bytes > MAX_SPINE_BYTES)
+        {
+            return Err("This EPUB exceeds the whole-book text limit".into());
+        }
+        let mut opened = Some(book);
+        let check = || Ok(check_cancelled(cancelled)?);
         for index in 0..self.spine.len() {
-            check_cancelled(cancelled)?;
-            let mut book = Book::open_snapshot(archive.clone())?;
-            if book.revision() != self.publication || !same_spine(&self.spine, &book.chapters) {
-                return Err(
-                    "The EPUB edition or spine changed during whole-book preparation".into(),
-                );
-            }
-            if index == 0 && !book.supports_eager_typography() {
-                return Err(
-                    "This EPUB's archive or publisher font assets need chapter-first rendering"
-                        .into(),
-                );
-            }
-            if index == 0
-                && book
-                    .chapter_offsets()?
-                    .last()
-                    .is_none_or(|&bytes| bytes > MAX_SPINE_BYTES)
-            {
-                return Err("This EPUB exceeds the whole-book text limit".into());
-            }
-            let probe = Probe::from_book_with_font_loader(
-                book,
+            check()?;
+            let probe = Probe::layout_opened_book_cancellable(
+                &mut opened,
                 Engine::Parley,
                 self.settings,
                 index,
@@ -249,6 +248,7 @@ impl Request {
                 &self.hyphenation,
                 &self.styles,
                 || Ok(fonts.clone()),
+                &check,
             )?;
             pages += probe.page_count();
             elements += probe.source.elements.len();

@@ -8,6 +8,7 @@ local Cre = require("libs/libkoreader-cre")
 local BB = require("ffi/blitbuffer")
 local source, cache, font, output = assert(arg[1]), assert(arg[2]), assert(arg[3]), assert(arg[4])
 local spine = assert(arg[5])
+local long_spine = arg[6]
 Cre.initCache(cache, 0, true, 1)
 Cre.registerFont(font)
 
@@ -65,6 +66,8 @@ local function compare_tokens(name, case, tokens)
     local keys = groups[case]
     if name == "spine-wiki" then
         keys = ({ Start = "O", Across = "OC", Close = "c", Normal = "oc" })[case]
+    elseif name == "spine-long" then
+        keys = ({ LongTail = "oc", MatchingClose = "C", RestoredDepth = "OC" })[case]
     elseif name == "spine" then
         keys = ({ Start = "O", Across = "oc", Close = "C", Normal = "OC" })[case]
     elseif name == "pseudo-off" then
@@ -183,3 +186,7 @@ assert(wikipedia.checked_func() and repaint == 3)
 compare("spine-wiki", "en", true, false, nil, spine, spine_labels)
 wikipedia.callback()
 assert(not wikipedia.checked_func() and repaint == 4)
+if long_spine then
+    compare("spine-long", "en", true, true, nil, long_spine,
+        {"LongTail", "MatchingClose", "RestoredDepth"})
+end

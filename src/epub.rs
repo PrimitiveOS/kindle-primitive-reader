@@ -91,6 +91,7 @@ pub struct Book {
     fixed_placements: Option<Vec<ItemPlacement>>,
     series: Vec<BookSeries>,
     cover: Option<BookCover>,
+    pub(crate) quote_prefixes: Option<Box<crate::book_style::pseudo::quotes::Checkpoints>>,
     content: Content,
 }
 
@@ -167,7 +168,25 @@ impl Book {
 
     #[cfg(feature = "kindle")]
     pub(crate) fn open_snapshot(bytes: std::sync::Arc<[u8]>) -> Result<Self> {
-        Self::from_archive(Archive::Zip(crate::epub_zip::open_snapshot(bytes)?))
+        let mut book = Self::from_archive(Archive::Zip(crate::epub_zip::open_snapshot(bytes)?))?;
+        book.quote_prefixes = Some(Box::new(
+            crate::book_style::pseudo::quotes::Checkpoints::snapshot(),
+        ));
+        Ok(book)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn quote_file_stamp(&self) -> Option<&crate::session::screen_pages::FileStamp> {
+        if !self.is_reflowable_epub() {
+            return None;
+        }
+        match &self.content {
+            Content::Archive {
+                archive: Archive::Zip(archive),
+                ..
+            } => archive.stamp.as_ref(),
+            _ => None,
+        }
     }
 
     #[cfg(feature = "kindle")]
@@ -442,6 +461,7 @@ impl Book {
             fixed_placements: fixed_layout.unwrap_or(false).then_some(placements),
             series,
             cover,
+            quote_prefixes: None,
             content: Content::Archive {
                 archive,
                 package_path,
@@ -595,6 +615,7 @@ impl Book {
             fixed_placements: None,
             series: Vec::new(),
             cover: None,
+            quote_prefixes: None,
             chapters: vec![Chapter {
                 is_svg: false,
                 nonlinear: false,
@@ -784,6 +805,7 @@ impl Book {
             fixed_placements: None,
             series: Vec::new(),
             cover: None,
+            quote_prefixes: None,
             content: Content::Loose {
                 metadata: publication.metadata,
                 format: loose::Format::Mobi,
@@ -826,6 +848,7 @@ impl Book {
             fixed_placements: None,
             series: Vec::new(),
             cover: None,
+            quote_prefixes: None,
             content: Content::Chm(Box::new(chm)),
         })
     }

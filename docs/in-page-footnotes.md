@@ -339,6 +339,34 @@ annotation keeps its spacing.
 [KOReader ruby after](screenshots/stock-note-inline-ruby-after.png) ·
 [KOReader original ruby note](screenshots/stock-note-inline-ruby-original.png)
 
+### Generated text in flattened notes
+
+The `inline-generated` replay combines a publisher’s brackets around `memo`,
+an inner quotation with a backlink, and a second quotation containing a chart
+and an annotated ruby base. A silent opening quote before the note leaves both
+quotes in the note and the first quote that follows it at the inner level.
+Turning on **Inline all footnote content** brings the bracketed text, backlink,
+chart, ruby base and start of the closing sentence onto one line in KOReader.
+The note separator moves from y=271 to y=351 at 720 × 480 px.
+The replay verifies stable original text pointers and the backlink, then
+reproduces the original page after the switch is turned off.
+
+Reader’s flattened layout inserts the bracket and quote glyphs as decoration
+around the original source spans. Search, copied text, saved positions and
+selection continue to use the original note text. Existing Reader controls
+can open the backlink or illustration in the visible note strip and the
+canonical page. The flattening remains bounded by the same supported note and
+table layouts. Generated block or float boxes are outside this layout path.
+[Reader layout test](../src/parley_layout/note_inline/tests.rs) ·
+[Reader note before](screenshots/reader-note-inline-generated-before.png) ·
+[Reader note after](screenshots/reader-note-inline-generated-after.png) ·
+[Reader original note](screenshots/reader-note-inline-generated-original.png) ·
+[KOReader note before](screenshots/stock-note-inline-generated-before.png) ·
+[KOReader note after](screenshots/stock-note-inline-generated-after.png) ·
+[KOReader original note](screenshots/stock-note-inline-generated-original.png)
+
+### Tables in flattened notes
+
 The `inline-table` replay starts with two columns and a second row spanning
 both columns. KOReader copies the entire 244 × 80 px grid to the reference
 strip, including its padding, backgrounds and borders. The inline switch
@@ -448,7 +476,7 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
 
 Pass `cosmetic`, `wikipedia`, `inline-all`, `inline-list`, `inline-nested`,
 `inline-root-epub`, `inline-root-wiki`, `inline-ruby`, `inline-ruby-narrow`,
-`inline-image`, `inline-block-image`, `inline-table`, `body-table`, or
+`inline-generated`, `inline-image`, `inline-block-image`, `inline-table`, `body-table`, or
 `rtl-note` as the fifth argument to select an advanced style replay.
 
 Run the combined note flow checks with the same stock runtime and scratch

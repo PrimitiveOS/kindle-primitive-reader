@@ -922,18 +922,17 @@ impl ParleyChapter {
             let note = joined.remove(&index);
             let note_layout = note.as_ref().map(|note| Arc::clone(&note.layout));
             let mut note_table = None;
+            let note_typography;
             let (flattened, note_images) = match note.zip(note_layout.as_ref()) {
                 Some((note, layout)) => {
                     joined_until = note.end_index;
                     note_table = note.table;
-                    (
-                        Some(
-                            input
-                                .text_fragment(note.element, &layout.text, note.runs)
-                                .with_joined_ruby(note.ruby),
-                        ),
-                        note.images,
-                    )
+                    note_typography = note.generated;
+                    let mut fragment = input
+                        .text_fragment(note.element, &layout.text, note.runs)
+                        .with_joined_ruby(note.ruby);
+                    fragment.generated = &note_typography;
+                    (Some(fragment), note.images)
                 }
                 None => (None, Vec::new()),
             };
@@ -1380,11 +1379,25 @@ impl ParleyChapter {
                     None
                 };
                 let (layout, ruby) = if let Some(table) = &mut tabular {
-                    let outer = block.text_fragment(
+                    let generated: Vec<_> = block
+                        .generated
+                        .iter()
+                        .flat_map(|run| {
+                            table.text.layout_spans(&run.bytes).map(|bytes| {
+                                crate::book_style::pseudo::Run {
+                                    bytes,
+                                    style: run.style,
+                                    host: run.host,
+                                }
+                            })
+                        })
+                        .collect();
+                    let mut outer = block.text_fragment(
                         block.element,
                         &table.text.text,
                         std::mem::take(&mut table.runs),
                     );
+                    outer.generated = &generated;
                     layout_with_images(
                         &mut context,
                         &mut fonts,
@@ -1522,33 +1535,6 @@ impl ParleyChapter {
                 let mut overlays = ruby.iter().peekable();
                 let first_line = lines.len();
                 for (index, line) in layout.lines().enumerate() {
-                    for item in line.items() {
-                        if inline_text.is_none()
-                            && tabular.is_none()
-                            && let PositionedLayoutItem::InlineBox(position) = item
-                        {
-                            let image = &mut chapter.illustrations[position.id as usize];
-                            let image_left = if position.kind == parley::InlineBoxKind::Block {
-                                let inset = if rtl {
-                                    text_width.saturating_sub(image.display.0)
-                                } else {
-                                    gutter - hanging
-                                };
-                                text_x + inset as f32
-                            } else {
-                                let after_gap = if rtl {
-                                    position.width - image.display.0 as f32
-                                } else {
-                                    0.0
-                                };
-                                x + position.x + after_gap
-                            };
-                            image.x = Some(image_left.round().max(0.0) as usize);
-                            image.y = (origin + position.y).round();
-                            image.render_line =
-                                Some((block.key, origin + line.metrics().content_block_min_coord));
-                        }
-                    }
                     let metrics = line.metrics();
                     let mut top = metrics.content_block_min_coord;
                     while let Some(overlay) = overlays.next_if(|overlay| overlay.line == index) {
@@ -1626,16 +1612,36 @@ impl ParleyChapter {
                         }
                     } else if let Some(note) = &note_layout {
                         note.project_line(&mut source_line, line.text_range());
-                        for item in line.items() {
-                            if let PositionedLayoutItem::InlineBox(position) = item {
-                                chapter.illustrations[position.id as usize].render_line =
-                                    Some((source_line.block, source_line.top));
-                            }
-                        }
                     } else if let Some(boxed) = &mut inline_text {
                         boxed.project_line(&mut source_line, &line, &projection, index == 0)?;
                     } else {
                         source_line.project(&projection, line.text_range())?;
+                    }
+                    if available > 0 && inline_text.is_none() && tabular.is_none() {
+                        for item in line.items() {
+                            let PositionedLayoutItem::InlineBox(position) = item else {
+                                continue;
+                            };
+                            let image = &mut chapter.illustrations[position.id as usize];
+                            let image_left = if position.kind == parley::InlineBoxKind::Block {
+                                let inset = if rtl {
+                                    text_width.saturating_sub(image.display.0)
+                                } else {
+                                    gutter - hanging
+                                };
+                                text_x + inset as f32
+                            } else {
+                                let after_gap = if rtl {
+                                    position.width - image.display.0 as f32
+                                } else {
+                                    0.0
+                                };
+                                x + position.x + after_gap
+                            };
+                            image.x = Some(image_left.round().max(0.0) as usize);
+                            image.y = (origin + position.y).round();
+                            image.render_line = Some((source_line.block, source_line.top));
+                        }
                     }
                     if index == 0
                         && let Some(bounds) = &initial_bounds
@@ -2674,7 +2680,7 @@ fn layout_with_images(
         if ruby.bytes.len() > MAX_RUBY_BASE_BYTES {
             continue;
         }
-        let Some((base, line)) = base_geometry(&layout, &ruby.bytes) else {
+        let Some((base, line, _)) = base_geometry(&layout, &ruby.bytes) else {
             continue;
         };
         let style = block
@@ -2738,7 +2744,7 @@ fn layout_with_images(
     );
     let mut overlays = Vec::new();
     for candidate in candidates {
-        let Some((base, index)) = base_geometry(&layout, &candidate.bytes) else {
+        let Some((base, index, base_top)) = base_geometry(&layout, &candidate.bytes) else {
             continue;
         };
         let ink = *candidate.layout.get(0).unwrap().metrics();
@@ -2746,7 +2752,7 @@ fn layout_with_images(
         let line = layout.get(index).unwrap();
         let metrics = line.metrics();
         let height = ink.content_block_max_coord - ink.content_block_min_coord;
-        let bottom = metrics.content_block_min_coord - 2.0;
+        let bottom = base_top - 2.0;
         let top = bottom - height;
         if top < metrics.block_min_coord || width > base.width() as f32 + 0.25 {
             continue;
@@ -2768,7 +2774,7 @@ fn layout_with_images(
 fn base_geometry(
     layout: &Layout<PaintBrush>,
     bytes: &Range<usize>,
-) -> Option<(BoundingBox, usize)> {
+) -> Option<(BoundingBox, usize, f32)> {
     let start = Cursor::from_byte_index(layout, bytes.start, Affinity::Downstream);
     let end = Cursor::from_byte_index(layout, bytes.end, Affinity::Upstream);
     if start.index() != bytes.start || end.index() != bytes.end {
@@ -2779,10 +2785,49 @@ fn base_geometry(
     Selection::new(start, end).geometry_with(layout, |bounds, line| {
         multiple |= result.replace((bounds, line)).is_some();
     });
-    let (bounds, row) = result?;
-    let line = layout.get(row)?.text_range();
-    (!multiple && line.start <= bytes.start && bytes.end <= line.end && bounds.width() > 0.0)
-        .then_some((bounds, row))
+    let (mut bounds, row) = result?;
+    let line = layout.get(row)?;
+    let text = line.text_range();
+    if multiple || text.start > bytes.start || bytes.end > text.end {
+        return None;
+    }
+    let mut top = line.metrics().content_block_min_coord;
+    if layout.inline_boxes().len() > 0 {
+        let mut has_artwork = false;
+        let mut glyph_top = f32::INFINITY;
+        // Selection gives a preceding inline box to the first selected cluster.
+        // Ruby sits above its base text, so the box cannot set either its center
+        // or its vertical clearance.
+        for item in line.items() {
+            match item {
+                PositionedLayoutItem::InlineBox(art) => {
+                    has_artwork = true;
+                    let left = f64::from(art.x);
+                    let right = f64::from(art.x + art.width);
+                    if left < bounds.x1 && right > bounds.x0 {
+                        if left <= bounds.x0 + 0.25 {
+                            bounds.x0 = right;
+                        } else if right >= bounds.x1 - 0.25 {
+                            bounds.x1 = left;
+                        } else {
+                            return None;
+                        }
+                    }
+                }
+                PositionedLayoutItem::GlyphRun(glyphs) => {
+                    let run = glyphs.run();
+                    let text = run.text_range();
+                    if text.start < bytes.end && bytes.start < text.end {
+                        glyph_top = glyph_top.min(glyphs.baseline() - run.font_metrics().ascent);
+                    }
+                }
+            }
+        }
+        if has_artwork && glyph_top.is_finite() {
+            top = glyph_top;
+        }
+    }
+    (bounds.width() > 0.0).then_some((bounds, row, top))
 }
 
 /// Rasterize typographic bullets geometrically so a book font lacking U+25E6 cannot show tofu.

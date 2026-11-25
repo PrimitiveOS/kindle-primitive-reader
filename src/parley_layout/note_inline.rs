@@ -7,13 +7,15 @@ use std::{
 
 use crate::{
     Line, Source,
-    book_style::Style,
+    book_style::{Style, pseudo::Run},
     flow_projection::{Affinity, OwnedProjection},
     flow_view::{ChapterFlow, LayoutImage, LayoutRuby},
     footnotes::in_page::Targets,
     source::StyledText,
     table_layout::{Cell, TableKey},
 };
+
+use super::inline_blocks::generated;
 
 const MAX_BLOCKS: usize = 64;
 const MAX_BYTES: usize = 32 * 1024;
@@ -28,6 +30,7 @@ pub(super) struct Fragment<'a> {
     // The box uses the joined paragraph's offset and the original image's owner.
     pub(super) images: Vec<(usize, LayoutImage<'a>)>,
     pub(super) ruby: Vec<LayoutRuby<'a>>,
+    pub(super) generated: Vec<Run<'a>>,
     pub(super) table: Option<Table>,
     pub(super) layout: Arc<JoinedNote>,
 }
@@ -41,17 +44,19 @@ pub(super) struct Table {
 pub(crate) struct JoinedNote {
     pub(crate) text: String,
     pub(crate) pieces: Vec<Piece>,
+    decorations: Vec<Range<usize>>,
 }
 
 pub(crate) struct Piece {
     pub(crate) block: usize,
     pub(crate) joined: Range<usize>,
+    visible_start: usize,
     projected: Option<Arc<OwnedProjection>>,
 }
 
 pub(super) fn plan<'a>(
     source: &'a Source,
-    styles: &[Style],
+    styles: &'a [Style],
     flow: &'a ChapterFlow,
     targets: &Targets,
     note_tables: &HashMap<TableKey, usize>,
@@ -94,7 +99,7 @@ pub(super) fn plan<'a>(
 
 fn join<'a>(
     source: &'a Source,
-    styles: &[Style],
+    styles: &'a [Style],
     flow: &'a ChapterFlow,
     indices: Range<usize>,
     element: usize,
@@ -108,10 +113,12 @@ fn join<'a>(
     let mut joined = JoinedNote {
         text: String::new(),
         pieces: Vec::new(),
+        decorations: Vec::new(),
     };
     let mut runs = Vec::new();
     let mut images = Vec::new();
     let mut ruby = Vec::new();
+    let mut generated_runs = Vec::new();
     let mut artwork_blocks = 0;
     let mut inside_marker = false;
     let has_table = source.blocks[indices.clone()]
@@ -164,17 +171,26 @@ fn join<'a>(
             });
             inside_marker = true;
         }
-        if joined.text.len() + 1 + input.text.len().max(1) > MAX_BYTES {
+        let view = flow
+            .view(source, block)
+            .map_err(|error| error.to_string())?;
+        let Ok(decorated) = generated::Plan::compose(&input, &view, styles) else {
+            return Ok(None);
+        };
+        let text = decorated
+            .as_ref()
+            .map_or(input.text, |part| part.text.text.as_str());
+        if joined.text.len() + 1 + text.len().max(1) > MAX_BYTES {
             return Ok(None);
         }
         if !joined.text.is_empty()
             && !joined.text.ends_with(char::is_whitespace)
-            && !input.text.starts_with(char::is_whitespace)
+            && !text.starts_with(char::is_whitespace)
         {
             joined.text.push(' ');
         }
         let offset = joined.text.len();
-        joined.text.push_str(input.text);
+        joined.text.push_str(text);
         if let Some(cell) = block.table_cell {
             if closed_table
                 || !note_tables.contains_key(&cell.table)
@@ -205,30 +221,61 @@ fn join<'a>(
         } else if table.is_some() {
             closed_table = true;
         }
-        runs.extend(input.styled_text.iter().map(|run| StyledText {
+        let styled: &[StyledText] = decorated
+            .as_ref()
+            .map_or(&input.styled_text, |part| part.runs.as_slice());
+        runs.extend(styled.iter().map(|run| StyledText {
             bytes: offset + run.bytes.start..offset + run.bytes.end,
             element: run.element,
             language: run.language,
         }));
         images.extend(input.images.iter().map(|mut image| {
+            if let Some(part) = &decorated {
+                image.offset = part.artwork_offset(source, image.element, image.offset);
+            }
             image.offset += offset;
             (block.key, image)
         }));
-        ruby.extend(input.ruby.iter().map(|mut annotation| {
+        for mut annotation in input.ruby.iter() {
+            if let Some(part) = &decorated {
+                let mut spans = part.text.layout_spans(&annotation.bytes);
+                let Some(first) = spans.next() else {
+                    return Ok(None);
+                };
+                let end = spans.last().map_or(first.end, |span| span.end);
+                annotation.bytes = first.start..end;
+            }
             annotation.bytes = offset + annotation.bytes.start..offset + annotation.bytes.end;
-            annotation
-        }));
+            ruby.push(annotation);
+        }
+        let projection = flow.shared(block.key);
+        if let Some(part) = decorated {
+            joined
+                .pieces
+                .extend(part.source_parts().map(|(visible, drawing)| Piece {
+                    block: block.key,
+                    joined: offset + drawing.start..offset + drawing.end,
+                    visible_start: visible.start,
+                    projected: projection.clone(),
+                }));
+            generated_runs.extend(part.typography.into_iter().map(|mut run| {
+                run.bytes = offset + run.bytes.start..offset + run.bytes.end;
+                joined.decorations.push(run.bytes.clone());
+                run
+            }));
+        } else if !input.text.is_empty() {
+            joined.pieces.push(Piece {
+                block: block.key,
+                joined: offset..joined.text.len(),
+                visible_start: 0,
+                projected: projection,
+            });
+        }
         if input.text.is_empty() {
             // Keep the inline box between its neighboring source blocks.
             // The separating space has no canonical text offset.
             joined.text.push(' ');
             artwork_blocks += 1;
-        } else {
-            joined.pieces.push(Piece {
-                block: block.key,
-                joined: offset..joined.text.len(),
-                projected: flow.shared(block.key),
-            });
         }
     }
     if let Some(table) = &table
@@ -249,10 +296,20 @@ fn join<'a>(
                 runs,
                 images,
                 ruby,
+                generated: generated_runs,
                 table,
                 layout: Arc::new(joined),
             }),
     )
+}
+
+impl Piece {
+    pub(crate) fn joined_span(&self, visible: Range<usize>) -> Option<Range<usize>> {
+        let start = visible.start.max(self.visible_start);
+        let end = visible.end.min(self.visible_start + self.joined.len());
+        let bias = self.joined.start;
+        (start < end).then(|| bias + start - self.visible_start..bias + end - self.visible_start)
+    }
 }
 
 impl JoinedNote {
@@ -261,6 +318,14 @@ impl JoinedNote {
         offset: usize,
         affinity: Affinity,
     ) -> Option<(usize, usize)> {
+        let index = self
+            .decorations
+            .partition_point(|range| range.end <= offset);
+        if self.decorations.get(index).is_some_and(|range| {
+            range.contains(&offset) && (offset > range.start || affinity == Affinity::After)
+        }) {
+            return None;
+        }
         let piece = match affinity {
             Affinity::Before => self
                 .pieces
@@ -277,7 +342,7 @@ impl JoinedNote {
                 .find(|piece| piece.joined.contains(&offset))
                 .or_else(|| self.pieces.iter().find(|piece| piece.joined.end == offset)),
         }?;
-        let offset = offset - piece.joined.start;
+        let offset = piece.visible_start + offset - piece.joined.start;
         let source = match &piece.projected {
             Some(view) => view.source_offset(offset, affinity)?,
             None => offset,
@@ -299,7 +364,8 @@ impl JoinedNote {
                     continue;
                 }
                 let origin = piece.joined.start;
-                let local = start - origin..end - origin;
+                let local =
+                    piece.visible_start + start - origin..piece.visible_start + end - origin;
                 if let Some(projected) = &piece.projected {
                     spans.extend(projected.runs().iter().filter_map(|run| {
                         let start = local.start.max(run.layout.start);

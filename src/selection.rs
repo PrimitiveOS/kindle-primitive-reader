@@ -359,11 +359,15 @@ impl Probe {
                     let Ok(view) = self.reading_flow.view(&self.source, block) else {
                         continue;
                     };
-                    for local in view.layout_spans(span).unwrap_or_default() {
-                        let start = piece.joined.start;
+                    for local in view
+                        .layout_spans(span)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|local| piece.joined_span(local))
+                    {
                         geometry.append_flow(
                             paragraph,
-                            start + local.start..start + local.end,
+                            local,
                             &page,
                             self.settings,
                             &columns,

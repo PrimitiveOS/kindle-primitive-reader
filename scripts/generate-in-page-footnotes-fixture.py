@@ -237,6 +237,23 @@ chapters = {
  <p dir="rtl" xml:lang="ar" style="text-align:right">توضح الحاشية تفاصيل القياس.</p>
  <p dir="ltr">The paired line is written in English.</p>
 </aside>""",
+    "inline-generated": """<p id="generated-start"><span class="silent-open">The harbor packet</span> carries a note<a id="generated-ref" epub:type="noteref" href="#generated-note"><sup>13</sup></a>.</p>
+<p style="page-break-before:always">The original packet note follows.</p>
+<aside id="generated-note" epub:type="footnote">
+ <p id="generated-intro">Packet <span class="note-badge">memo</span>.</p>
+ <p id="generated-quote"><q><a href="#generated-ref" role="doc-backlink">river seal</a></q>.</p>
+ <p id="generated-art"><q><img src="chart.png" width="42" height="27" alt="Packet diagram"/> <ruby>blue buoy<rt>mark</rt></ruby></q>.</p>
+ <p id="generated-tail">Keep a duplicate.</p>
+</aside>
+<p id="generated-follow"><q>Following remark</q> <span class="silent-close">ends the entry.</span></p>""",
+}
+chapter_styles = {
+    "inline-generated": '''
+.note-badge::before { content: "["; font-weight: bold; }
+.note-badge::after { content: "]"; }
+.silent-open::before { content: no-open-quote; }
+.silent-close::after { content: no-close-quote; }
+''',
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)
@@ -255,7 +272,7 @@ nav = '<nav epub:type="toc"><ol>' + ''.join(
 def xhtml(title, body):
     return f'''<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en">
 <head><title>{title}</title><style type="text/css">
-body, p, aside {{ margin: 0; padding: 0; text-indent: 0; text-align: left; orphans: 1; widows: 1; }}
+body, p, aside {{ margin: 0; padding: 0; text-indent: 0; text-align: left; orphans: 1; widows: 1; }}{chapter_styles.get(title, '')}
 </style></head><body>{body}</body></html>'''
 
 

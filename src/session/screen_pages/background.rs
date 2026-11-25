@@ -343,6 +343,22 @@ impl Request {
             })?;
         self.verify_sources(cancelled)?;
         let mut result = Vec::with_capacity(self.chapters.len());
+        let mut book = Book::open_snapshot(archive)?;
+        if book.revision() != self.publication
+            || !book.supports_screen_page_count()
+            || !same_spine(&self.spine, &book.chapters)
+        {
+            return Err("The EPUB edition changed during indexing".into());
+        }
+        if book
+            .chapter_offsets()?
+            .windows(2)
+            .any(|ends| ends[1] - ends[0] > CHAPTER_BYTES_LIMIT)
+        {
+            return Err("An EPUB chapter exceeds the background pagination limit".into());
+        }
+        let mut opened = Some(book);
+        let check = || Ok(check_cancelled(cancelled)?);
         // Check the visible chapter first. This also guards against an ostensibly
         // equivalent worker font context making different page breaks.
         let indices = std::iter::once(self.witness.0).chain(
@@ -352,24 +368,9 @@ impl Request {
                 .filter(|index| *index != self.witness.0),
         );
         for index in indices {
-            check_cancelled(cancelled)?;
-            let mut book = Book::open_snapshot(archive.clone())?;
-            if book.revision() != self.publication
-                || !book.supports_screen_page_count()
-                || !same_spine(&self.spine, &book.chapters)
-            {
-                return Err("The EPUB edition changed during indexing".into());
-            }
-            if index == self.witness.0
-                && book
-                    .chapter_offsets()?
-                    .windows(2)
-                    .any(|ends| ends[1] - ends[0] > CHAPTER_BYTES_LIMIT)
-            {
-                return Err("An EPUB chapter exceeds the background pagination limit".into());
-            }
-            let probe = Probe::from_book_with_font_loader(
-                book,
+            check()?;
+            let probe = Probe::layout_opened_book_cancellable(
+                &mut opened,
                 Engine::Parley,
                 self.settings,
                 index,
@@ -377,6 +378,7 @@ impl Request {
                 &self.hyphenation,
                 &self.styles,
                 || Ok(fonts.clone()),
+                &check,
             )?;
             if probe.is_vertical() {
                 return Err("This EPUB uses vertical page layouts".into());

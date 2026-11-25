@@ -1,5 +1,6 @@
 use crate::{
     Book, Engine, Probe, PublisherRenderMode, Renderer, Settings,
+    flow_projection::Affinity,
     selection::TextSelection,
     test_fixture,
     user_styles::{Data, EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT},
@@ -7,6 +8,7 @@ use crate::{
 
 const RUBY_CHAPTER: usize = 22;
 const RUBY_PAINT_CHAPTER: usize = 23;
+const GENERATED_CHAPTER: usize = 28;
 
 fn open(width: u32, chapter: usize, inline: bool) -> Probe {
     let mut data = Data::default();
@@ -78,10 +80,15 @@ fn annotation_rows(probe: &Probe, page: usize, pixels: &[u8]) -> Vec<(usize, boo
 }
 
 fn capture(probe: &mut Probe, page: usize, name: &str) -> Vec<u8> {
+    let name = format!("ruby-{name}");
+    capture_named(probe, page, &name)
+}
+
+fn capture_named(probe: &mut Probe, page: usize, name: &str) -> Vec<u8> {
     let pixels = probe.capture(page).unwrap();
     if let Some(folder) = std::env::var_os("READER_IN_PAGE_FOOTNOTE_CAPTURES") {
         image::save_buffer(
-            std::path::Path::new(&folder).join(format!("reader-note-inline-ruby-{name}.png")),
+            std::path::Path::new(&folder).join(format!("reader-note-inline-{name}.png")),
             &pixels,
             probe.settings.width,
             probe.settings.height,
@@ -90,6 +97,137 @@ fn capture(probe: &mut Probe, page: usize, name: &str) -> Vec<u8> {
         .unwrap();
     }
     pixels
+}
+
+#[test]
+fn whole_note_inline_generated_marks_stay_out_of_source_and_keep_media() {
+    let mut ordinary = open(720, GENERATED_CHAPTER, false);
+    let mut inline = open(720, GENERATED_CHAPTER, true);
+    let reference = ordinary.fragment("generated-ref").unwrap();
+    let page = ordinary.page_for(&reference).unwrap();
+    let memo = selection(&ordinary, "memo");
+    let seal = selection(&ordinary, "river seal");
+    let buoy = selection(&ordinary, "blue buoy");
+    let tail = selection(&ordinary, "Keep a duplicate");
+    let following = selection(&ordinary, "Following remark");
+    let original = ordinary.page_for(&seal.start).unwrap();
+    assert!(original > page);
+    for probe in [&ordinary, &inline] {
+        assert!(
+            probe.in_page_notes.as_ref().unwrap()[page]
+                .separator
+                .is_some()
+        );
+        assert_eq!(probe.page_for(&memo.start), Some(original));
+        assert_eq!(probe.page_for(&seal.start), Some(original));
+        assert_eq!(probe.page_for(&buoy.start), Some(original));
+        assert_eq!(selection(probe, "memo"), memo);
+        assert_eq!(selection(probe, "river seal"), seal);
+        assert_eq!(selection(probe, "blue buoy"), buoy);
+        assert_eq!(selection(probe, "Following remark"), following);
+        let selected = probe.select_range(&memo.start, &tail.end).unwrap();
+        assert_eq!(
+            selected.text.lines().map(str::trim).collect::<Vec<_>>(),
+            ["memo.", "river seal.", "blue buoy.", "Keep a duplicate"]
+        );
+        for token in ["[memo]", "‘", "’"] {
+            assert!(probe.matches(token).is_empty(), "{token}");
+        }
+    }
+    assert_eq!(ordinary.coverage(), inline.coverage());
+    let Renderer::Parley(layout) = &inline.renderer else {
+        unreachable!()
+    };
+    let (source, _) = inline.page_parts(original).next().unwrap();
+    let note = layout
+        .paragraphs_in(source)
+        .filter_map(|paragraph| paragraph.joined_note.as_ref())
+        .find(|note| {
+            note.pieces
+                .iter()
+                .any(|part| part.block == seal.start.block)
+        })
+        .unwrap();
+    assert!(note.text.contains("Packet [memo]."), "{:?}", note.text);
+    assert!(
+        note.text.contains("‘\u{2060}river seal\u{2060}’"),
+        "{:?}",
+        note.text
+    );
+    assert!(note.text.contains("blue buoy\u{2060}’"), "{:?}", note.text);
+    for (offset, token) in note
+        .text
+        .char_indices()
+        .filter(|(_, ch)| "[]‘’\u{2060}".contains(*ch))
+    {
+        assert_eq!(
+            note.source_location(offset, Affinity::After),
+            None,
+            "{token}: {offset}"
+        );
+    }
+    for (needle, anchor) in [
+        ("memo", &memo.start),
+        ("river seal", &seal.start),
+        ("blue buoy", &buoy.start),
+    ] {
+        assert_eq!(
+            note.source_location(note.text.find(needle).unwrap(), Affinity::After),
+            Some((anchor.block, anchor.offset))
+        );
+    }
+    assert!(
+        ordinary.selection_rects(page, &memo)[0].y < ordinary.selection_rects(page, &tail)[0].y
+    );
+    for current in [page, original] {
+        let memo = inline.selection_rects(current, &memo)[0];
+        let word = inline.selection_rects(current, &seal)[0];
+        let tail = inline.selection_rects(current, &tail)[0];
+        assert_eq!(memo.y, tail.y);
+        assert!(memo.x < word.x && word.x < tail.x);
+        let (x, y) = ((word.x + 5) as f32, (word.y + word.height / 2) as f32);
+        assert_eq!(inline.word_at(current, x, y).unwrap().start, seal.start);
+        assert_eq!(
+            inline.link_at(current, x, y).unwrap().fragment.as_deref(),
+            Some("generated-ref")
+        );
+    }
+    let before = capture_named(&mut ordinary, page, "generated-before");
+    let after = capture_named(&mut inline, page, "generated-after");
+    let canonical = capture_named(&mut inline, original, "generated-original");
+    assert_ne!(before, after);
+    for (probe, current, pixels) in [
+        (&ordinary, page, before),
+        (&inline, page, after),
+        (&inline, original, canonical),
+    ] {
+        let annotation = annotation_rows(probe, current, &pixels);
+        assert_eq!(annotation.len(), 1, "ruby on page {current}");
+        assert!(annotation[0].1);
+        let Renderer::Parley(layout) = &probe.renderer else {
+            unreachable!();
+        };
+        let (art, art_y) = probe
+            .page_parts(current)
+            .find_map(|(source, destination)| {
+                let (_, columns, rows) = layout
+                    .visible_illustrations(source, probe.settings)
+                    .next()?;
+                Some((columns, rows.start + destination as usize))
+            })
+            .expect("the chart shares the ruby line");
+        let x = art.start + art.len() / 2;
+        assert_eq!(
+            probe.illustration_at(current, x as f32, (art_y + 5) as f32),
+            Some("chart.png")
+        );
+        let width = probe.settings.width as usize;
+        assert!(
+            pixels[art_y * width + art.start..art_y * width + art.end]
+                .iter()
+                .any(|&gray| gray < 235)
+        );
+    }
 }
 
 #[test]

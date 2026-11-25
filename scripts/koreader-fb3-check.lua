@@ -38,6 +38,36 @@ for i = 4, #arg do
         view:gotoPage(contents[1].page)
         view:drawCurrentPage(frame, false, false, false, false)
         frame:writePNG(output .. "/stock-fb3-harbor-survey.png", false)
+    elseif label == "harbor-continuation.fb3" then
+        for i, title in ipairs({"Outer Survey Log", "Long Soundings", "Shore Register"}) do
+            assert(contents[i].title == title, title)
+        end
+        local function locate(term)
+            local hit = (view:findAllText(term, true, false, 16, true, 0, 255) or {})[1]
+            assert(hit and view:getTextFromXPointers(hit.start, hit["end"]) == term, term)
+            return view:getPageFromXPointer(hit.start), hit
+        end
+        local function visible_link(term)
+            local page, hit = locate(term)
+            view:gotoPage(page)
+            local box = assert(view:getWordBoxesFromPositions(hit.start, hit["end"], true)[1])
+            return view:getLinkFromPosition(math.floor((box.x0 + box.x1) / 2), math.floor((box.y0 + box.y1) / 2))
+        end
+        local first = locate("The early watch sets out")
+        local later = locate("The final sounding records a silver buoy")
+        local shore = locate("The shore register closes at dusk")
+        local note = locate("The note records a calm sea")
+        assert(first < later and later <= shore and shore <= note)
+        local forward = visible_link("Find the final sounding")
+        assert(forward == "#late", forward)
+        view:gotoLink(forward)
+        assert(view:getCurrentPage() == later)
+        view:drawCurrentPage(frame, false, false, false, false)
+        frame:writePNG(output .. "/stock-fb3-harbor-continuation.png", false)
+        local back = visible_link("Return to the early watch")
+        assert(back == "#opening", back)
+        view:gotoLink(back)
+        assert(view:getCurrentPage() == first)
     end
     view:gotoPage(math.min(2, pages))
     view:drawCurrentPage(frame, false, false, false, false)

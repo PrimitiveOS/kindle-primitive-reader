@@ -251,6 +251,7 @@ fn render_mode_switch_preserves_the_focused_quote_and_returns_to_the_original_fr
         user_styles: Default::default(),
         user_hyphenation: Default::default(),
         chapter_offsets: Default::default(),
+        quote_prefixes: Default::default(),
         screen_pages: Default::default(),
         eager_layouts: Default::default(),
         hidden_flows: Default::default(),

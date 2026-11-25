@@ -63,6 +63,200 @@ fn fb3_large_books_keep_contents_and_local_note_links_across_section_groups() {
 }
 
 #[test]
+fn fb3_legacy_readable_markup_keeps_exact_grouping_and_source() {
+    // Each section exceeds half the newer raw-markup planning budget, while
+    // their combined converted XHTML still fits the previous output limit.
+    let runs = "<em xml:lang=\"en-US\">x</em>".repeat(15_000);
+    let source = format!(
+        "<fb3-body xmlns=\"{FB3_BODY_NS}\"><section id=\"first\"><title><p>West</p></title><p>{runs}</p></section><section><title><p>East</p></title><p>{runs}</p></section></fb3-body>"
+    );
+    let tree = parse_xml(&source).unwrap();
+    let converted = body::convert(
+        tree.root_element(),
+        "Survey",
+        None,
+        None,
+        &BTreeMap::new(),
+        |_| None,
+    )
+    .unwrap();
+    let [(path, xhtml)] = converted.chapters.as_slice() else {
+        panic!("legacy-readable sections must remain in the original chapter");
+    };
+    assert_eq!(path, crate::loose::CHAPTER_PATH);
+    let expected = format!(
+        "<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\"><head><title>Survey</title></head><body><section id=\"first\"><div><h2>West</h2></div><p>{runs}</p></section><section id=\"primitiveos-fb3-section-1\"><div><h2>East</h2></div><p>{runs}</p></section></body></html>"
+    );
+    assert_eq!(xhtml, &expected);
+    assert_eq!(converted.toc.len(), 2);
+    assert_eq!(converted.toc[1].destination.as_ref().unwrap().path, *path);
+    assert_eq!(
+        converted.toc[1]
+            .destination
+            .as_ref()
+            .unwrap()
+            .fragment
+            .as_deref(),
+        Some("primitiveos-fb3-section-1")
+    );
+}
+
+#[test]
+fn fb3_legacy_readable_single_paragraph_is_not_rejected_by_markup_planning() {
+    let runs = "<em xml:lang=\"en-US\">x</em>".repeat(28_000);
+    let source =
+        format!("<fb3-body xmlns=\"{FB3_BODY_NS}\"><section><p>{runs}</p></section></fb3-body>");
+    let tree = parse_xml(&source).unwrap();
+    let converted = body::convert(
+        tree.root_element(),
+        "",
+        None,
+        None,
+        &BTreeMap::new(),
+        |_| None,
+    )
+    .unwrap();
+    assert_eq!(converted.chapters.len(), 1);
+    assert!(converted.chapters[0].1.contains(&format!("<p>{runs}</p>")));
+}
+
+#[test]
+fn fb3_output_limit_retry_splits_sections_without_repeating_asset_loads() {
+    let language = format!("en-{}", "a".repeat(58));
+    let run = format!("<em xml:lang=\"{language}\">x</em>");
+    let runs = run.repeat(6_500);
+    let source = format!(
+        "<fb3-body xmlns=\"{FB3_BODY_NS}\"><section id=\"first\"><img src=\"pic\" alt=\"Beacon\"/><p>{runs}</p></section><section id=\"second\"><p>{runs}</p></section></fb3-body>"
+    );
+    let tree = parse_xml(&source).unwrap();
+    let images = BTreeMap::from([("pic".to_owned(), "images/pic".to_owned())]);
+    let loads = std::cell::Cell::new(0);
+    let converted = body::convert(tree.root_element(), "", None, None, &images, |_| {
+        loads.set(loads.get() + 1);
+        Some("assets/pic.png".into())
+    })
+    .unwrap();
+    assert_eq!(loads.get(), 1);
+    assert_eq!(converted.chapters.len(), 2);
+    assert!(converted.chapters[0].1.contains("alt=\"Beacon\""));
+    assert!(converted.chapters[0].1.contains("id=\"first\""));
+    assert!(converted.chapters[1].1.contains("id=\"second\""));
+}
+
+#[test]
+fn fb3_nested_continuation_keeps_structure_destinations_and_late_reading_positions() {
+    let path = crate::test_fixture("harbor-continuation.fb3");
+    let before = std::fs::read(&path).unwrap();
+    let mut book = Book::open(&path).unwrap();
+    assert_eq!(book.chapters.len(), 2);
+    let opening = book.chapter(0).unwrap();
+    let continuation = book.chapter(1).unwrap();
+    let last = &book.chapters[1].href;
+    assert_eq!(last, "fb3-section-2.xhtml");
+    assert_eq!(
+        book.toc
+            .iter()
+            .map(|entry| (&*entry.label, entry.depth))
+            .collect::<Vec<_>>(),
+        [
+            ("Outer Survey Log", 0),
+            ("Long Soundings", 1),
+            ("Shore Register", 1),
+        ]
+    );
+    let dest = |index: usize| book.toc[index].destination.as_ref().unwrap();
+    assert_eq!(
+        dest(0).fragment.as_deref(),
+        Some("primitiveos-fb3-section-2")
+    );
+    assert_eq!(dest(1).fragment.as_deref(), Some("soundings"));
+    assert_eq!(
+        dest(2).fragment.as_deref(),
+        Some("primitiveos-fb3-section-1")
+    );
+    assert_eq!(&dest(2).path, last);
+    for target in ["primitiveos-fb3-section-2", "soundings", "opening"] {
+        assert_eq!(opening.matches(&format!("id=\"{target}\"")).count(), 1);
+        assert!(!continuation.contains(&format!("id=\"{target}\"")));
+    }
+    assert!(continuation.contains("<section xml:lang=\"en\"><section xml:lang=\"en-GB\"><blockquote xml:lang=\"en-GB\" class=\"fb2-epigraph\">"));
+    assert!(opening.contains("href=\"fb3-section-2.xhtml#late\""));
+    assert!(opening.contains("href=\"fb3-section-2.xhtml#later-note\" epub:type=\"noteref\""));
+    assert_eq!(
+        continuation
+            .matches("href=\"document.xhtml#opening\"")
+            .count(),
+        2
+    );
+    assert!(!continuation.contains("Outer Survey Log") && !continuation.contains("Long Soundings"));
+    assert_eq!(
+        opening.matches("The lantern remains lit").count()
+            + continuation.matches("The lantern remains lit").count(),
+        4290
+    );
+    let markers = [
+        "The final sounding",
+        "The shore register",
+        "The note records",
+    ];
+    assert!(
+        markers
+            .windows(2)
+            .all(|pair| continuation.find(pair[0]).unwrap() < continuation.find(pair[1]).unwrap())
+    );
+
+    let source = book.chapter_source(last, &continuation).unwrap();
+    let sounding = source
+        .blocks
+        .iter()
+        .find(|block| block.text.contains(markers[0]))
+        .unwrap();
+    assert_eq!(
+        sounding.language.as_ref().and_then(|tag| tag.region()),
+        Some("GB")
+    );
+    let view = chapter(&path, 1);
+    let at = view.matches(markers[0]).pop().unwrap();
+    assert!(view.fragment("late").is_some() && view.fragment("later-note").is_some());
+    let mut reopened = chapter(&path, 1);
+    assert_eq!(reopened.restore_anchor(&at), Some(at.clone()));
+    let page = reopened.page_for(&at).unwrap();
+    let pixels = reopened.capture(page).unwrap();
+    assert!(pixels.iter().any(|&pixel| pixel < 128));
+    assert_eq!(std::fs::read(path).unwrap(), before);
+    #[cfg(feature = "kindle")]
+    if let Some(directory) = std::env::var_os("READER_FB3_CAPTURES") {
+        primitive_app::write_png(
+            &Path::new(&directory).join("reader-fb3-harbor-continuation.png"),
+            reopened.settings.width,
+            reopened.settings.height,
+            &pixels,
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn fb3_rejects_an_indivisible_block_over_the_chapter_budget() {
+    let source = format!(
+        "<fb3-body xmlns=\"{FB3_BODY_NS}\"><section><p>{}</p></section></fb3-body>",
+        "x".repeat(384 * 1024 + 1)
+    );
+    let tree = parse_xml(&source).unwrap();
+    let err = body::convert(
+        tree.root_element(),
+        "Oversized",
+        None,
+        None,
+        &BTreeMap::new(),
+        |_| None,
+    )
+    .err()
+    .unwrap();
+    assert!(err.to_string().contains("indivisible FB3 block"));
+}
+
+#[test]
 fn fb3_opens_as_a_reflow_document_with_contents_images_notes_and_saved_locations() {
     let path = crate::test_fixture("harbor-survey.fb3");
     let before = std::fs::read(&path).unwrap();
@@ -173,7 +367,7 @@ fn fb3_rejects_ambiguous_parts_and_escaping_targets_before_reflow() {
 }
 
 #[test]
-#[ignore = "Requires the format author's three original distributable specimens in READER_FB3_ORIGINALS"]
+#[ignore = "Requires the format author's three unchanged public specimens in READER_FB3_ORIGINALS"]
 fn fb3_real_upstream_publications_open_paint_turn_and_keep_their_original_bytes() {
     let dir = std::env::var_os("READER_FB3_ORIGINALS").unwrap();
     for name in ["anatomy.fb3", "part-names.fb3", "nightmare.fb3"] {

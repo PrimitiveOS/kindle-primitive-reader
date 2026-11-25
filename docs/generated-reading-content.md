@@ -28,13 +28,14 @@ publisher hides an inline element. A line carrying only generated content
 paints normally and offers no selectable text or caret.
 [Layout projection](../src/parley_layout/inline_blocks/generated.rs)
 
-The supported scope is inline text in ordinary horizontal rendering.
-Remaining coverage includes dedicated generated block and float boxes, empty
-standalone block hosts, and composition with image,
-ruby, boxed inline, or joined-note layouts. CRE itself treats generated URLs
-and other unsupported tokens as placeholders. Reader bounds captured host
-attributes and inline boundaries per chapter, and caps generated text at
-1,024 hosts and 64 KiB per chapter.
+Reader supports inline generated text in ordinary horizontal rendering and
+flattened in-page notes. Supported flattened notes can share a line with images
+or ruby annotation. Ordinary mixed-media paragraphs, generated block and float
+boxes, empty standalone hosts and general boxed inline layouts remain outside
+this coverage. CRE treats generated URLs and other unsupported tokens as
+placeholders. Reader bounds captured host attributes and inline boundaries per
+chapter, and caps generated text at 1,024 hosts and 64 KiB per chapter.
+[Flattened note replay](in-page-footnotes.md#generated-text-in-flattened-notes) ·
 [Stock generated content parser](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L1493-L1678)
 
 The native replay runs KOReader’s actual toggle on the same chapter. It

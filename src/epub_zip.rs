@@ -100,9 +100,24 @@ pub(crate) struct Archive {
     pub(crate) zip: ZipArchive<EpubInput>,
     /// Original uncompressed lengths for members whose payload could not be recovered.
     pub(crate) missing: HashMap<Vec<u8>, u32>,
+    #[cfg(feature = "kindle")]
+    pub(crate) stamp: Option<crate::session::screen_pages::FileStamp>,
 }
 
 pub(crate) fn open(file: File, len: u64) -> Result<Archive> {
+    #[cfg(feature = "kindle")]
+    let stamp = file
+        .metadata()
+        .ok()
+        .as_ref()
+        .and_then(crate::session::screen_pages::FileStamp::from_metadata);
+    #[cfg(feature = "kindle")]
+    {
+        let mut archive = open_input(Backing::Disk(BufReader::new(file)), len)?;
+        archive.stamp = stamp;
+        Ok(archive)
+    }
+    #[cfg(not(feature = "kindle"))]
     open_input(Backing::Disk(BufReader::new(file)), len)
 }
 
@@ -153,6 +168,8 @@ fn open_input(mut input: Backing, len: u64) -> Result<Archive> {
     Ok(Archive {
         zip: archive,
         missing,
+        #[cfg(feature = "kindle")]
+        stamp: None,
     })
 }
 

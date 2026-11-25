@@ -67,11 +67,24 @@ pub(in crate::parley_layout) fn plan(
     let mut below = 0.0_f32;
     for &(element, ref range) in &table.cells {
         let style = &styles[element];
-        let child = block.text_fragment(
+        let generated: Vec<_> = block
+            .generated
+            .iter()
+            .filter_map(|run| {
+                let bytes = super::intersection(&run.bytes, range)?;
+                Some(crate::book_style::pseudo::Run {
+                    bytes: bytes.start - range.start..bytes.end - range.start,
+                    style: run.style,
+                    host: run.host,
+                })
+            })
+            .collect();
+        let mut child = block.text_fragment(
             element,
             &block.text[range.clone()],
             slice_runs(block, range, 0),
         );
+        child.generated = &generated;
         let layout = make_paragraph(
             context,
             fonts,

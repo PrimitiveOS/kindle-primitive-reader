@@ -24,28 +24,67 @@ quote tokens are resolved up to the first string or `attr(...)`.
 [Pinned token resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L1708-L1782)
 
 Generated marks leave search, copying, links, and saved anchors attached to
-the original text. For reflowable EPUBs, Reader can calculate depth from the
-preceding spine items before opening a later chapter directly. The prefix
-pass runs when the current chapter has a winning quote rule and covers up to
-16 preceding items and 512 KiB of preceding XHTML. Outside that budget or
-when the prefix cannot be read, Reader starts at depth zero for the chapter.
-The depth pass uses the active EPUB note preferences, including Wikipedia
-backlink suppression. If an earlier page cannot fit its note band, its
-rendering can fall back to ordinary flow. Each independent chapter layout recomputes its bounded
-prefix, including layouts in the page-count worker. Other languages use the
-English pair. The existing horizontal generated-text limits still apply to
-painting. Joined notes keep their source text and currently omit generated
-marks from their flattened layout. [Reader tests](../src/book_style/pseudo/quotes/tests.rs)
+the original text. When a chapter has an active quote rule, Reader walks
+earlier EPUB spine items one at a time. Normal forward and nearby backward
+turns reuse the quote state already established during that reading session.
+The state is tied to the active styles and the open ZIP file's identity,
+size, modification time, and change time. Reader checks the file before and
+after chapter layout and clears the state when USB storage returns.
+Extracted EPUB folders use the same bounded scan without file reuse.
+
+A foreground scan processes at most 24 preceding items and 768 KiB of
+their XHTML. The previous range of up to 16 items and 512 KiB still
+completes on slow devices. Outside that range Reader checks the 120 ms
+deadline between items. An item already being read can finish after the
+deadline, and a single predecessor larger than the byte budget cannot
+advance the scan.
+
+A cold jump beyond this budget uses default quote depth for that page.
+The session remembers the last fully checked boundary and resumes from it
+on a later chapter layout. The page refreshes its quote depth the next time
+it is laid out. Exact asynchronous preparation remains open. Once the
+prefix is complete, later layouts use exact depth. If an earlier item
+cannot be read or parsed, Reader uses default quote depth without saving
+a partial result from that failed scan.
+
+The planned asynchronous path can reuse the storage-safe snapshot and
+cancellation pattern in the [page-count worker](../src/session/screen_pages/background.rs).
+It must verify the edition, file identity, chapter and effective style before
+accepting a result, then defer an anchor-preserving repaint while a selection,
+modal or page turn is active. EPUBs above the current snapshot limit need a
+separate bounded, storage-leased member reader; they retain the foreground
+fallback until that path is implemented and tested.
+
+Whole-book preparation and background page counting reuse quote state
+inside their immutable EPUB snapshot. Each style profile keeps two
+checkpoints so page counting can check the visible chapter first and then
+scan from the beginning. Note fallback and style changes use separate
+profiles. Cancellation and incomplete reads leave no partial checkpoint.
+Reader keeps a checkpoint only while it has at most 128 odd-depth language
+keys. Larger sets continue with the languages in the requested chapter.
+Foreground reading retains 12 recent exact boundaries per style profile.
+
+The prefix uses the active EPUB note preferences, including Wikipedia
+backlink suppression. An earlier page that cannot fit its note band may
+have used an ordinary-flow fallback when displayed. Other languages use
+the English pair. The horizontal generated-text limits still apply to
+painting. [Reader tests](../src/book_style/pseudo/quotes/tests.rs)
 
 ## Mac simulator comparison
 
 The native replay checks the computed marks and original source pointers,
 calls the real style-tweak callback, restores the first frame, and opens a
-second EPUB spine item with an incoming depth. Reader checks the same quote
-rules, direct-open placement, source selection, and a linked word inside
-nested quotes. Each engine uses its own line metrics and glyph spacing.
+second EPUB spine item with an incoming depth. A longer EPUB opens the
+21st spine item after 621,448 bytes of preceding XHTML. Both engines draw
+the inner marks in its first paragraph and return to the outer marks after
+the matching close. Reader also checks source selection, a linked word
+inside nested quotes, and snapshot reuse across witness-first indexing,
+style retries, and cancellation. The foreground regression checks direct
+jump fallback, resumption, back and forward turns, and file replacement.
+Each engine uses its own line metrics and glyph spacing.
 [XHTML fixture](../tests/fixtures/quote-marks.xhtml) ·
 [EPUB spine fixture](../tests/fixtures/quote-spine.epub) ·
+[Long EPUB spine fixture](../tests/fixtures/quote-spine-long.epub) ·
 [Native replay](../scripts/koreader-quote-marks-check.lua)
 
 | Reading style | Reader | KOReader |
@@ -53,8 +92,9 @@ nested quotes. Each engine uses its own line metrics and glyph spacing.
 | Embedded languages | [Page](screenshots/reader-quote-marks-publisher.png) | [Page](screenshots/stock-quote-marks-publisher.png) |
 | Main German with embedded languages off | [Page](screenshots/reader-quote-marks-main-de.png) | [Page](screenshots/stock-quote-marks-main-de.png) |
 | Generated marks suppressed | [Page](screenshots/reader-quote-marks-pseudo-off.png) | [Page](screenshots/stock-quote-marks-pseudo-off.png) |
+| Direct jump to spine item 21 | [Page](screenshots/reader-quote-marks-spine-long.png) | [Page](screenshots/stock-quote-marks-spine-long.png) |
 
 Set `READER_QUOTE_MARK_CAPTURES` and run the `quote_marks` Rust test filter
 to recreate Reader’s screenshots. The native replay takes the XHTML
 fixture, a cache directory, Noto Sans Regular, a capture directory, and the
-EPUB spine fixture.
+two EPUB spine fixtures, with the longer fixture last.

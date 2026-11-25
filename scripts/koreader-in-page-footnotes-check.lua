@@ -502,6 +502,72 @@ if arg[5] == "inline-all" then
     return
 end
 
+if arg[5] == "inline-generated" then
+    controller:onReadSettings(Settings:wrap({}))
+    local option = assert(find_tweak(menu.style_tweaks.sub_item_table,
+        "inpage_footnote_all_inline"))
+    local pointers = {}
+    local function inspect(view, phrase)
+        local page, y = position(view, phrase)
+        local hit = view:findAllText(phrase, false, false, 8, true, 0, 255)[1]
+        assert(pointers[phrase] == nil or pointers[phrase] == hit.start, phrase)
+        pointers[phrase] = hit.start
+        local box = assert(view:getWordBoxesFromPositions(hit.start, hit["end"], true)[1])
+        local node = hit.start:match("^(.-/q)/ruby/") or hit.start
+        local markup = assert(view:getHTMLFromXPointer(node, 0x0C40, true))
+        local tags = {}
+        for tag in markup:gmatch("<pseudoElem ([^>]+)") do
+            tags[#tags + 1] = tag
+        end
+        print("note-generated", phrase, table.concat(tags, " | "))
+        return {page = page, y = y, box = box, tags = table.concat(tags, " | ")}
+    end
+    local function measure(phase, inline)
+        local view = open(assert(controller:getCssText()))
+        local body = inspect(view, "The harbor packet")
+        local memo = inspect(view, "memo")
+        local seal = inspect(view, "river seal")
+        local buoy = inspect(view, "blue buoy")
+        local tail = inspect(view, "Keep a duplicate")
+        local following = inspect(view, "Following remark")
+        assert(body.page < memo.page and memo.page == seal.page and seal.page == buoy.page
+            and buoy.page == tail.page and tail.page == following.page)
+        assert(memo.tags:find("[", 1, true) and memo.tags:find("]", 1, true))
+        assert(seal.tags:find("‘", 1, true) and seal.tags:find("’", 1, true))
+        assert(buoy.tags:find("‘", 1, true) and buoy.tags:find("’", 1, true))
+        assert(following.tags:find("‘", 1, true) and following.tags:find("’", 1, true))
+        for _, token in ipairs({"[memo]", "‘", "’"}) do
+            local hits = view:findAllText(token, false, false, 8, true, 0, 255) or {}
+            for _, hit in ipairs(hits) do
+                -- CRE folds curly quotes onto earlier authored ASCII apostrophes.
+                assert(not hit.start:find("/DocFragment[29]/", 1, true), token)
+                assert(view:getTextFromXPointers(hit.start, hit["end"]) ~= token, token)
+            end
+        end
+        view:gotoPage(seal.page)
+        assert((view:getLinkFromPosition(seal.box.x0 + 5, math.floor((seal.box.y0 + seal.box.y1) / 2))
+            or ""):find("generated%-ref"))
+        if inline then
+            assert(memo.y == seal.y and seal.y == tail.y)
+            assert(memo.box.x0 < seal.box.x0 and seal.box.x0 < buoy.box.x0 and buoy.box.x0 < tail.box.x0)
+            assert(not capture(view, memo.page, "stock-note-inline-generated-original"))
+        else
+            assert(memo.y < seal.y and seal.y < tail.y)
+        end
+        assert(capture(view, body.page, "stock-note-inline-generated-" .. phase))
+        view:close()
+        return body.y
+    end
+    assert(not option.checked_func())
+    local y = measure("before", false)
+    option.callback()
+    assert(option.checked_func() and measure("after", true) == y)
+    option.callback()
+    assert(not option.checked_func() and measure("restored", false) == y)
+    print("Pinned joined note decorations: canonical word pointers, link, source-free marks, and restored baseline")
+    return
+end
+
 if arg[5] == "inline-ruby" or narrow_ruby then
     controller:onReadSettings(Settings:wrap({}))
     local option = assert(find_tweak(menu.style_tweaks.sub_item_table,
