@@ -112,6 +112,7 @@ pub(crate) struct LayoutTweaks {
     pub(crate) disable_generated_content: bool,
     pub(crate) disable_first_letter: bool,
     pub(crate) disable_first_line: bool,
+    pub(crate) normal_line_height_percent: Option<u8>,
 }
 
 #[repr(u8)]
@@ -246,6 +247,10 @@ impl Snapshot {
         if layout.disable_first_line {
             digest.consume(b"\0disable-first-line");
         }
+        if let Some(percent) = layout.normal_line_height_percent {
+            digest.consume(b"\0normal-line-height");
+            digest.consume([percent]);
+        }
         Ok(Self {
             css: css.into(),
             digest: digest.finalize().0,
@@ -348,6 +353,7 @@ pub(crate) enum Effect {
     DisableGeneratedContent,
     DisableFirstLetter,
     DisableFirstLine,
+    NormalLineHeight(u8),
     InPageEpubFootnotes,
     FullWidthImages,
     InPageClassicFootnotes,
@@ -371,6 +377,18 @@ pub(crate) struct Preset {
     pub group: &'static str,
     pub priority: u8,
     pub effect: Effect,
+}
+
+macro_rules! normal_line_height_preset {
+    ($id:literal, $title:literal, $percent:literal) => {
+        Preset {
+            id: $id,
+            title: $title,
+            group: "normal-line-height",
+            priority: 0,
+            effect: Effect::NormalLineHeight($percent),
+        }
+    };
 }
 // Authored CSS and native layout effects for supported style tweaks.
 pub(crate) const PRESETS: &[Preset] = &[
@@ -926,6 +944,19 @@ pub(crate) const PRESETS: &[Preset] = &[
         priority: 0,
         effect: Effect::Css("* {line-height:inherit !important;}"),
     },
+    normal_line_height_preset!("normal_line-height_90", "Normal line height: 0.90", 90),
+    normal_line_height_preset!("normal_line-height_95", "Normal line height: 0.95", 95),
+    normal_line_height_preset!("normal_line-height_100", "Normal line height: 1.00", 100),
+    normal_line_height_preset!("normal_line-height_105", "Normal line height: 1.05", 105),
+    normal_line_height_preset!("normal_line-height_110", "Normal line height: 1.10", 110),
+    normal_line_height_preset!("normal_line-height_115", "Normal line height: 1.15", 115),
+    normal_line_height_preset!("normal_line-height_120", "Normal line height: 1.20", 120),
+    normal_line_height_preset!("normal_line-height_125", "Normal line height: 1.25", 125),
+    normal_line_height_preset!("normal_line-height_130", "Normal line height: 1.30", 130),
+    normal_line_height_preset!("normal_line-height_135", "Normal line height: 1.35", 135),
+    normal_line_height_preset!("normal_line-height_140", "Normal line height: 1.40", 140),
+    normal_line_height_preset!("normal_line-height_145", "Normal line height: 1.45", 145),
+    normal_line_height_preset!("normal_line-height_150", "Normal line height: 1.50", 150),
     Preset {
         id: "ruby_most_line_height_larger",
         title: "Larger spacing between ruby lines",
@@ -1084,6 +1115,7 @@ impl Data {
                 | Effect::BrowserParagraphs
                 | Effect::FullWidthImages
                 | Effect::ParagraphSpacing(_)
+                | Effect::NormalLineHeight(_)
                 | Effect::LinkInk(_)
                 | Effect::IgnoreTableHints
         ) {
@@ -1155,6 +1187,9 @@ impl Data {
                 Effect::DisableGeneratedContent => layout.disable_generated_content = true,
                 Effect::DisableFirstLetter => layout.disable_first_letter = true,
                 Effect::DisableFirstLine => layout.disable_first_line = true,
+                Effect::NormalLineHeight(percent) => {
+                    layout.normal_line_height_percent = Some(percent)
+                }
                 Effect::InPageEpubFootnotes => {
                     notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
                     notes.explicit_epub = true;

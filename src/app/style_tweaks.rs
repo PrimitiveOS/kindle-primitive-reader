@@ -196,6 +196,7 @@ impl Reader {
                 Screen::PseudoElementStyles
             }
             Some(preset) if preset.group.starts_with(LIST_MARKER) => Screen::ListItemStyles,
+            Some(preset) if preset.group == "normal-line-height" => Screen::NormalLineHeightStyles,
             _ => Screen::StyleTweaks,
         }
     }
@@ -528,6 +529,24 @@ impl Reader {
                         }
                         continue;
                     }
+                    if p.group == "normal-line-height" {
+                        if p.id == "normal_line-height_90" {
+                            let selected = PRESETS
+                                .iter()
+                                .find(|preset| {
+                                    preset.group == p.group && data.enabled(book.id, preset.id)
+                                })
+                                .map_or("Use font metrics", |preset| preset.title);
+                            items.push(
+                                Item::new(
+                                    "Normal line height",
+                                    Action::Show(Screen::NormalLineHeightStyles),
+                                )
+                                .detail(selected),
+                            );
+                        }
+                        continue;
+                    }
                     if advanced_note(p.id) {
                         continue;
                     }
@@ -604,6 +623,11 @@ impl Reader {
             Screen::ListItemStyles => PRESETS
                 .iter()
                 .filter(|preset| preset.group.starts_with(LIST_MARKER))
+                .map(|preset| preset_item(*preset, data, &b))
+                .collect(),
+            Screen::NormalLineHeightStyles => PRESETS
+                .iter()
+                .filter(|preset| preset.group == "normal-line-height")
                 .map(|preset| preset_item(*preset, data, &b))
                 .collect(),
             Screen::FootnoteTweaks => PRESETS

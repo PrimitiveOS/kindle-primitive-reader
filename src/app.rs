@@ -347,6 +347,7 @@ enum Screen {
     TableStyles,
     PseudoElementStyles,
     ListItemStyles,
+    NormalLineHeightStyles,
     InPageFootnoteSize(style_tweaks::NoteSizeScope),
     StyleFiles,
     StyleReview,
@@ -575,6 +576,7 @@ impl Screen {
             Self::TableStyles => "Tables",
             Self::PseudoElementStyles => "Pseudo-elements",
             Self::ListItemStyles => "List items",
+            Self::NormalLineHeightStyles => "Normal line height",
             Self::InPageFootnoteSize(style_tweaks::NoteSizeScope::Book) => "In-page footnote size",
             Self::InPageFootnoteSize(style_tweaks::NoteSizeScope::Default) => {
                 "Default footnote size"
@@ -2817,6 +2819,7 @@ impl Reader {
                 | Screen::TableStyles
                 | Screen::PseudoElementStyles
                 | Screen::ListItemStyles
+                | Screen::NormalLineHeightStyles
                 | Screen::InPageFootnoteSize(_)
                 | Screen::StyleFiles
                 | Screen::StyleReview
@@ -3776,6 +3779,7 @@ impl Reader {
             | Screen::TableStyles
             | Screen::PseudoElementStyles
             | Screen::ListItemStyles
+            | Screen::NormalLineHeightStyles
             | Screen::InPageFootnoteSize(_)
             | Screen::StyleFiles
             | Screen::StyleReview
@@ -10502,6 +10506,7 @@ impl App for Reader {
                     | Screen::TableStyles
                     | Screen::PseudoElementStyles
                     | Screen::ListItemStyles
+                    | Screen::NormalLineHeightStyles
                     | Screen::StyleFiles
                     | Screen::StyleClear => self.show(Screen::StyleTweaks),
                     Screen::StyleReview => self.show(if self.style_view.editor.is_some() {

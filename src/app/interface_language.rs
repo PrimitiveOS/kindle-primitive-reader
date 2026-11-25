@@ -847,6 +847,12 @@ impl InterfaceLanguage {
             "No matches from this preset" => "Không có kết quả từ bộ này",
             "No dictionaries enabled for this book" => "Chưa bật từ điển cho sách này",
             "No matches in installed dictionaries" => "Không tìm thấy trong từ điển đã cài",
+            "No results found" => "Không tìm thấy kết quả",
+            "Word or phrase" => "Từ hoặc cụm từ",
+            "Try similar spellings for this lookup" => "Thử cách viết tương tự",
+            "Fuzzy search" => "Tìm gần đúng",
+            "Edit lookup word" => "Sửa từ tra cứu",
+            "Find in definition" => "Tìm trong định nghĩa",
             _ => english,
         }
     }
@@ -908,6 +914,31 @@ impl InterfaceLanguage {
             (_, false) => format!(
                 "Translate sends this text to {target}. Open Language to change the translation language."
             ),
+        }
+    }
+
+    /// Reader-owned Contents navigation labels, never chapter or query text.
+    pub(super) fn contents_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Building contents…" => "Đang tạo mục lục…",
+            "Showing publisher contents" => "Đang hiện mục lục nhà xuất bản",
+            "The alternative contents could not be built" => "Không thể tạo mục lục thay thế",
+            "Generated outline" => "Mục lục tự tạo",
+            "Build from headings in the book" => "Tạo từ các tiêu đề trong sách",
+            "Manage custom contents" => "Quản lý mục lục tùy chỉnh",
+            "Custom contents" => "Mục lục tùy chỉnh",
+            "Current section" => "Mục hiện tại",
+            "Page" => "Trang",
+            "Chapter" => "Chương",
+            "Previous" => "Trước",
+            "Next" => "Tiếp",
+            "Search" => "Tìm kiếm",
+            "Clear" => "Xóa",
+            "Query:" => "Từ tìm:",
+            _ => english,
         }
     }
 

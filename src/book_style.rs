@@ -357,6 +357,7 @@ pub(crate) struct Style {
     /// Whether a ruby annotation has its own computed font-size declaration.
     pub(crate) ruby_size_explicit: bool,
     pub line_height: Option<f32>,
+    pub(crate) normal_line_height_percent: Option<u8>,
     pub text_indent: TextIndent,
     pub padding: [CssLength; 2],
     pub vertical_padding: [CssLength; 2],
@@ -420,6 +421,7 @@ impl Default for Style {
             common_ligatures: true,
             ruby_size_explicit: false,
             line_height: None,
+            normal_line_height_percent: None,
             text_indent: TextIndent::default(),
             padding: Default::default(),
             vertical_padding: Default::default(),
@@ -806,6 +808,7 @@ impl BookStyle {
             )
         };
         let defaults = Style {
+            normal_line_height_percent: self.layout_tweaks.normal_line_height_percent,
             font_weights: self.font_weights.clone(),
             cjk_tailored: self.layout_tweaks.cjk_tailored,
             ignore_table_hints: !self.author_inline || self.layout_tweaks.ignore_table_hints,

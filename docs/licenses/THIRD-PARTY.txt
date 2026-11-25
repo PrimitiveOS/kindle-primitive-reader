@@ -16,6 +16,7 @@ For the compiled Swedish patterns, see HYPHENATION-SV.txt and LPPL-1.3c.txt.
 For the compiled Catalan patterns, see HYPHENATION-CA.txt and LPPL-1.3c.txt.
 For the compiled Turkish patterns, see HYPHENATION-TR.txt and LPPL-1.3c.txt.
 For the compiled Croatian patterns, see HYPHENATION-HR.txt and LPPL-1.3c.txt.
+For the compiled Norwegian patterns, see HYPHENATION-NO.txt and hyph-no.tex.
 For the compiled Slovak and Slovenian patterns, see HYPHENATION-SK-SL.txt.
 
 ab_glyph_rasterizer 0.1.10 (Apache-2.0)

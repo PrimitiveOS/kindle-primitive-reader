@@ -23,6 +23,17 @@ paragraph and a paragraph after a heading keep their existing indentation.
 
 ## Text size and line height
 
+**Normal line height** offers KOReader's 0.90–1.50 choices in 0.05 steps.
+The choices are mutually exclusive and can be saved for one book or as a
+default. They override only computed `line-height: normal`; an explicit
+publisher numeric line height remains in force. The reading line-spacing
+control still scales the chosen value. Reader may increase spacing in its
+existing emergency fallback when font metrics would otherwise make a page
+unreadable. Horizontal Parley layout supports this setting; vertical and
+Blitz rendering remain outside this subset. Saved source anchors do not
+change. This addition has not yet been built or behaviorally tested.
+[Pinned KOReader choices](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L486-L505)
+
 Four additional per-book and default choices use the supported native CSS
 cascade:
 

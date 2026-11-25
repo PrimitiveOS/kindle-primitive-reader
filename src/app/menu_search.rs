@@ -168,6 +168,7 @@ fn child_menu(action: &Action) -> Option<Screen> {
             | Screen::TableStyles
             | Screen::PseudoElementStyles
             | Screen::ListItemStyles
+            | Screen::NormalLineHeightStyles
             | Screen::TypographyRules
             | Screen::TypographyLanguages(_)
             | Screen::FontRendering(_)

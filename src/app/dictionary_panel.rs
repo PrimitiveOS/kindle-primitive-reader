@@ -1240,7 +1240,9 @@ impl Reader {
         let Some(key) = keyboard_key(
             &Layout::new(width, height, 4, 5),
             &self.editor,
-            mode.action(),
+            self.controls
+                .interface_language
+                .dictionary_popup_text(mode.action()),
             x,
             y,
         ) else {
@@ -1300,7 +1302,9 @@ impl Reader {
         let Some(key) = keyboard_key(
             &Layout::new(width, height, 4, 5),
             &self.editor,
-            "Find",
+            self.controls
+                .interface_language
+                .dictionary_popup_text("Find"),
             x,
             y,
         ) else {
@@ -1536,28 +1540,34 @@ impl Reader {
 
     pub(super) fn draw_definition_popup(&self, canvas: &mut Canvas) {
         let view = &self.dictionary_navigation.view;
+        let language = self.controls.interface_language;
         let bounds = canvas.bounds();
         if view.query_editing == Some(QueryEdit::FuzzyRetry) {
             let (panel, cancel) = self.fuzzy_retry_layout();
             canvas.popup(panel);
             canvas.text(
                 Rect::new(panel.x + 30, panel.y + 20, panel.w - 244, 76),
-                "No results found",
+                language.dictionary_popup_text("No results found"),
                 BODY.bold(),
             );
-            canvas.button(cancel, "Cancel", false, false);
+            canvas.button(
+                cancel,
+                language.dictionary_popup_text("Cancel"),
+                false,
+                false,
+            );
             canvas.single_line_field(
                 Rect::new(panel.x + 30, panel.y + 112, panel.w - 60, 92),
                 &self.editor,
-                "Word or phrase",
+                language.dictionary_popup_text("Word or phrase"),
                 false,
             );
             if self.dictionary_settings.presets.is_empty() {
                 canvas.text(
                     Rect::new(panel.x + 30, panel.y + 216, panel.w - 60, 54),
-                    self.notice
-                        .as_deref()
-                        .unwrap_or("Try similar spellings for this lookup"),
+                    self.notice.as_deref().unwrap_or_else(|| {
+                        language.dictionary_popup_text("Try similar spellings for this lookup")
+                    }),
                     CAPTION,
                 );
             } else {
@@ -1575,17 +1585,22 @@ impl Reader {
             if !self.dictionary_preset_picker_open() {
                 let band = Layout::new(bounds.w as u32, bounds.h as u32, 4, 5).keyboard_area();
                 canvas.popup(Rect::new(band.x - 40, band.y, band.w + 80, band.h));
-                canvas.keyboard(self.editor.layer, QueryEdit::FuzzyRetry.action(), None);
+                canvas.keyboard(
+                    self.editor.layer,
+                    language.dictionary_popup_text(QueryEdit::FuzzyRetry.action()),
+                    None,
+                );
             }
             return;
         }
         if view.query_editing == Some(QueryEdit::Word) {
             canvas.fill(bounds, 255);
-            self.navigation_layout().header(canvas, "Edit lookup word");
+            self.navigation_layout()
+                .header(canvas, language.dictionary_popup_text("Edit lookup word"));
             canvas.single_line_field(
                 Rect::new(40, 160, bounds.w - 80, 124),
                 &self.editor,
-                "Word or phrase",
+                language.dictionary_popup_text("Word or phrase"),
                 false,
             );
             if let Some(message) = &self.notice {
@@ -1593,24 +1608,32 @@ impl Reader {
             }
             self.draw_lookup_preset_button(canvas);
             if !self.dictionary_preset_picker_open() {
-                canvas.keyboard(self.editor.layer, "Look up", None);
+                canvas.keyboard(
+                    self.editor.layer,
+                    language.dictionary_popup_text("Look up"),
+                    None,
+                );
             }
             return;
         }
         if view.editing {
             canvas.fill(bounds, 255);
             self.navigation_layout()
-                .header(canvas, "Find in definition");
+                .header(canvas, language.dictionary_popup_text("Find in definition"));
             canvas.single_line_field(
                 Rect::new(40, 160, bounds.w - 80, 124),
                 &self.editor,
-                "Find",
+                language.dictionary_popup_text("Find"),
                 false,
             );
             if let Some(message) = &self.notice {
                 canvas.text(Rect::new(46, 320, bounds.w - 92, 90), message, CAPTION);
             }
-            canvas.keyboard(self.editor.layer, "Find", None);
+            canvas.keyboard(
+                self.editor.layer,
+                language.dictionary_popup_text("Find"),
+                None,
+            );
             return;
         }
         let (popup, back, rows) = self.definition_layout();

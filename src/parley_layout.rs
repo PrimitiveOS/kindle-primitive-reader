@@ -3188,8 +3188,14 @@ fn shape_paragraph(
     builder.push_default(StyleProperty::FontFamily(family));
     let line_height = |style: &Style| {
         let default_spacing = Settings::default().line_height;
-        let publisher = style.line_height.unwrap_or(default_spacing);
-        let minimum_spacing = if settings.line_spacing_percent.is_some() {
+        let publisher = style.line_height.unwrap_or_else(|| {
+            style
+                .normal_line_height_percent
+                .map_or(default_spacing, |percent| f32::from(percent) / 100.0)
+        });
+        let minimum_spacing = if settings.line_spacing_percent.is_some()
+            || style.line_height.is_none() && style.normal_line_height_percent.is_some()
+        {
             0.5
         } else {
             1.0

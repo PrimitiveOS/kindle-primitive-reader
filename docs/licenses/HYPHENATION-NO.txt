@@ -1,0 +1,13 @@
+Norwegian hyphenation patterns, version 18 May 2012
+Copyright (C) 2004, 2005 Rune Kleveland, Ole Michael Selberg
+
+Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-no.tex
+Source SHA-256: 05a2ac5fbf88bdc78c580e5cb8a158e6aa760d13756604f9523aa99feec3ec65
+
+Copying and distribution of this file, with or without modification,
+is permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.
+
+The unmodified upstream TeX file is included in hyph-no.tex. Reader compiles
+its supported single-word patterns and exceptions into native lookup tables;
+those tables are a derived form, not the original TeX file.

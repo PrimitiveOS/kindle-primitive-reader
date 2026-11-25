@@ -34,12 +34,14 @@ with ZipFile(args.package) as package:
         'licenses/HYPHENATION-CA.txt': root / 'docs/licenses/HYPHENATION-CA.txt',
         'licenses/HYPHENATION-TR.txt': root / 'docs/licenses/HYPHENATION-TR.txt',
         'licenses/HYPHENATION-HR.txt': root / 'docs/licenses/HYPHENATION-HR.txt',
+        'licenses/HYPHENATION-NO.txt': root / 'docs/licenses/HYPHENATION-NO.txt',
         'licenses/LPPL-1.3c.txt': root / 'docs/licenses/LPPL-1.3c.txt',
         'licenses/hyph-ru.tex': root / 'assets/hyphenation/hyph-ru.tex',
         'licenses/hyph-sv.tex': root / 'assets/hyphenation/hyph-sv.tex',
         'licenses/hyph-ca.tex': root / 'assets/hyphenation/hyph-ca.tex',
         'licenses/hyph-tr.tex': root / 'assets/hyphenation/hyph-tr.tex',
         'licenses/hyph-hr.tex': root / 'assets/hyphenation/hyph-hr.tex',
+        'licenses/hyph-no.tex': root / 'assets/hyphenation/hyph-no.tex',
     }
     for file, source in assets.items():
         data = package.read(roots[0] + 'reader/' + file)

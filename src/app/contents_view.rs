@@ -221,6 +221,15 @@ impl Reader {
             },
             Action::Show(Screen::CustomContents),
         ));
+        // Only these app-owned control rows are localized. Chapter and custom
+        // contents titles are assembled separately and stay verbatim.
+        let language = self.controls.interface_language;
+        for item in &mut controls {
+            item.title = language.contents_text(&item.title).to_owned();
+            if let Some(detail) = &mut item.detail {
+                *detail = language.contents_text(detail).to_owned();
+            }
+        }
         controls
     }
 
@@ -279,9 +288,17 @@ impl Reader {
                             .and_then(|state| state.custom_contents.entries().get(index))
                     {
                         item.detail = Some(if self.fixed.is_some() {
-                            format!("Page {}", mark.position.page.saturating_add(1))
+                            format!(
+                                "{} {}",
+                                self.controls.interface_language.contents_text("Page"),
+                                mark.position.page.saturating_add(1)
+                            )
                         } else {
-                            format!("Chapter {}", mark.position.chapter.saturating_add(1))
+                            format!(
+                                "{} {}",
+                                self.controls.interface_language.contents_text("Chapter"),
+                                mark.position.chapter.saturating_add(1)
+                            )
                         });
                     }
                     ContentsLine {
@@ -319,6 +336,7 @@ impl Reader {
             .as_ref()
             .is_some_and(|view| view.hierarchical);
         let navigation = self.navigation_layout();
+        let language = self.controls.interface_language;
         for (offset, line) in lines.iter().enumerate() {
             let row = self.contents_row_rect(offset);
             let branch = line.heading.and_then(|heading| branch_rect(row, heading));
@@ -339,8 +357,11 @@ impl Reader {
             });
             let current = self.current_contents_row == Some(first + offset);
             let detail = match (current, &line.item.detail) {
-                (true, Some(detail)) => Some(format!("Current section · {detail}")),
-                (true, None) => Some("Current section".into()),
+                (true, Some(detail)) => Some(format!(
+                    "{} · {detail}",
+                    language.contents_text("Current section")
+                )),
+                (true, None) => Some(language.contents_text("Current section").into()),
                 (false, detail) => detail.clone(),
             };
             let detail = detail.filter(|_| detail_size >= 20);
@@ -430,10 +451,14 @@ impl Reader {
         }
 
         if self.list_page > 0 {
-            footer_button(canvas, navigation.previous(), "Previous");
+            footer_button(
+                canvas,
+                navigation.previous(),
+                language.contents_text("Previous"),
+            );
         }
         if (self.list_page + 1) * rows < count {
-            footer_button(canvas, navigation.next(), "Next");
+            footer_button(canvas, navigation.next(), language.contents_text("Next"));
         }
         let query = self
             .contents_view
@@ -444,10 +469,18 @@ impl Reader {
             .as_ref()
             .is_some_and(|view| !view.entries.is_empty())
         {
-            footer_button(canvas, navigation.centered_footer(SEARCH), "Search");
+            footer_button(
+                canvas,
+                navigation.centered_footer(SEARCH),
+                language.contents_text("Search"),
+            );
         }
         if query.is_some() {
-            footer_button(canvas, navigation.centered_footer(CLEAR), "Clear");
+            footer_button(
+                canvas,
+                navigation.centered_footer(CLEAR),
+                language.contents_text("Clear"),
+            );
         }
         let pages = count.div_ceil(rows);
         if pages > 1 {
@@ -460,7 +493,7 @@ impl Reader {
         let info = self
             .notice
             .clone()
-            .or_else(|| query.map(|query| format!("Query: {query}")));
+            .or_else(|| query.map(|query| format!("{} {query}", language.contents_text("Query:"))));
         if let Some(info) = info {
             canvas.text(
                 navigation.footer_text(LIST_X, 173, 52),
