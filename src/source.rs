@@ -216,6 +216,8 @@ pub(crate) struct Source {
     // XHTML can have different anonymous wrappers. Not a canonical text model.
     element_origins: Vec<Option<usize>>,
     pub blocks: Vec<Block>,
+    /// Separate, unrendered candidates; canonical block order is unchanged.
+    pub(crate) raw_only_blocks: Vec<Block>,
     pub fragments: BTreeMap<String, (usize, usize)>,
     fragment_owners: BTreeMap<String, usize>,
     pub list_counters: Vec<crate::list_marker::CounterGroup>,
@@ -809,6 +811,7 @@ impl Source {
         let mut list_items = crate::list_marker::Items::read(body, &element_ids);
         let tables = crate::table_layout::TableCells::read(body, &element_ids);
         let mut blocks = Vec::new();
+        let mut raw_only_blocks = Vec::new();
         let mut pseudo_edges_remaining = 32 * 1024;
         let mut fragments = BTreeMap::new();
         let mut fragment_owners = BTreeMap::new();
@@ -817,6 +820,7 @@ impl Source {
         let mut available_ruby = MAX_RUBY_GROUPS;
         let mut flow_budget = crate::flow_projection::Budget::new();
         let mut raw_whitespace_budget = raw_whitespace::Budget::new();
+        let mut raw_only_budget = raw_whitespace::Budget::new();
         for node in body.descendants().filter(Node::is_element) {
             if !is_block(node)
                 || hidden(node)
@@ -1084,6 +1088,34 @@ impl Source {
                 }
             }
             if text.is_empty() && images.is_empty() {
+                // Keep whitespace-only preformatted candidates out of the
+                // canonical source vector and navigation/legacy maps.
+                if crate::parley_layout::RAW_LAYOUT_ENABLED
+                    && node.has_tag_name("pre")
+                    && let Some(raw_whitespace) =
+                        raw_whitespace::capture(node, &text, &mut raw_only_budget, &element_ids)
+                {
+                    raw_only_blocks.push(Block {
+                        table_cell: None,
+                        key,
+                        origin: 0,
+                        text,
+                        element: element_ids[&node.id()],
+                        styled_text,
+                        raw_whitespace: Some(raw_whitespace),
+                        flow_origins,
+                        pseudo_edges: Box::default(),
+                        list_item: None,
+                        #[cfg(test)]
+                        emphasis,
+                        links,
+                        images,
+                        direction: base_direction(node),
+                        language: languages[element_ids[&node.id()]],
+                        ruby: Vec::new(),
+                        legacy: None,
+                    });
+                }
                 continue;
             }
             for image in &mut images {
@@ -1253,6 +1285,7 @@ impl Source {
             origins,
             element_origins,
             blocks,
+            raw_only_blocks,
             fragments,
             fragment_owners,
             list_counters: list_items.counters,

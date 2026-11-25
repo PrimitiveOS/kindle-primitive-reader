@@ -14,13 +14,13 @@ retains its current RTF subset; images, field instructions and other hidden
 destinations are still not rendered in text documents. [KOReader format registration](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L1617-L1618) · [CREngine archive selection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L4712-L4793)
 
 As a separate recovery candidate, a structurally valid RTF with no supported
-reading text can expose visible direct `\\pict` PNG or JPEG groups, including
+reading text can expose visible direct `\pict` PNG or JPEG groups, including
 hex or a single binary payload. It accepts at most 16 images, 1 MiB each and
 4 MiB total, and checks image type and bounded dimensions before constructing
 an in-memory document. Image contents are decoded later by the existing image
 reader. If the direct-picture pass finds no pictures, a second bounded pass can
-also recover an otherwise visible `\\shppict` wrapper containing exactly one
-direct picture; `\\nonshppict` alternatives are ignored. Hidden or object
+also recover an otherwise visible `\shppict` wrapper containing exactly one
+direct picture; `\nonshppict` alternatives are ignored. Hidden or object
 destinations, nested or ambiguous picture groups, mixed or malformed payloads
 and other image formats are not supported. A successful direct-picture pass
 remains unchanged, including its resource ordering and anchors.
@@ -39,6 +39,15 @@ in the package; [provenance and distribution review](licenses/RTF-OEM.txt)
 remain open. This is an RTF compatibility candidate: the pinned CREngine
 lists `\ansicpg`, but its `\pc` and `\pca` behavior has not been established.
 Real-document, simulation and Kindle comparisons are pending.
+
+RTF text runs can also declare GB18030 (`\ansicpg54936`), KOI8-R (`20866`),
+KOI8-U (`21866`) or EUC-JP (`51932`). Reader uses the existing strict
+`encoding_rs` decoders and output bounds; malformed encoded runs are rejected.
+Their WHATWG mappings, particularly GB18030 and EUC-JP, can differ from older
+Windows variants. Previously readable ASCII and supported encodings retain
+their conversion and anchors. The pinned KOReader parser lists `ansicpg`, but
+its charset setters are incomplete; exact behavior and real-book, simulator
+and Kindle comparisons remain open. [Microsoft code-page identifiers](https://learn.microsoft.com/en-us/windows/win32/intl/code-page-identifiers) · [Pinned KOReader charset setters](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/rtfimp.cpp#L642-L655)
 
 HTMLZ archives now retain local GIF and SVG assets as well as the existing
 PNG, JPEG and CSS. GIF uses Reader's first-frame decoder and SVG uses its

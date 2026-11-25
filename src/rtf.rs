@@ -544,6 +544,10 @@ fn code_page(number: i32) -> Option<TextEncoding> {
         1258 => enc::WINDOWS_1258,
         10000 => enc::MACINTOSH,
         10007 => enc::X_MAC_CYRILLIC,
+        20866 => enc::KOI8_R,
+        21866 => enc::KOI8_U,
+        51932 => enc::EUC_JP,
+        54936 => enc::GB18030,
         65001 => enc::UTF_8,
         _ => return None,
     }))

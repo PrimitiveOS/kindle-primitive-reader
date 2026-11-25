@@ -378,9 +378,6 @@ pub(super) fn capture(
     budget: &mut Budget,
     element_ids: &HashMap<roxmltree::NodeId, usize>,
 ) -> Option<Snapshot> {
-    if canonical.is_empty() {
-        return None;
-    }
     let mut raw = String::new();
     let mut style_runs: Vec<RawStyleRun> = Vec::new();
     let mut hard_breaks = Vec::new();

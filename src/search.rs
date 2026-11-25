@@ -242,7 +242,7 @@ impl Search {
         }
 
         let mut hits = Vec::new();
-        for block in &source.blocks {
+        for block in raw_layout::ordered_blocks(&source, text.raw_layout.as_ref()) {
             if cancel.load(Ordering::Relaxed) {
                 break;
             }

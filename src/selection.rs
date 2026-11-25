@@ -39,6 +39,27 @@ pub struct HighlightRect {
 }
 
 impl Probe {
+    /// Temporary DOM order including only virtual blocks actually rendered.
+    fn raw_ordered_blocks(&self) -> Vec<&crate::source::Block> {
+        let mut blocks: Vec<_> = self.source.blocks.iter().collect();
+        if let Renderer::Parley(renderer) = &self.renderer {
+            let keys: std::collections::BTreeSet<_> = renderer
+                .paragraphs()
+                .iter()
+                .filter(|paragraph| paragraph.raw_binding.is_some())
+                .map(|paragraph| paragraph.key)
+                .collect();
+            blocks.extend(
+                self.source
+                    .raw_only_blocks
+                    .iter()
+                    .filter(|block| keys.contains(&block.key)),
+            );
+            blocks.sort_unstable_by_key(|block| block.key);
+        }
+        blocks
+    }
+
     /// Compare text locations without collapsing distinct raw offsets. Mixed
     /// coordinates within a block require a uniquely provable projection.
     pub(crate) fn compare_text_anchors(
@@ -46,6 +67,7 @@ impl Probe {
         first: &Anchor,
         second: &Anchor,
     ) -> Option<std::cmp::Ordering> {
+        let blocks = self.raw_ordered_blocks();
         let locate = |anchor: &Anchor| {
             if anchor.illustration.is_some() {
                 return None;
@@ -58,13 +80,20 @@ impl Probe {
                     caret: caret.clone(),
                 })?;
                 Some((
-                    self.selection_block(anchor.block)?,
+                    blocks
+                        .binary_search_by_key(&anchor.block, |block| block.key)
+                        .ok()?,
                     caret.raw_offset,
                     Some(caret.raw_sha256),
                 ))
             } else {
                 let (index, offset) = self.project_anchor(anchor)?;
-                Some((index, offset, None))
+                let key = self.source.blocks.get(index)?.key;
+                Some((
+                    blocks.binary_search_by_key(&key, |block| block.key).ok()?,
+                    offset,
+                    None,
+                ))
             }
         };
         let (a_block, a_offset, a_hash) = locate(first)?;
@@ -201,8 +230,13 @@ impl Probe {
     /// Each endpoint and intermediate block must use its installed raw or
     /// ordinary projection; an ambiguous layout rejects the entire range.
     fn select_raw_across_blocks(&self, first: Anchor, second: Anchor) -> Option<TextSelection> {
-        let a = self.selection_block(first.block)?;
-        let b = self.selection_block(second.block)?;
+        let ordered = self.raw_ordered_blocks();
+        let a = ordered
+            .binary_search_by_key(&first.block, |block| block.key)
+            .ok()?;
+        let b = ordered
+            .binary_search_by_key(&second.block, |block| block.key)
+            .ok()?;
         let (first_index, last_index, start, end) = if a < b {
             (a, b, first, second)
         } else {
@@ -216,7 +250,7 @@ impl Probe {
         }
         let mut quote = String::new();
         for index in first_index..=last_index {
-            let block = &self.source.blocks[index];
+            let block = ordered[index];
             let part = if raw_blocks.contains(&index) {
                 let raw = block.raw_whitespace.as_ref()?.bind(&block.text)?;
                 let from = if index == first_index {
@@ -283,13 +317,16 @@ impl Probe {
         {
             return None;
         }
+        let ordered = self.raw_ordered_blocks();
         let mut blocks = std::collections::BTreeSet::new();
         for paragraph in renderer.paragraphs() {
             if paragraph.raw_binding.is_none() {
                 continue;
             }
-            let index = self.selection_block(paragraph.key)?;
-            if !paragraph.is_verified_raw(&self.source.blocks[index]) || !blocks.insert(index) {
+            let index = ordered
+                .binary_search_by_key(&paragraph.key, |block| block.key)
+                .ok()?;
+            if !paragraph.is_verified_raw(ordered[index]) || !blocks.insert(index) {
                 return None;
             }
         }
@@ -317,6 +354,13 @@ impl Probe {
         }
         let (a, _) = self.project_anchor(start)?;
         let (b, _) = self.project_anchor(end)?;
+        let ordered = self.raw_ordered_blocks();
+        let a = ordered
+            .binary_search_by_key(&self.source.blocks[a].key, |block| block.key)
+            .ok()?;
+        let b = ordered
+            .binary_search_by_key(&self.source.blocks[b].key, |block| block.key)
+            .ok()?;
         let range = a.min(b)..=a.max(b);
         Some(
             self.verified_raw_blocks()?
@@ -334,13 +378,14 @@ impl Probe {
     /// canonical offsets for raw whitespace. Unsupported projections fail closed.
     fn selectable_chapter_edge(&self, first: bool) -> Option<Anchor> {
         let raw_blocks = self.verified_raw_blocks()?;
-        let mut indexes = 0..self.source.blocks.len();
+        let ordered = self.raw_ordered_blocks();
+        let mut indexes = 0..ordered.len();
         while let Some(index) = if first {
             indexes.next()
         } else {
             indexes.next_back()
         } {
-            let block = &self.source.blocks[index];
+            let block = ordered[index];
             if raw_blocks.contains(&index) {
                 let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
                 if bound.raw().is_empty() {
@@ -420,12 +465,7 @@ impl Probe {
         } else {
             (second, first)
         };
-        let index = self
-            .source
-            .blocks
-            .binary_search_by_key(&start.canonical.block, |block| block.key)
-            .ok()?;
-        let block = &self.source.blocks[index];
+        let block = self.raw_source_block(start.canonical.block)?;
         let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
         let text = bound
             .raw()
@@ -509,8 +549,13 @@ impl Probe {
         if self.select_raw_anchors(&selection.start, &selection.end)? != *selection {
             return None;
         }
-        let first = self.selection_block(selection.start.block)?;
-        let last = self.selection_block(selection.end.block)?;
+        let ordered = self.raw_ordered_blocks();
+        let first = ordered
+            .binary_search_by_key(&selection.start.block, |block| block.key)
+            .ok()?;
+        let last = ordered
+            .binary_search_by_key(&selection.end.block, |block| block.key)
+            .ok()?;
         if first > last {
             return None;
         }
@@ -522,7 +567,7 @@ impl Probe {
         }
         let mut before = String::new();
         for index in (0..=first).rev() {
-            let block = &self.source.blocks[index];
+            let block = ordered[index];
             let piece = if raw_blocks.contains(&index) {
                 let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
                 let end = if index == first {
@@ -546,8 +591,8 @@ impl Probe {
             }
         }
         let mut after = String::new();
-        for index in last..self.source.blocks.len() {
-            let block = &self.source.blocks[index];
+        for index in last..ordered.len() {
+            let block = ordered[index];
             let piece = if raw_blocks.contains(&index) {
                 let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
                 let start = if index == last {
@@ -583,11 +628,14 @@ impl Probe {
             {
                 return None;
             }
-            let index = self.selection_block(selection.start.block)?;
+            let ordered = self.raw_ordered_blocks();
+            let index = ordered
+                .binary_search_by_key(&selection.start.block, |block| block.key)
+                .ok()?;
             if !self.verified_raw_blocks()?.contains(&index) {
                 return None;
             }
-            let block = &self.source.blocks[index];
+            let block = ordered[index];
             let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
             let start = selection.start.raw_caret.as_ref()?.raw_offset;
             let tail = bound.raw().get(start..)?;
@@ -673,7 +721,7 @@ impl Probe {
                     if !(0.0..paragraph.layout.height()).contains(&local_y) {
                         continue;
                     }
-                    let block = &self.source.blocks[self.selection_block(paragraph.key)?];
+                    let block = self.raw_source_block(paragraph.key)?;
                     if !paragraph.is_verified_raw(block) {
                         return None;
                     }
@@ -763,7 +811,7 @@ impl Probe {
                     Affinity::Downstream => SourceAffinity::After,
                 };
                 if paragraph.raw_binding.is_some() {
-                    let block = &self.source.blocks[self.selection_block(paragraph.key)?];
+                    let block = self.raw_source_block(paragraph.key)?;
                     if child.is_some() || !paragraph.is_verified_raw(block) {
                         return None;
                     }
@@ -956,10 +1004,12 @@ impl Probe {
         {
             return Vec::new();
         }
-        let Some(first) = self.selection_block(selection.start.block) else {
+        let ordered = self.raw_ordered_blocks();
+        let Ok(first) = ordered.binary_search_by_key(&selection.start.block, |block| block.key)
+        else {
             return Vec::new();
         };
-        let Some(last) = self.selection_block(selection.end.block) else {
+        let Ok(last) = ordered.binary_search_by_key(&selection.end.block, |block| block.key) else {
             return Vec::new();
         };
         if first > last {
@@ -980,7 +1030,7 @@ impl Probe {
             .map_or(selection.end.offset, |caret| caret.raw_offset);
         let mut rects = Vec::new();
         for paragraph in renderer.paragraphs_in(page.clone()) {
-            let Some(index) = self.selection_block(paragraph.key) else {
+            let Ok(index) = ordered.binary_search_by_key(&paragraph.key, |block| block.key) else {
                 continue;
             };
             if !(first..=last).contains(&index) {
@@ -989,7 +1039,7 @@ impl Probe {
             if paragraph.joined_note.is_some() {
                 return Vec::new();
             }
-            let block = &self.source.blocks[index];
+            let block = ordered[index];
             let columns = paragraph.paint_columns(self.settings);
             let geometry = Geometry {
                 layout: &paragraph.layout,

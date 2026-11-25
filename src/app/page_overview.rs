@@ -12,7 +12,9 @@ use crate::session::{PageThumbnail, page_thumbnail};
 use crate::{Anchor, Probe, Result};
 
 mod grid_menu;
+mod raw_verification;
 mod ribbon_map;
+pub(super) use raw_verification::Verification as RawVerification;
 pub(super) use ribbon_map::{RibbonMap, RibbonMapTarget};
 
 fn capacity(grid: Option<PageBrowserGrid>) -> usize {
@@ -379,6 +381,7 @@ impl Reader {
         overview.grid_help = false;
         self.overview = Some(overview);
         self.show(Screen::PageOverview);
+        self.start_overview_raw_verification();
         Ok(())
     }
 
@@ -387,6 +390,7 @@ impl Reader {
         chapter: Option<usize>,
         first: Option<usize>,
     ) -> Result<()> {
+        let previous_chapter = self.overview.as_ref().and_then(|view| view.chapter);
         let grid = self
             .overview
             .as_ref()
@@ -396,8 +400,184 @@ impl Reader {
                     .and_then(|id| self.library.page_browser_grid(id))
             });
         self.overview = Some(self.prepare_overview(chapter, first, None, grid)?);
+        if previous_chapter != chapter {
+            self.start_overview_raw_verification();
+        }
         self.notice = None;
         Ok(())
+    }
+
+    pub(super) fn start_overview_raw_verification(&mut self) {
+        self.overview_raw = None;
+        let (Some(active), Some(overview)) = (&self.active, &self.overview) else {
+            return;
+        };
+        let Some(chapter) = overview.chapter else {
+            return;
+        };
+        let Some(state) = self.library.state(active.id) else {
+            return;
+        };
+        let history = self.back.len().min(3) + self.forward.len().min(3);
+        let total = state
+            .bookmarks
+            .len()
+            .saturating_add(history)
+            .saturating_add(state.highlights.len());
+        let reading = &active.reading;
+        let recipe = reading.config.search_layout_recipe(&reading.probe);
+        self.overview_raw = Some(RawVerification::new(
+            recipe,
+            total,
+            chapter,
+            reading.probe.chapter_count(),
+        ));
+        self.queue_overview_raw_slice(std::time::Instant::now());
+    }
+
+    fn queue_overview_raw_slice(&mut self, now: std::time::Instant) {
+        use raw_verification::{SCAN, SLICE, Task};
+        let Some(mut job) = self.overview_raw.take() else {
+            return;
+        };
+        if job.pending() {
+            self.overview_raw = Some(job);
+            return;
+        }
+        let (Some(active), Some(overview)) = (&self.active, &self.overview) else {
+            return;
+        };
+        let Some(state) = self.library.state(active.id) else {
+            return;
+        };
+        let probe = &active.reading.probe;
+        let history = self.back.len().min(3) + self.forward.len().min(3);
+        let total = state
+            .bookmarks
+            .len()
+            .saturating_add(history)
+            .saturating_add(state.highlights.len());
+        if total != job.total || overview.chapter != Some(job.chapter) {
+            return;
+        }
+        let mut tasks = Vec::new();
+        let mut scanned = 0;
+        while job.cursor < job.total && tasks.len() < SLICE && scanned < SCAN {
+            let index = job.cursor;
+            job.cursor += 1;
+            scanned += 1;
+            if index < state.bookmarks.len() {
+                let Some(anchor) = state.bookmarks[index].position.anchor.as_ref() else {
+                    continue;
+                };
+                if anchor.raw_caret.is_none() || anchor.book != probe.book {
+                    continue;
+                }
+                if let Some(chapter) = probe.chapter_index(&anchor.chapter) {
+                    tasks.push(Task::Mark {
+                        first: chapter,
+                        last: chapter,
+                        start: anchor.clone(),
+                        end: None,
+                        flags: 4,
+                        quote: None,
+                    });
+                }
+            } else if index < state.bookmarks.len() + history {
+                let ordinal = index - state.bookmarks.len();
+                let location = self
+                    .back
+                    .iter()
+                    .rev()
+                    .take(3)
+                    .chain(self.forward.iter().rev().take(3))
+                    .nth(ordinal);
+                let Some(anchor) = location.and_then(|location| location.position.anchor.as_ref())
+                else {
+                    continue;
+                };
+                if anchor.raw_caret.is_none() || anchor.book != probe.book {
+                    continue;
+                }
+                if let Some(chapter) = probe.chapter_index(&anchor.chapter) {
+                    tasks.push(Task::History {
+                        chapter,
+                        anchor: anchor.clone(),
+                    });
+                }
+            } else {
+                let selection =
+                    &state.highlights[index - state.bookmarks.len() - history].selection;
+                if selection.start.raw_caret.is_none() && selection.end.raw_caret.is_none() {
+                    continue;
+                }
+                if selection.start.book != probe.book || selection.end.book != probe.book {
+                    continue;
+                }
+                let (Some(first), Some(last)) = (
+                    probe.chapter_index(&selection.start.chapter),
+                    probe.chapter_index(&selection.end.chapter),
+                ) else {
+                    continue;
+                };
+                if first > last {
+                    continue;
+                }
+                let quote = if first != last
+                    && last.saturating_sub(first) < 8
+                    && (first..=last).contains(&job.chapter)
+                    && job.thumb_candidates < 4
+                    && selection.text.len() <= crate::library::MAX_HIGHLIGHT_TEXT_BYTES
+                {
+                    job.thumb_candidates += 1;
+                    Some(selection.clone())
+                } else {
+                    None
+                };
+                let noted = state.highlights[index - state.bookmarks.len() - history]
+                    .note
+                    .as_ref()
+                    .is_some_and(|note| !note.trim().is_empty());
+                tasks.push(Task::Mark {
+                    first,
+                    last,
+                    start: selection.start.clone(),
+                    end: Some(selection.end.clone()),
+                    flags: 1 | if noted { 2 } else { 0 },
+                    quote,
+                });
+            }
+        }
+        job.submit(tasks, now);
+        self.overview_raw = Some(job);
+    }
+
+    pub(super) fn poll_overview_raw_verification(
+        &mut self,
+        now: std::time::Instant,
+    ) -> Option<Change> {
+        if !self
+            .overview_raw
+            .as_ref()
+            .and_then(RawVerification::deadline)
+            .is_some_and(|at| at <= now)
+        {
+            return None;
+        }
+        let Some(active) = &self.active else {
+            self.overview_raw = None;
+            return None;
+        };
+        let recipe = active
+            .reading
+            .config
+            .search_layout_recipe(&active.reading.probe);
+        let changed = self
+            .overview_raw
+            .as_mut()
+            .is_some_and(|job| job.poll(now, &recipe));
+        self.queue_overview_raw_slice(now);
+        changed.then_some(Change::Partial)
     }
 
     fn prepare_overview(
@@ -550,12 +730,10 @@ impl Reader {
                             continue;
                         }
                         cross_chapter_checks += 1;
-                        if active
-                            .reading
-                            .anchored_quote(&saved.start, &saved.end)
-                            .ok()
+                        if !self
+                            .overview_raw
                             .as_ref()
-                            != Some(saved)
+                            .is_some_and(|job| job.selection(saved))
                         {
                             continue;
                         }
@@ -896,6 +1074,35 @@ impl Reader {
             let offset = (portion * (track.w - 20).max(0) as f64).round() as i32;
             *saved.entry(offset / 5 * 5).or_default() |= flags;
         };
+        let chapter_for = |anchor: &Anchor| {
+            let reading = &self.active.as_ref()?.reading;
+            let probe = &reading.probe;
+            if anchor.book != probe.book {
+                return None;
+            }
+            let chapter = probe.chapter_index(&anchor.chapter)?;
+            if anchor.raw_caret.is_some() {
+                let loaded = if chapter == reading.chapter {
+                    Some(probe)
+                } else if overview.chapter == Some(chapter) {
+                    overview.preview.as_deref()
+                } else {
+                    None
+                };
+                let valid = loaded.map_or_else(
+                    || {
+                        self.overview_raw
+                            .as_ref()
+                            .is_some_and(|job| job.history(anchor))
+                    },
+                    |probe| probe.page_for(anchor).is_some(),
+                );
+                if !valid {
+                    return None;
+                }
+            }
+            Some(chapter)
+        };
         if let Some(fixed) = self.fixed.as_ref().filter(|_| overview.chapter.is_none())
             && let Some(state) = self.library.state(fixed.id)
         {
@@ -923,24 +1130,6 @@ impl Reader {
         } else if let Some(active) = self.active.as_ref().filter(|_| overview.chapter.is_some())
             && let Some(state) = self.library.state(active.id)
         {
-            let probe = &active.reading.probe;
-            let chapter_for = |anchor: &Anchor| {
-                if anchor.book != probe.book {
-                    return None;
-                }
-                let chapter = probe.chapter_index(&anchor.chapter)?;
-                if anchor.raw_caret.is_some() {
-                    let loaded;
-                    let chapter_probe = if active.reading.chapter == chapter {
-                        probe
-                    } else {
-                        loaded = active.reading.config.chapter(chapter).ok()?;
-                        &loaded
-                    };
-                    chapter_probe.page_for(anchor)?;
-                }
-                Some(chapter)
-            };
             for bookmark in &state.bookmarks {
                 let chapter = match &bookmark.position.anchor {
                     Some(anchor) => chapter_for(anchor),
@@ -951,12 +1140,27 @@ impl Reader {
                 }
             }
             for highlight in &state.highlights {
+                let selection = &highlight.selection;
+                if selection.start.raw_caret.is_some() || selection.end.raw_caret.is_some() {
+                    continue;
+                }
                 if let Some(chapter) = chapter_for(&highlight.selection.start) {
                     let noted = highlight
                         .note
                         .as_ref()
                         .is_some_and(|note| !note.trim().is_empty());
                     mark_page(chapter, 1 | if noted { 2 } else { 0 });
+                }
+            }
+            if let Some(job) = &self.overview_raw {
+                for (bin, &flags) in job.bins().iter().enumerate() {
+                    if flags != 0 {
+                        let chapter = bin
+                            .saturating_mul(count.saturating_sub(1))
+                            .saturating_add(127)
+                            / 255;
+                        mark_page(chapter, flags);
+                    }
                 }
             }
         }
@@ -1003,33 +1207,8 @@ impl Reader {
                     let coordinate = if overview.chapter.is_none() {
                         (position.chapter == 0).then_some(position.page)
                     } else {
-                        let probe = &self
-                            .active
-                            .as_ref()
-                            .expect("Open reflow book")
-                            .reading
-                            .probe;
                         match &position.anchor {
-                            Some(anchor) if anchor.book == probe.book => {
-                                probe.chapter_index(&anchor.chapter).filter(|&chapter| {
-                                    if anchor.raw_caret.is_none() {
-                                        return true;
-                                    }
-                                    let reading =
-                                        &self.active.as_ref().expect("Open reflow book").reading;
-                                    if reading.chapter == chapter {
-                                        probe.page_for(anchor).is_some()
-                                    } else {
-                                        reading
-                                            .config
-                                            .chapter(chapter)
-                                            .ok()
-                                            .and_then(|candidate| candidate.page_for(anchor))
-                                            .is_some()
-                                    }
-                                })
-                            }
-                            Some(_) => None,
+                            Some(anchor) => chapter_for(anchor),
                             None => Some(position.chapter),
                         }
                     };

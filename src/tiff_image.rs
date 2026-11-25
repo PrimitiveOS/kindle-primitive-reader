@@ -5,7 +5,7 @@ use std::fmt;
 use std::ops::Range;
 
 use flate2::{Decompress, FlushDecompress, Status};
-use image::GrayImage;
+use image::{GrayImage, ImageDecoder};
 
 const HEADER_BYTES: usize = 8;
 const FIELD_BYTES: usize = 12;
@@ -115,14 +115,15 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let predictor = image.scalar(317, SHORT_ONLY, 1)?;
     let orientation = image.scalar(274, SHORT_ONLY, 1)?;
     if !matches!(bits, 1 | 2 | 4 | 8 | 16)
-        || (bits == 16 && !matches!((photometric, samples), (0 | 1, 1 | 2) | (2, 3 | 4)))
+        || (bits == 16 && !matches!((photometric, samples), (0 | 1, 1 | 2) | (2, 3 | 4) | (3, 1)))
         || (!matches!(photometric, 0 | 1 | 3) && !matches!(bits, 1 | 8) && !(photometric == 2 && bits == 16))
         || (samples >= 2 && bits != 8 && !(bits == 16 && matches!((photometric, samples), (0 | 1, 2) | (2, 3 | 4))))
         || bits_values.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != bits))
         || formats.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != 1))
         || !(fill_order == 1 || (bits < 8 && fill_order == 2))
-        || !matches!(compression, 1 | 2 | 3 | 4 | 5 | 8 | 32946 | 32773)
+        || !matches!(compression, 1 | 2 | 3 | 4 | 5 | 7 | 8 | 32946 | 32773)
         || (matches!(compression, 2 | 3 | 4) && (!matches!(photometric, 0 | 1) || samples != 1 || bits != 1 || predictor != 1))
+        || (compression == 7 && (photometric != 1 || samples != 1 || bits != 8 || predictor != 1 || [280, 281, 301, 318, 319, 340, 341, 342, 347, 513, 514, 34675].iter().any(|&tag| image.has_tag(tag))))
         || (compression == 3 && fax_options > 1)
         || (compression == 4 && fax_options != 0)
         || !matches!(orientation, 1..=8)
@@ -165,6 +166,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         return Err(TiffError::Strips);
     }
     let strip_count = height.div_ceil(rows_per_strip) as usize;
+    if compression == 7 && strip_count != 1 {
+        return Err(TiffError::Unsupported);
+    }
     let offsets = image
         .numbers(273, SHORT_OR_LONG, strip_count)?
         .ok_or(TiffError::Strips)?;
@@ -294,6 +298,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
                 }
                 Err(error) => return Err(error),
             }),
+            7 => Some(unpack_grayscale_jpeg(compressed, width, rows)?),
             8 | 32946 => Some(unpack_deflate(compressed, row_bytes, rows)?),
             _ => None,
         };
@@ -359,6 +364,14 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
                     let a = u32::from(pixel[1]);
                     ((gray * a + 255 * (255 - a) + 127) / 255) as u8
                 }));
+            } else if bits == 16 {
+                // ColorMap has 65,536 entries for 16-bit indices. The table
+                // and every referenced sample were bounded above.
+                pixels.extend(
+                    strip.chunks_exact(2).map(|sample| {
+                        palette[usize::from(image.order.short([sample[0], sample[1]]))]
+                    }),
+                );
             } else {
                 for row in strip.chunks_exact(row_bytes) {
                     for x in 0..width as usize {
@@ -501,6 +514,28 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         }
     }
     GrayImage::from_raw(out_width, out_height, visual).ok_or(TiffError::Strips)
+}
+
+/// Decode a self-contained grayscale JPEG strip with matching TIFF dimensions.
+fn unpack_grayscale_jpeg(input: &[u8], width: u32, rows: usize) -> Result<Vec<u8>, TiffError> {
+    let reader = crate::image_reader(input).map_err(|_| TiffError::Strips)?;
+    if reader.format() != Some(image::ImageFormat::Jpeg) {
+        return Err(TiffError::Strips);
+    }
+    let decoder = reader.into_decoder().map_err(|_| TiffError::Strips)?;
+    let height = u32::try_from(rows).map_err(|_| TiffError::Limit)?;
+    let expected = (width as usize).checked_mul(rows).ok_or(TiffError::Limit)?;
+    if decoder.dimensions() != (width, height)
+        || decoder.color_type() != image::ColorType::L8
+        || decoder.total_bytes() != expected as u64
+    {
+        return Err(TiffError::Unsupported);
+    }
+    let mut output = vec![0; expected];
+    decoder
+        .read_image(&mut output)
+        .map_err(|_| TiffError::Strips)?;
+    Ok(output)
 }
 
 /// Decode one TIFF CCITT 1D, Group 3 or Group 4 strip to MSB-first samples. The decoder reports

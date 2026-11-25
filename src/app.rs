@@ -1025,6 +1025,7 @@ pub struct Reader {
     book_list: Option<BookList>,
     book_details: Option<BookDetails>,
     overview: Option<PageOverview>,
+    overview_raw: Option<page_overview::RawVerification>,
     skim: Option<skim::Session>,
     staged_viewport: Option<(
         primitive_app::viewport::Viewport,
@@ -1292,6 +1293,7 @@ impl Reader {
             book_list: None,
             book_details: None,
             overview: None,
+            overview_raw: None,
             skim: None,
             library_viewport: crate::session::ReadingViewport::PORTRAIT,
             staged_viewport: None,
@@ -2256,6 +2258,7 @@ impl Reader {
         }
         if screen != Screen::PageOverview {
             self.overview = None;
+            self.overview_raw = None;
         }
         if screen != Screen::BookMap {
             self.fixed_map_help = false;
@@ -10391,6 +10394,7 @@ impl App for Reader {
         if input == Input::Sleep {
             self.screen_page_worker.cancel();
             self.cancel_screen_page_jump();
+            self.overview_raw = None;
         }
         if matches!(
             input,
@@ -10455,6 +10459,9 @@ impl App for Reader {
             }
             if let Some(flow) = &mut self.text_flow {
                 flow.pause();
+            }
+            if input == Input::Wake && self.screen == Screen::PageOverview {
+                self.start_overview_raw_verification();
             }
             let progress_changed = if input == Input::Wake {
                 self.reset_footer_initial_position();
@@ -11177,6 +11184,11 @@ impl App for Reader {
             )
             .chain(self.search_at)
             .chain(self.nearby.deadline())
+            .chain(
+                self.overview_raw
+                    .as_ref()
+                    .and_then(page_overview::RawVerification::deadline),
+            )
             .chain(self.spelling_lookup.as_ref().map(|job| job.deadline))
             .chain(self.cjk_selection_lookup.as_ref().map(|job| job.deadline))
             .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
@@ -11207,6 +11219,9 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if let Some(change) = self.poll_overview_raw_verification(now) {
+            return change;
+        }
         if self.notifications.tick(now) {
             // The notification deadline has been consumed. Let any due
             // reading event run at this same instant before repainting.
@@ -11442,6 +11457,7 @@ impl App for Reader {
 
     fn save(&mut self) -> io::Result<()> {
         self.finish_interrupted_scroll();
+        self.overview_raw = None;
         self.embedded_font_report = None;
         self.eager_typography.cancel();
         self.screen_page_worker.cancel();
@@ -11459,6 +11475,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.overview_raw = None;
         self.gestures.multiswipes.clear_contact();
         self.finish_interrupted_scroll();
         self.embedded_font_report = None;
@@ -11517,6 +11534,9 @@ impl App for Reader {
         self.save()?;
         with_storage(|| self.library.scan())?;
         self.refresh_browser()?;
+        if self.screen == Screen::PageOverview {
+            self.start_overview_raw_verification();
+        }
         Ok(())
     }
 }

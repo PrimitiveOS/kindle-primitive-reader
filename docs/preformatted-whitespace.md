@@ -72,3 +72,9 @@ remote deletion cutoffs. Export reports omitted raw marks as unavailable; the
 existing completeness guard refuses to publish an incomplete replacement.
 
 [Pinned CRE whitespace formatting](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L2569-L2575)
+
+Whitespace-only `<pre>` blocks are captured as separate bounded source
+candidates without changing canonical block indices, anchors or navigation.
+They use a separate budget of up to 1 MiB per chapter so existing raw-text
+candidates keep their allowance. They are not rendered yet: virtual positions, pagination and selection still
+need end-to-end integration. This stage remains untested.

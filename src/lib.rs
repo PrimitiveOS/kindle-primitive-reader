@@ -1415,6 +1415,7 @@ impl Probe {
             for block in &mut source.blocks {
                 block.raw_whitespace = None;
             }
+            source.raw_only_blocks.clear();
         }
         source.resolve_hyphenation_languages(main_language, settings.typography.respect_embedded);
         if complete {
@@ -2953,6 +2954,23 @@ impl Probe {
         }
     }
 
+    /// Resolve a raw source block without adding virtual-only blocks to the
+    /// canonical vector or changing existing canonical indices.
+    pub(crate) fn raw_source_block(&self, key: usize) -> Option<&source::Block> {
+        self.source
+            .blocks
+            .binary_search_by_key(&key, |block| block.key)
+            .ok()
+            .map(|index| &self.source.blocks[index])
+            .or_else(|| {
+                self.source
+                    .raw_only_blocks
+                    .binary_search_by_key(&key, |block| block.key)
+                    .ok()
+                    .map(|index| &self.source.raw_only_blocks[index])
+            })
+    }
+
     /// Create a transient raw caret only for the exact open source and block.
     /// This is not persisted or used for rendering until v2 state and all
     /// selection/pagination consumers are ready.
@@ -2964,12 +2982,7 @@ impl Probe {
         affinity: source::raw_whitespace::CaretAffinity,
     ) -> Option<source::raw_whitespace::RawAnchor> {
         use source::raw_whitespace::{AnchorContext, RawAnchor};
-        let index = self
-            .source
-            .blocks
-            .binary_search_by_key(&block, |item| item.key)
-            .ok()?;
-        let item = &self.source.blocks[index];
+        let item = self.raw_source_block(block)?;
         let bound = item.raw_whitespace.as_ref()?.bind(&item.text)?;
         let caret = bound.caret_at(raw_offset, affinity)?;
         let anchor = RawAnchor {
@@ -2996,12 +3009,7 @@ impl Probe {
     ) -> Option<source::raw_whitespace::RawBoundary> {
         use source::raw_whitespace::AnchorContext;
         let block = anchor.canonical.block;
-        let index = self
-            .source
-            .blocks
-            .binary_search_by_key(&block, |item| item.key)
-            .ok()?;
-        let item = &self.source.blocks[index];
+        let item = self.raw_source_block(block)?;
         let bound = item.raw_whitespace.as_ref()?.bind(&item.text)?;
         bound.validate_raw_anchor(
             anchor,

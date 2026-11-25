@@ -109,6 +109,25 @@ pub(super) fn matches_anchors(
     Ok(results)
 }
 
+/// Search canonical blocks and only those virtual blocks proven installed by
+/// the renderer, retaining document order without changing canonical indices.
+pub(super) fn ordered_blocks<'a>(
+    source: &'a Source,
+    layout: Option<&VerifiedRawLayout>,
+) -> Vec<&'a Block> {
+    let mut blocks: Vec<_> = source.blocks.iter().collect();
+    if let Some(layout) = layout {
+        blocks.extend(
+            source
+                .raw_only_blocks
+                .iter()
+                .filter(|block| layout.contains(block.key)),
+        );
+        blocks.sort_unstable_by_key(|block| block.key);
+    }
+    blocks
+}
+
 impl VerifiedRawLayout {
     pub(super) fn from_probe(probe: &Probe) -> Result<Self> {
         let Renderer::Parley(renderer) = &probe.renderer else {
@@ -132,12 +151,9 @@ impl VerifiedRawLayout {
             if paragraph.raw_binding.is_none() {
                 continue;
             }
-            let index = probe
-                .source
-                .blocks
-                .binary_search_by_key(&paragraph.key, |block| block.key)
-                .map_err(|_| "A raw search block is unavailable")?;
-            let block = &probe.source.blocks[index];
+            let block = probe
+                .raw_source_block(paragraph.key)
+                .ok_or("A raw search block is unavailable")?;
             if !paragraph.is_verified_raw(block) || blocks.len() >= MAX_RAW_BLOCKS {
                 return Err("A raw search layout cannot be verified".into());
             }
@@ -219,11 +235,19 @@ impl VerifiedRawLayout {
             return Err("The raw search publication or chapter changed".into());
         }
         for (key, (hash, length)) in &self.blocks {
-            let index = source
+            let block = source
                 .blocks
                 .binary_search_by_key(key, |block| block.key)
-                .map_err(|_| "A raw search block has moved")?;
-            let block = &source.blocks[index];
+                .ok()
+                .map(|index| &source.blocks[index])
+                .or_else(|| {
+                    source
+                        .raw_only_blocks
+                        .binary_search_by_key(key, |block| block.key)
+                        .ok()
+                        .map(|index| &source.raw_only_blocks[index])
+                })
+                .ok_or("A raw search block has moved")?;
             let bound = block
                 .raw_whitespace
                 .as_ref()

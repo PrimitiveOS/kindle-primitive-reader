@@ -33,6 +33,20 @@ These additions have not yet been compared against KOReader or exercised on
 the simulator or Kindle. Associated-alpha white-is-zero grayscale and palette images, packed palette alpha, profiled or nonstandard CMYK, multi-page and tiled TIFFs and advanced fax options remain outside this decoder's support. [TIFF 6.0 LZW
 and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
+## Self-contained JPEG grayscale scans
+
+A TIFF compression-7 page can use one self-contained, 8-bit unsigned
+BlackIsZero grayscale JPEG strip with no alpha or predictor. Reader rejects
+separate JPEG tables, ICC/profile or nondefault sample/transfer metadata,
+requires the JPEG decoder's L8 output and dimensions to match the TIFF, and
+fully decodes through the existing image reader before applying TIFF
+orientation. The compressed input retains the 16 MiB bound and decoded strip
+plus grayscale output is at most 16 MiB; the JPEG decoder's internal memory
+uses the existing image-reader limit but still needs a separate audit.
+Multi-strip JPEG, shared tables, YCbCr/RGB TIFF JPEG, old compression 6 and
+color-managed cases remain unsupported. This candidate has not been compared
+with KOReader or behaviorally tested in the simulator or on Kindle. [Pinned MuPDF JPEG handling](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L400-L413)
+
 ## CCITT 1D, Group 3 and Group 4 scans
 
 Single-sample, one-bit grayscale strips with TIFF CCITT Group 4 compression can
@@ -76,7 +90,7 @@ in TIFF byte order and resets at each row. Contiguous 16-bit grayscale can
 also include an explicitly unassociated alpha channel: samples are composited
 over white in 16-bit precision before conversion to 8-bit grayscale. The
 decoded strip and output are capped at 32 MiB; predictor history is kept
-separately per sample. Associated-alpha grayscale, 16-bit palette and non-RGB
+separately per sample. Associated-alpha grayscale and non-RGB
 color modes remain unsupported. Pinned MuPDF has a 16-bit predictor path, but its
 sample handling differs and exact pixel parity is unverified. This conversion has not
 been compared with KOReader or behaviorally validated on the simulator or
@@ -172,8 +186,17 @@ other tracked metadata, and converts the mapped RGB colors to the same sRGB
 grayscale used for other image pages. Stored, PackBits, LZW and both Deflate
 variants use the existing strip decoders. Eight-bit compressed indices support
 horizontal prediction; packed indices support either fill order.
-Orientation and existing image limits apply. At most 256 grayscale palette
-entries are allocated in addition to the existing bounded strip buffers.
+Orientation and existing image limits apply. One-, two-, four- and eight-bit
+indices allocate at most 256 grayscale palette entries in addition to the
+existing bounded strip buffers.
+
+Unsigned 16-bit single-sample palette indices without alpha are also accepted.
+Indices use TIFF byte order and select from a validated 65,536-entry ColorMap;
+the grayscale palette adds at most 64 KiB alongside at most 24 MiB of decoded
+strip and output buffers. Compressed predictor 2 uses the existing 16-bit
+sample path. Sixteen-bit palette alpha and planar data remain unsupported;
+this candidate has not been behaviorally compared with KOReader or tested in
+the simulator or on Kindle. [Pinned MuPDF palette expansion](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L263-L284)
 
 For single-sample 1-, 2- and 4-bit grayscale or palette images, compressed
 LZW/Deflate strips can also use horizontal predictor 2. Reader restores packed

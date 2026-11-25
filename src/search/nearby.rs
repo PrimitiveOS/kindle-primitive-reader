@@ -163,9 +163,9 @@ impl NearbySearch {
                 if let Some(layout) = &text.raw_layout {
                     layout.verify(text.book, &text.href, &source, &text.flow_config)?;
                 }
+                let ordered = super::raw_layout::ordered_blocks(&source, text.raw_layout.as_ref());
                 let boundary = if let Some(anchor) = anchor.filter(|_| ci == origin) {
-                    let i = source
-                        .blocks
+                    let i = ordered
                         .binary_search_by_key(&anchor.block, |block| block.key)
                         .map_err(|_| "The starting text is unavailable")?;
                     if anchor.raw_caret.is_some()
@@ -182,8 +182,7 @@ impl NearbySearch {
                 };
                 let stop_boundary = if stop_here {
                     let anchor = stop.and_then(|(_, boundary)| boundary).unwrap();
-                    let i = source
-                        .blocks
+                    let i = ordered
                         .binary_search_by_key(&anchor.block, |block| block.key)
                         .map_err(|_| "The current page text is unavailable")?;
                     if anchor.raw_caret.is_some()
@@ -199,7 +198,7 @@ impl NearbySearch {
                     None
                 };
                 let previous = self.direction == SearchDirection::Previous;
-                let mut blocks = source.blocks.iter().enumerate();
+                let mut blocks = ordered.iter().copied().enumerate();
                 while let Some((index, block)) = if previous {
                     blocks.next_back()
                 } else {

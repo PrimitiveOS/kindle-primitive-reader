@@ -297,6 +297,7 @@ impl Reader {
             push_page_bookmark(book, position, label, chapter_title)?;
         }
         self.mark_book_changed();
+        self.start_overview_raw_verification();
         self.notice = None;
         Ok(())
     }

@@ -51,6 +51,9 @@ const MAX_RUBY_BASE_BYTES: usize = 192;
 // projections retain the canonical layout; device validation remains pending.
 pub(crate) const RAW_LAYOUT_ENABLED: bool = true;
 
+// Kept disabled until virtual search, selection and persistence are wired end to end.
+const RAW_ONLY_RENDER_ENABLED: bool = false;
+
 fn declared_box_height(style: &Style, width: u32, font: f32) -> Option<f32> {
     let length = match style.image_height? {
         ImageLength::Pixels(px) => CssLength::Pixels(px),
@@ -1102,9 +1105,41 @@ impl ParleyChapter {
         });
         let mut joined_until = 0;
         let mut floating_table = None;
+        let virtual_allowed = RAW_ONLY_RENDER_ENABLED
+            && RAW_LAYOUT_ENABLED
+            && !settings.in_page_footnotes
+            && source.table_cells.is_empty()
+            && float_plan.is_none()
+            && order.is_none();
+        let mut virtual_blocks = source.raw_only_blocks.iter().peekable();
         for slot in 0..source.blocks.len() {
             let index = source_index(slot);
             let source_block = &source.blocks[index];
+            while virtual_allowed
+                && virtual_blocks
+                    .peek()
+                    .is_some_and(|block| block.key < source_block.key)
+            {
+                let virtual_block = virtual_blocks.next().expect("peeked virtual block");
+                if let Some((paragraph, mut virtual_lines, bottom)) = virtual_raw_paragraph(
+                    source,
+                    virtual_block,
+                    flow,
+                    styles,
+                    &mut context,
+                    &mut fonts,
+                    settings,
+                    user_rules,
+                    y,
+                    outer_width,
+                ) && lines.len().saturating_add(virtual_lines.len()) <= MAX_LINES
+                {
+                    y = bottom;
+                    trailing_gap = 0.0;
+                    lines.append(&mut virtual_lines);
+                    chapter.paragraphs.push(paragraph);
+                }
+            }
             if index < joined_until {
                 if let Some(points) = &mut fill_positions {
                     points.push((y, y));
@@ -2197,6 +2232,30 @@ impl ParleyChapter {
                 };
                 y = placement.finish(&mut float_flow, bottom, settings.text_height() as f32)?;
                 row_flow = Default::default();
+            }
+        }
+
+        while virtual_allowed {
+            let Some(virtual_block) = virtual_blocks.next() else {
+                break;
+            };
+            if let Some((paragraph, mut virtual_lines, bottom)) = virtual_raw_paragraph(
+                source,
+                virtual_block,
+                flow,
+                styles,
+                &mut context,
+                &mut fonts,
+                settings,
+                user_rules,
+                y,
+                outer_width,
+            ) && lines.len().saturating_add(virtual_lines.len()) <= MAX_LINES
+            {
+                y = bottom;
+                trailing_gap = 0.0;
+                lines.append(&mut virtual_lines);
+                chapter.paragraphs.push(paragraph);
             }
         }
 
@@ -3402,6 +3461,102 @@ fn overlaps_entire_page(layout: &Layout<PaintBrush>, page_height: f32) -> bool {
         }
     }
     false
+}
+
+/// Shape a whitespace-only preformatted candidate without adding it to the
+/// canonical block vector. Unsupported placement/style returns no projection.
+fn virtual_raw_paragraph(
+    source: &Source,
+    block: &crate::source::Block,
+    flow: &ChapterFlow,
+    styles: &[Style],
+    context: &mut LayoutContext<PaintBrush>,
+    fonts: &mut FontContext,
+    settings: Settings,
+    rules: &crate::user_hyphenation::Rules,
+    y: f32,
+    width: u32,
+) -> Option<(Paragraph, Vec<Line>, f32)> {
+    let element = source.elements.get(block.element)?;
+    let parent = source.elements.get(element.parent?)?;
+    let style = styles.get(block.element)?;
+    if element.tag != "pre"
+        || parent.tag != "body"
+        || style.flow.suppressed
+        || !style.flow.painted
+        || !y.is_finite()
+        || width == 0
+    {
+        return None;
+    }
+    let view = flow.view(source, block).ok()?;
+    let input = flow.layout_block(source, block).ok()?;
+    let plan = inline_blocks::raw_whitespace::Plan::new(&input, &view, styles)?;
+    let prepared = plan.shape(
+        context,
+        fonts,
+        &input,
+        width,
+        settings,
+        styles,
+        LineIndent::default(),
+        rules,
+    )?;
+    let (layout, text, positions, binding) = prepared.into_page_parts(block)?;
+    if layout.len() == 0 || layout.len() != positions.len() {
+        return None;
+    }
+    let origin = y - layout
+        .lines()
+        .next()
+        .map_or(0.0, |line| line.metrics().content_block_min_coord.min(0.0));
+    let mut bottom = origin + layout.height();
+    let mut lines = Vec::with_capacity(layout.len());
+    for (line, position) in layout.lines().zip(positions) {
+        let metrics = line.metrics();
+        let top = origin + metrics.content_block_min_coord;
+        let end = origin + metrics.content_block_max_coord;
+        if !top.is_finite() || !end.is_finite() || end < top {
+            return None;
+        }
+        bottom = bottom.max(end);
+        lines.push(Line {
+            block: block.key,
+            bytes: 0..0,
+            spans: None,
+            additional_sources: None,
+            raw_whitespace: Some(position),
+            top,
+            bottom: end,
+            page_extension: [0.0; 2],
+            missing_glyphs: 0,
+        });
+    }
+    if !bottom.is_finite() || bottom > settings.chapter_height_limit() {
+        return None;
+    }
+    Some((
+        Paragraph {
+            column: 0.0..width as f32,
+            signed_margin: false,
+            max_bottom: bottom,
+            key: block.key,
+            x: 0.0,
+            y: origin,
+            text_bottom: bottom,
+            bottom,
+            background: style.background,
+            fitted: None,
+            layout,
+            ruby: Vec::new(),
+            flow: None,
+            inline_text: Some(text),
+            raw_binding: Some(binding),
+            joined_note: None,
+        },
+        lines,
+        bottom,
+    ))
 }
 
 fn make_paragraph(
