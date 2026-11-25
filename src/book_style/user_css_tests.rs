@@ -134,7 +134,7 @@ fn user_rules_remain_effective_without_author_css_and_never_mutate_source() {
 
 #[test]
 fn every_published_preset_changes_its_supported_computed_property_through_user_origin() {
-    let markup = r#"<html><body style="font-size:150%;font-family:monospace"><p id="p" style="text-indent:2em!important;padding:8px!important;text-align:right!important;break-before:page!important;break-after:page!important;orphans:1;widows:1">Paragraph <a id="a" href="x" style="font-weight:300!important">link</a></p><h1 id="h" style="text-align:left!important">Heading</h1><img id="i" src="x" style="width:72px!important"/><table id="t"><tr><td>Cell</td></tr></table><code id="code">code</code></body></html>"#;
+    let markup = r#"<html><body style="font-size:150%;font-family:monospace"><p id="p" style="text-indent:2em!important;padding:8px!important;text-align:right!important;break-before:page!important;break-after:page!important;orphans:1;widows:1">Paragraph <a id="a" href="x" style="font-weight:300!important">link</a></p><p id="following" style="text-indent:2em!important">Following paragraph</p><h1 id="h" style="text-align:left!important">Heading</h1><img id="i" src="x" style="width:72px!important"/><table id="t"><tr><td>Cell</td></tr></table><code id="code">code</code></body></html>"#;
     for preset in crate::user_styles::PRESETS {
         let crate::user_styles::Effect::Css(css) = preset.effect else {
             continue;
@@ -157,6 +157,14 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
                     p.text_indent.pixels(1000, 42.),
                     old.text_indent.pixels(1000, 42.)
                 )
+            }
+            "paragraph_following_no_indent" => {
+                let indent = |computed: &[Style], id| {
+                    at(&source, computed, id).text_indent.pixels(1000, 42.)
+                };
+                assert_eq!(indent(&after, "p"), indent(&before, "p"));
+                assert!(indent(&before, "following") > 0.0);
+                assert_eq!(indent(&after, "following"), 0.0);
             }
             "paragraph-align-left" | "paragraph-align-justify" => {
                 assert_ne!(p.alignment, old.alignment)

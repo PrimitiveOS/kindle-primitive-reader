@@ -27,3 +27,8 @@ edge controls, and the preserved reading position. [Stock first page](screenshot
 Run `cargo test --locked --features kindle --lib menu_footer_hold`. Set
 `READER_SELECTION_VIEWPORT_CAPTURES` to an output directory to write the Reader
 captures during the tests.
+
+The stock frames use the pinned 1264 × 1680 SDL viewport at 300 DPI,
+with `EMULATE_READER_BB_TYPE=BB8` and `EMULATE_BW_SCREEN=1`. The Reading
+controls captures show a missing minus glyph in Warmth with the simulator's
+bundled fonts.
