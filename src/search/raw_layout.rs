@@ -22,7 +22,14 @@ pub(super) struct VerifiedRawLayout {
     chapter: String,
     revision: u64,
     flow: super::FlowConfig,
-    blocks: BTreeMap<usize, ([u8; 32], usize)>,
+    blocks: BTreeMap<usize, RawBlock>,
+}
+
+#[derive(Clone)]
+struct RawBlock {
+    hash: [u8; 32],
+    length: usize,
+    pre_line: Option<std::sync::Arc<crate::source::pre_line_projection::PreLineProjection>>,
 }
 
 /// Construct raw anchors and canonical coverage with at most one grapheme
@@ -33,6 +40,7 @@ pub(super) fn matches_anchors(
     source: &Source,
     block: &Block,
     ranges: &[Range<usize>],
+    projection: Option<&crate::source::pre_line_projection::PreLineProjection>,
 ) -> Result<Vec<(Anchor, Anchor, Vec<Range<usize>>)>> {
     use crate::source::raw_whitespace::CaretAffinity;
     let bound = block
@@ -51,18 +59,36 @@ pub(super) fn matches_anchors(
     };
     let mut results = Vec::with_capacity(ranges.len());
     for chunk in ranges.chunks(4096) {
-        let mut requests = Vec::with_capacity(chunk.len() * 2);
+        let mut visible_requests = Vec::with_capacity(chunk.len() * 2);
         for range in chunk {
-            if range.start >= range.end || bound.raw().get(range.clone()).is_none() {
+            let visible = projection.map_or(bound.raw(), |projection| projection.text());
+            if range.start >= range.end || visible.get(range.clone()).is_none() {
                 return Err("The raw search result has invalid boundaries".into());
             }
-            requests.push((range.start, CaretAffinity::After));
-            requests.push((range.end, CaretAffinity::Before));
+            visible_requests.push((range.start, crate::flow_projection::Affinity::After));
+            visible_requests.push((range.end, crate::flow_projection::Affinity::Before));
+        }
+        let offsets = if let Some(projection) = projection {
+            projection
+                .visible_carets_at(&visible_requests)
+                .ok_or("The search result splits a visible grapheme")?
+        } else {
+            visible_requests.iter().map(|(offset, _)| *offset).collect()
+        };
+        let mut requests = Vec::with_capacity(offsets.len());
+        let mut raw_ranges = Vec::with_capacity(chunk.len());
+        for pair in offsets.chunks_exact(2) {
+            if pair[0] >= pair[1] {
+                return Err("The raw search result has invalid source boundaries".into());
+            }
+            requests.push((pair[0], CaretAffinity::After));
+            requests.push((pair[1], CaretAffinity::Before));
+            raw_ranges.push(pair[0]..pair[1]);
         }
         let carets = bound
             .carets_at(&requests)
             .ok_or("The raw search result splits a grapheme")?;
-        for (range, pair) in chunk.iter().zip(carets.chunks_exact(2)) {
+        for (range, pair) in raw_ranges.iter().zip(carets.chunks_exact(2)) {
             let mut spans = Vec::new();
             let text = bound.text_spans();
             let start = text.partition_point(|span| span.raw.end <= range.start);
@@ -179,17 +205,33 @@ impl VerifiedRawLayout {
             let verified = bound
                 .carets_at(&requests)
                 .ok_or("A raw search line has an invalid caret")?;
-            for ((line, raw), pair) in paragraph
+            let visible_requests: Vec<_> = paragraph
                 .layout
                 .lines()
-                .zip(actual)
+                .flat_map(|line| {
+                    let range = line.text_range();
+                    [
+                        (range.start, crate::flow_projection::Affinity::After),
+                        (range.end, crate::flow_projection::Affinity::Before),
+                    ]
+                })
+                .collect();
+            let offsets = if let Some(projection) = &paragraph.raw_pre_line {
+                projection
+                    .visible_carets_at(&visible_requests)
+                    .ok_or("A raw search line splits a visible grapheme")?
+            } else {
+                visible_requests.iter().map(|(offset, _)| *offset).collect()
+            };
+            for ((raw, pair), expected) in actual
+                .into_iter()
                 .zip(verified.chunks_exact(2))
+                .zip(offsets.chunks_exact(2))
             {
-                let bytes = line.text_range();
                 if raw.start != pair[0]
                     || raw.end != pair[1]
-                    || raw.start.raw_offset != bytes.start
-                    || raw.end.raw_offset != bytes.end
+                    || raw.start.raw_offset != expected[0]
+                    || raw.end.raw_offset != expected[1]
                 {
                     return Err("A raw search line differs from its shaped text".into());
                 }
@@ -198,7 +240,14 @@ impl VerifiedRawLayout {
                 .as_ref()
                 .try_into()?;
             if blocks
-                .insert(block.key, (hash, bound.raw().len()))
+                .insert(
+                    block.key,
+                    RawBlock {
+                        hash,
+                        length: bound.raw().len(),
+                        pre_line: paragraph.raw_pre_line.clone(),
+                    },
+                )
                 .is_some()
             {
                 return Err("A raw search block has ambiguous layouts".into());
@@ -234,7 +283,7 @@ impl VerifiedRawLayout {
         {
             return Err("The raw search publication or chapter changed".into());
         }
-        for (key, (hash, length)) in &self.blocks {
+        for (key, saved) in &self.blocks {
             let block = source
                 .blocks
                 .binary_search_by_key(key, |block| block.key)
@@ -253,13 +302,25 @@ impl VerifiedRawLayout {
                 .as_ref()
                 .and_then(|s| s.bind(&block.text))
                 .ok_or("A raw search source has changed")?;
-            if bound.raw().len() != *length
-                || digest(&SHA256, bound.raw().as_bytes()).as_ref() != hash
+            if bound.raw().len() != saved.length
+                || digest(&SHA256, bound.raw().as_bytes()).as_ref() != saved.hash.as_slice()
+                || saved.pre_line.as_ref().is_some_and(|projection| {
+                    crate::source::pre_line_projection::PreLineProjection::build(bound.raw())
+                        .as_ref()
+                        != Some(projection.as_ref())
+                })
             {
                 return Err("A raw search source has changed".into());
             }
         }
         Ok(())
+    }
+
+    pub(super) fn projection(
+        &self,
+        key: usize,
+    ) -> Option<&crate::source::pre_line_projection::PreLineProjection> {
+        self.blocks.get(&key)?.pre_line.as_deref()
     }
 
     pub(super) fn contains(&self, key: usize) -> bool {

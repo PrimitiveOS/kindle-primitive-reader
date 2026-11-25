@@ -60,6 +60,38 @@ impl Probe {
         blocks
     }
 
+    fn raw_rendered_piece(
+        &self,
+        block: &crate::source::Block,
+        start: Option<usize>,
+        end: Option<usize>,
+    ) -> Option<String> {
+        let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+        let paragraph = match &self.renderer {
+            Renderer::Parley(renderer) => renderer
+                .paragraphs()
+                .iter()
+                .find(|paragraph| paragraph.key == block.key && paragraph.raw_binding.is_some()),
+            _ => None,
+        }?;
+        // Saved raw carets can outlive a change in rendering settings. Never
+        // copy source whitespace when this block is no longer displayed using
+        // the verified raw projection.
+        if !paragraph.is_verified_raw(block) {
+            return None;
+        }
+        let display = paragraph.raw_display(bound.raw());
+        let start = match start {
+            Some(at) => paragraph.raw_source_to_visible(at, SourceAffinity::After)?,
+            None => 0,
+        };
+        let end = match end {
+            Some(at) => paragraph.raw_source_to_visible(at, SourceAffinity::Before)?,
+            None => display.len(),
+        };
+        Some(display.get(start..end)?.to_owned())
+    }
+
     /// Compare text locations without collapsing distinct raw offsets. Mixed
     /// coordinates within a block require a uniquely provable projection.
     pub(crate) fn compare_text_anchors(
@@ -252,18 +284,17 @@ impl Probe {
         for index in first_index..=last_index {
             let block = ordered[index];
             let part = if raw_blocks.contains(&index) {
-                let raw = block.raw_whitespace.as_ref()?.bind(&block.text)?;
                 let from = if index == first_index {
-                    start.raw_caret.as_ref()?.raw_offset
+                    Some(start.raw_caret.as_ref()?.raw_offset)
                 } else {
-                    0
+                    None
                 };
                 let to = if index == last_index {
-                    end.raw_caret.as_ref()?.raw_offset
+                    Some(end.raw_caret.as_ref()?.raw_offset)
                 } else {
-                    raw.raw().len()
+                    None
                 };
-                raw.raw().get(from..to)?.to_owned()
+                self.raw_rendered_piece(block, from, to)?
             } else {
                 let view = self.reading_flow.view(&self.source, block).ok()?;
                 let mut text = String::new();
@@ -391,7 +422,23 @@ impl Probe {
                 if bound.raw().is_empty() {
                     continue;
                 }
-                let offset = if first { 0 } else { bound.raw().len() };
+                let paragraph = match &self.renderer {
+                    Renderer::Parley(renderer) => {
+                        renderer.paragraphs().iter().find(|paragraph| {
+                            paragraph.key == block.key && paragraph.raw_binding.is_some()
+                        })?
+                    }
+                    _ => return None,
+                };
+                if !paragraph.is_verified_raw(block) {
+                    return None;
+                }
+                let visible = paragraph.raw_display(bound.raw());
+                let offset = if first {
+                    paragraph.raw_visible_to_source(0, SourceAffinity::After)?
+                } else {
+                    paragraph.raw_visible_to_source(visible.len(), SourceAffinity::Before)?
+                };
                 let affinity = if first {
                     crate::source::raw_whitespace::CaretAffinity::After
                 } else {
@@ -466,14 +513,18 @@ impl Probe {
             (second, first)
         };
         let block = self.raw_source_block(start.canonical.block)?;
-        let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
-        let text = bound
-            .raw()
-            .get(start.caret.raw_offset..end.caret.raw_offset)?;
+        let text = self.raw_rendered_piece(
+            block,
+            Some(start.caret.raw_offset),
+            Some(end.caret.raw_offset),
+        )?;
+        if text.is_empty() {
+            return None;
+        }
         Some(RawTextSelection {
             start: start.clone(),
             end: end.clone(),
-            text: text.to_owned(),
+            text,
         })
     }
 
@@ -569,13 +620,12 @@ impl Probe {
         for index in (0..=first).rev() {
             let block = ordered[index];
             let piece = if raw_blocks.contains(&index) {
-                let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
                 let end = if index == first {
-                    selection.start.raw_caret.as_ref()?.raw_offset
+                    Some(selection.start.raw_caret.as_ref()?.raw_offset)
                 } else {
-                    bound.raw().len()
+                    None
                 };
-                bounded_context(bound.raw().get(..end)?, words, true)
+                bounded_context(&self.raw_rendered_piece(block, None, end)?, words, true)
             } else {
                 let view = self.reading_flow.view(&self.source, block).ok()?;
                 let end = if index == first {
@@ -594,13 +644,12 @@ impl Probe {
         for index in last..ordered.len() {
             let block = ordered[index];
             let piece = if raw_blocks.contains(&index) {
-                let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
                 let start = if index == last {
-                    selection.end.raw_caret.as_ref()?.raw_offset
+                    Some(selection.end.raw_caret.as_ref()?.raw_offset)
                 } else {
-                    0
+                    None
                 };
-                bounded_context(bound.raw().get(start..)?, words, false)
+                bounded_context(&self.raw_rendered_piece(block, start, None)?, words, false)
             } else {
                 let view = self.reading_flow.view(&self.source, block).ok()?;
                 let start = if index == last {
@@ -738,12 +787,19 @@ impl Probe {
                         return None;
                     }
                     let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
-                    let word = word_range(bound.raw(), cluster.text_range().start)?;
+                    let word = word_range(
+                        paragraph.raw_display(bound.raw()),
+                        cluster.text_range().start,
+                    )?;
                     use crate::source::raw_whitespace::CaretAffinity;
+                    let raw_start =
+                        paragraph.raw_visible_to_source(word.start, SourceAffinity::After)?;
+                    let raw_end =
+                        paragraph.raw_visible_to_source(word.end, SourceAffinity::Before)?;
                     let start =
-                        self.raw_whitespace_anchor(block.key, word.start, CaretAffinity::After)?;
+                        self.raw_whitespace_anchor(block.key, raw_start, CaretAffinity::After)?;
                     let end =
-                        self.raw_whitespace_anchor(block.key, word.end, CaretAffinity::Before)?;
+                        self.raw_whitespace_anchor(block.key, raw_end, CaretAffinity::Before)?;
                     let attach = |raw: crate::source::raw_whitespace::RawAnchor| {
                         let mut anchor = raw.canonical;
                         anchor.raw_caret = Some(raw.caret);
@@ -859,8 +915,8 @@ impl Probe {
                             crate::source::raw_whitespace::CaretAffinity::After
                         }
                     };
-                    let raw =
-                        self.raw_whitespace_anchor(paragraph.key, cursor.index(), raw_affinity)?;
+                    let offset = paragraph.raw_visible_to_source(cursor.index(), affinity)?;
+                    let raw = self.raw_whitespace_anchor(paragraph.key, offset, raw_affinity)?;
                     let mut anchor = raw.canonical;
                     anchor.raw_caret = Some(raw.caret);
                     return Some(anchor);
@@ -1099,8 +1155,24 @@ impl Probe {
                 else {
                     return Vec::new();
                 };
-                let from = if index == first { start } else { 0 };
-                let to = if index == last { end } else { raw.raw().len() };
+                let from = if index == first {
+                    let Some(at) = paragraph.raw_source_to_visible(start, SourceAffinity::After)
+                    else {
+                        return Vec::new();
+                    };
+                    at
+                } else {
+                    0
+                };
+                let to = if index == last {
+                    let Some(at) = paragraph.raw_source_to_visible(end, SourceAffinity::Before)
+                    else {
+                        return Vec::new();
+                    };
+                    at
+                } else {
+                    paragraph.raw_display(raw.raw()).len()
+                };
                 if from < to {
                     geometry.append(from..to, &page, self.settings, &columns, &mut rects);
                 }

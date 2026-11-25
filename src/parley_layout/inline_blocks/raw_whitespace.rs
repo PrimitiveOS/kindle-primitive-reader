@@ -22,6 +22,9 @@ use std::ops::Range;
 
 const MAX_RAW_LINES: usize = 4096;
 const MAX_SELECTION_RECTS: usize = 4096;
+// The bounded source-mapped collapsing projection is active locally;
+// unsupported or ambiguous cases retain canonical layout.
+const EXTENDED_PRE_LINE_ENABLED: bool = true;
 
 pub(in crate::parley_layout) struct Plan {
     pub(in crate::parley_layout) text: InlineText,
@@ -30,6 +33,8 @@ pub(in crate::parley_layout) struct Plan {
     block: usize,
     owner: usize,
     white_space: WhiteSpace,
+    pre_line_projection:
+        Option<std::sync::Arc<crate::source::pre_line_projection::PreLineProjection>>,
 }
 
 pub(in crate::parley_layout) struct RawLine {
@@ -45,6 +50,8 @@ pub(in crate::parley_layout) struct Prepared {
     pub(in crate::parley_layout) layout: Layout<PaintBrush>,
     pub(in crate::parley_layout) lines: Vec<RawLine>,
     binding: SourceBinding,
+    pre_line_projection:
+        Option<std::sync::Arc<crate::source::pre_line_projection::PreLineProjection>>,
 }
 
 fn supported_raw_mode(style: &Style) -> bool {
@@ -136,9 +143,22 @@ impl Plan {
             }
         }
         let raw = bound.raw();
-        if owner_style.white_space == WhiteSpace::PreLine && !pre_line_identity(raw) {
-            return None;
-        }
+        let pre_line_projection =
+            if owner_style.white_space == WhiteSpace::PreLine && !pre_line_identity(raw) {
+                if !EXTENDED_PRE_LINE_ENABLED || bound.has_explicit_breaks() {
+                    return None;
+                }
+                let projection = crate::source::pre_line_projection::PreLineProjection::build(raw)?;
+                if projection.text() == block.text {
+                    return None;
+                }
+                Some(std::sync::Arc::new(projection))
+            } else {
+                None
+            };
+        let display = pre_line_projection
+            .as_ref()
+            .map_or(raw, |projection| projection.text());
         let mut runs = Vec::with_capacity(bound.style_runs().len());
         let mut previous_raw = 0;
         for raw_run in bound.style_runs() {
@@ -190,11 +210,34 @@ impl Plan {
         if previous_raw != raw.len() || runs.is_empty() {
             return None;
         }
+        if let Some(projection) = &pre_line_projection {
+            let mut projected_runs = Vec::new();
+            for (bytes, element) in projection.style_spans(bound.style_runs())? {
+                let template = runs.iter().find(|run| run.element == element)?;
+                projected_runs.push(StyledText {
+                    bytes,
+                    element,
+                    language: template.language,
+                    hyphenation_language: template.hyphenation_language,
+                    preserve_whitespace: template.preserve_whitespace,
+                });
+            }
+            runs = projected_runs;
+        }
         let mut segments = Vec::new();
         for span in bound.text_spans() {
+            let offset = if let Some(projection) = &pre_line_projection {
+                let fragments = projection.visible_fragments(span.raw.clone())?;
+                if fragments.len() != 1 || fragments[0].len() != span.canonical.len() {
+                    return None;
+                }
+                fragments[0].start
+            } else {
+                span.raw.start
+            };
             segments.push(Segment {
                 source: span.canonical.clone(),
-                offset: span.raw.start,
+                offset,
             });
         }
         for gap in bound.gaps() {
@@ -207,13 +250,21 @@ impl Plan {
             if block.text.get(gap.canonical.clone())? != " " {
                 return None;
             }
-            let raw_gap = raw.get(gap.raw.clone())?;
-            let whitespace = raw_gap
-                .bytes()
-                .position(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | 0x0c))?;
+            let offset = if let Some(projection) = &pre_line_projection {
+                projection
+                    .visible_fragments(gap.raw.clone())?
+                    .first()?
+                    .start
+            } else {
+                let raw_gap = raw.get(gap.raw.clone())?;
+                let whitespace = raw_gap
+                    .bytes()
+                    .position(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | 0x0c))?;
+                gap.raw.start.checked_add(whitespace)?
+            };
             segments.push(Segment {
                 source: gap.canonical.clone(),
-                offset: gap.raw.start.checked_add(whitespace)?,
+                offset,
             });
         }
         segments.sort_by_key(|segment| segment.source.start);
@@ -222,7 +273,7 @@ impl Plan {
         for segment in &segments {
             let length = segment.source.len();
             let end = segment.offset.checked_add(length)?;
-            let projected = raw.get(segment.offset..end)?;
+            let projected = display.get(segment.offset..end)?;
             let canonical = block.text.get(segment.source.clone())?;
             let whitespace_alias = canonical == " "
                 && projected.len() == 1
@@ -241,7 +292,7 @@ impl Plan {
         }
         Some(Self {
             text: InlineText {
-                text: raw.to_owned(),
+                text: display.to_owned(),
                 segments,
                 boxes: Vec::new(),
                 generated: true,
@@ -252,6 +303,7 @@ impl Plan {
             block: block.key,
             owner: block.element,
             white_space: styles.get(block.element)?.white_space,
+            pre_line_projection,
         })
     }
 
@@ -278,7 +330,11 @@ impl Plan {
             || style.white_space != self.white_space
             || style.generated.is_some()
             || style.text_transform != TextTransform::None
-            || bound.raw() != self.text.text.as_str()
+            || self
+                .pre_line_projection
+                .as_ref()
+                .map_or(bound.raw(), |projection| projection.text())
+                != self.text.text.as_str()
         {
             return None;
         }
@@ -300,7 +356,7 @@ impl Plan {
             None,
         );
         if !ruby.is_empty()
-            || layout.text_len() != bound.raw().len()
+            || layout.text_len() != self.text.text.len()
             || layout.len() > MAX_RAW_LINES
         {
             return None;
@@ -315,7 +371,7 @@ impl Plan {
             let metrics = line.metrics();
             if range.start != previous_end
                 || range.end < range.start
-                || range.end > bound.raw().len()
+                || range.end > self.text.text.len()
                 || previous_start == Some(range.start)
                 || !metrics.block_min_coord.is_finite()
                 || !metrics.block_max_coord.is_finite()
@@ -328,12 +384,31 @@ impl Plan {
             previous_start = Some(range.start);
             previous_top = Some(metrics.block_min_coord);
             previous_end = range.end;
-            requests.push((range.start, CaretAffinity::After));
-            requests.push((range.end, CaretAffinity::Before));
             ranges.push((range, metrics.block_min_coord, metrics.block_max_coord));
         }
-        if previous_end != bound.raw().len() {
+        if previous_end != self.text.text.len() {
             return None;
+        }
+        let visible_requests: Vec<_> = ranges
+            .iter()
+            .flat_map(|(range, _, _)| {
+                [
+                    (range.start, crate::flow_projection::Affinity::After),
+                    (range.end, crate::flow_projection::Affinity::Before),
+                ]
+            })
+            .collect();
+        let offsets = if let Some(projection) = &self.pre_line_projection {
+            projection.visible_carets_at(&visible_requests)?
+        } else {
+            visible_requests.iter().map(|(offset, _)| *offset).collect()
+        };
+        for pair in offsets.chunks_exact(2) {
+            if pair[0] > pair[1] {
+                return None;
+            }
+            requests.push((pair[0], CaretAffinity::After));
+            requests.push((pair[1], CaretAffinity::Before));
         }
         let mut carets = bound.carets_at(&requests)?.into_iter();
         let mut lines = Vec::with_capacity(ranges.len());
@@ -351,6 +426,7 @@ impl Plan {
             layout,
             lines,
             binding: self.binding,
+            pre_line_projection: self.pre_line_projection,
         })
     }
 }
@@ -366,9 +442,16 @@ impl Prepared {
         InlineText,
         Vec<crate::RawLinePosition>,
         SourceBinding,
+        Option<std::sync::Arc<crate::source::pre_line_projection::PreLineProjection>>,
     )> {
         let lines = self.page_lines(block)?;
-        Some((self.layout, self.text, lines, self.binding))
+        Some((
+            self.layout,
+            self.text,
+            lines,
+            self.binding,
+            self.pre_line_projection,
+        ))
     }
 
     /// Search a verified raw-shaped block using the same folded literal query
@@ -433,16 +516,35 @@ impl Prepared {
             return None;
         }
         let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
-        if self.text.text.as_str() != bound.raw() || self.layout.text_len() != bound.raw().len() {
+        let visible = self
+            .pre_line_projection
+            .as_ref()
+            .map_or(bound.raw(), |projection| projection.text());
+        if self.text.text.as_str() != visible || self.layout.text_len() != visible.len() {
             return None;
         }
-        let mut requests = Vec::with_capacity(self.lines.len().checked_mul(2)?);
-        for line in &self.lines {
-            if line.start.raw_offset != line.bytes.start || line.end.raw_offset != line.bytes.end {
+        let visible_requests: Vec<_> = self
+            .lines
+            .iter()
+            .flat_map(|line| {
+                [
+                    (line.bytes.start, crate::flow_projection::Affinity::After),
+                    (line.bytes.end, crate::flow_projection::Affinity::Before),
+                ]
+            })
+            .collect();
+        let offsets = if let Some(projection) = &self.pre_line_projection {
+            projection.visible_carets_at(&visible_requests)?
+        } else {
+            visible_requests.iter().map(|(offset, _)| *offset).collect()
+        };
+        let mut requests = Vec::with_capacity(offsets.len());
+        for (line, pair) in self.lines.iter().zip(offsets.chunks_exact(2)) {
+            if line.start.raw_offset != pair[0] || line.end.raw_offset != pair[1] {
                 return None;
             }
-            requests.push((line.bytes.start, CaretAffinity::After));
-            requests.push((line.bytes.end, CaretAffinity::Before));
+            requests.push((pair[0], CaretAffinity::After));
+            requests.push((pair[1], CaretAffinity::Before));
         }
         let mut verified = bound.carets_at(&requests)?.into_iter();
         let mut positions = Vec::with_capacity(self.lines.len());

@@ -231,9 +231,14 @@ impl NearbySearch {
                     } else {
                         None
                     };
-                    let rendered = raw
+                    let projection = text
+                        .raw_layout
                         .as_ref()
-                        .map_or_else(|| view.text(), |bound| bound.raw());
+                        .and_then(|layout| layout.projection(block.key));
+                    let rendered = raw.as_ref().map_or_else(
+                        || view.text(),
+                        |bound| projection.map_or(bound.raw(), |projection| projection.text()),
+                    );
                     let mut left = 0;
                     let mut right = rendered.len();
                     if let Some((at, anchor)) = boundary {
@@ -252,6 +257,7 @@ impl NearbySearch {
                                 block,
                                 &view,
                                 raw.as_ref(),
+                                projection,
                                 affinity,
                             )?;
                             if previous {
@@ -285,6 +291,7 @@ impl NearbySearch {
                                 block,
                                 &view,
                                 raw.as_ref(),
+                                projection,
                                 affinity,
                             )?;
                             if previous && span.end <= offset || !previous && span.start >= offset {
@@ -298,6 +305,7 @@ impl NearbySearch {
                                 &source,
                                 block,
                                 std::slice::from_ref(&span),
+                                projection,
                             )?
                             .pop()
                             .ok_or("The raw search result changed")?
@@ -364,6 +372,7 @@ fn boundary_offset(
     block: &crate::source::Block,
     view: &crate::flow_projection::Projection<'_>,
     raw: Option<&crate::source::raw_whitespace::Bound<'_>>,
+    projection: Option<&crate::source::pre_line_projection::PreLineProjection>,
     affinity: crate::flow_projection::Affinity,
 ) -> Result<usize> {
     if anchor.illustration.is_some() {
@@ -377,15 +386,24 @@ fn boundary_offset(
         bound
             .validate_caret(caret)
             .ok_or("The raw search boundary is invalid")?;
-        return Ok(caret.raw_offset);
+        return projection
+            .map_or(Some(caret.raw_offset), |projection| {
+                projection.raw_to_visible(caret.raw_offset, affinity)
+            })
+            .ok_or_else(|| "The raw search boundary is not visible".into());
     }
     let offset = source
         .project_offset(block, anchor.revision, anchor.offset)
         .ok_or("The search boundary is unavailable")?;
     if let Some(bound) = raw {
-        bound
+        let raw = bound
             .canonical_to_raw(offset, affinity)
-            .ok_or_else(|| "The search boundary cannot be mapped to raw text".into())
+            .ok_or("The search boundary cannot be mapped to raw text")?;
+        projection
+            .map_or(Some(raw), |projection| {
+                projection.raw_to_visible(raw, affinity)
+            })
+            .ok_or_else(|| "The search boundary cannot be mapped to visible text".into())
     } else {
         view.project_nearest(offset, affinity)
             .ok_or_else(|| "The search boundary cannot be mapped to rendered text".into())

@@ -311,6 +311,7 @@ pub(crate) struct Paragraph {
     pub(crate) inline_text: Option<inline_blocks::InlineText>,
     /// Present only for an explicitly installed, source-bound raw layout.
     pub(crate) raw_binding: Option<crate::flow_projection::SourceBinding>,
+    pub(crate) raw_pre_line: Option<Arc<crate::source::pre_line_projection::PreLineProjection>>,
     pub(crate) joined_note: Option<Arc<note_inline::JoinedNote>>,
 }
 
@@ -329,10 +330,51 @@ impl Paragraph {
         else {
             return false;
         };
+        let expected = match &self.raw_pre_line {
+            Some(projection) => {
+                if crate::source::pre_line_projection::PreLineProjection::build(raw.raw()).as_ref()
+                    != Some(projection.as_ref())
+                {
+                    return false;
+                }
+                projection.text()
+            }
+            None => raw.raw(),
+        };
         self.key == block.key
             && binding.matches(block)
-            && text.text == raw.raw()
-            && self.layout.text_len() == raw.raw().len()
+            && text.text == expected
+            && self.layout.text_len() == expected.len()
+    }
+
+    pub(crate) fn raw_visible_to_source(
+        &self,
+        offset: usize,
+        affinity: crate::flow_projection::Affinity,
+    ) -> Option<usize> {
+        self.raw_pre_line
+            .as_ref()
+            .map_or(Some(offset), |projection| {
+                projection.visible_to_raw(offset, affinity)
+            })
+    }
+
+    pub(crate) fn raw_source_to_visible(
+        &self,
+        offset: usize,
+        affinity: crate::flow_projection::Affinity,
+    ) -> Option<usize> {
+        self.raw_pre_line
+            .as_ref()
+            .map_or(Some(offset), |projection| {
+                projection.raw_to_visible(offset, affinity)
+            })
+    }
+
+    pub(crate) fn raw_display<'a>(&'a self, raw: &'a str) -> &'a str {
+        self.raw_pre_line
+            .as_ref()
+            .map_or(raw, |projection| projection.text())
     }
 
     pub(crate) fn source_offset(
@@ -1677,131 +1719,133 @@ impl ParleyChapter {
                 let mut raw_text = None;
                 let mut raw_lines = None;
                 let mut raw_binding = None;
-                let (layout, ruby) = if let Some((layout, text, positions, binding)) = raw_candidate
-                {
-                    raw_text = Some(text);
-                    raw_lines = Some(positions);
-                    raw_binding = Some(binding);
-                    (layout, Vec::new())
-                } else if let Some(table) = &mut tabular {
-                    let generated: Vec<_> = block
-                        .generated
-                        .iter()
-                        .flat_map(|run| {
-                            table.text.layout_spans(&run.bytes).map(|bytes| {
-                                crate::book_style::pseudo::Run {
+                let mut raw_pre_line = None;
+                let (layout, ruby) =
+                    if let Some((layout, text, positions, binding, pre_line)) = raw_candidate {
+                        raw_text = Some(text);
+                        raw_lines = Some(positions);
+                        raw_binding = Some(binding);
+                        raw_pre_line = pre_line;
+                        (layout, Vec::new())
+                    } else if let Some(table) = &mut tabular {
+                        let generated: Vec<_> = block
+                            .generated
+                            .iter()
+                            .flat_map(|run| {
+                                table.text.layout_spans(&run.bytes).map(|bytes| {
+                                    crate::book_style::pseudo::Run {
+                                        bytes,
+                                        style: run.style,
+                                        host: run.host,
+                                    }
+                                })
+                            })
+                            .collect();
+                        let mut outer = block.text_fragment(
+                            block.element,
+                            &table.text.text,
+                            std::mem::take(&mut table.runs),
+                        );
+                        outer.generated = &generated;
+                        layout_with_images(
+                            &mut context,
+                            &mut fonts,
+                            &outer,
+                            width,
+                            settings,
+                            styles,
+                            std::slice::from_ref(&table.item),
+                            indent,
+                            user_rules,
+                            contour,
+                        )
+                    } else if let Some(boxed) = &mut plan {
+                        let mut outer = block.text_fragment(
+                            block.element,
+                            &boxed.text.text,
+                            std::mem::take(&mut boxed.runs),
+                        );
+                        outer.first_letter = block.first_letter.as_ref().and_then(|run| {
+                            boxed.text.layout_spans(&run.bytes).next().map(|bytes| {
+                                crate::book_style::pseudo::LetterRun {
                                     bytes,
-                                    style: run.style,
-                                    host: run.host,
+                                    ..run.clone()
                                 }
                             })
-                        })
-                        .collect();
-                    let mut outer = block.text_fragment(
-                        block.element,
-                        &table.text.text,
-                        std::mem::take(&mut table.runs),
-                    );
-                    outer.generated = &generated;
-                    layout_with_images(
-                        &mut context,
-                        &mut fonts,
-                        &outer,
-                        width,
-                        settings,
-                        styles,
-                        std::slice::from_ref(&table.item),
-                        indent,
-                        user_rules,
-                        contour,
-                    )
-                } else if let Some(boxed) = &mut plan {
-                    let mut outer = block.text_fragment(
-                        block.element,
-                        &boxed.text.text,
-                        std::mem::take(&mut boxed.runs),
-                    );
-                    outer.first_letter = block.first_letter.as_ref().and_then(|run| {
-                        boxed.text.layout_spans(&run.bytes).next().map(|bytes| {
-                            crate::book_style::pseudo::LetterRun {
-                                bytes,
-                                ..run.clone()
-                            }
-                        })
-                    });
-                    remaining_inline_boxes -= boxed.items.len();
-                    layout_with_images(
-                        &mut context,
-                        &mut fonts,
-                        &outer,
-                        text_width - indent.common,
-                        settings,
-                        styles,
-                        &boxed.items,
-                        indent,
-                        user_rules,
-                        contour,
-                    )
-                } else if let Some(generated) = &mut generated {
-                    let mut outer = block.text_fragment(
-                        block.element,
-                        &generated.text.text,
-                        std::mem::take(&mut generated.runs),
-                    );
-                    outer.generated = &generated.typography;
-                    outer.first_line = block.first_line;
-                    outer.first_letter = block.first_letter.as_ref().and_then(|run| {
-                        generated.text.layout_spans(&run.bytes).next().map(|bytes| {
-                            crate::book_style::pseudo::LetterRun {
-                                bytes,
-                                ..run.clone()
-                            }
-                        })
-                    });
-                    layout_with_images(
-                        &mut context,
-                        &mut fonts,
-                        &outer,
-                        text_width - indent.common,
-                        settings,
-                        styles,
-                        &[],
-                        indent,
-                        user_rules,
-                        contour,
-                    )
-                } else if let Some(initial) = &mut initial {
-                    let outer = block.text_fragment(
-                        block.element,
-                        &initial.text.text,
-                        std::mem::take(&mut initial.runs),
-                    );
-                    layout_with_images(
-                        &mut context,
-                        &mut fonts,
-                        &outer,
-                        width,
-                        settings,
-                        styles,
-                        &[],
-                        indent,
-                        user_rules,
-                        Some(initial.contour),
-                    )
-                } else {
-                    layout_with_images(
-                        &mut context,
-                        &mut fonts,
-                        block,
-                        text_width - indent.common,
-                        settings,
-                        styles,
-                        &inline_boxes,
-                        indent,
-                        user_rules,
-                        contour,
-                    )
-                };
+                        });
+                        remaining_inline_boxes -= boxed.items.len();
+                        layout_with_images(
+                            &mut context,
+                            &mut fonts,
+                            &outer,
+                            text_width - indent.common,
+                            settings,
+                            styles,
+                            &boxed.items,
+                            indent,
+                            user_rules,
+                            contour,
+                        )
+                    } else if let Some(generated) = &mut generated {
+                        let mut outer = block.text_fragment(
+                            block.element,
+                            &generated.text.text,
+                            std::mem::take(&mut generated.runs),
+                        );
+                        outer.generated = &generated.typography;
+                        outer.first_line = block.first_line;
+                        outer.first_letter = block.first_letter.as_ref().and_then(|run| {
+                            generated.text.layout_spans(&run.bytes).next().map(|bytes| {
+                                crate::book_style::pseudo::LetterRun {
+                                    bytes,
+                                    ..run.clone()
+                                }
+                            })
+                        });
+                        layout_with_images(
+                            &mut context,
+                            &mut fonts,
+                            &outer,
+                            text_width - indent.common,
+                            settings,
+                            styles,
+                            &[],
+                            indent,
+                            user_rules,
+                            contour,
+                        )
+                    } else if let Some(initial) = &mut initial {
+                        let outer = block.text_fragment(
+                            block.element,
+                            &initial.text.text,
+                            std::mem::take(&mut initial.runs),
+                        );
+                        layout_with_images(
+                            &mut context,
+                            &mut fonts,
+                            &outer,
+                            width,
+                            settings,
+                            styles,
+                            &[],
+                            indent,
+                            user_rules,
+                            Some(initial.contour),
+                        )
+                    } else {
+                        layout_with_images(
+                            &mut context,
+                            &mut fonts,
+                            block,
+                            text_width - indent.common,
+                            settings,
+                            styles,
+                            &inline_boxes,
+                            indent,
+                            user_rules,
+                            contour,
+                        )
+                    };
                 let mut inline_text = raw_text.or_else(|| {
                     plan.map(|boxed| boxed.text)
                         .or_else(|| generated.map(|generated| generated.text))
@@ -2054,6 +2098,7 @@ impl ParleyChapter {
                     },
                     inline_text,
                     raw_binding,
+                    raw_pre_line,
                     joined_note: note_layout.as_ref().map(Arc::clone),
                 });
             }
@@ -3558,7 +3603,7 @@ fn virtual_raw_paragraph(
         LineIndent::default(),
         rules,
     )?;
-    let (layout, text, positions, binding) = prepared.into_page_parts(block)?;
+    let (layout, text, positions, binding, raw_pre_line) = prepared.into_page_parts(block)?;
     if layout.len() == 0 || layout.len() != positions.len() {
         return None;
     }
@@ -3608,6 +3653,7 @@ fn virtual_raw_paragraph(
             flow: None,
             inline_text: Some(text),
             raw_binding: Some(binding),
+            raw_pre_line,
             joined_note: None,
         },
         lines,

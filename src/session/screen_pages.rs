@@ -38,6 +38,11 @@ impl ScreenPageSources {
     }
 
     pub(super) fn read_paths(book: &Path, fonts: &[PathBuf]) -> Option<Self> {
+        // A folder EPUB is opened through its mimetype marker; a stamp of that
+        // single file cannot verify its other independently mutable members.
+        if crate::epub_members::is_folder_book(book) {
+            return None;
+        }
         Some(Self {
             book: FileStamp::read(book)?,
             fonts: fonts

@@ -85,6 +85,7 @@ mod numeric_editor;
 mod ocr_language_names;
 mod online_panel;
 mod overview_bookmarks;
+mod page_bookmark_navigation;
 mod page_overview;
 pub(crate) mod page_turn_settings;
 #[cfg(test)]
@@ -1031,6 +1032,8 @@ pub struct Reader {
     overview_raw: Option<page_overview::RawVerification>,
     book_map_raw_history: Option<reflow_book_map_history::Verification>,
     book_map_raw_counts: Option<reflow_book_map_raw_counts::Verification>,
+    page_bookmark_search: Option<page_bookmark_navigation::Search>,
+    page_bookmark_worker_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     skim: Option<skim::Session>,
     staged_viewport: Option<(
         primitive_app::viewport::Viewport,
@@ -1301,6 +1304,10 @@ impl Reader {
             overview_raw: None,
             book_map_raw_history: None,
             book_map_raw_counts: None,
+            page_bookmark_search: None,
+            page_bookmark_worker_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                false,
+            )),
             skim: None,
             library_viewport: crate::session::ReadingViewport::PORTRAIT,
             staged_viewport: None,
@@ -2107,6 +2114,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.page_bookmark_search = None;
         self.bookmark_browser.clear_confirmation();
         self.menu_search.clear_overlays();
         self.embedded_font_report = None;
@@ -4779,7 +4787,7 @@ impl Reader {
             Action::SetMenuActivation(option) => self.change_menu_activation(option)?,
             Action::Chapter(direction) => self.jump_chapter(direction)?,
             Action::SavedMark(direction) => self.jump_saved_mark(direction, false)?,
-            Action::PageBookmark(direction) => self.jump_page_bookmark(direction)?,
+            Action::PageBookmark(direction) => self.start_page_bookmark_search(direction)?,
             Action::SavedMarkEdge(direction) => self.jump_saved_mark(direction, true)?,
             Action::LatestSavedMark => {
                 let action = self.latest_bookmark_action().ok_or("No saved marks")?;
@@ -10072,6 +10080,7 @@ impl App for Reader {
         self.draw_annotation_exchange_confirmation(canvas);
         self.draw_menu_search_preview(canvas);
         self.draw_bookmark_confirmation(canvas);
+        self.draw_page_bookmark_search(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
@@ -10116,6 +10125,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.page_bookmark_search_input(input) {
+            return change;
+        }
         if let Some(change) = self.quickstart_input(input) {
             return change;
         }
@@ -10249,6 +10261,9 @@ impl App for Reader {
     }
 
     fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        if self.page_bookmark_search.is_some() {
+            return Change::None;
+        }
         if self.quickstart.is_some() {
             return Change::None;
         }
@@ -10382,6 +10397,14 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if input == Input::Sleep {
+            self.page_bookmark_search = None;
+        }
+        if !matches!(input, Input::Sleep | Input::Wake)
+            && let Some(change) = self.page_bookmark_search_input(input)
+        {
+            return change;
+        }
         match input {
             Input::Sleep => self.quote_repair.sleep(),
             Input::Wake => self.quote_repair.wake(),
@@ -11247,6 +11270,11 @@ impl App for Reader {
                     .as_ref()
                     .and_then(reflow_book_map_raw_counts::Verification::deadline),
             )
+            .chain(
+                self.page_bookmark_search
+                    .as_ref()
+                    .map(page_bookmark_navigation::Search::deadline),
+            )
             .chain(self.spelling_lookup.as_ref().map(|job| job.deadline))
             .chain(self.cjk_selection_lookup.as_ref().map(|job| job.deadline))
             .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
@@ -11277,6 +11305,9 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if let Some(change) = self.poll_page_bookmark_search(now) {
+            return change;
+        }
         if let Some(change) = self.poll_book_map_raw_counts(now) {
             return change;
         }
@@ -11524,6 +11555,7 @@ impl App for Reader {
         self.overview_raw = None;
         self.book_map_raw_history = None;
         self.book_map_raw_counts = None;
+        self.page_bookmark_search = None;
         self.embedded_font_report = None;
         self.eager_typography.cancel();
         self.screen_page_worker.cancel();
@@ -11544,6 +11576,7 @@ impl App for Reader {
         self.overview_raw = None;
         self.book_map_raw_history = None;
         self.book_map_raw_counts = None;
+        self.page_bookmark_search = None;
         self.gestures.multiswipes.clear_contact();
         self.finish_interrupted_scroll();
         self.embedded_font_report = None;

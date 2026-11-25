@@ -2,9 +2,11 @@
 
 The local Reader build enables a bounded horizontal layout for simple source
 blocks with `white-space: pre`, `pre-wrap` or `break-spaces`. A bounded
-`pre-line` subset is also supported when the raw text has no tabs, carriage
-returns, form feeds, repeated or line-edge spaces, or final newline; more
-complex collapsing retains the canonical fallback. It preserves
+`pre-line` content also uses a bounded source-mapped collapse projection for
+horizontal whitespace and line breaks. Unsupported mappings, mixed style owners
+within one collapsed run, explicit `<br>` elements in collapsed projections and
+unverifiable boundaries retain the canonical fallback. When the projected text
+already matches canonical text, Reader keeps the canonical layout and anchors. It preserves
 verified spaces, tabs and line breaks while keeping existing canonical source
 identities. This implementation has not yet been behaviorally tested in the
 simulator or on Kindle and must not be treated as validated or released.
@@ -22,7 +24,8 @@ is used for content outside these bounds, unsupported projections, images,
 ruby, generated content, unsupported inline styles, transforms, bidi controls, joined
 notes and chapters with detected in-page note targets. The in-page-note setting alone
 does not disable raw layout in chapters without note targets. A layout whose source or ordered font stack cannot
-be stamped also uses the canonical path. Folder books retain canonical search.
+be stamped also uses the canonical path. Folder-backed EPUBs use canonical layout
+and search because their mimetype marker cannot verify the other folder members.
 
 The layout-only source map may represent one normalized space with one byte of
 its original ASCII whitespace gap, including a tab or newline. The raw mapper,

@@ -235,6 +235,12 @@ pub(crate) struct SearchLayoutRecipe {
 }
 
 impl SearchLayoutRecipe {
+    pub(crate) fn has_verified_sources(&self) -> bool {
+        !crate::epub_members::is_folder_book(&self.book)
+            && self.foreground_sources.is_some()
+            && self.foreground_sources == self.current_sources
+    }
+
     pub(crate) fn chapter(
         &self,
         index: usize,

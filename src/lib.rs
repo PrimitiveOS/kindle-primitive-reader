@@ -2758,6 +2758,16 @@ impl Probe {
             canonical: canonical.clone(),
             caret: caret.clone(),
         })?;
+        if let Renderer::Parley(renderer) = &self.renderer {
+            let paragraph = renderer.paragraphs().iter().find(|paragraph| {
+                paragraph.key == anchor.block && paragraph.raw_binding.is_some()
+            })?;
+            let affinity = match caret.affinity {
+                CaretAffinity::Before => flow_projection::Affinity::Before,
+                CaretAffinity::After => flow_projection::Affinity::After,
+            };
+            paragraph.raw_source_to_visible(caret.raw_offset, affinity)?;
+        }
         let mut before = None;
         let mut after = None;
         for line in self.lines.iter().filter(|line| line.block == anchor.block) {

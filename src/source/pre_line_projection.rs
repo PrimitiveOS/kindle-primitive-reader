@@ -11,14 +11,14 @@ use crate::flow_projection::Affinity;
 const MAX_BYTES: usize = 64 * 1024;
 const MAX_SEGMENTS: usize = 4096;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Segment {
     visible: Range<usize>,
     raw: Range<usize>,
     exact: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PreLineProjection {
     display: String,
     segments: Vec<Segment>,
@@ -114,6 +114,98 @@ impl PreLineProjection {
         })
     }
 
+    /// Project text ownership without inventing a style across a collapsed
+    /// run. If collapsed bytes have different owners, use canonical fallback.
+    pub(crate) fn style_spans(
+        &self,
+        owners: &[super::raw_whitespace::RawStyleRun],
+    ) -> Option<Vec<(Range<usize>, usize)>> {
+        let mut result: Vec<(Range<usize>, usize)> = Vec::new();
+        for segment in &self.segments {
+            let mut covered = segment.raw.start;
+            let first = owners.partition_point(|run| run.raw.end <= covered);
+            let mut pieces = 0usize;
+            for owner in owners[first..]
+                .iter()
+                .take_while(|run| run.raw.start < segment.raw.end)
+            {
+                let start = owner.raw.start.max(segment.raw.start);
+                let end = owner.raw.end.min(segment.raw.end);
+                if start != covered || start >= end {
+                    return None;
+                }
+                let visible = if segment.exact {
+                    (segment.visible.start + start - segment.raw.start)
+                        ..(segment.visible.start + end - segment.raw.start)
+                } else {
+                    if start != segment.raw.start || end != segment.raw.end {
+                        return None;
+                    }
+                    segment.visible.clone()
+                };
+                if let Some((prior, element)) = result.last_mut()
+                    && *element == owner.element
+                    && prior.end == visible.start
+                {
+                    prior.end = visible.end;
+                } else {
+                    result.push((visible, owner.element));
+                }
+                covered = end;
+                pieces += 1;
+                if result.len() > MAX_SEGMENTS {
+                    return None;
+                }
+            }
+            if covered != segment.raw.end || pieces == 0 {
+                return None;
+            }
+        }
+        Some(result)
+    }
+
+    /// Map a raw source range to its visible fragments. Removed edge spaces
+    /// contribute nothing; collapsed runs contribute their visible space only
+    /// when the raw range covers the whole run.
+    pub(crate) fn visible_fragments(&self, raw: Range<usize>) -> Option<Vec<Range<usize>>> {
+        if raw.start > raw.end || raw.end > self.raw_len {
+            return None;
+        }
+        let first = self
+            .segments
+            .partition_point(|segment| segment.raw.end <= raw.start);
+        let mut result = Vec::new();
+        for segment in self.segments[first..]
+            .iter()
+            .take_while(|segment| segment.raw.start < raw.end)
+        {
+            let start = segment.raw.start.max(raw.start);
+            let end = segment.raw.end.min(raw.end);
+            if start >= end {
+                continue;
+            }
+            let visible = if segment.exact {
+                (segment.visible.start + start - segment.raw.start)
+                    ..(segment.visible.start + end - segment.raw.start)
+            } else {
+                if start != segment.raw.start || end != segment.raw.end {
+                    return None;
+                }
+                segment.visible.clone()
+            };
+            if !self.display.is_char_boundary(visible.start)
+                || !self.display.is_char_boundary(visible.end)
+            {
+                return None;
+            }
+            result.push(visible);
+            if result.len() > MAX_SEGMENTS {
+                return None;
+            }
+        }
+        Some(result)
+    }
+
     pub(crate) fn text(&self) -> &str {
         &self.display
     }
@@ -121,6 +213,31 @@ impl PreLineProjection {
     /// Convert a visible caret to a raw source boundary. At removed space,
     /// affinity selects the corresponding edge instead of guessing inside it.
     pub(crate) fn visible_to_raw(&self, offset: usize, affinity: Affinity) -> Option<usize> {
+        self.visible_carets_at(&[(offset, affinity)])?
+            .into_iter()
+            .next()
+    }
+
+    /// Verify a bounded batch with one grapheme scan before mapping offsets.
+    pub(crate) fn visible_carets_at(&self, requests: &[(usize, Affinity)]) -> Option<Vec<usize>> {
+        if requests.len() > 8192 {
+            return None;
+        }
+        let boundaries: Vec<_> = icu_segmenter::GraphemeClusterSegmenter::new()
+            .segment_str(&self.display)
+            .collect();
+        requests
+            .iter()
+            .map(|&(offset, affinity)| {
+                if boundaries.binary_search(&offset).is_err() {
+                    return None;
+                }
+                self.visible_to_raw_unchecked(offset, affinity)
+            })
+            .collect()
+    }
+
+    fn visible_to_raw_unchecked(&self, offset: usize, affinity: Affinity) -> Option<usize> {
         if !self.display.is_char_boundary(offset) {
             return None;
         }
@@ -187,6 +304,10 @@ impl PreLineProjection {
                 }
             }
         }
-        result
+        result.filter(|&visible| {
+            icu_segmenter::GraphemeClusterSegmenter::new()
+                .segment_str(&self.display)
+                .any(|boundary| boundary == visible)
+        })
     }
 }

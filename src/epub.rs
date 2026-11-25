@@ -2000,24 +2000,42 @@ fn toc_entry(base: &str, href: Option<&str>, node: Node<'_, '_>, depth: usize) -
 
 fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
     let mut bytes = read_entry(archive, path, MAX_XML)?;
-    let text = if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
-        let (encoding, label) = if bytes.starts_with(&[0xff, 0xfe]) {
-            (encoding_rs::UTF_16LE, "utf-16le")
-        } else {
-            (encoding_rs::UTF_16BE, "utf-16be")
-        };
+    let utf32 = if bytes.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
+        Some(true)
+    } else if bytes.starts_with(&[0x00, 0x00, 0xfe, 0xff]) {
+        Some(false)
+    } else {
+        None
+    };
+    let utf16 = if bytes.starts_with(&[0xff, 0xfe]) {
+        Some((encoding_rs::UTF_16LE, "utf-16le", 2, false))
+    } else if bytes.starts_with(&[0xfe, 0xff]) {
+        Some((encoding_rs::UTF_16BE, "utf-16be", 2, false))
+    } else if bytes.starts_with(b"<\0?\0x\0") {
+        Some((encoding_rs::UTF_16LE, "utf-16le", 0, true))
+    } else if bytes.starts_with(b"\0<\0?\0x") {
+        Some((encoding_rs::UTF_16BE, "utf-16be", 0, true))
+    } else {
+        None
+    };
+    let text = if let Some(little_endian) = utf32 {
+        decode_utf32_epub_xml(&bytes[4..], little_endian)?
+    } else if let Some((encoding, label, offset, requires_declaration)) = utf16 {
         let decoded = encoding
-            .decode_without_bom_handling_and_without_replacement(&bytes[2..])
+            .decode_without_bom_handling_and_without_replacement(&bytes[offset..])
             .ok_or("The EPUB XML contains invalid UTF-16")?;
         if decoded.contains('\0') {
             return Err("The EPUB XML contains binary characters".into());
         }
-        if decoded.starts_with("<?xml")
+        let has_declaration = decoded.starts_with("<?xml")
             && decoded
                 .as_bytes()
                 .get(5)
-                .is_some_and(u8::is_ascii_whitespace)
-        {
+                .is_some_and(u8::is_ascii_whitespace);
+        if requires_declaration && !has_declaration {
+            return Err("The EPUB XML requires a UTF-16 declaration".into());
+        }
+        if has_declaration {
             let end = decoded
                 .find("?>")
                 .ok_or("The EPUB XML declaration is incomplete")?
@@ -2039,12 +2057,122 @@ fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
         decoded.into_owned()
     } else {
         // Keep the existing UTF-8 text and source-revision behavior exactly.
-        if bytes.starts_with(b"\xef\xbb\xbf") {
+        let utf8_bom = bytes.starts_with(b"\xef\xbb\xbf");
+        if utf8_bom {
             bytes.drain(..3);
         }
-        String::from_utf8(bytes)?
+        match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(error) if !utf8_bom => decode_legacy_epub_xml(error.as_bytes())?,
+            Err(error) => return Err(error.into()),
+        }
     };
     crate::epub_xml::prepare(text, MAX_XML)
+}
+
+fn decode_utf32_epub_xml(input: &[u8], little_endian: bool) -> Result<String> {
+    if !input.len().is_multiple_of(4) {
+        return Err("The EPUB XML contains an incomplete UTF-32 unit".into());
+    }
+    // A UTF-8 scalar never occupies more than its four-byte UTF-32 input.
+    let mut decoded = String::with_capacity(input.len());
+    for chunk in input.chunks_exact(4) {
+        let bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
+        let value = if little_endian {
+            u32::from_le_bytes(bytes)
+        } else {
+            u32::from_be_bytes(bytes)
+        };
+        let character =
+            char::from_u32(value).ok_or("The EPUB XML contains an invalid UTF-32 scalar")?;
+        if character == '\0' {
+            return Err("The EPUB XML contains binary characters".into());
+        }
+        decoded.push(character);
+    }
+    if decoded.starts_with("<?xml")
+        && decoded
+            .as_bytes()
+            .get(5)
+            .is_some_and(u8::is_ascii_whitespace)
+    {
+        let end = decoded
+            .find("?>")
+            .ok_or("The EPUB XML declaration is incomplete")?
+            + 2;
+        if end > 1024 {
+            return Err("The EPUB XML declaration is too long".into());
+        }
+        let declaration = &decoded[..end];
+        Document::parse(&format!("{declaration}<root/>"))
+            .map_err(|_| "The EPUB XML declaration is invalid")?;
+        let expected = if little_endian {
+            "utf-32le"
+        } else {
+            "utf-32be"
+        };
+        if let Some(declared) = loose::declared_encoding(declaration.as_bytes(), loose::Format::Fb2)
+            && declared != "utf-32"
+            && declared != expected
+        {
+            return Err("The EPUB XML encoding conflicts with its byte order".into());
+        }
+    }
+    Ok(decoded)
+}
+
+/// Compatibility with nonconforming XML that declares a legacy charset. Only
+/// consulted after the unchanged UTF-8 and UTF-16 paths have failed.
+fn decode_legacy_epub_xml(bytes: &[u8]) -> Result<String> {
+    if !bytes.starts_with(b"<?xml") || !bytes.get(5).is_some_and(u8::is_ascii_whitespace) {
+        return Err("The EPUB XML is not valid UTF-8 and has no encoding declaration".into());
+    }
+    let prefix = &bytes[..bytes.len().min(1024)];
+    let end = prefix
+        .windows(2)
+        .position(|pair| pair == b"?>")
+        .ok_or("The EPUB XML declaration is incomplete or too long")?
+        + 2;
+    let declaration = std::str::from_utf8(&prefix[..end])?;
+    Document::parse(&format!("{declaration}<root/>"))
+        .map_err(|_| "The EPUB XML declaration is invalid")?;
+    let label = loose::declared_encoding(declaration.as_bytes(), loose::Format::Fb2)
+        .ok_or("The EPUB XML declaration has no encoding")?;
+    let encoding = encoding_rs::Encoding::for_label(label.as_bytes())
+        .ok_or("The EPUB XML declares an unsupported encoding")?;
+    let allowed = [
+        encoding_rs::GBK,
+        encoding_rs::GB18030,
+        encoding_rs::BIG5,
+        encoding_rs::SHIFT_JIS,
+        encoding_rs::EUC_JP,
+        encoding_rs::EUC_KR,
+        encoding_rs::WINDOWS_1250,
+        encoding_rs::WINDOWS_1251,
+        encoding_rs::WINDOWS_1252,
+        encoding_rs::WINDOWS_1253,
+        encoding_rs::WINDOWS_1254,
+        encoding_rs::WINDOWS_1255,
+        encoding_rs::WINDOWS_1256,
+        encoding_rs::WINDOWS_1257,
+        encoding_rs::WINDOWS_1258,
+        encoding_rs::WINDOWS_874,
+        encoding_rs::KOI8_R,
+        encoding_rs::KOI8_U,
+        encoding_rs::IBM866,
+        encoding_rs::MACINTOSH,
+        encoding_rs::X_MAC_CYRILLIC,
+    ];
+    if !allowed.contains(&encoding) {
+        return Err("The EPUB XML declares an unsupported legacy encoding".into());
+    }
+    let decoded = encoding
+        .decode_without_bom_handling_and_without_replacement(bytes)
+        .ok_or("The EPUB XML does not match its declared encoding")?;
+    if decoded.len() > MAX_XML || decoded.contains('\0') {
+        return Err("The EPUB XML contains binary data or exceeds its size limit".into());
+    }
+    Ok(decoded.into_owned())
 }
 
 fn read_entry(archive: &mut Archive, path: &str, max_bytes: usize) -> Result<Vec<u8>> {

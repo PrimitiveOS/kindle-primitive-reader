@@ -23,14 +23,22 @@ pages are in range; no saved mark is changed. KOReader's previous/next helpers e
 than claiming that KOReader has the same menu. These actions require simulator
 and Kindle validation.
 
-To bound foreground work, bookmark-only navigation checks at most 512 saved
-bookmarks and loads at most eight distinct noncurrent chapter layouts per
-attempt. If either limit would be exceeded, it reports that the bookmark list
-should be used instead; it never jumps using an incomplete set. Layouts are
-reused within the attempt. These limits are a temporary Reader constraint,
-not KOReader parity. A follow-up should move source verification into a
-bounded cancellable background search so books beyond these limits can still
-use bookmark-only navigation without blocking the reading interface.
+Bookmark-only navigation collects and rechecks the complete bookmark snapshots
+in slices of at most 128 entries. A cancellable background worker groups the
+eligible entries by chapter, opens each needed chapter at most once, and keeps
+only the nearest verified target. A progress popup offers Cancel; no reading
+position or history changes until the complete snapshot and source/layout
+stamps have been rechecked. Sleep, leaving the reading surface, book changes,
+and storage return cancel the search. A retry reports if a canceled worker is
+still stopping, so it cannot start overlapping layout workers. The temporary 512-bookmark and
+eight-chapter limits no longer apply. To bound memory, snapshot data and the
+worker's sort indices have a 4 MiB estimated budget; searches exceeding it fail
+without moving. Reflow books without actual matching file source stamps,
+including folder-backed books, currently fail closed; a bounded folder-source
+fingerprint remains open. Fixed documents are checked for file changes during
+the search but the current provider does not establish a file stamp from the
+time the book was opened. File-stamp race behavior, the progress presentation,
+and Kindle performance remain unvalidated.
 
 KOReader's [current-document mark list](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L675-L705) and [highlight filters](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L960-L980) motivated the Current book source.
 

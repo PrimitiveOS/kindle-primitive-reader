@@ -65,6 +65,9 @@ impl Reader {
     }
 
     pub(super) fn mark_book_changed(&mut self) {
+        if let Some(search) = &mut self.page_bookmark_search {
+            search.invalidate();
+        }
         self.dirty = true;
         self.metadata_checkpoint
             .record(self.controls.metadata_save, false, Instant::now());

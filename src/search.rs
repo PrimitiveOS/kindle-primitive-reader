@@ -265,9 +265,14 @@ impl Search {
             } else {
                 None
             };
-            let rendered = raw
+            let projection = text
+                .raw_layout
                 .as_ref()
-                .map_or_else(|| view.text(), |bound| bound.raw());
+                .and_then(|layout| layout.projection(block.key));
+            let rendered = raw.as_ref().map_or_else(
+                || view.text(),
+                |bound| projection.map_or(bound.raw(), |projection| projection.text()),
+            );
             let ranges = match &self.query {
                 ReflowQuery::Literal(query) => {
                     query.matches_until(rendered, self.limit - self.hits, || {
@@ -284,8 +289,10 @@ impl Search {
             };
             let mut raw_hits = if raw.is_some() {
                 Some(
-                    raw_layout::matches_anchors(text.book, &text.href, &source, block, &ranges)?
-                        .into_iter(),
+                    raw_layout::matches_anchors(
+                        text.book, &text.href, &source, block, &ranges, projection,
+                    )?
+                    .into_iter(),
                 )
             } else {
                 None

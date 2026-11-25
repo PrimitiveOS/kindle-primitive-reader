@@ -68,6 +68,7 @@ pub(crate) struct Snapshot {
     raw: String,
     style_runs: Vec<RawStyleRun>,
     elements: Vec<usize>,
+    explicit_breaks: bool,
     text: Vec<TextSpan>,
     gaps: Vec<WhitespaceGap>,
     canonical_sha256: [u8; 32],
@@ -148,6 +149,10 @@ impl Bound<'_> {
 
     pub(crate) fn elements(&self) -> &[usize] {
         &self.snapshot.elements
+    }
+
+    pub(crate) fn has_explicit_breaks(&self) -> bool {
+        self.snapshot.explicit_breaks
     }
 
     pub(crate) fn text_spans(&self) -> &[TextSpan] {
@@ -568,6 +573,7 @@ pub(super) fn capture(
         raw: raw.to_owned(),
         style_runs,
         elements,
+        explicit_breaks: !hard_breaks.is_empty(),
         text,
         gaps,
         canonical_sha256: digest(&SHA256, canonical.as_bytes())

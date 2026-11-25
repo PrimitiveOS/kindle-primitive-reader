@@ -3625,9 +3625,21 @@ impl InterfaceLanguage {
             "No later saved mark" => "Không có dấu đã lưu tiếp theo",
             "No earlier page bookmark" => "Không có dấu trang trước đó",
             "No later page bookmark" => "Không có dấu trang tiếp theo",
-            "Too many bookmarks to search; open Bookmarks" => {
-                "Quá nhiều dấu trang; hãy mở Dấu trang"
+            "Finding page bookmark" => "Đang tìm dấu trang",
+            "The book or bookmarks changed; try again" => "Sách hoặc dấu trang đã đổi; hãy thử lại",
+            "The book changed; try again" => "Sách đã thay đổi; hãy thử lại",
+            "The book or reading settings changed; try again" => {
+                "Sách hoặc cài đặt đọc đã đổi; hãy thử lại"
             }
+            "Bookmarks exceed the search memory limit" => "Dấu trang vượt giới hạn bộ nhớ tìm kiếm",
+            "Unable to start bookmark search" => "Không thể bắt đầu tìm dấu trang",
+            "Previous bookmark search is still stopping" => "Lượt tìm dấu trang trước đang dừng",
+            "Bookmark search stopped" => "Tìm dấu trang đã dừng",
+            "A bookmarked chapter could not be checked" => "Không thể kiểm tra chương có dấu trang",
+            "This book cannot be verified for bookmark navigation" => {
+                "Không thể xác minh sách để chuyển dấu trang"
+            }
+            "The bookmarked page changed; try again" => "Trang đã đánh dấu thay đổi; hãy thử lại",
             "Saved mark location is unavailable" => "Vị trí dấu đã lưu không khả dụng",
             _ => english,
         }

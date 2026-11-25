@@ -16,9 +16,13 @@ A hybrid opens its legacy edition when Reader can read it. If that edition uses 
 Book information can preview a PNG, JPEG or GIF declared by EXTH 201 in the
 primary MOBI header, when the record and image dimensions meet Reader's
 existing limits. It reuses an identical loaded resource when available; the
-source file, reconstructed XHTML and saved positions do not change. Covers
-declared only in a secondary hybrid header remain unsupported. This addition
-awaits integrated testing. [KOReader cover extraction](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L556-L561) · [libmobi EXTH cover offset](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/tools/mobitool.c#L340-L356)
+source file, reconstructed XHTML and saved positions do not change. For a
+validated unprotected hybrid whose primary EXTH has no cover declaration, Reader
+also attempts EXTH 201 from its KF8 header against the shared primary resource
+section. It requires one valid EXTH 121 boundary, a matching `BOUNDARY` record,
+and an unambiguous in-range image; malformed, ambiguous, protected or other
+cover arrangements remain unavailable. This secondary-header candidate has not
+yet been behaviorally tested against KOReader or real hybrid books. [KOReader cover extraction](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L556-L561) · [libmobi EXTH cover offset](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/tools/mobitool.c#L340-L356)
 
 ## Legacy illustrations, links and reading positions
 
