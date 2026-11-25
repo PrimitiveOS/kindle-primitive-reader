@@ -345,6 +345,48 @@ const PAGE_ACTION_LABELS: &[(&str, &str)] = &[
     ("Matches", "Kết quả tìm kiếm"),
 ];
 
+// Fixed selection settings labels; selected text and settings values stay untouched.
+const SELECTION_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Top", "Trên"),
+    ("Center", "Giữa"),
+    ("Bottom", "Dưới"),
+    ("By selected text", "Cạnh văn bản đã chọn"),
+    ("Selected", "Đã chọn"),
+    ("Dictionary on a single word", "Từ điển khi chọn một từ"),
+    (
+        "On · opens the local dictionary",
+        "Bật · mở từ điển trên máy",
+    ),
+    (
+        "Off · uses the default action",
+        "Tắt · dùng thao tác mặc định",
+    ),
+    (
+        "Auto-scroll when selection reaches a corner",
+        "Tự cuộn khi vùng chọn đến góc",
+    ),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    (
+        "Highlight style and color prompt",
+        "Hỏi kiểu và màu tô sáng",
+    ),
+    ("Very long press interval", "Thời gian nhấn rất lâu"),
+    ("Ask with popup dialog", "Hỏi bằng cửa sổ nổi"),
+    ("Do nothing", "Không làm gì"),
+    ("Highlight", "Tô sáng"),
+    ("Select and highlight", "Chọn và tô sáng"),
+    ("Add note", "Thêm ghi chú"),
+    ("Translate", "Dịch"),
+    ("Wikipedia", "Wikipedia"),
+    ("Dictionary", "Từ điển"),
+    ("Full-text search", "Tìm toàn văn"),
+    ("Reset to default", "Đặt lại mặc định"),
+    ("Style", "Kiểu"),
+    ("Color", "Màu"),
+    ("Style and color", "Kiểu và màu"),
+];
+
 // Fixed saved-mark list settings and paging controls; mark text stays untouched.
 const BOOKMARK_LIST_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Sort by page", "Sắp xếp theo trang"),
@@ -1843,6 +1885,18 @@ const NOTIFICATION_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("No notifications yet", "Chưa có thông báo"),
 ];
 
+fn valid_selection_seconds(value: &str) -> bool {
+    let number = value.strip_prefix(['+', '-', '−']).unwrap_or(value);
+    let (whole, fraction) = number
+        .split_once('.')
+        .map_or((number, None), |(whole, fraction)| (whole, Some(fraction)));
+    !whole.is_empty()
+        && whole.bytes().all(|digit| digit.is_ascii_digit())
+        && fraction.is_none_or(|digits| {
+            !digits.is_empty() && digits.bytes().all(|digit| digit.is_ascii_digit())
+        })
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum InterfaceLanguage {
@@ -2252,6 +2306,40 @@ impl InterfaceLanguage {
     }
 
     /// Translate only fixed end-of-document UI labels and status text.
+    pub(super) fn selection_settings_text(self, value: &str) -> String {
+        if self == Self::Vietnamese {
+            if let Some(number) = value.strip_suffix(" seconds") {
+                if valid_selection_seconds(number) {
+                    return format!("{number} giây");
+                }
+            }
+            if let Some((_, vietnamese)) = SELECTION_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == value)
+            {
+                return (*vietnamese).to_owned();
+            }
+        }
+        value.to_owned()
+    }
+
+    pub(super) fn selection_settings_english(self, value: &str) -> String {
+        if self == Self::Vietnamese {
+            if let Some(number) = value.strip_suffix(" giây") {
+                if valid_selection_seconds(number) {
+                    return format!("{number} seconds");
+                }
+            }
+            if let Some((english, _)) = SELECTION_SETTINGS_LABELS
+                .iter()
+                .find(|(_, translated)| *translated == value)
+            {
+                return (*english).to_owned();
+            }
+        }
+        value.to_owned()
+    }
+
     pub(super) fn bookmark_list_settings_text<'a>(self, english: &'a str) -> &'a str {
         if self == Self::Vietnamese {
             if let Some((_, vietnamese)) = BOOKMARK_LIST_SETTINGS_LABELS

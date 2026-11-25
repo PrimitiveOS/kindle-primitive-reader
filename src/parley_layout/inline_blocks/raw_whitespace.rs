@@ -4,17 +4,46 @@
 //! anchors can retain raw gap positions without changing existing v1 anchors.
 #![allow(dead_code)]
 
+use super::super::{LineIndent, PaintBrush, layout_with_images};
 use super::{InlineText, Segment};
 use crate::{
-    book_style::{Style, WhiteSpace},
-    flow_projection::Projection,
+    Settings,
+    book_style::{Style, TextTransform, WhiteSpace},
+    flow_projection::{Projection, SourceBinding},
     flow_view::{LayoutBlock, StyledRuns},
-    source::StyledText,
+    selection::RawTextSelection,
+    source::raw_whitespace::{AnchorContext, CaretAffinity, RawCaret},
+    source::{Block, StyledText},
+    user_hyphenation::Rules,
 };
+use parley::{Affinity, BoundingBox, Cursor, FontContext, Layout, LayoutContext, Selection};
+use std::ops::Range;
+
+const MAX_RAW_LINES: usize = 4096;
+const MAX_SELECTION_RECTS: usize = 4096;
 
 pub(super) struct Plan {
     pub(super) text: InlineText,
     pub(super) runs: Vec<StyledText>,
+    binding: SourceBinding,
+    block: usize,
+    owner: usize,
+    white_space: WhiteSpace,
+}
+
+pub(super) struct RawLine {
+    pub(super) bytes: Range<usize>,
+    pub(super) start: RawCaret,
+    pub(super) end: RawCaret,
+    pub(super) top: f32,
+    pub(super) bottom: f32,
+}
+
+pub(super) struct Prepared {
+    pub(super) text: InlineText,
+    pub(super) layout: Layout<PaintBrush>,
+    pub(super) lines: Vec<RawLine>,
+    binding: SourceBinding,
 }
 
 impl Plan {
@@ -31,6 +60,8 @@ impl Plan {
             || !block.bidi_controls.is_empty()
             || block.first_letter.is_some()
             || styles.get(block.element)?.first_line.is_some()
+            || styles.get(block.element)?.generated.is_some()
+            || styles.get(block.element)?.text_transform != TextTransform::None
             || !styles.get(block.element)?.preformatted_spaces
             || !matches!(
                 styles.get(block.element)?.white_space,
@@ -103,6 +134,155 @@ impl Plan {
                 hyphenation_language: original.hyphenation_language,
                 preserve_whitespace: original.preserve_whitespace,
             }],
+            binding: SourceBinding::new(block),
+            block: block.key,
+            owner: block.element,
+            white_space: styles.get(block.element)?.white_space,
         })
+    }
+
+    /// Shape a detached candidate and verify every line before any future
+    /// caller may choose to install it in a chapter.
+    pub(super) fn shape(
+        mut self,
+        context: &mut LayoutContext<PaintBrush>,
+        fonts: &mut FontContext,
+        block: &LayoutBlock<'_>,
+        width: u32,
+        settings: Settings,
+        styles: &[Style],
+        indent: LineIndent,
+        rules: &Rules,
+    ) -> Option<Prepared> {
+        let bound = block.raw_whitespace.as_ref()?.bind(block.text)?;
+        let style = styles.get(block.element)?;
+        if width == 0
+            || !self.binding.matches(block)
+            || block.key != self.block
+            || block.element != self.owner
+            || !style.preformatted_spaces
+            || style.white_space != self.white_space
+            || style.generated.is_some()
+            || style.text_transform != TextTransform::None
+            || bound.raw() != self.text.text.as_str()
+        {
+            return None;
+        }
+        let fragment = block.text_fragment(
+            block.element,
+            &self.text.text,
+            std::mem::take(&mut self.runs),
+        );
+        let (layout, ruby) = layout_with_images(
+            context,
+            fonts,
+            &fragment,
+            width,
+            settings,
+            styles,
+            &[],
+            indent,
+            rules,
+            None,
+        );
+        if !ruby.is_empty()
+            || layout.text_len() != bound.raw().len()
+            || layout.len() > MAX_RAW_LINES
+        {
+            return None;
+        }
+        let mut ranges = Vec::with_capacity(layout.len());
+        let mut requests = Vec::with_capacity(layout.len() * 2);
+        let mut previous_end = 0;
+        let mut previous_start = None;
+        for line in layout.lines() {
+            let range = line.text_range();
+            let metrics = line.metrics();
+            if range.start != previous_end
+                || range.end < range.start
+                || range.end > bound.raw().len()
+                || previous_start == Some(range.start)
+                || !metrics.block_min_coord.is_finite()
+                || !metrics.block_max_coord.is_finite()
+                || metrics.block_max_coord < metrics.block_min_coord
+                || metrics.block_max_coord - metrics.block_min_coord > settings.text_height() as f32
+            {
+                return None;
+            }
+            previous_start = Some(range.start);
+            previous_end = range.end;
+            requests.push((range.start, CaretAffinity::After));
+            requests.push((range.end, CaretAffinity::Before));
+            ranges.push((range, metrics.block_min_coord, metrics.block_max_coord));
+        }
+        if previous_end != bound.raw().len() {
+            return None;
+        }
+        let mut carets = bound.carets_at(&requests)?.into_iter();
+        let mut lines = Vec::with_capacity(ranges.len());
+        for (bytes, top, bottom) in ranges {
+            lines.push(RawLine {
+                bytes,
+                start: carets.next()?,
+                end: carets.next()?,
+                top,
+                bottom,
+            });
+        }
+        Some(Prepared {
+            text: self.text,
+            layout,
+            lines,
+            binding: self.binding,
+        })
+    }
+}
+
+impl Prepared {
+    /// Compute raw selection geometry only after revalidating both anchors and
+    /// the exact text/quote against the bound source snapshot.
+    pub(super) fn selection_geometry(
+        &self,
+        block: &Block,
+        context: &AnchorContext<'_>,
+        selection: &RawTextSelection,
+    ) -> Option<Vec<(usize, BoundingBox)>> {
+        if !self.binding.matches(block) || block.key != context.block {
+            return None;
+        }
+        let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+        bound.validate_raw_anchor(&selection.start, context)?;
+        bound.validate_raw_anchor(&selection.end, context)?;
+        let start = selection.start.caret.raw_offset;
+        let end = selection.end.caret.raw_offset;
+        if start >= end
+            || self.text.text.as_str() != bound.raw()
+            || self.layout.text_len() != bound.raw().len()
+            || bound.raw().get(start..end)? != selection.text.as_str()
+        {
+            return None;
+        }
+        let first = Cursor::from_byte_index(&self.layout, start, Affinity::Downstream);
+        let last = Cursor::from_byte_index(&self.layout, end, Affinity::Upstream);
+        if first.index() != start || last.index() != end {
+            return None;
+        }
+        let mut result = Vec::new();
+        let mut invalid = false;
+        Selection::new(first, last).geometry_with(&self.layout, |bounds, line| {
+            if result.len() >= MAX_SELECTION_RECTS
+                || !bounds.x0.is_finite()
+                || !bounds.x1.is_finite()
+                || !bounds.y0.is_finite()
+                || !bounds.y1.is_finite()
+                || bounds.x1 < bounds.x0
+                || bounds.y1 < bounds.y0
+            {
+                invalid = true;
+            } else {
+                result.push((line, bounds));
+            }
+        });
+        (!invalid && !result.is_empty()).then_some(result)
     }
 }

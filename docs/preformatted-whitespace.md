@@ -51,9 +51,18 @@ for a verified simple block with an explicit `pre`, `pre-wrap` or
 `break-spaces` mode. Every canonical byte must map in order to an identical raw
 byte; additional whitespace is synthetic, and a collapsed space with no raw
 space makes the plan fail closed. Images, ruby, inline markup, generated text,
-directional controls and other projections are currently excluded. The plan is
-not activated: blank-line pagination, raw-aware selection geometry and durable
-raw anchor storage must be integrated before it can safely affect reading.
+directional controls, text transforms and other projections are currently
+excluded. The plan is not activated: blank-line pagination, raw-aware selection
+geometry and durable raw anchor storage must be integrated before it can safely
+affect reading.
+
+The detached plan can shape its raw text with Parley and create bounded,
+grapheme-validated raw carets for contiguous line ranges, including lines
+whose content is whitespace. It is tied to the source block's lifetime and
+rechecks the raw snapshot and computed mode before shaping. A detached
+selection-geometry consumer validates both raw anchors and the exact raw
+quote before accepting bounded rectangles. These are not installed into
+Reader's page model or UI; durable state and the full integration remain open.
 
 This stage does **not** change rendering, copying, selection, source revisions,
 existing anchors or saved state. It does not yet implement preformatted EPUB

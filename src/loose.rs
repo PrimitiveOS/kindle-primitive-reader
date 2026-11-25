@@ -644,7 +644,10 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
     if archive.len() != count {
         return Err("The HTMLZ ZIP has ambiguous or duplicate entries".into());
     }
-    let mut chapter = None;
+    let mut top_level_chapters = Vec::new();
+    let mut nested_chapters = Vec::new();
+    let mut chapter_names = BTreeSet::new();
+    let mut duplicate_chapters = false;
     let mut metadata = None;
     let mut resources = Vec::new();
     // New optional resource types are indexed here, but only read if
@@ -679,10 +682,14 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
             .map(|(_, ext)| ext.to_ascii_lowercase())
             .as_deref()
         {
-            Some("htm" | "html" | "xht" | "xhtml") if !path.contains('/') => {
-                if chapter.replace((index, path.to_owned())).is_some() {
-                    return Err("The HTMLZ ZIP has more than one top-level HTML document".into());
-                }
+            Some("htm" | "html" | "xht" | "xhtml") => {
+                duplicate_chapters |= !chapter_names.insert(path.to_owned());
+                let chapters = if path.contains('/') {
+                    &mut nested_chapters
+                } else {
+                    &mut top_level_chapters
+                };
+                chapters.push((index, path.to_owned()));
             }
             Some("opf") if path.eq_ignore_ascii_case("metadata.opf") => {
                 if metadata.replace(index).is_some() {
@@ -719,7 +726,37 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
             _ => {}
         }
     }
-    let (index, chapter_path) = chapter.ok_or("The HTMLZ ZIP has no top-level HTML document")?;
+    // Keep the exact prior choice for every archive with one root document.
+    // For previously rejected archives, accept only an unambiguous default
+    // (or one nested document); never pick between duplicate candidates.
+    let unique_default = |chapters: &[(usize, String)]| {
+        let mut defaults = chapters.iter().filter(|(_, path)| {
+            path.rsplit('/')
+                .next()
+                .and_then(|name| name.rsplit_once('.'))
+                .is_some_and(|(stem, _)| {
+                    stem.eq_ignore_ascii_case("index") || stem.eq_ignore_ascii_case("default")
+                })
+        });
+        let chosen = defaults.next();
+        if defaults.next().is_some() {
+            None
+        } else {
+            chosen.cloned()
+        }
+    };
+    let (index, chapter_path) = match top_level_chapters.as_slice() {
+        [only] => only.clone(),
+        _ if duplicate_chapters => {
+            return Err("The HTMLZ ZIP has duplicate HTML document paths".into());
+        }
+        [] => match nested_chapters.as_slice() {
+            [only] => only.clone(),
+            [] => return Err("The HTMLZ ZIP has no HTML document".into()),
+            many => unique_default(many).ok_or("The HTMLZ ZIP has ambiguous HTML documents")?,
+        },
+        many => unique_default(many).ok_or("The HTMLZ ZIP has ambiguous HTML documents")?,
+    };
     let bytes = read_htmlz_member(&mut archive, index, MAX_INPUT)?;
     let input = decode_document(&bytes, Format::Html)?;
     // Calibre may emit named HTML entities in otherwise XML-compatible markup.

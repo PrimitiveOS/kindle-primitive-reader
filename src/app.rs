@@ -3059,14 +3059,20 @@ impl Reader {
                     .into_iter()
                     .map(|position| {
                         let item = Item::new(
-                            position.label(),
+                            self.controls
+                                .interface_language
+                                .selection_settings_text(position.label()),
                             Action::SetReadingControls(ReadingControls {
                                 selection_popup_position: position,
                                 ..self.controls
                             }),
                         );
                         if position == self.controls.selection_popup_position {
-                            item.detail("Selected")
+                            item.detail(
+                                self.controls
+                                    .interface_language
+                                    .selection_settings_text("Selected"),
+                            )
                         } else {
                             item
                         }
@@ -3122,6 +3128,13 @@ impl Reader {
                         item
                     }
                 }));
+                let language = self.controls.interface_language;
+                for item in &mut items {
+                    item.title = language.selection_settings_text(&item.title);
+                    if let Some(detail) = &mut item.detail {
+                        *detail = language.selection_settings_text(detail);
+                    }
+                }
                 return items;
             }
             Screen::VeryLongPressSettings => {
@@ -3162,6 +3175,13 @@ impl Reader {
                     )
                     .detail("3.0 seconds"),
                 );
+                let language = self.controls.interface_language;
+                for item in &mut choices {
+                    item.title = language.selection_settings_text(&item.title);
+                    if let Some(detail) = &mut item.detail {
+                        *detail = language.selection_settings_text(detail);
+                    }
+                }
                 return choices;
             }
             Screen::HighlightPromptSettings => {
@@ -3169,14 +3189,20 @@ impl Reader {
                     .into_iter()
                     .map(|prompt| {
                         let item = Item::new(
-                            prompt.label(),
+                            self.controls
+                                .interface_language
+                                .selection_settings_text(prompt.label()),
                             Action::SetReadingControls(ReadingControls {
                                 highlight_prompt: prompt,
                                 ..self.controls
                             }),
                         );
                         if prompt == self.controls.highlight_prompt {
-                            item.detail("Selected")
+                            item.detail(
+                                self.controls
+                                    .interface_language
+                                    .selection_settings_text("Selected"),
+                            )
                         } else {
                             item
                         }

@@ -148,6 +148,14 @@ impl Bound<'_> {
         if !self.is_grapheme_boundary(raw_offset) {
             return None;
         }
+        self.caret_at_valid_boundary(raw_offset, affinity)
+    }
+
+    fn caret_at_valid_boundary(
+        &self,
+        raw_offset: usize,
+        affinity: CaretAffinity,
+    ) -> Option<RawCaret> {
         let canonical_offset = match self.raw_to_canonical(raw_offset)? {
             RawBoundary::Exact(offset) => offset,
             RawBoundary::Gap { canonical, .. } => match affinity {
@@ -161,6 +169,25 @@ impl Bound<'_> {
             raw_sha256: self.snapshot.raw_sha256,
             affinity,
         })
+    }
+
+    /// Resolve a bounded batch with one grapheme scan, for layout lines.
+    pub(crate) fn carets_at(&self, requested: &[(usize, CaretAffinity)]) -> Option<Vec<RawCaret>> {
+        if requested.len() > 8192 {
+            return None;
+        }
+        let boundaries: Vec<_> = icu_segmenter::GraphemeClusterSegmenter::new()
+            .segment_str(&self.snapshot.raw)
+            .collect();
+        requested
+            .iter()
+            .map(|&(offset, affinity)| {
+                if boundaries.binary_search(&offset).is_err() {
+                    return None;
+                }
+                self.caret_at_valid_boundary(offset, affinity)
+            })
+            .collect()
     }
 
     /// Verify the raw fingerprint and canonical relationship before use.
@@ -242,12 +269,26 @@ impl Bound<'_> {
                 }));
             }
         };
-        for span in &self.snapshot.text {
+        let text_start = self
+            .snapshot
+            .text
+            .partition_point(|span| span.canonical.end < offset);
+        for span in self.snapshot.text[text_start..]
+            .iter()
+            .take_while(|span| span.canonical.start <= offset)
+        {
             if span.canonical.start <= offset && offset <= span.canonical.end {
                 consider(span.raw.start + offset - span.canonical.start);
             }
         }
-        for gap in &self.snapshot.gaps {
+        let gap_start = self
+            .snapshot
+            .gaps
+            .partition_point(|gap| gap.canonical.end < offset);
+        for gap in self.snapshot.gaps[gap_start..]
+            .iter()
+            .take_while(|gap| gap.canonical.start <= offset)
+        {
             if offset == gap.canonical.start {
                 consider(gap.raw.start);
             }
@@ -264,7 +305,14 @@ impl Bound<'_> {
         if !self.snapshot.raw.is_char_boundary(offset) {
             return None;
         }
-        for gap in &self.snapshot.gaps {
+        let gap_start = self
+            .snapshot
+            .gaps
+            .partition_point(|gap| gap.raw.end < offset);
+        for gap in self.snapshot.gaps[gap_start..]
+            .iter()
+            .take_while(|gap| gap.raw.start <= offset)
+        {
             if gap.raw.start < offset && offset < gap.raw.end {
                 return Some(RawBoundary::Gap {
                     canonical: gap.canonical.clone(),
@@ -283,12 +331,22 @@ impl Bound<'_> {
             result = Some(candidate);
             Some(())
         };
-        for span in &self.snapshot.text {
+        let text_start = self
+            .snapshot
+            .text
+            .partition_point(|span| span.raw.end < offset);
+        for span in self.snapshot.text[text_start..]
+            .iter()
+            .take_while(|span| span.raw.start <= offset)
+        {
             if span.raw.start <= offset && offset <= span.raw.end {
                 consider(span.canonical.start + offset - span.raw.start)?;
             }
         }
-        for gap in &self.snapshot.gaps {
+        for gap in self.snapshot.gaps[gap_start..]
+            .iter()
+            .take_while(|gap| gap.raw.start <= offset)
+        {
             if offset == gap.raw.start {
                 consider(gap.canonical.start)?;
             }
