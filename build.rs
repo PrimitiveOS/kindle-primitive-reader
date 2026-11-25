@@ -353,7 +353,7 @@ fn main() {
         let mut rules = if matches!(tag, "la-x-classic" | "la-x-liturgic" | "grc" | "ml") {
             decomposed_rules(&tex, tag)
         } else {
-            stock_word_rules(&tex, tag == "uk")
+            stock_word_rules(&tex, false)
         };
         if tag == "fi" {
             // CRE converted this two-entry TeX line into one pattern with an

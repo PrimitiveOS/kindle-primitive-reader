@@ -21,7 +21,7 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Bulgarian | 2 / 2 | 6,883 upstream word rules; stock comparison pending |
 | Galician | 2 / 2 | 2,321 upstream word rules; stock comparison pending |
 | Irish | 2 / 3 | 6,033 upstream word rules and 46 exceptions; stock comparison pending |
-| Ukrainian | 2 / 2 | 1,989 upstream word and apostrophe rules; stock comparison pending |
+| Ukrainian | 2 / 2 | 1,897 weighted source rules match pinned KOReader; behavior pending |
 | Polish | 2 / 2 | 4,053 upstream word rules and 20 exceptions; stock comparison pending |
 | Russian | 2 / 2 | Upstream single-word rules and exceptions; stock comparison pending |
 | Swedish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
@@ -77,12 +77,14 @@ historical LPPL notices are preserved; mixed-notice distribution review remains
 open. Rule loading, real-book behavior and Kindle checks remain unverified, so
 full KOReader word-break parity is not claimed.
 Bulgarian and Ukrainian (including explicit Cyrillic tags), Galician and Irish
-use licensed upstream patterns and KOReader's default minima. Ukrainian
-normalizes typographic apostrophes for matching, preserving source offsets;
-patterns containing literal hyphens are not supported by the current word
-matcher. Their normalized rule sets and Irish exceptions have not yet been
-compared exhaustively with the pinned KOReader dictionaries, and simulator and
-device checks remain pending. [Pattern provenance and notices](licenses/HYPHENATION-BG-GL-GA.txt)
+use licensed upstream patterns and KOReader's default minima. Ukrainian compiles
+the alphabetic source-only subset: its 1,897 effective weighted rules match
+the pinned KOReader set, whose remaining unweighted entry cannot add a break.
+Straight and curly apostrophes split lookup input without changing source
+offsets. U+02BC modifier-letter segmentation, actual wrapping and real-book
+behavior still need comparison. Bulgarian, Galician and Irish normalized rule
+sets and Irish exceptions have not yet been compared exhaustively, and
+simulator and device checks remain pending. [Pattern provenance and notices](licenses/HYPHENATION-BG-GL-GA.txt)
 Russian uses Alexander Lebedev's upstream TeX patterns and exceptions, also
 identified as the origin of KOReader's pinned Russian dictionary. Reader
 filters patterns that require punctuation outside its single-word matcher,

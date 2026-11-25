@@ -88,18 +88,41 @@ impl Reader {
         let Some(entry) = &self.history_view.month_entry else {
             return;
         };
+        let language = self.controls.interface_language;
         let face = self.month_editor_layout();
         canvas.popup(face.panel);
-        canvas.text(face.title, "Enter month", BODY.bold());
-        canvas.button(face.cancel, "Cancel", false, false);
+        canvas.text(
+            face.title,
+            language.history_month_text("Enter month"),
+            BODY.bold(),
+        );
+        canvas.button(
+            face.cancel,
+            language.history_month_text("Cancel"),
+            false,
+            false,
+        );
         canvas.single_line_field(face.field, &entry.editor, "YYYY-MM", false);
         if !entry.editor.text.is_empty() {
-            canvas.button(face.clear, "Clear", false, false);
+            canvas.button(
+                face.clear,
+                language.history_month_text("Clear"),
+                false,
+                false,
+            );
         }
         if entry.invalid {
-            canvas.text(face.hint, "Use YYYY-MM with a month from 01 to 12", CAPTION);
+            canvas.text(
+                face.hint,
+                language.history_month_text("Use YYYY-MM with a month from 01 to 12"),
+                CAPTION,
+            );
         }
-        canvas.keyboard(entry.editor.layer, "Go to month", None);
+        canvas.keyboard(
+            entry.editor.layer,
+            language.history_month_text("Go to month"),
+            None,
+        );
     }
 
     pub(super) fn history_month_navigation_input(&mut self, input: Input) -> Option<Change> {
@@ -144,6 +167,10 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
+        let action_label = self
+            .controls
+            .interface_language
+            .history_month_text("Go to month");
         let face = self.month_editor_layout();
         if face.cancel.contains(x, y)
             || !face.panel.contains(x, y) && !face.keyboard.keyboard_area().contains(x, y)
@@ -160,7 +187,7 @@ impl Reader {
             entry.invalid = false;
             return Change::Partial;
         }
-        let Some(key) = keyboard_key(&face.keyboard, &entry.editor, "Go to month", x, y) else {
+        let Some(key) = keyboard_key(&face.keyboard, &entry.editor, action_label, x, y) else {
             return Change::None;
         };
         if matches!(entry.editor.press(key), Press::Go) {

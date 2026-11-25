@@ -79,21 +79,37 @@ impl Reader {
         if !matches!(page, Page::Calendar | Page::Day(_)) {
             return false;
         }
-        header(canvas, page.title(), "Back");
-        canvas.button(SUMMARY, "Summary", false, false);
-        canvas.button(DAILY, "Daily history", false, false);
-        canvas.button(TODAY, "Today", false, false);
+        let language = self.controls.interface_language;
+        header(
+            canvas,
+            language.history_timeline_text(page.title()),
+            language.history_timeline_text("Back"),
+        );
+        canvas.button(
+            SUMMARY,
+            language.history_timeline_text("Summary"),
+            false,
+            false,
+        );
+        canvas.button(
+            DAILY,
+            language.history_timeline_text("Daily history"),
+            false,
+            false,
+        );
+        canvas.button(TODAY, language.history_timeline_text("Today"), false, false);
         match page {
             Page::Calendar => {
                 self.draw_history_month_navigation(canvas);
                 self.draw_history_calendar(canvas);
             }
             Page::Day(day) => {
-                let label = format!(
-                    "{} · {} start",
-                    day.label(),
-                    timeline_clock(self.reading_history.options().day_start),
-                );
+                let start = timeline_clock(self.reading_history.options().day_start);
+                let label = if language.is_english() {
+                    format!("{} · {} start", day.label(), start)
+                } else {
+                    format!("{} · bắt đầu lúc {}", day.label(), start)
+                };
                 canvas.text(Rect::new(220, 146, 824, 80), &label, BODY.bold().center());
                 if day.add_days(-1).is_some() {
                     history_arrow(canvas, PREVIOUS, crate::app::bar_icons::PREVIOUS_PAGE);
@@ -105,13 +121,18 @@ impl Reader {
             }
             _ => {}
         }
-        canvas.button(OPTIONS, "Settings", false, false);
+        canvas.button(
+            OPTIONS,
+            language.history_timeline_text("Settings"),
+            false,
+            false,
+        );
         canvas.button(
             FILTER,
-            &self
-                .history_view
-                .book
-                .map_or_else(|| "All books".into(), |id| self.history_title(id)),
+            &self.history_view.book.map_or_else(
+                || language.history_timeline_text("All books").into(),
+                |id| self.history_title(id),
+            ),
             false,
             false,
         );
@@ -130,8 +151,10 @@ impl Reader {
         for col in 0..7 {
             canvas.text(
                 Rect::new(40 + col * 169, 328, 164, 40),
-                ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-                    [(col as usize + week as usize) % 7],
+                self.controls.interface_language.history_timeline_text(
+                    ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+                        [(col as usize + week as usize) % 7],
+                ),
                 CAPTION.center(),
             );
         }
@@ -271,7 +294,9 @@ impl Reader {
         if rows.is_empty() {
             canvas.text(
                 Rect::new(40, RUN_Y, 1184, 100),
-                "No recorded reading in this day.",
+                self.controls
+                    .interface_language
+                    .history_timeline_text("No recorded reading in this day."),
                 BODY,
             );
         }
@@ -302,7 +327,9 @@ impl Reader {
         if self.history_view.run_page > 0 {
             canvas.button(
                 Rect::new(40, 1450, 330, 70),
-                "Earlier sessions",
+                self.controls
+                    .interface_language
+                    .history_timeline_text("Earlier sessions"),
                 false,
                 false,
             );
@@ -310,7 +337,9 @@ impl Reader {
         if first + RUN_ROWS < rows.len() {
             canvas.button(
                 Rect::new(894, 1450, 330, 70),
-                "Later sessions",
+                self.controls
+                    .interface_language
+                    .history_timeline_text("Later sessions"),
                 false,
                 false,
             );

@@ -551,6 +551,63 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Calendar month editor fixed labels; typed months and date validation stay untouched.
+const HISTORY_MONTH_LABELS: &[(&str, &str)] = &[
+    ("Enter month", "Nhập tháng"),
+    ("Cancel", "Hủy"),
+    ("Clear", "Xóa"),
+    (
+        "Use YYYY-MM with a month from 01 to 12",
+        "Dùng YYYY-MM với tháng từ 01 đến 12",
+    ),
+    ("Go to month", "Đến tháng"),
+];
+
+// Calendar and day-timeline chrome only; recorded data and book titles stay untouched.
+const HISTORY_TIMELINE_LABELS: &[(&str, &str)] = &[
+    ("Reading calendar", "Lịch đọc"),
+    ("Reading timeline", "Dòng thời gian đọc"),
+    ("Back", "Quay lại"),
+    ("Summary", "Tổng quan"),
+    ("Daily history", "Lịch sử theo ngày"),
+    ("Today", "Hôm nay"),
+    ("Settings", "Cài đặt"),
+    ("All books", "Tất cả sách"),
+    ("Sun", "CN"),
+    ("Mon", "T2"),
+    ("Tue", "T3"),
+    ("Wed", "T4"),
+    ("Thu", "T5"),
+    ("Fri", "T6"),
+    ("Sat", "T7"),
+    (
+        "No recorded reading in this day.",
+        "Không có lượt đọc được ghi trong ngày này.",
+    ),
+    ("Earlier sessions", "Phiên trước"),
+    ("Later sessions", "Phiên sau"),
+];
+
+// Fixed weekly-reading progress controls; calculated values and dates stay untouched.
+const HISTORY_PROGRESS_LABELS: &[(&str, &str)] = &[
+    ("Reading progress", "Tiến độ đọc"),
+    ("Close", "Đóng"),
+    (
+        "No reading recorded in the last week.",
+        "Không có lượt đọc được ghi trong tuần qua.",
+    ),
+    ("Last week", "Tuần qua"),
+    ("Total pages", "Tổng số trang"),
+    ("Total time", "Tổng thời gian"),
+    ("Pages per day", "Trang mỗi ngày"),
+    ("Time per day", "Thời gian mỗi ngày"),
+    ("Week progress", "Tiến độ trong tuần"),
+    ("Session", "Phiên"),
+    ("Today", "Hôm nay"),
+    ("Pages", "Trang"),
+    ("Time", "Thời gian"),
+];
+
 // Fixed statistics report controls; book titles and recorded values stay untouched.
 const HISTORY_REPORT_LABELS: &[(&str, &str)] = &[
     ("Book filter", "Lọc theo sách"),
@@ -2322,6 +2379,41 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn history_month_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                HISTORY_MONTH_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn history_timeline_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = HISTORY_TIMELINE_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn history_progress_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = HISTORY_PROGRESS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn history_report_text<'a>(self, english: &'a str) -> &'a str {

@@ -2,8 +2,9 @@
 pub(crate) mod quotes;
 
 use super::{
-    BookStyle, BoxMargin, CascadeOrigin, CssLength, CssResult, Display, Element, Family, Priority,
-    Property, Rule, Size, Style, TextDecoration, Weight, flow,
+    BookStyle, BoxMargin, CascadeOrigin, CssLength, CssResult, Display, Element, Family,
+    LigatureExtras, Priority, Property, Rule, Size, Style, TextDecoration, VariantCaps,
+    VariantEastAsian, VariantNumeric, VariantPosition, Weight, flow,
 };
 use cssparser::{Parser, Token};
 use parley::{FontStyle, FontWeight, GenericFamily};
@@ -237,6 +238,13 @@ struct Typography {
     decoration: Option<TextDecoration>,
     line_height: Option<Option<f32>>,
     letter_spacing: Option<CssLength>,
+    common_ligatures: Option<bool>,
+    ligature_extras: Option<LigatureExtras>,
+    variant_caps: Option<VariantCaps>,
+    variant_numeric: Option<VariantNumeric>,
+    variant_east_asian: Option<VariantEastAsian>,
+    variant_position: Option<VariantPosition>,
+    variant_historical: Option<bool>,
     dpi: u16,
 }
 
@@ -285,6 +293,27 @@ impl Typography {
             style.letter_spacing =
                 computed_spacing(length, style.size_scale, self.root_scale).for_dpi(self.dpi);
         }
+        if let Some(value) = self.common_ligatures {
+            style.common_ligatures = value;
+        }
+        if let Some(value) = self.ligature_extras {
+            style.ligature_extras = value;
+        }
+        if let Some(value) = self.variant_caps {
+            style.variant_caps = value;
+        }
+        if let Some(value) = self.variant_numeric {
+            style.variant_numeric = value;
+        }
+        if let Some(value) = self.variant_east_asian {
+            style.variant_east_asian = value;
+        }
+        if let Some(value) = self.variant_position {
+            style.variant_position = value;
+        }
+        if let Some(value) = self.variant_historical {
+            style.variant_historical = value;
+        }
         style.flow = flow::resolve(base.flow, style.display, style.visibility);
         style
     }
@@ -315,6 +344,13 @@ pub(crate) struct FirstLine {
     slant: FontStyle,
     line_height: Option<f32>,
     letter_spacing: CssLength,
+    common_ligatures: bool,
+    ligature_extras: LigatureExtras,
+    variant_caps: VariantCaps,
+    variant_numeric: VariantNumeric,
+    variant_east_asian: VariantEastAsian,
+    variant_position: VariantPosition,
+    variant_historical: bool,
     root_scale: f32,
     decoration: TextDecoration,
 }
@@ -329,6 +365,13 @@ impl FirstLine {
             slant: style.font_style,
             line_height: style.line_height,
             letter_spacing: style.letter_spacing,
+            common_ligatures: style.common_ligatures,
+            ligature_extras: style.ligature_extras,
+            variant_caps: style.variant_caps,
+            variant_numeric: style.variant_numeric,
+            variant_east_asian: style.variant_east_asian,
+            variant_position: style.variant_position,
+            variant_historical: style.variant_historical,
             root_scale,
             decoration: style.decoration,
         }
@@ -342,6 +385,13 @@ impl FirstLine {
         style.font_style = self.slant;
         style.line_height = self.line_height;
         style.letter_spacing = self.letter_spacing;
+        style.common_ligatures = self.common_ligatures;
+        style.ligature_extras = self.ligature_extras;
+        style.variant_caps = self.variant_caps;
+        style.variant_numeric = self.variant_numeric;
+        style.variant_east_asian = self.variant_east_asian;
+        style.variant_position = self.variant_position;
+        style.variant_historical = self.variant_historical;
         style.decoration = style.decoration.including(self.decoration);
         style
     }
@@ -372,6 +422,15 @@ impl FirstLine {
             _ => style.font_weight,
         };
         let size = size.clamp(0.125, 8.0);
+        macro_rules! inherited_variant {
+            ($slot:expr, $field:ident) => {
+                if inherits($slot) {
+                    self.$field
+                } else {
+                    style.$field
+                }
+            };
+        }
         Self {
             host: self.host,
             family: if inherits(0) {
@@ -399,6 +458,13 @@ impl FirstLine {
                 _ if inherits(super::LETTER_SPACING) => self.letter_spacing,
                 _ => style.letter_spacing,
             },
+            common_ligatures: inherited_variant!(super::COMMON_LIGATURES, common_ligatures),
+            ligature_extras: inherited_variant!(super::LIGATURE_EXTRAS, ligature_extras),
+            variant_caps: inherited_variant!(super::VARIANT_CAPS, variant_caps),
+            variant_numeric: inherited_variant!(super::VARIANT_NUMERIC, variant_numeric),
+            variant_east_asian: inherited_variant!(super::VARIANT_EAST_ASIAN, variant_east_asian),
+            variant_position: inherited_variant!(super::VARIANT_POSITION, variant_position),
+            variant_historical: inherited_variant!(super::VARIANT_HISTORICAL, variant_historical),
             root_scale: self.root_scale,
             decoration: self.decoration.including(style.decoration),
         }
@@ -494,6 +560,13 @@ fn property_slot(property: &Property) -> Option<usize> {
         Property::InitialLetter(_) => 10,
         Property::HorizontalMargin(1, _) => 11,
         Property::LetterSpacing(_) => 12,
+        Property::CommonLigatures(_) | Property::Reset(super::COMMON_LIGATURES, _) => 13,
+        Property::LigatureExtras(_) | Property::Reset(super::LIGATURE_EXTRAS, _) => 14,
+        Property::VariantCaps(_) | Property::Reset(super::VARIANT_CAPS, _) => 15,
+        Property::VariantNumeric(_) | Property::Reset(super::VARIANT_NUMERIC, _) => 16,
+        Property::VariantEastAsian(_) | Property::Reset(super::VARIANT_EAST_ASIAN, _) => 17,
+        Property::VariantPosition(_) | Property::Reset(super::VARIANT_POSITION, _) => 18,
+        Property::VariantHistorical(_) | Property::Reset(super::VARIANT_HISTORICAL, _) => 19,
         _ => return None,
     })
 }
@@ -502,6 +575,25 @@ pub(super) fn accepts_user_declaration(target: Target, property: &Property) -> b
     match (target, property) {
         (_, Property::Display(value)) => matches!(value, Display::Inline | Display::None),
         (Target::Generated(_), _) => property_slot(property).is_some_and(|slot| slot <= 8),
+        (
+            Target::FirstLetter | Target::FirstLine,
+            Property::VariantShorthand(..) | Property::LigatureShorthand(..),
+        ) => true,
+        (Target::FirstLetter | Target::FirstLine, Property::ResetMany(keys, _)) => {
+            !keys.is_empty()
+                && keys.iter().all(|key| {
+                    matches!(
+                        *key,
+                        super::COMMON_LIGATURES
+                            | super::LIGATURE_EXTRAS
+                            | super::VARIANT_CAPS
+                            | super::VARIANT_NUMERIC
+                            | super::VARIANT_EAST_ASIAN
+                            | super::VARIANT_POSITION
+                            | super::VARIANT_HISTORICAL
+                    )
+                })
+        }
         (Target::FirstLine, _) => is_first_line_typography(property),
         (
             Target::FirstLetter,
@@ -527,10 +619,27 @@ fn is_first_line_typography(property: &Property) -> bool {
             | Property::Decoration(_)
             | Property::LineHeight(_)
             | Property::LetterSpacing(_)
+            | Property::CommonLigatures(_)
+            | Property::LigatureExtras(_)
+            | Property::VariantCaps(_)
+            | Property::VariantNumeric(_)
+            | Property::VariantEastAsian(_)
+            | Property::VariantPosition(_)
+            | Property::VariantHistorical(_)
+            | Property::Reset(
+                super::COMMON_LIGATURES
+                    | super::LIGATURE_EXTRAS
+                    | super::VARIANT_CAPS
+                    | super::VARIANT_NUMERIC
+                    | super::VARIANT_EAST_ASIAN
+                    | super::VARIANT_POSITION
+                    | super::VARIANT_HISTORICAL,
+                _,
+            )
     )
 }
 
-const SLOTS: usize = 13;
+const SLOTS: usize = 20;
 type Winners<'a> = [Option<(Priority, &'a Property)>; SLOTS];
 
 pub(super) struct Rules<'a> {
@@ -644,6 +753,11 @@ impl<'a> Rules<'a> {
                     let Some(slot) = property_slot(&decl.property) else {
                         continue;
                     };
+                    // Generated text uses a separate typography lifecycle; do
+                    // not imply variant support there until it is implemented.
+                    if matches!(target, Target::Generated(_)) && slot >= 13 {
+                        continue;
+                    }
                     let priority = super::cascade_priority(
                         *origin,
                         decl.important,
@@ -712,7 +826,8 @@ impl<'a> Rules<'a> {
             None
         } else if block {
             (!matches!(line_winners[1], Some((_, Property::Display(Display::None))))
-                && (line_winners[3..=8].iter().any(Option::is_some) || line_winners[12].is_some()))
+                && (line_winners[3..=8].iter().any(Option::is_some)
+                    || line_winners[12..].iter().any(Option::is_some)))
             .then(|| {
                 self.first_line_styles -= 1;
                 let style = self.typography(line_winners, root_scale).apply(host);
@@ -820,6 +935,27 @@ impl<'a> Rules<'a> {
                 Property::Decoration(value) => style.decoration = *value,
                 Property::LineHeight(value) => style.line_height = Some(*value),
                 Property::LetterSpacing(value) => style.letter_spacing = Some(*value),
+                Property::CommonLigatures(value) => style.common_ligatures = Some(*value),
+                Property::LigatureExtras(value) => style.ligature_extras = Some(*value),
+                Property::VariantCaps(value) => style.variant_caps = Some(*value),
+                Property::VariantNumeric(value) => style.variant_numeric = Some(*value),
+                Property::VariantEastAsian(value) => style.variant_east_asian = Some(*value),
+                Property::VariantPosition(value) => style.variant_position = Some(*value),
+                Property::VariantHistorical(value) => style.variant_historical = Some(*value),
+                Property::Reset(key, super::user_css::Reset::Initial) => match *key {
+                    super::COMMON_LIGATURES => style.common_ligatures = Some(true),
+                    super::LIGATURE_EXTRAS => style.ligature_extras = Some(Default::default()),
+                    super::VARIANT_CAPS => style.variant_caps = Some(VariantCaps::Normal),
+                    super::VARIANT_NUMERIC => style.variant_numeric = Some(Default::default()),
+                    super::VARIANT_EAST_ASIAN => {
+                        style.variant_east_asian = Some(Default::default())
+                    }
+                    super::VARIANT_POSITION => {
+                        style.variant_position = Some(VariantPosition::Normal)
+                    }
+                    super::VARIANT_HISTORICAL => style.variant_historical = Some(false),
+                    _ => {}
+                },
                 _ => (),
             }
         }

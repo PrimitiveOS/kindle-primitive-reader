@@ -934,20 +934,6 @@ fn word_breaks_with_limits(
         }
         return;
     }
-    // Ukrainian patterns include the apostrophe as an internal letter-like
-    // character; normalize the typographic spelling without changing offsets.
-    if locale == Dictionary::Ukrainian {
-        pattern_breaks(
-            patterns.view(),
-            additional.map(Patterns::view),
-            word,
-            limits,
-            true,
-            false,
-            emit,
-        );
-        return;
-    }
     // CRE's dictionary lookup uses alphabetic runs, while ICU may keep
     // apostrophes and Catalan's middle dot inside a single selected word.
     // Split only the lookup input and retain the original UTF-8 offsets.

@@ -56,6 +56,9 @@ Copyright (C) 1998-2001 Maksym Polyakov
 MIT (selected from the upstream dual licence)
 Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-uk.tex
 Source SHA-256: 9f57d9593f4b8a93e033f7f9649aaf3abb49d17117cbd987692b626e13374c55
+The unchanged source is packaged as hyph-uk.tex. Reader compiles its
+alphabetic weighted subset, corresponding to KOReader's pinned rule set.
+Comparison of actual behavior and distribution review remain open.
 
 The following MIT licence applies to both the Irish and Ukrainian patterns:
 

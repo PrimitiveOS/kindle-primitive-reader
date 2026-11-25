@@ -51,12 +51,17 @@ impl Reader {
     }
 
     pub(super) fn draw_reading_progress(&self, canvas: &mut Canvas) {
+        let language = self.controls.interface_language;
         let layout = self.navigation_layout();
-        layout.header_action(canvas, "Reading progress", "Close");
+        layout.header_action(
+            canvas,
+            language.history_progress_text("Reading progress"),
+            language.history_progress_text("Close"),
+        );
         let Some(progress) = &self.history_view.progress.snapshot else {
             canvas.text(
                 layout.body(236, 80),
-                "No reading recorded in the last week.",
+                language.history_progress_text("No reading recorded in the last week."),
                 crate::app::BODY.center(),
             );
             return;
@@ -70,7 +75,11 @@ impl Reader {
         let (seconds, screens) = progress.week_totals();
         let week_summary = layout.body(229, metric_height);
         let quarter = week_summary.w / 4;
-        canvas.text(layout.body(169, 48), "Last week", heading);
+        canvas.text(
+            layout.body(169, 48),
+            language.history_progress_text("Last week"),
+            heading,
+        );
         canvas.card(week_summary);
         for (column, (label, value)) in [
             ("Total pages", screens.to_string()),
@@ -89,13 +98,17 @@ impl Reader {
                     quarter,
                     metric_height,
                 ),
-                label,
+                language.history_progress_text(label),
                 &value,
             );
         }
 
         let week_heading = week_summary.bottom() + 30;
-        canvas.text(layout.body(week_heading, 46), "Week progress", heading);
+        canvas.text(
+            layout.body(week_heading, 46),
+            language.history_progress_text("Week progress"),
+            heading,
+        );
         let chart_y = week_heading + 57;
         let totals_y = layout.height - metric_height - 37;
         let chart_bottom = totals_y - 62;
@@ -110,7 +123,7 @@ impl Reader {
         for (index, day) in progress.days.iter().enumerate() {
             let row = layout.body(chart_y + index as i32 * row_height, row_height - 12);
             let heading_height = if row_height < 96 { 44 } else { 53 };
-            let weekday = WEEKDAYS[usize::from(day.date.weekday())];
+            let weekday = language.history_calendar_text(WEEKDAYS[usize::from(day.date.weekday())]);
             let date = format!("{weekday} · {}", day.date.label());
             let text = if index == 0 {
                 TextStyle::new(31).bold()
@@ -147,19 +160,23 @@ impl Reader {
                 baseline.w / 2 - 12,
                 baseline.h,
             );
-            canvas.text(Rect::new(rect.x, rect.y - 50, rect.w, 42), title, heading);
+            canvas.text(
+                Rect::new(rect.x, rect.y - 50, rect.w, 42),
+                language.history_progress_text(title),
+                heading,
+            );
             canvas.card(rect);
             let half = rect.w / 2;
             metric(
                 canvas,
                 Rect::new(rect.x, rect.y, half, rect.h),
-                "Pages",
+                language.history_progress_text("Pages"),
                 &totals.screens.to_string(),
             );
             metric(
                 canvas,
                 Rect::new(rect.x + half, rect.y, half, rect.h),
-                "Time",
+                language.history_progress_text("Time"),
                 &duration(totals.seconds),
             );
         }
