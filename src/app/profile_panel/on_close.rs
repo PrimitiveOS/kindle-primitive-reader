@@ -20,7 +20,7 @@ pub(in crate::app) enum AfterClose {
     Mark(MarkKey),
     CurrentFolder {
         browser: FileBrowser,
-        path: PathBuf,
+        reveal: Option<PathBuf>,
     },
     FinishedFolder(PathBuf),
 }
@@ -359,7 +359,7 @@ impl Reader {
                 self.view_bookmark_in_book_now(key)?;
                 Ok(Change::Partial)
             }
-            AfterClose::CurrentFolder { browser, path } => {
+            AfterClose::CurrentFolder { browser, reveal } => {
                 if !saved_before_profile {
                     self.save()?;
                 }
@@ -367,7 +367,11 @@ impl Reader {
                 let warning = self.annotation_close_warning().or(archive_warning);
                 self.close_book_to_library();
                 self.browser = browser;
-                self.reveal_book_row(&path);
+                if let Some(path) = reveal {
+                    self.reveal_book_row(&path);
+                } else {
+                    self.library_query.clear();
+                }
                 self.notice = warning;
                 Ok(Change::Partial)
             }

@@ -1,4 +1,5 @@
 //! Recognize single-contact direction chains from the SDK's viewport-projected pan stream.
+use super::book_shortcuts;
 use super::{Action, App, Binding, Change, Gesture, Item, Reader, Screen, read_import_file};
 use crate::Result;
 use primitive_app::{PanPhase, TouchPan};
@@ -415,7 +416,7 @@ impl Multiswipes {
         Ok(screen)
     }
 
-    fn binding_item(&self, shape: Shape) -> Item {
+    fn binding_item(&self, shape: Shape, shortcuts: &book_shortcuts::State) -> Item {
         Item::new(
             shape.arrows(),
             Action::Show(Screen::MultiswipeBinding(shape)),
@@ -423,18 +424,22 @@ impl Multiswipes {
         .detail(
             self.configured(shape)
                 .unwrap_or(Binding::PassThrough)
-                .label(),
+                .label(shortcuts),
         )
     }
 
-    pub(in crate::app) fn items(&self, screen: Screen) -> Vec<Item> {
+    pub(in crate::app) fn items(
+        &self,
+        screen: Screen,
+        shortcuts: &book_shortcuts::State,
+    ) -> Vec<Item> {
         if !self.enabled() {
             return Vec::new();
         }
         match screen {
             Screen::Multiswipes => PRESETS
                 .into_iter()
-                .map(|(shape, _)| self.binding_item(shape))
+                .map(|(shape, _)| self.binding_item(shape, shortcuts))
                 .collect(),
             Screen::CustomMultiswipes => {
                 let mut items = vec![if self.can_record() {
@@ -450,7 +455,7 @@ impl Multiswipes {
                     self.profile
                         .custom
                         .keys()
-                        .map(|&shape| self.binding_item(shape)),
+                        .map(|&shape| self.binding_item(shape, shortcuts)),
                 );
                 items
             }
@@ -500,6 +505,9 @@ impl Multiswipes {
                         }
                     })
                     .collect::<Vec<_>>();
+                items.extend(shortcuts.binding_items(selected, |action| {
+                    Action::Multiswipe(Command::Bind(shape, action))
+                }));
                 if !is_preset {
                     items.insert(
                         0,
@@ -514,7 +522,7 @@ impl Multiswipes {
                     Item::new(shape.arrows(), Action::MultiswipePreview(shape)).detail(
                         self.configured(shape)
                             .unwrap_or(Binding::PassThrough)
-                            .label(),
+                            .label(shortcuts),
                     ),
                 );
                 items
@@ -531,7 +539,7 @@ impl Multiswipes {
         }
     }
 
-    fn overview(&self) -> Vec<Item> {
+    fn overview(&self, shortcuts: &book_shortcuts::State) -> Vec<Item> {
         if !self.enabled() {
             return Vec::new();
         }
@@ -543,7 +551,7 @@ impl Multiswipes {
                 let action = self.configured(shape)?;
                 (!matches!(action, Binding::PassThrough | Binding::Ignore)).then(|| {
                     Item::new(shape.arrows(), Action::MultiswipePreview(shape))
-                        .detail(action.label())
+                        .detail(action.label(shortcuts))
                 })
             })
             .collect()
@@ -572,7 +580,7 @@ impl Reader {
     pub(in crate::app) fn return_to_multiswipe_list(&mut self, shape: Shape) {
         let screen = Multiswipes::list_for(shape);
         self.show(screen);
-        if let Some(index) = self.gestures.multiswipes.items(screen).iter().position(
+        if let Some(index) = self.gestures.multiswipes.items(screen, &self.book_shortcuts).iter().position(
             |item| matches!(item.action, Action::Show(Screen::MultiswipeBinding(key)) if key == shape),
         ) {
             self.list_page = index / self.list_geometry().rows;
@@ -588,10 +596,12 @@ impl Reader {
                     binding,
                     Binding::Default | Binding::Ignore | Binding::PassThrough
                 ))
-                .then(|| Item::new(title, Action::Heading).detail(binding.label()))
+                .then(|| {
+                    Item::new(title, Action::Heading).detail(binding.label(&self.book_shortcuts))
+                })
             })
             .collect::<Vec<_>>();
-        items.extend(self.gestures.multiswipes.overview());
+        items.extend(self.gestures.multiswipes.overview(&self.book_shortcuts));
         items
     }
 

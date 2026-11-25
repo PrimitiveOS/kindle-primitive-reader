@@ -90,6 +90,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
             FOLDER
         }
         Action::BookArchive(_) | Action::MetadataArchive(_) => ARCHIVE,
+        Action::BookShortcut(_) => BOOKMARK,
         Action::Show(Screen::Contents | Screen::FixedContents) => BOOK,
         Action::Chapter(super::chapter_navigation::Direction::Previous) => FIRST_PAGE,
         Action::Chapter(super::chapter_navigation::Direction::Next) => LAST_PAGE,

@@ -532,6 +532,7 @@ impl Reader {
             );
         }
         items.push(Item::new("Reading data", Action::Show(Screen::ReadingData)));
+        items.push(Self::book_shortcuts_item());
         items
     }
 

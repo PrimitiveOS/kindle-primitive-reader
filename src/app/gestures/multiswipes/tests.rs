@@ -62,6 +62,38 @@ fn touch(reader: &mut Reader, positions: &[(f32, f32)], start: (f32, f32)) -> Ch
 }
 
 #[test]
+fn multiswipe_can_open_a_saved_book_shortcut() {
+    use crate::app::book_shortcuts::{Command as ShortcutCommand, Kind};
+
+    let fixture = Fixture::new();
+    let name = "Harbor notes.epub";
+    fs::copy(
+        crate::test_fixture("night-landing.epub"),
+        fixture.root.join(name),
+    )
+    .unwrap();
+    let mut reader = canvas_reader(&fixture);
+    reader.open_path(&fixture.book).unwrap();
+    reader
+        .activate(Action::BookShortcut(ShortcutCommand::Add(
+            Kind::Book,
+            name.into(),
+        )))
+        .unwrap();
+    reader.show(Screen::Gestures);
+    tap_contents_item(&mut reader, "Multiswipes");
+    tap_contents_item(&mut reader, "Preset multiswipes");
+    tap_contents_item(&mut reader, "↑ →");
+    tap_contents_item(&mut reader, "Open Harbor notes.epub");
+    reader.show(Screen::Book);
+    assert_eq!(touch(&mut reader, &[UP, ELBOW], START), Change::Partial);
+    assert_eq!(
+        reader.current_document().unwrap().0.library_path(),
+        Path::new(name)
+    );
+}
+
+#[test]
 fn groups_in_contact_directions_at_stock_threshold_and_release_window() {
     let fixture = Fixture::new();
     let mut shape = Multiswipes::load(&fixture.state);

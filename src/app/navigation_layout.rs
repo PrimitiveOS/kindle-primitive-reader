@@ -133,6 +133,7 @@ impl Screen {
                 | Self::Gestures
                 | Self::Scrolling
                 | Self::GestureBinding(_)
+                | Self::BookShortcuts(_)
                 | Self::BackOptions(_)
                 | Self::AnnotationExchange
                 | Self::AnnotationExchangePreview

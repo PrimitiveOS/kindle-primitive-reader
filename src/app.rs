@@ -7,6 +7,7 @@ pub(crate) const NOTE_MARK_ICON: primitive_ui::Icon = bar_icons::HIGHLIGHT;
 #[cfg(test)]
 mod base_stylesheet_tests;
 mod book_archive;
+mod book_shortcuts;
 mod bookmark_browser;
 mod chapter_navigation;
 mod character_page_settings;
@@ -217,6 +218,7 @@ enum Screen {
     BookArchive,
     ArchiveFolder,
     MetadataArchive(metadata_archive::Page),
+    BookShortcuts(book_shortcuts::Page),
     BookmarkBrowser(bookmark_browser::Page),
     ReadingHistory(reading_history::Page),
     BookList,
@@ -397,6 +399,7 @@ impl Screen {
             Self::BookArchive => "Move to archive",
             Self::ArchiveFolder => "Archive folder",
             Self::MetadataArchive(page) => page.title(),
+            Self::BookShortcuts(page) => page.title(),
             Self::BookmarkBrowser(page) => page.title(),
             Self::ReadingHistory(page) => page.title(),
             Self::BookList => "Books",
@@ -625,6 +628,7 @@ enum Action {
     OrganizeCurrent,
     BookArchive(book_archive::Command),
     MetadataArchive(metadata_archive::Command),
+    BookShortcut(book_shortcuts::Command),
     BookmarkBrowser(bookmark_browser::Command),
     ReadingHistory(reading_history::Command),
     ToggleNonlinear,
@@ -952,6 +956,7 @@ pub struct Reader {
     library_viewport: crate::session::ReadingViewport,
     archive: book_archive::Archive,
     metadata_archive: metadata_archive::State,
+    book_shortcuts: book_shortcuts::State,
     bookmark_browser: bookmark_browser::Browser,
     library_query: String,
     book_list: Option<BookList>,
@@ -1198,6 +1203,7 @@ impl Reader {
             metadata_archive: metadata_archive::State::load(
                 data.join("book-metadata-archive.json"),
             ),
+            book_shortcuts: book_shortcuts::State::load(data.join("book-shortcuts.json")),
             bookmark_browser: bookmark_browser::Browser::load(data.join("bookmark-browser.json")),
             library_query: String::new(),
             book_list: None,
@@ -1919,6 +1925,7 @@ impl Reader {
         }
         self.archive.close_surfaces(screen);
         self.metadata_archive.close_surfaces(screen);
+        self.book_shortcuts.close_surfaces(screen);
         if !matches!(screen, Screen::ReadingProfileFields(_)) {
             self.profile_fields.clear();
         }
@@ -2966,13 +2973,18 @@ impl Reader {
             }
             Screen::Gestures => return self.reading_gesture_items(),
             Screen::Scrolling => return self.scroll_settings_items(),
-            Screen::GestureBinding(gesture) => return self.gestures.choices(gesture),
+            Screen::GestureBinding(gesture) => {
+                return self.gestures.choices(gesture, &self.book_shortcuts);
+            }
             Screen::Multiswipes
             | Screen::CustomMultiswipes
             | Screen::RecordMultiswipe
             | Screen::MultiswipeBinding(_)
             | Screen::RemoveMultiswipe(_) => {
-                return self.gestures.multiswipes.items(screen);
+                return self
+                    .gestures
+                    .multiswipes
+                    .items(screen, &self.book_shortcuts);
             }
             Screen::GestureOverview => return self.gesture_overview_items(),
             Screen::BookMap => return self.book_map_items(),
@@ -3155,6 +3167,9 @@ impl Reader {
         }
         if let Screen::MetadataArchive(page) = screen {
             return self.metadata_archive_items(page);
+        }
+        if let Screen::BookShortcuts(page) = screen {
+            return self.book_shortcut_items(page);
         }
         if let Some(items) = self.organization_items() {
             return items;
@@ -3833,6 +3848,7 @@ impl Reader {
                     "Recently read",
                     Action::ListBooks(BookList::Recent),
                 ));
+                items.push(Self::book_shortcuts_item());
                 items.push(Item::new("Authors", Action::ListBooks(BookList::Authors)));
                 items.extend(ReadingStatus::ALL.into_iter().map(|status| {
                     Item::new(status.label(), Action::ListBooks(BookList::Status(status)))
@@ -4037,6 +4053,7 @@ impl Reader {
             Action::Browse(directory) => self.browse_to(directory)?,
             Action::BookArchive(command) => self.archive_command(command)?,
             Action::MetadataArchive(command) => self.metadata_archive_command(command)?,
+            Action::BookShortcut(command) => self.book_shortcut_command(command)?,
             Action::CurrentBookFolder => self.current_book_folder()?,
             Action::OpenTracked(id) => {
                 let entry = self.locate_tracked(id)?;
@@ -8567,6 +8584,9 @@ impl Reader {
                         Action::MetadataArchive(metadata_archive::Command::Toggle(reason)) => {
                             RowAccessory::Toggle(self.metadata_archive.enabled(*reason))
                         }
+                        Action::BookShortcut(book_shortcuts::Command::Recursive) => {
+                            RowAccessory::Toggle(self.book_shortcuts.recursive())
+                        }
                         Action::AnnotationExchange(command) => self
                             .annotation_exchange
                             .toggle(*command)
@@ -9053,6 +9073,7 @@ impl App for Reader {
         self.draw_flow_popup(canvas);
         self.draw_archive_confirmation(canvas);
         self.draw_metadata_archive_confirmation(canvas);
+        self.draw_remove_book_shortcut(canvas);
         self.draw_profile_confirmation(canvas);
         self.draw_opening_time(canvas);
         self.draw_profile_field_controls(canvas);
@@ -9082,6 +9103,9 @@ impl App for Reader {
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
+        if let Some(point) = self.book_shortcut_removal_press(input) {
+            return point;
+        }
         if let Some(point) = self.metadata_archive_press(input) {
             return point;
         }
@@ -9175,6 +9199,9 @@ impl App for Reader {
             return change;
         }
         if let Some(change) = self.metadata_archive_confirmation_input(input) {
+            return change;
+        }
+        if let Some(change) = self.book_shortcut_removal_input(input) {
             return change;
         }
         if self.read_alarm.modal() {
@@ -9545,6 +9572,9 @@ impl App for Reader {
         if let Some(change) = self.metadata_archive_confirmation_input(input) {
             return change;
         }
+        if let Some(change) = self.book_shortcut_removal_input(input) {
+            return change;
+        }
         if self.flow_popup.is_some() {
             return self.flow_popup_input(input);
         }
@@ -9845,6 +9875,7 @@ impl App for Reader {
                     Screen::BookArchive => self.show(self.surface_screen()),
                     Screen::ArchiveFolder => self.show(Screen::BookArchive),
                     Screen::MetadataArchive(page) => self.back_from_metadata_archive(page),
+                    Screen::BookShortcuts(page) => self.back_from_book_shortcuts(page),
                     Screen::BookList if matches!(self.book_list, Some(BookList::Author(_))) => {
                         self.book_list = Some(BookList::Authors);
                         self.show(Screen::BookList);
@@ -10050,6 +10081,20 @@ impl App for Reader {
             }
             Input::Tap(x, y) if prev.contains(x, y) => -1,
             Input::Tap(x, y) if next.contains(x, y) => 1,
+            Input::LongTap(x, y)
+                if self.screen == Screen::BookShortcuts(book_shortcuts::Page::List) =>
+            {
+                let Some(index) = geometry.item_at(self.list_page, count, x, y) else {
+                    return Change::None;
+                };
+                if let Action::BookShortcut(book_shortcuts::Command::Launch(id)) =
+                    items[index % geometry.rows].action
+                {
+                    self.confirm_remove_book_shortcut(id);
+                    return Change::Partial;
+                }
+                return Change::None;
+            }
             Input::LongTap(x, y) if self.screen == Screen::Matches => {
                 let index = geometry
                     .item_at(self.list_page, count, x, y)

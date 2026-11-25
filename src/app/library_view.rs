@@ -92,7 +92,16 @@ impl Reader {
         let browser = self.read_book_folder(&path)?;
         self.request_close(super::profile_panel::on_close::AfterClose::CurrentFolder {
             browser,
-            path,
+            reveal: Some(path),
+        })?;
+        Ok(())
+    }
+
+    pub(super) fn open_shortcut_folder(&mut self, directory: PathBuf) -> Result<()> {
+        let browser = self.read_browser(directory)?;
+        self.request_close(super::profile_panel::on_close::AfterClose::CurrentFolder {
+            browser,
+            reveal: None,
         })?;
         Ok(())
     }

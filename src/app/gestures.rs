@@ -1,4 +1,5 @@
 //! Assign single-contact gestures to existing Reader actions. The SDK owns system gestures.
+use super::book_shortcuts;
 use super::{Action, BookList, DisplayLevel, Item, Reader, Screen, TopGroup, read_import_file};
 
 pub(super) mod multiswipes;
@@ -191,6 +192,7 @@ pub(super) enum Binding {
     FavoriteBooks,
     FitPageWidth,
     FitPageHeight,
+    BookShortcut(u64),
 }
 
 impl Binding {
@@ -230,8 +232,17 @@ impl Binding {
         (Self::FitPageWidth, "Fit page width"),
         (Self::FitPageHeight, "Fit page height"),
     ];
-    fn label(self) -> &'static str {
-        Self::ALL.iter().find(|entry| entry.0 == self).unwrap().1
+    fn label(self, shortcuts: &book_shortcuts::State) -> String {
+        if let Self::BookShortcut(id) = self {
+            shortcuts.binding_label(id)
+        } else {
+            Self::ALL
+                .iter()
+                .find(|entry| entry.0 == self)
+                .unwrap()
+                .1
+                .into()
+        }
     }
 }
 
@@ -277,18 +288,18 @@ impl GestureBindings {
         self.bindings = updated;
         Ok(())
     }
-    pub fn gestures(&self) -> Vec<Item> {
+    pub fn gestures(&self, shortcuts: &book_shortcuts::State) -> Vec<Item> {
         Gesture::ALL
             .iter()
             .map(|&(g, title)| {
                 Item::new(title, Action::Show(Screen::GestureBinding(g)))
-                    .detail(self.get(g).label())
+                    .detail(self.get(g).label(shortcuts))
             })
             .collect()
     }
-    pub fn choices(&self, gesture: Gesture) -> Vec<Item> {
+    pub fn choices(&self, gesture: Gesture, shortcuts: &book_shortcuts::State) -> Vec<Item> {
         let current = self.get(gesture);
-        Binding::ALL
+        let mut items: Vec<_> = Binding::ALL
             .iter()
             .filter(|(binding, _)| *binding != Binding::PassThrough)
             .map(|&(b, title)| {
@@ -299,7 +310,11 @@ impl GestureBindings {
                     item
                 }
             })
-            .collect()
+            .collect();
+        items.extend(
+            shortcuts.binding_items(current, |binding| Action::BindGesture(gesture, binding)),
+        );
+        items
     }
 
     fn corner_holds_paused(&self, controls: &ReadingControls, now: Instant) -> bool {
@@ -378,7 +393,7 @@ impl Reader {
             Item::new("Custom multiswipes", submenu(Screen::CustomMultiswipes)),
             Item::new("Gesture overview", Action::Show(Screen::GestureOverview)),
         ];
-        items.extend(self.gestures.gestures());
+        items.extend(self.gestures.gestures(&self.book_shortcuts));
         items.extend([
             Item::new(
                 "Ignore long-press on corners",
@@ -454,7 +469,9 @@ impl Reader {
             None => Gesture::touch(input, viewport)?,
         };
         let binding = self.gestures.get(gesture);
-        if self.screen == Screen::Library && binding != Binding::NavigationBack {
+        if self.screen == Screen::Library
+            && !matches!(binding, Binding::NavigationBack | Binding::BookShortcut(_))
+        {
             return None;
         }
         if let (Binding::Default, Input::Swipe { dy, .. }) = (binding, input) {
@@ -566,6 +583,7 @@ impl Reader {
             Binding::FitPageWidth if fixed => Action::FitPage(true),
             Binding::FitPageHeight if fixed => Action::FitHeight,
             Binding::FitPageWidth | Binding::FitPageHeight => return None,
+            Binding::BookShortcut(id) => Action::BookShortcut(book_shortcuts::Command::Launch(id)),
         };
         Some(match self.activate(action) {
             Ok(()) => {
