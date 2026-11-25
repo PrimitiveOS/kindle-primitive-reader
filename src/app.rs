@@ -260,6 +260,7 @@ enum Screen {
     HiddenFlows,
     ChapterNavigation,
     Gestures,
+    MenuActivationSettings,
     Scrolling,
     GestureBinding(Gesture),
     Multiswipes,
@@ -443,6 +444,7 @@ impl Screen {
             Self::HiddenFlows => "Custom hidden flows",
             Self::ChapterNavigation => "Chapter navigation",
             Self::Gestures => "Reading gestures",
+            Self::MenuActivationSettings => "Menu activation",
             Self::Scrolling => "Scrolling",
             Self::GestureBinding(gesture) => gesture.label(),
             Self::Multiswipes => "Preset multiswipes",
@@ -691,6 +693,7 @@ enum Action {
     OpenFixedLink(crate::fixed::PdfLink),
     OpenLinkAddress(String),
     ToggleLinkPreference(link_taps::LinkPreference),
+    SetMenuActivation(reading_bars::ActivationOption),
     Chapter(chapter_navigation::Direction),
     ChapterLevel(chapter_navigation::LevelSetting),
     SetCharacterPages(Option<u16>),
@@ -2997,6 +3000,7 @@ impl Reader {
                     .collect();
             }
             Screen::Gestures => return self.reading_gesture_items(),
+            Screen::MenuActivationSettings => return self.menu_activation_items(),
             Screen::Scrolling => return self.scroll_settings_items(),
             Screen::GestureBinding(gesture) => {
                 return self.gestures.choices(gesture, &self.book_shortcuts);
@@ -4365,6 +4369,7 @@ impl Reader {
                 self.show_link_address(address);
             }
             Action::ToggleLinkPreference(setting) => self.toggle_link_preference(setting)?,
+            Action::SetMenuActivation(option) => self.change_menu_activation(option)?,
             Action::Chapter(direction) => self.jump_chapter(direction)?,
             Action::ChapterLevel(setting) => self.set_chapter_level(setting)?,
             Action::Custom(action) => self.custom_action(action)?,
@@ -5742,14 +5747,11 @@ impl Reader {
         let viewport = self.reading_viewport();
         let (width, screen_height) = viewport.dimensions();
         let width = width as f32;
-        let page_height = viewport.page_height() as f32;
+        if !(0.0..width).contains(&start_x) {
+            return None;
+        }
         let screen_height = screen_height as f32;
-        let central = (width / 4.0..=width * 0.75).contains(&start_x);
-        let edge = if central {
-            page_height / 5.0
-        } else {
-            page_height / 8.0
-        };
+        let edge = reading_bars::menu_edge_height(width, screen_height, start_x);
         let from_top = dy > 0.0 && (0.0..=edge).contains(&start_y);
         let from_bottom = dy < 0.0 && (screen_height - edge..=screen_height).contains(&start_y);
         (from_top || from_bottom).then_some(from_top)
@@ -8607,6 +8609,9 @@ impl Reader {
                         Action::ToggleLinkPreference(setting) => {
                             RowAccessory::Toggle(setting.checked(self.controls))
                         }
+                        Action::SetMenuActivation(option) => {
+                            RowAccessory::Toggle(option.checked(self.controls))
+                        }
                         Action::SetReadingControls(_) if self.screen == Screen::TypographyRules => {
                             RowAccessory::Toggle(
                                 self.controls
@@ -9935,7 +9940,9 @@ impl App for Reader {
                         self.show(Screen::ReadingNotifications);
                         self.restore_reading_list_ordinal(reading_notifications::HISTORY_ROW);
                     }
-                    Screen::Gestures | Screen::LinkSettings => self.show(Screen::ReadingControls),
+                    Screen::Gestures | Screen::LinkSettings | Screen::MenuActivationSettings => {
+                        self.show(Screen::ReadingControls)
+                    }
                     Screen::BackOptions(_) => self.show(Screen::NavigationSettings),
                     Screen::PageTurnZones | Screen::PageTurnDefaults => {
                         self.show(Screen::PageTurns)
@@ -14911,6 +14918,7 @@ mod tests {
         let fixture = Fixture::new();
         let mut app = fixture.app();
         app.open_path(&fixture.book).unwrap();
+        app.controls.legacy_both_toolbars = Some(false);
         let original = app.current_position();
         let downward = Input::Swipe {
             dx: 5.0,

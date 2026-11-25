@@ -15,12 +15,38 @@ use super::bar_icons::{EXIT, action_icon, group_icon, panel_icon};
 use super::menu_search::mark_control;
 use super::reading_notifications::Source;
 use super::top_config::TopGroup;
-use super::{Action, Item, Reader, Screen};
+use super::{Action, Item, Reader, Result, Screen};
+use crate::reading_controls::ReadingControls;
 #[cfg(test)]
 use crate::session::PAGE_HEIGHT;
 use crate::session::PagePaint;
 
 pub(super) use crate::book_menus::BarPanel;
+
+#[derive(Clone, Copy)]
+pub(super) enum ActivationOption {
+    Tap,
+    Swipe,
+    AutoBottom,
+}
+
+impl ActivationOption {
+    pub(super) fn checked(self, controls: ReadingControls) -> bool {
+        match self {
+            Self::Tap => controls.menu_activation.allows_tap(),
+            Self::Swipe => controls.menu_activation.allows_swipe(),
+            Self::AutoBottom => controls.auto_shows_bottom(true),
+        }
+    }
+}
+
+pub(super) fn menu_edge_height(width: f32, height: f32, x: f32) -> f32 {
+    if (width / 4.0..=width * 0.75).contains(&x) {
+        height / 5.0
+    } else {
+        height / 8.0
+    }
+}
 
 impl BarPanel {
     fn tab(self) -> Self {
@@ -818,7 +844,7 @@ impl Reader {
         let width = self.reading_viewport().dimensions().0 as f32;
         self.show(self.tools_screen());
         self.reading_top = from_top;
-        self.reading_bottom = !from_top || self.controls.both_toolbars;
+        self.reading_bottom = !from_top || self.controls.auto_shows_bottom(false);
         if from_top {
             let group = if x < width / 3.0 {
                 TopGroup::ALL[0]
@@ -836,26 +862,70 @@ impl Reader {
         Change::Partial
     }
 
+    pub(super) fn menu_activation_items(&self) -> Vec<Item> {
+        use ActivationOption::*;
+        let controls = self.controls;
+        let auto_bottom_detail = if controls.auto_show_bottom_menu.is_none()
+            && controls.legacy_both_toolbars == Some(false)
+        {
+            "Upper-center tap opens both"
+        } else {
+            "Open the bottom controls with the top menu"
+        };
+        vec![
+            Item::new("With a tap", Action::SetMenuActivation(Tap)),
+            Item::new("With a swipe", Action::SetMenuActivation(Swipe)),
+            Item::new(
+                "Auto-show bottom menu",
+                Action::SetMenuActivation(AutoBottom),
+            )
+            .detail(auto_bottom_detail),
+        ]
+    }
+
+    pub(super) fn change_menu_activation(&mut self, option: ActivationOption) -> Result<()> {
+        let mut controls = self.controls;
+        match option {
+            ActivationOption::Tap => {
+                controls.menu_activation = controls.menu_activation.toggle_tap()
+            }
+            ActivationOption::Swipe => {
+                controls.menu_activation = controls.menu_activation.toggle_swipe()
+            }
+            ActivationOption::AutoBottom => {
+                controls.auto_show_bottom_menu = Some(!option.checked(controls));
+                controls.legacy_both_toolbars = None;
+            }
+        }
+        self.activate(Action::SetReadingControls(controls))
+    }
+
     pub(super) fn reveal_reading_tools(&mut self, x: f32, y: f32, screen: Screen) -> bool {
-        if self.controls.menu_activation == crate::reading_controls::MenuActivation::Swipe {
+        if !self.controls.menu_activation.allows_tap() {
             return false;
         }
         let viewport = self.reading_viewport();
         let (width, height) = viewport.dimensions();
         let (width, height) = (width as f32, height as f32);
-        if (x - width / 2.0).abs() <= 150.0 && (height * 0.8..height * 12.0 / 13.0).contains(&y) {
-            // The lower menu strip stops where the status footer takes over.
-            self.show(screen);
-            self.set_bottom_panel(Some(self.last_bottom_panel()));
-            true
+        if !(0.0..width).contains(&x) {
+            return false;
+        }
+        let edge = menu_edge_height(width, height, x);
+        // The lower menu strip stops where the status footer takes over.
+        if (height - edge..height * 12.0 / 13.0).contains(&y) {
+            self.open_reading_edge(false, x);
         } else if (width / 3.0..=width * 2.0 / 3.0).contains(&x)
             && (0.0..viewport.page_height() as f32 * 0.55).contains(&y)
         {
+            // The upper-center shortcut keeps Reader's navigation shortcuts visible.
             self.show(screen);
-            true
+            self.reading_bottom = self.controls.auto_shows_bottom(true);
+        } else if (0.0..edge).contains(&y) {
+            self.open_reading_edge(true, x);
         } else {
-            false
+            return false;
         }
+        true
     }
 
     fn apply_overlay_action(&mut self, action: Action) -> Change {
@@ -1062,12 +1132,12 @@ mod tests {
                 false,
             );
             app.finish_viewport(portrait, ViewportDecision::Commit);
-            // Keep the existing physical half-width and exact portrait y cutoffs.
+            // The stock middle-half extension and the upper-center shortcut share the screen.
             for (x, y, opened) in [
                 (632.0, 1343.0, false),
                 (632.0, 1344.0, true),
-                (482.0, 1400.0, true),
-                (481.0, 1400.0, false),
+                (316.0, 1400.0, true),
+                (315.0, 1400.0, false),
                 (632.0, 1551.0, false),
                 (632.0, 882.0, true),
                 (632.0, 884.0, false),
@@ -1491,3 +1561,7 @@ mod render_dpi_tests;
 #[cfg(test)]
 #[path = "kerning_modes_tests.rs"]
 mod kerning_modes_tests;
+
+#[cfg(test)]
+#[path = "menu_activation_tests.rs"]
+mod menu_activation_tests;

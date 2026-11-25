@@ -441,23 +441,8 @@ impl Reader {
             )
             .detail(format!("{} · paged reading", current.page_refresh.label())),
             Item::new(
-                "Open both reading bars",
-                Action::SetReadingControls(ReadingControls {
-                    both_toolbars: !current.both_toolbars,
-                    ..current
-                }),
-            )
-            .detail(if current.both_toolbars {
-                "Top swipe opens both"
-            } else {
-                "Top and bottom open separately"
-            }),
-            Item::new(
-                "Open reading menus",
-                Action::SetReadingControls(ReadingControls {
-                    menu_activation: current.menu_activation.next(),
-                    ..current
-                }),
+                "Menu activation",
+                Action::Show(Screen::MenuActivationSettings),
             )
             .detail(current.menu_activation.label()),
         ]);

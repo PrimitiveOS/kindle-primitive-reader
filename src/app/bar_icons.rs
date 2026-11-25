@@ -119,6 +119,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Show(
             Screen::DocumentDefaults
             | Screen::PublisherRenderDefaults
+            | Screen::MenuActivationSettings
             | Screen::StyleTweaks
             | Screen::StylePreset
             | Screen::StyleFiles

@@ -132,6 +132,7 @@ impl Screen {
                 | Self::PastNotifications
                 | Self::FooterItemWidths
                 | Self::Gestures
+                | Self::MenuActivationSettings
                 | Self::Scrolling
                 | Self::GestureBinding(_)
                 | Self::BookShortcuts(_)

@@ -147,7 +147,11 @@ pub(crate) struct ReadingControls {
     pub auto_turn_enabled: bool,
     /// Signed movement distance in tenths of a page. Zero is the legacy 100% default.
     pub auto_turn_distance_tenths: i16,
-    pub both_toolbars: bool,
+    /// Older profiles only applied this choice to edge activation.
+    #[serde(rename = "both_toolbars", skip_serializing_if = "Option::is_none")]
+    pub legacy_both_toolbars: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_show_bottom_menu: Option<bool>,
     pub orientation: ReadingOrientation,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reflow_orientation_default: Option<ReadingOrientation>,
@@ -698,11 +702,27 @@ impl MenuActivation {
         }
     }
 
-    pub fn next(self) -> Self {
-        match self {
-            Self::TapAndSwipe => Self::Tap,
-            Self::Tap => Self::Swipe,
-            Self::Swipe => Self::TapAndSwipe,
+    pub(crate) fn allows_tap(self) -> bool {
+        self != Self::Swipe
+    }
+
+    pub(crate) fn allows_swipe(self) -> bool {
+        self != Self::Tap
+    }
+
+    pub(crate) fn toggle_tap(self) -> Self {
+        if self.allows_tap() {
+            Self::Swipe
+        } else {
+            Self::TapAndSwipe
+        }
+    }
+
+    pub(crate) fn toggle_swipe(self) -> Self {
+        if self.allows_swipe() {
+            Self::Tap
+        } else {
+            Self::TapAndSwipe
         }
     }
 }
@@ -1486,6 +1506,11 @@ impl PageRefresh {
 }
 
 impl ReadingControls {
+    pub(crate) fn auto_shows_bottom(self, center_tap: bool) -> bool {
+        self.auto_show_bottom_menu
+            .unwrap_or(center_tap || self.legacy_both_toolbars.unwrap_or(true))
+    }
+
     pub(crate) fn bookmark_max_lines(self) -> Option<u8> {
         self.bookmark_max_lines
             .filter(|count| (1..=MAX_BOOKMARK_LINES).contains(count))
