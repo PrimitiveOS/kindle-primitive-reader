@@ -786,7 +786,7 @@ pub(crate) fn is_serbian_language(locale: Option<crate::TypographyLocale>) -> bo
         && matches!(language.script(), None | Some("Latn") | Some("Cyrl"))
 }
 
-fn is_serbian_script(locale: Option<crate::TypographyLocale>, latin: bool) -> bool {
+pub(crate) fn is_serbian_script(locale: Option<crate::TypographyLocale>, latin: bool) -> bool {
     let Some(crate::TypographyLocale::Language(language)) = locale else {
         return false;
     };
@@ -796,7 +796,7 @@ fn is_serbian_script(locale: Option<crate::TypographyLocale>, latin: bool) -> bo
 }
 
 // Mixed-script words must not receive rules from only one Serbian table.
-fn word_has_script(word: &str, target: Script) -> bool {
+pub(crate) fn word_has_script(word: &str, target: Script) -> bool {
     let scripts = CodePointMapData::<Script>::new();
     let mut found = false;
     for ch in word.chars().filter(|ch| ch.is_alphabetic()) {

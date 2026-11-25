@@ -37,6 +37,8 @@ use crate::footnotes::in_page::Targets as FootnoteTargets;
 use crate::source::{Element, Source, Stylesheet};
 
 const MAX_SHEETS: usize = 8;
+const MAX_IMPORTS: usize = 8;
+const MAX_IMPORT_DEPTH: usize = 4;
 const MAX_SHEET_BYTES: usize = 96 * 1024;
 const MAX_CSS_BYTES: usize = 256 * 1024;
 const MAX_INLINE_BYTES: usize = 4 * 1024;
@@ -884,6 +886,8 @@ impl BookStyle {
         let mut remaining = MAX_CSS_BYTES;
         let mut linked = 0;
         let mut inline = 0;
+        let mut imports = 0;
+        let mut active_imports = HashSet::new();
         let names = ChapterNames::new(&source.elements);
         for sheet in &source.stylesheets {
             match sheet {
@@ -903,12 +907,34 @@ impl BookStyle {
                         continue;
                     };
                     if let Ok(text) = std::str::from_utf8(&bytes) {
-                        styled.read_sheet(&path, text, &mut remaining, &mut faces, &names);
+                        active_imports.insert(path.clone());
+                        styled.read_sheet(
+                            book,
+                            &path,
+                            text,
+                            &mut remaining,
+                            &mut faces,
+                            &names,
+                            &mut imports,
+                            &mut active_imports,
+                            0,
+                        );
+                        active_imports.remove(&path);
                     }
                 }
                 Stylesheet::Inline(sheet) if inline < MAX_SHEETS => {
                     inline += 1;
-                    styled.read_sheet(chapter, sheet, &mut remaining, &mut faces, &names);
+                    styled.read_sheet(
+                        book,
+                        chapter,
+                        sheet,
+                        &mut remaining,
+                        &mut faces,
+                        &names,
+                        &mut imports,
+                        &mut active_imports,
+                        0,
+                    );
                 }
                 _ => {}
             }
@@ -1605,32 +1631,76 @@ impl BookStyle {
 
     fn read_sheet(
         &mut self,
+        book: &mut Book,
         base: &str,
         text: &str,
         remaining: &mut usize,
         faces: &mut Vec<FontFace>,
         names: &ChapterNames<'_>,
+        imports: &mut usize,
+        active_imports: &mut HashSet<String>,
+        depth: usize,
     ) {
         if text.len() > MAX_SHEET_BYTES || text.len() > *remaining {
             return;
         }
         *remaining -= text.len();
         let mut parser = Parser::new(text.trim_start_matches('\u{feff}'));
+        let mut imports_allowed = true;
         for rule in StyleSheetParser::new(&mut parser, &mut SheetParser)
             .take(MAX_RULES)
             .flatten()
         {
             match rule {
-                SheetItem::Rule(mut rule)
-                    if self.rules.len() < MAX_RULES && !rule.declarations.is_empty() =>
+                SheetItem::Import(href)
+                    if imports_allowed && depth < MAX_IMPORT_DEPTH && *imports < MAX_IMPORTS =>
                 {
-                    rule.selectors.retain(|selector| names.possible(selector));
-                    if !rule.selectors.is_empty() {
-                        self.rules.push(rule);
+                    let Ok(path) = Book::resolve(base, &href) else {
+                        continue;
+                    };
+                    if !path
+                        .rsplit_once('.')
+                        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("css"))
+                        || active_imports.contains(&path)
+                    {
+                        continue;
+                    }
+                    *imports += 1;
+                    let Ok(bytes) = book.resource_limited(&path, MAX_SHEET_BYTES.min(*remaining))
+                    else {
+                        continue;
+                    };
+                    let Ok(css) = std::str::from_utf8(&bytes) else {
+                        continue;
+                    };
+                    active_imports.insert(path.clone());
+                    self.read_sheet(
+                        book,
+                        &path,
+                        css,
+                        remaining,
+                        faces,
+                        names,
+                        imports,
+                        active_imports,
+                        depth + 1,
+                    );
+                    active_imports.remove(&path);
+                }
+                SheetItem::Rule(mut rule) => {
+                    imports_allowed = false;
+                    if self.rules.len() < MAX_RULES && !rule.declarations.is_empty() {
+                        rule.selectors.retain(|selector| names.possible(selector));
+                        if !rule.selectors.is_empty() {
+                            self.rules.push(rule);
+                        }
                     }
                 }
-                SheetItem::Font(declarations) if faces.len() < MAX_FACE_RULES => {
-                    if let Some(face) = FontFace::from_rule(base, declarations) {
+                SheetItem::Font(declarations) => {
+                    imports_allowed = false;
+                    if faces.len() < MAX_FACE_RULES
+                        && let Some(face) = FontFace::from_rule(base, declarations)
+                    {
                         faces.push(face);
                     }
                 }
@@ -2102,6 +2172,12 @@ struct Rule {
 enum SheetItem {
     Rule(Rule),
     Font(Vec<Declaration>),
+    Import(String),
+}
+
+enum SheetPrelude {
+    Font,
+    Import(String),
 }
 
 type CssResult<T> = Result<T, ParseError<()>>;
@@ -2135,24 +2211,51 @@ impl<'i> QualifiedRuleParser<'i> for SheetParser {
 }
 
 impl<'i> AtRuleParser<'i> for SheetParser {
-    type Prelude = ();
+    type Prelude = SheetPrelude;
     type AtRule = SheetItem;
     type Error = ();
 
-    fn parse_prelude(&mut self, name: CowRcStr<'i>, input: &mut Parser<'i>) -> CssResult<()> {
-        if !name.eq_ignore_ascii_case("font-face") {
-            return Err(ParseError::unexpected_token());
+    fn parse_prelude(
+        &mut self,
+        name: CowRcStr<'i>,
+        input: &mut Parser<'i>,
+    ) -> CssResult<SheetPrelude> {
+        if name.eq_ignore_ascii_case("font-face") {
+            input.expect_exhausted()?;
+            return Ok(SheetPrelude::Font);
         }
-        Ok(input.expect_exhausted()?)
+        if name.eq_ignore_ascii_case("import") {
+            let href = input
+                .try_parse(|p| p.expect_string_cloned())
+                .or_else(|_| input.expect_url())?
+                .to_string();
+            input.expect_exhausted()?;
+            return Ok(SheetPrelude::Import(href));
+        }
+        Err(ParseError::unexpected_token())
+    }
+
+    fn rule_without_block(
+        &mut self,
+        prelude: SheetPrelude,
+        _: &ParserState,
+    ) -> Result<SheetItem, ()> {
+        match prelude {
+            SheetPrelude::Import(href) => Ok(SheetItem::Import(href)),
+            SheetPrelude::Font => Err(()),
+        }
     }
 
     fn parse_block(
         &mut self,
-        _: (),
+        prelude: SheetPrelude,
         _: &ParserState,
         input: &mut Parser<'i>,
     ) -> CssResult<SheetItem> {
-        Ok(SheetItem::Font(declarations(input)))
+        match prelude {
+            SheetPrelude::Font => Ok(SheetItem::Font(declarations(input))),
+            SheetPrelude::Import(_) => Err(ParseError::unexpected_token()),
+        }
     }
 }
 

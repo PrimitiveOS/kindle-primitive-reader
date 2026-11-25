@@ -551,6 +551,111 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed bottom typography availability and Style tweaks controls; CSS and user data stay untouched.
+const BOTTOM_TYPOGRAPHY_LABELS: &[(&str, &str)] = &[
+    ("Open a reflowable EPUB", "Mở EPUB có thể dàn trang lại"),
+    (
+        "Requires a horizontal left-to-right EPUB",
+        "Cần EPUB ngang từ trái sang phải",
+    ),
+    ("Requires one-page reading", "Cần chế độ đọc một trang"),
+    ("Turn on Publisher CSS", "Bật CSS của nhà xuất bản"),
+    ("No embedded fonts found", "Không tìm thấy phông chữ nhúng"),
+    (
+        "Open a reflowable book first",
+        "Trước tiên hãy mở sách có thể dàn trang lại",
+    ),
+    ("Enable style tweaks", "Bật điều chỉnh kiểu"),
+    ("On for this book", "Bật cho sách này"),
+    (
+        "Off; choices and CSS retained",
+        "Tắt; giữ các lựa chọn và CSS",
+    ),
+    ("Edit book CSS", "Sửa CSS của sách"),
+    (
+        "Supported CSS only; review before applying",
+        "Chỉ hỗ trợ CSS được cho phép; xem lại trước khi áp dụng",
+    ),
+    ("Import book CSS", "Nhập CSS cho sách"),
+    (
+        "Copy a .css file to reader/data/style-tweaks",
+        "Sao chép tệp .css vào reader/data/style-tweaks",
+    ),
+    ("Book CSS", "CSS của sách"),
+    ("On", "Bật"),
+    ("Off; text retained", "Tắt; giữ văn bản"),
+    ("Clear book CSS", "Xóa CSS của sách"),
+    ("Saved settings preserved", "Đã giữ cài đặt đã lưu"),
+    (
+        "Unavailable tweaks retained",
+        "Đã giữ các điều chỉnh không khả dụng",
+    ),
+    ("Links", "Liên kết"),
+    ("Spacing between paragraphs", "Khoảng cách giữa các đoạn"),
+    ("Use book spacing", "Dùng khoảng cách của sách"),
+    ("Full", "Đầy đủ"),
+    ("Half", "Một nửa"),
+    ("None", "Không"),
+    ("Images", "Hình ảnh"),
+    ("Tables", "Bảng"),
+    ("Pseudo-elements", "Phần tử giả"),
+    ("List items", "Mục danh sách"),
+    ("Normal line height", "Chiều cao dòng thông thường"),
+    ("In-page footnote size", "Cỡ chú thích trong trang"),
+    ("More footnote options", "Tùy chọn chú thích khác"),
+    ("Supported reflow styles", "Kiểu dàn trang được hỗ trợ"),
+    (
+        "Margins, hiding, floats, arbitrary selectors and vendor hints are not supported.",
+        "Không hỗ trợ lề, ẩn nội dung, phần tử nổi, bộ chọn tùy ý và gợi ý của nhà cung cấp.",
+    ),
+];
+
+// Fixed top Settings descriptions only; user fonts, paths and dynamic notices stay untouched.
+const TOP_SETTINGS_DETAIL_LABELS: &[(&str, &str)] = &[
+    ("By date", "Theo ngày"),
+    ("By page in reading order", "Theo trang trong thứ tự đọc"),
+    (
+        "Settings for new books; existing books stay unchanged",
+        "Cài đặt cho sách mới; sách hiện có giữ nguyên",
+    ),
+    (
+        "Assign taps, holds and swipes",
+        "Gán thao tác chạm, nhấn giữ và vuốt",
+    ),
+    (
+        "Touch controls, tap zones and reading direction",
+        "Điều khiển cảm ứng, vùng chạm và hướng đọc",
+    ),
+    (
+        "Back action, opening location and Skim position",
+        "Thao tác quay lại, vị trí mở và vị trí đọc lướt",
+    ),
+    (
+        "Link taps and return gesture",
+        "Chạm liên kết và cử chỉ quay lại",
+    ),
+    (
+        "Previous and next buttons are swapped",
+        "Đã đổi chức năng nút trước và tiếp",
+    ),
+    (
+        "Standard physical button directions",
+        "Hướng nút vật lý tiêu chuẩn",
+    ),
+    (
+        "Supported user CSS and live defaults",
+        "CSS người dùng được hỗ trợ và mặc định hiện hành",
+    ),
+    ("Light text on dark pages", "Chữ sáng trên trang tối"),
+    ("Dark text on light pages", "Chữ tối trên trang sáng"),
+    ("Large labels and controls", "Nhãn và điều khiển lớn"),
+    ("Compact labels and controls", "Nhãn và điều khiển gọn"),
+    (
+        "Physical page buttons, Unlock touch and Done stay available",
+        "Nút lật trang vật lý, Mở khóa cảm ứng và Xong vẫn khả dụng",
+    ),
+];
+
 // Fixed reading-profile controls; profile names and saved rules stay untouched.
 const READING_PROFILE_LABELS: &[(&str, &str)] = &[
     ("Save current settings", "Lưu cài đặt hiện tại"),
@@ -696,6 +801,24 @@ const READING_PROFILE_LABELS: &[(&str, &str)] = &[
         "Page mode, alignment, styles and images",
         "Chế độ trang, căn lề, kiểu và ảnh",
     ),
+    ("Native", "Nguyên bản"),
+    ("Auto", "Tự động"),
+    ("Fast", "Nhanh"),
+    ("Good", "Tốt"),
+    ("Best", "Tốt nhất"),
+    ("On", "Bật"),
+    ("Smooth", "Mượt"),
+    ("Original", "Gốc"),
+    ("Inverted", "Đảo màu"),
+    ("Page turns", "Lật trang"),
+    ("Scrolling", "Cuộn"),
+    ("One page", "Một trang"),
+    ("Publisher", "Nhà xuất bản"),
+    ("Start", "Đầu dòng"),
+    ("Center", "Giữa"),
+    ("Justify", "Căn đều"),
+    ("None", "Không"),
+    ("Traditional", "Truyền thống"),
 ];
 
 // Fixed hidden-flow controls; stored positions and marker identities stay untouched.
@@ -3040,6 +3163,42 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn bottom_typography_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = BOTTOM_TYPOGRAPHY_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn bottom_typography_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = BOTTOM_TYPOGRAPHY_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    pub(super) fn top_settings_detail<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = TOP_SETTINGS_DETAIL_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn reading_profile_text<'a>(self, english: &'a str) -> &'a str {

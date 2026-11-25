@@ -816,7 +816,8 @@ impl Reader {
             }
             Command::BookInfo(id) => {
                 self.bookmark_browser.book = Some(id);
-                self.bookmark_browser.catalog.queue([id]);
+                let cbz = self.library.state(id).is_some_and(metadata::is_cbz_book);
+                self.bookmark_browser.catalog.queue([(id, cbz)]);
                 self.show(Screen::BookmarkBrowser(Page::Book));
             }
             Command::ViewBook(id) => {

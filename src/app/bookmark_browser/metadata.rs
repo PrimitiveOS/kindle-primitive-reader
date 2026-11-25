@@ -13,6 +13,13 @@ const MAX_DESCRIPTION: usize = 8192;
 const MAX_VALUE: usize = 512;
 const MAX_VALUES: usize = 128;
 
+pub(super) fn is_cbz_book(book: &BookState) -> bool {
+    book.path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("cbz"))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::app) enum Property {
     Series,
@@ -56,6 +63,9 @@ pub(super) struct Snapshot {
     pub(super) has_cover: bool,
     pub(super) chapters: HashMap<String, usize>,
     pub(super) fixed: bool,
+    // Older cache entries predate ComicInfo. Refresh those CBZs once, while
+    // retaining the old snapshot if the source is temporarily unavailable.
+    cbz_info_scanned: bool,
 }
 
 pub(super) fn backup_value(bytes: &[u8]) -> std::io::Result<serde_json::Value> {
@@ -113,10 +123,17 @@ impl Catalog {
         self.books.get(&id)
     }
 
-    pub(super) fn queue(&mut self, ids: impl IntoIterator<Item = u64>) {
+    pub(super) fn queue(&mut self, ids: impl IntoIterator<Item = (u64, bool)>) {
         let ids: BTreeSet<_> = ids
             .into_iter()
-            .filter(|id| !self.books.contains_key(id) && !self.failed.contains(id))
+            .filter(|(id, cbz)| {
+                !self.failed.contains(id)
+                    && self
+                        .books
+                        .get(id)
+                        .is_none_or(|snapshot| *cbz && !snapshot.cbz_info_scanned)
+            })
+            .map(|(id, _)| id)
             .collect();
         self.pending = ids.into_iter().collect();
         self.next = (!self.pending.is_empty()).then(Instant::now);
@@ -260,6 +277,19 @@ fn read_snapshot(library: &Library, state: &BookState) -> Result<Snapshot> {
             || entry.format.is_still_image()
             || entry.format == DocumentFormat::Djvu;
         snapshot.has_cover = snapshot.fixed;
+        if entry.format == DocumentFormat::Cbz {
+            if let Some(info) = crate::comic::cbz_info(&absolute)? {
+                snapshot.series = values(info.series.iter().map(String::as_str));
+                snapshot.language = info
+                    .language
+                    .as_deref()
+                    .and_then(|language| value(language, MAX_VALUE))
+                    .map(|language| language.to_lowercase());
+                snapshot.keywords = values(info.keywords.iter().map(String::as_str));
+                snapshot.description = info.description.as_deref().and_then(description);
+            }
+            snapshot.cbz_info_scanned = true;
+        }
     }
     if library.identify(&entry)? != state.id {
         return Err("The book changed while reading its metadata".into());
@@ -327,7 +357,7 @@ impl Reader {
             .filter(|book| {
                 browser.picking.is_none() || browser.books.iter().any(|listed| listed.id == book.id)
             })
-            .map(|book| book.id);
+            .map(|book| (book.id, is_cbz_book(book)));
         browser.catalog.queue(ids);
     }
 

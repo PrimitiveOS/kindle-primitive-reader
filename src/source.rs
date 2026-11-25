@@ -10,6 +10,7 @@ pub(crate) const SOURCE_ATTRIBUTE: &str = "data-primos-source";
 #[cfg(test)]
 mod flow_metadata_tests;
 mod numeric_references;
+pub(crate) mod raw_whitespace;
 #[cfg(feature = "kindle")]
 mod selection_html;
 
@@ -32,6 +33,9 @@ pub(crate) struct Block {
     pub text: String,
     pub element: usize,
     pub styled_text: Vec<StyledText>,
+    /// Optional raw provenance is layout metadata; canonical bytes are unchanged.
+    #[allow(dead_code)]
+    pub(crate) raw_whitespace: Option<raw_whitespace::Snapshot>,
     /// Layout-only origins. These never participate in canonical text or revisions.
     pub flow_origins: crate::flow_projection::Origins,
     pub(crate) pseudo_edges: Box<[crate::book_style::pseudo::Edge]>,
@@ -812,6 +816,7 @@ impl Source {
         let mut ruby_exclusions = Vec::new();
         let mut available_ruby = MAX_RUBY_GROUPS;
         let mut flow_budget = crate::flow_projection::Budget::new();
+        let mut raw_whitespace_budget = raw_whitespace::Budget::new();
         for node in body.descendants().filter(Node::is_element) {
             if !is_block(node)
                 || hidden(node)
@@ -1110,6 +1115,7 @@ impl Source {
             insertions.push((key + tag_end, key));
             ruby_exclusions.extend(exclusions);
             let pseudo_edges = pseudo_edges.finish(text.len(), &mut pseudo_edges_remaining);
+            let raw_whitespace = raw_whitespace::capture(node, &text, &mut raw_whitespace_budget);
             blocks.push(Block {
                 table_cell: tables.containing(node),
                 key,
@@ -1123,6 +1129,7 @@ impl Source {
                 text,
                 element: element_ids[&node.id()],
                 styled_text,
+                raw_whitespace,
                 flow_origins,
                 pseudo_edges,
                 list_item: list_items.block(node),

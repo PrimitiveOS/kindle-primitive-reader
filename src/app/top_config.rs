@@ -342,6 +342,7 @@ impl Reader {
 
     pub(super) fn reading_settings_items(&self) -> Vec<Item> {
         let current = self.controls;
+        let language = current.interface_language;
         let mut items = vec![
             Self::quickstart_item(),
             Item::new(
@@ -357,9 +358,9 @@ impl Reader {
                 Action::Show(Screen::BookmarkListSettings),
             )
             .detail(if current.bookmark_sort_by_date {
-                "By date"
+                language.top_settings_detail("By date")
             } else {
-                "By page in reading order"
+                language.top_settings_detail("By page in reading order")
             }),
             Item::new(
                 "Selection dialog position",
@@ -378,20 +379,25 @@ impl Reader {
             } else {
                 current.selection_long_press_action.label().to_owned()
             }),
-            Item::new("Document defaults", Action::Show(Screen::DocumentDefaults))
-                .detail("Settings for new books; existing books stay unchanged"),
+            Item::new("Document defaults", Action::Show(Screen::DocumentDefaults)).detail(
+                language
+                    .top_settings_detail("Settings for new books; existing books stay unchanged"),
+            ),
             Item::new("Reading gestures", Action::Show(Screen::Gestures))
-                .detail("Assign taps, holds and swipes"),
-            Item::new("Page turns", Action::Show(Screen::PageTurns))
-                .detail("Touch controls, tap zones and reading direction"),
+                .detail(language.top_settings_detail("Assign taps, holds and swipes")),
+            Item::new("Page turns", Action::Show(Screen::PageTurns)).detail(
+                language.top_settings_detail("Touch controls, tap zones and reading direction"),
+            ),
             Item::new(
                 "Navigation settings",
                 Action::Show(Screen::NavigationSettings),
             )
-            .detail("Back action, opening location and Skim position"),
+            .detail(
+                language.top_settings_detail("Back action, opening location and Skim position"),
+            ),
             self.reading_notifications_item(),
             Item::new("Links", Action::Show(Screen::LinkSettings))
-                .detail("Link taps and return gesture"),
+                .detail(language.top_settings_detail("Link taps and return gesture")),
             Item::new(
                 "Invert page-turn buttons",
                 Action::SetReadingControls(ReadingControls {
@@ -400,20 +406,20 @@ impl Reader {
                 }),
             )
             .detail(if current.invert_page_turn_buttons {
-                "Previous and next buttons are swapped"
+                language.top_settings_detail("Previous and next buttons are swapped")
             } else {
-                "Standard physical button directions"
+                language.top_settings_detail("Standard physical button directions")
             }),
             Item::new(
                 "At the end of a book",
                 Action::Show(Screen::EndActionSettings),
             )
-            .detail(current.end_action.label()),
+            .detail(language.end_document_text(current.end_action.label())),
             Item::new(
                 "Save reading data",
                 Action::Show(Screen::MetadataSaveSettings),
             )
-            .detail(current.metadata_save.label()),
+            .detail(language.metadata_settings_text(current.metadata_save.label())),
             self.live_metadata_item(),
             self.metadata_archive_item(),
         ];
@@ -421,14 +427,14 @@ impl Reader {
             items.insert(
                 1,
                 Item::new("Style tweaks", Action::Show(Screen::StyleTweaks))
-                    .detail("Supported user CSS and live defaults"),
+                    .detail(language.top_settings_detail("Supported user CSS and live defaults")),
             );
             items.push(
                 Item::new(
                     "Font size rendering",
                     Action::Show(Screen::FontRendering(super::eager_typography::Scope::Book)),
                 )
-                .detail(self.font_rendering_label()),
+                .detail(language.typography_settings_text(self.font_rendering_label())),
             );
         }
         items.extend(self.quick_display_items());
@@ -443,9 +449,9 @@ impl Reader {
                     }),
                 )
                 .detail(if current.night_pages {
-                    "Light text on dark pages"
+                    language.top_settings_detail("Light text on dark pages")
                 } else {
-                    "Dark text on light pages"
+                    language.top_settings_detail("Dark text on light pages")
                 }),
             );
         }
@@ -458,9 +464,9 @@ impl Reader {
                 }),
             )
             .detail(if current.large_toolbar {
-                "Large labels and controls"
+                language.top_settings_detail("Large labels and controls")
             } else {
-                "Compact labels and controls"
+                language.top_settings_detail("Compact labels and controls")
             }),
             Item::new(
                 "Full screen refresh",
@@ -477,10 +483,11 @@ impl Reader {
             .detail(current.menu_activation.label()),
         ]);
         if self.active.is_some() || self.fixed.is_some() {
-            items.push(
-                Item::new("Lock page touch", Action::LockTouch)
-                    .detail("Physical page buttons, Unlock touch and Done stay available"),
-            );
+            items.push(Item::new("Lock page touch", Action::LockTouch).detail(
+                language.top_settings_detail(
+                    "Physical page buttons, Unlock touch and Done stay available",
+                ),
+            ));
         }
         items
     }

@@ -418,8 +418,12 @@ impl Reader {
         self.show(Screen::StyleReview);
     }
     pub(super) fn style_items(&self, screen: Screen) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let Some(book) = &self.active else {
-            return vec![Item::new("Open a reflowable book first", Action::Heading)];
+            return vec![Item::new(
+                language.bottom_typography_text("Open a reflowable book first"),
+                Action::Heading,
+            )];
         };
         let data = &self.style_store.data;
         let b = data.book(book.id);
@@ -428,31 +432,56 @@ impl Reader {
         match screen {
             Screen::StyleTweaks => {
                 let mut items = vec![
-                    action("Enable style tweaks", Command::Master(!b.enabled)).detail(
-                        if b.enabled {
-                            "On for this book"
-                        } else {
-                            "Off; choices and CSS retained"
-                        },
+                    action(
+                        language.bottom_typography_text("Enable style tweaks"),
+                        Command::Master(!b.enabled),
+                    )
+                    .detail(if b.enabled {
+                        language.bottom_typography_text("On for this book")
+                    } else {
+                        language.bottom_typography_text("Off; choices and CSS retained")
+                    }),
+                    action(
+                        language.bottom_typography_text("Edit book CSS"),
+                        Command::Edit,
+                    )
+                    .detail(
+                        language
+                            .bottom_typography_text("Supported CSS only; review before applying"),
                     ),
-                    action("Edit book CSS", Command::Edit)
-                        .detail("Supported CSS only; review before applying"),
-                    action("Import book CSS", Command::Files)
-                        .detail("Copy a .css file to reader/data/style-tweaks"),
+                    action(
+                        language.bottom_typography_text("Import book CSS"),
+                        Command::Files,
+                    )
+                    .detail(
+                        language
+                            .bottom_typography_text("Copy a .css file to reader/data/style-tweaks"),
+                    ),
                 ];
                 if b.custom.is_some() {
-                    items.push(action("Book CSS", Command::ToggleCustom).detail(
-                        if b.custom_enabled {
-                            "On"
+                    items.push(
+                        action(
+                            language.bottom_typography_text("Book CSS"),
+                            Command::ToggleCustom,
+                        )
+                        .detail(if b.custom_enabled {
+                            language.bottom_typography_text("On")
                         } else {
-                            "Off; text retained"
-                        },
+                            language.bottom_typography_text("Off; text retained")
+                        }),
+                    );
+                    items.push(action(
+                        language.bottom_typography_text("Clear book CSS"),
+                        Command::Clear,
                     ));
-                    items.push(action("Clear book CSS", Command::Clear));
                 }
                 if let Some(problem) = &self.style_store.problem {
                     items.push(
-                        Item::new("Saved settings preserved", Action::Heading).detail(problem),
+                        Item::new(
+                            language.bottom_typography_text("Saved settings preserved"),
+                            Action::Heading,
+                        )
+                        .detail(problem),
                     );
                 }
                 let unavailable: std::collections::BTreeSet<_> = data
@@ -463,17 +492,31 @@ impl Reader {
                     .collect();
                 if !unavailable.is_empty() {
                     items.push(
-                        Item::new("Unavailable tweaks retained", Action::Heading).detail(format!(
-                            "{} saved IDs are not supported by this build",
-                            unavailable.len()
-                        )),
+                        Item::new(
+                            language.bottom_typography_text("Unavailable tweaks retained"),
+                            Action::Heading,
+                        )
+                        .detail(if language.is_english() {
+                            format!(
+                                "{} saved IDs are not supported by this build",
+                                unavailable.len()
+                            )
+                        } else {
+                            format!(
+                                "{} ID đã lưu không được bản dựng này hỗ trợ",
+                                unavailable.len()
+                            )
+                        }),
                     );
                 }
                 let mut note_row = 1;
                 for p in PRESETS {
                     if p.group.starts_with("link-") {
                         if p.id == "link-black" {
-                            items.push(Item::new("Links", Action::Show(Screen::LinkStyles)));
+                            items.push(Item::new(
+                                language.bottom_typography_text("Links"),
+                                Action::Show(Screen::LinkStyles),
+                            ));
                         }
                         continue;
                     }
@@ -491,30 +534,36 @@ impl Reader {
                                 });
                             items.push(
                                 Item::new(
-                                    "Spacing between paragraphs",
+                                    language.bottom_typography_text("Spacing between paragraphs"),
                                     Action::Show(Screen::ParagraphSpacing),
                                 )
-                                .detail(state),
+                                .detail(language.bottom_typography_text(state)),
                             );
                         }
                         continue;
                     }
                     if image_preset(p) {
                         if p.id == "image_full_width" {
-                            items.push(Item::new("Images", Action::Show(Screen::ImageStyles)));
+                            items.push(Item::new(
+                                language.bottom_typography_text("Images"),
+                                Action::Show(Screen::ImageStyles),
+                            ));
                         }
                         continue;
                     }
                     if TABLE_STYLES.contains(&p.id) {
                         if p.id == TABLE_STYLES[0] {
-                            items.push(Item::new("Tables", Action::Show(Screen::TableStyles)));
+                            items.push(Item::new(
+                                language.bottom_typography_text("Tables"),
+                                Action::Show(Screen::TableStyles),
+                            ));
                         }
                         continue;
                     }
                     if p.group.starts_with(PSEUDO_ELEMENTS) {
                         if p.id == "no_pseudo_element_before_after" {
                             items.push(Item::new(
-                                "Pseudo-elements",
+                                language.bottom_typography_text("Pseudo-elements"),
                                 Action::Show(Screen::PseudoElementStyles),
                             ));
                         }
@@ -523,7 +572,7 @@ impl Reader {
                     if p.group.starts_with(LIST_MARKER) {
                         if p.id == "ul_li_type_disc" {
                             items.push(Item::new(
-                                "List items",
+                                language.bottom_typography_text("List items"),
                                 Action::Show(Screen::ListItemStyles),
                             ));
                         }
@@ -539,7 +588,7 @@ impl Reader {
                                 .map_or("Use font metrics", |preset| preset.title);
                             items.push(
                                 Item::new(
-                                    "Normal line height",
+                                    language.bottom_typography_text("Normal line height"),
                                     Action::Show(Screen::NormalLineHeightStyles),
                                 )
                                 .detail(selected),
@@ -575,7 +624,7 @@ impl Reader {
                         items.insert(
                             note_row,
                             Item::new(
-                                "In-page footnote size",
+                                language.bottom_typography_text("In-page footnote size"),
                                 Action::Show(Screen::InPageFootnoteSize(NoteSizeScope::Book)),
                             )
                             .detail(b.footnote_size.unwrap_or(data.footnote_size).label()),
@@ -587,12 +636,12 @@ impl Reader {
                     items.insert(
                         note_row,
                         Item::new(
-                            "More footnote options",
+                            language.bottom_typography_text("More footnote options"),
                             Action::Show(Screen::FootnoteTweaks),
                         ),
                     );
                 }
-                items.push(Item::new("Supported reflow styles",Action::Heading).detail("Margins, hiding, floats, arbitrary selectors and vendor hints are not supported."));
+                items.push(Item::new(language.bottom_typography_text("Supported reflow styles"),Action::Heading).detail(language.bottom_typography_text("Margins, hiding, floats, arbitrary selectors and vendor hints are not supported.")));
                 items
             }
             Screen::ParagraphSpacing => PRESETS

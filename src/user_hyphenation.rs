@@ -114,10 +114,41 @@ impl Rules {
     pub(crate) fn locale_for_word<'a>(&self, language: &'a Language, word: &str) -> &'a str {
         let old = legacy_locale(language);
         if self.contains(old, word) {
-            old
-        } else {
-            locale(language)
+            return old;
         }
+        let selected = Some(crate::TypographyLocale::Language(*language));
+        let loaded = |patterns: &OptionalPatterns| matches!(patterns, OptionalPatterns::Loaded(_));
+        if loaded(&self.serbian_latin)
+            && crate::hyphenation::is_serbian_script(selected, true)
+            && crate::hyphenation::word_has_script(word, icu_properties::props::Script::Latin)
+        {
+            return "sr-Latn";
+        }
+        if loaded(&self.serbian_cyrillic)
+            && crate::hyphenation::is_serbian_script(selected, false)
+            && crate::hyphenation::word_has_script(word, icu_properties::props::Script::Cyrillic)
+        {
+            return "sr-Cyrl";
+        }
+        if loaded(&self.armenian) && crate::hyphenation::is_armenian_language(selected) {
+            return "hy";
+        }
+        if loaded(&self.zulu) && crate::hyphenation::is_zulu_language(selected) {
+            return "zu";
+        }
+        if loaded(&self.czech) && crate::hyphenation::is_czech_language(selected) {
+            return "cs";
+        }
+        if loaded(&self.romanian) && crate::hyphenation::is_romanian_language(selected) {
+            return "ro";
+        }
+        if loaded(&self.latvian) && crate::hyphenation::is_latvian_language(selected) {
+            return "lv";
+        }
+        if loaded(&self.macedonian) && crate::hyphenation::is_macedonian_language(selected) {
+            return "mk";
+        }
+        locale(language)
     }
 
     pub(crate) fn has_rules(&self) -> bool {

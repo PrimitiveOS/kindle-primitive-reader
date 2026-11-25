@@ -12,6 +12,8 @@ use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::Path;
 
+mod css_resources;
+
 use base64::{Engine as _, engine::general_purpose::STANDARD_PAD_INDIFFERENT};
 use encoding_rs::{Encoding, UTF_8, WINDOWS_1252};
 use flate2::read::MultiGzDecoder;
@@ -1035,8 +1037,8 @@ fn html_document(input: &str, fallback_title: &str) -> Result<Document> {
     })
 }
 
-/// Snapshot only directly referenced local assets, without changing XHTML or
-/// its source revision. Failure to load an optional asset leaves text readable.
+/// Snapshot bounded local assets without changing XHTML or its source revision.
+/// Failure to load an optional asset leaves text readable.
 fn load_local_html_resources(path: &Path, document: &mut Document) {
     const MAX_REFERENCES: usize = 64;
     let references = {
@@ -1052,6 +1054,17 @@ fn load_local_html_resources(path: &Path, document: &mut Document) {
         let mut found = BTreeSet::new();
         for node in xml.descendants().filter(Node::is_element) {
             let tag = node.tag_name().name();
+            if let Some(css) = node.attribute("style") {
+                css_resources::collect(css, CHAPTER_PATH, &mut found, MAX_REFERENCES);
+            }
+            if tag == "style" {
+                for text in node.children().filter_map(|child| child.text()) {
+                    css_resources::collect(text, CHAPTER_PATH, &mut found, MAX_REFERENCES);
+                }
+            }
+            if found.len() >= MAX_REFERENCES {
+                break;
+            }
             let value = if tag == "img" {
                 node.attribute("src")
             } else if tag == "image"
@@ -1074,7 +1087,7 @@ fn load_local_html_resources(path: &Path, document: &mut Document) {
                 && local_html_resource_limit(&relative).is_some()
             {
                 found.insert(relative);
-                if found.len() == MAX_REFERENCES {
+                if found.len() >= MAX_REFERENCES {
                     break;
                 }
             }
@@ -1089,7 +1102,12 @@ fn load_local_html_resources(path: &Path, document: &mut Document) {
         return;
     };
     let mut remaining = MAX_HTMLZ_RESOURCES;
-    for relative in references {
+    let mut pending = references;
+    let mut seen = BTreeSet::new();
+    while let Some(relative) = pending.pop_first() {
+        if !seen.insert(relative.clone()) {
+            continue;
+        }
         let Some(limit) = local_html_resource_limit(&relative) else {
             continue;
         };
@@ -1105,6 +1123,22 @@ fn load_local_html_resources(path: &Path, document: &mut Document) {
             continue;
         };
         remaining -= bytes.len();
+        if relative
+            .rsplit_once('.')
+            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("css"))
+            && let Ok(css) = std::str::from_utf8(&bytes)
+        {
+            let mut nested = BTreeSet::new();
+            css_resources::collect(css, &relative, &mut nested, MAX_REFERENCES);
+            for path in nested {
+                if seen.len() + pending.len() >= MAX_REFERENCES {
+                    break;
+                }
+                if !seen.contains(&path) {
+                    pending.insert(path);
+                }
+            }
+        }
         document.resources.insert(relative, bytes);
     }
 }
@@ -1113,9 +1147,8 @@ fn local_html_resource_limit(path: &str) -> Option<usize> {
     let extension = path.rsplit_once('.')?.1.to_ascii_lowercase();
     match extension.as_str() {
         "css" => Some(MAX_HTMLZ_CSS),
-        "png" | "jpg" | "jpeg" | "gif" | "svg" | "bmp" | "pnm" | "pbm" | "pgm" | "ppm" | "pam" => {
-            Some(MAX_HTMLZ_IMAGE)
-        }
+        "png" | "jpg" | "jpeg" | "gif" | "svg" | "bmp" | "pnm" | "pbm" | "pgm" | "ppm" | "pam"
+        | "ttf" | "otf" | "woff" | "woff2" => Some(MAX_HTMLZ_IMAGE),
         _ => None,
     }
 }

@@ -17,8 +17,16 @@ The source chooser returns its results immediately. Metadata extraction runs one
 | FictionBook 2, including the existing compressed adapters | `title-info` language, keywords, sequence names, annotation and declared PNG/JPEG cover. |
 | DOCX | Language and description from the related core-properties part, and core keywords. |
 | PDF | PDF Info subject and keywords, plus the catalog language. Existing PDF text decoding handles Unicode metadata. |
+| CBZ | A bounded, root-level `ComicInfo.xml` can supply Series, LanguageISO, comma-separated Genre and Tags, and Summary. Earlier cached CBZ entries are refreshed once when their source remains available. |
 | Plain text and Markdown | These adapters expose no publisher properties for these filters. Missing values remain explicit. |
-| RTF, CHM, DjVu, comics and images | Their reading adapters currently expose no descriptive fields for these filters. RTF info groups, CHM language properties, DjVu annotation metadata, ComicInfo.xml and image EXIF descriptive fields remain follow-up work. |
+| RTF, CHM, DjVu, CBT, CBR and images | Their reading adapters currently expose no descriptive fields for these filters. RTF info groups, CHM language properties, DjVu annotation metadata, other comic-archive metadata and image EXIF descriptive fields remain follow-up work. |
+
+The CBZ metadata addition is an unverified implementation candidate. It reads
+only a single UTF-8 root-level `ComicInfo.xml`, capped at 256 KiB and 4,096 XML
+nodes, from an existing bounded ZIP archive. Duplicate, encrypted, malformed or
+unsupported entries are ignored. Archive identity is checked again after the
+read, and existing cached information remains if the source cannot be read.
+This addition has not been behaviorally tested or verified on Kindle.
 
 Declared EPUB, FictionBook 2, supported FictionBook 3 and supported MOBI/KF8 covers and the first page of supported fixed documents can be inspected. The FB2 cover uses the same validated, bounded local resource as the reading page. MOBI/KF8 uses the primary header's EXTH 201 cover record when it contains a bounded PNG, JPEG or GIF; other declarations remain open. Missing or unsupported image data does not create a cover. The new FB2 and MOBI/KF8 previews await integrated testing. Fixed covers become a single-image preview, so page buttons stay within that preview. The source book's page and history retain their previous values. An archived source offers its cached description and information. Its cover action is unavailable while the file is missing. [KOReader cover API](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L556-L561)
 

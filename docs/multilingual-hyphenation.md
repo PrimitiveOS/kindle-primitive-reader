@@ -19,10 +19,18 @@ New personal rules for built-in dictionaries use shared keys corresponding to
 the selected dictionary, including distinct US/UK, Portugal/Brazil, Russian
 mixed-language and classical/liturgical Latin keys. An existing old exact-tag
 rule for the same word takes precedence and is kept intact; removing it can
-reveal a shared rule if one already exists. Optional-only and unsupported
-dictionaries retain their prior personal-rule keys. Unlike KOReader's single
-main-language personal dictionary, Reader still selects rules per embedded
-language run. Migration and real-book behavior remain unverified.
+reveal a shared rule if one already exists. Armenian, Zulu, Czech, Romanian,
+Latvian and Macedonian use a shared key only while the corresponding optional
+pattern file is loaded and the language/script is eligible; otherwise their
+previous keys remain in use. Serbian uses separate Latin and Cyrillic personal
+keys only when the matching optional table is loaded and its letters use that
+eligible script; mixed-script words and unavailable tables retain their
+prior keys. KOReader has one Serbian personal dictionary, so this separation is
+a Reader-specific difference. Unsupported dictionaries retain their prior keys.
+No additional pattern data is bundled, and the optional files' permissions
+and distribution questions remain open. Unlike KOReader's
+single main-language personal dictionary, Reader still selects rules per
+embedded language run. Migration and real-book behavior remain unverified.
 
 | Dictionary | Before / after | Pinned rules |
 | --- | ---: | ---: |

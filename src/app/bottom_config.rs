@@ -118,13 +118,19 @@ impl Reader {
                 | BarPanel::Scan
         ) {
             // These audited panels contain fixed labels and numeric settings;
-            // leave information messages and action/feedback payloads unchanged.
+            // leave action/feedback payloads unchanged.
             let language = self.controls.interface_language;
             for row in &mut rows {
                 row.label = language.other_bottom_title(&row.label);
                 for choice in &mut row.choices {
                     choice.title = language.other_bottom_title(&choice.title);
                 }
+            }
+        }
+        let language = self.controls.interface_language;
+        for row in &mut rows {
+            if let Some(information) = row.information {
+                row.information = Some(language.bottom_typography_text(information));
             }
         }
         rows

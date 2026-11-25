@@ -152,6 +152,7 @@ impl Reader {
         let Some(profile @ Profile::Text { preferences, .. }) = self.profiles.get(index) else {
             return Vec::new();
         };
+        let language = self.controls.interface_language;
         let selection = profile.selection();
         fields
             .iter()
@@ -162,13 +163,17 @@ impl Reader {
                     .find_map(|&(label, option)| (value == Some(option)).then_some(label))
                     .unwrap_or("Default");
                 Item::new(
-                    field.label(),
+                    language.reading_profile_text(field.label()),
                     Action::Show(Screen::ReadingProfileChoice(index, field)),
                 )
                 .detail(if selection.contains(&field) {
-                    label.into()
+                    language.reading_profile_text(label).into()
                 } else {
-                    format!("{label} · Excluded")
+                    format!(
+                        "{} · {}",
+                        language.reading_profile_text(label),
+                        language.reading_profile_text("Excluded")
+                    )
                 })
             })
             .collect()
@@ -178,6 +183,7 @@ impl Reader {
         let Some(Profile::Text { preferences, .. }) = self.profiles.get(index) else {
             return Vec::new();
         };
+        let language = self.controls.interface_language;
         let current = saved(field, preferences);
         choices(field)
             .iter()
@@ -194,9 +200,12 @@ impl Reader {
                     })
             })
             .map(|&(label, value)| {
-                let item = Item::new(label, Action::SetProfileRendering(index, value));
+                let item = Item::new(
+                    language.reading_profile_text(label),
+                    Action::SetProfileRendering(index, value),
+                );
                 if current == Some(value) {
-                    item.detail("Selected")
+                    item.detail(language.reading_profile_text("Selected"))
                 } else {
                     item
                 }

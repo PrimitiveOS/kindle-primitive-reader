@@ -33,6 +33,92 @@ const MAX_TAR_TRAILER_BYTES: u64 = 1024 * 1024;
 
 type Archive = ZipArchive<BufReader<File>>;
 
+/// Optional, bounded ComicInfo.xml properties used by the bookmark browser.
+/// The archive and its pages remain unmodified.
+#[derive(Default)]
+pub(crate) struct ComicInfo {
+    pub(crate) series: Option<String>,
+    pub(crate) language: Option<String>,
+    pub(crate) keywords: Vec<String>,
+    pub(crate) description: Option<String>,
+}
+
+pub(crate) fn cbz_info(path: &Path) -> Result<Option<ComicInfo>> {
+    const LIMIT: u64 = 256 * 1024;
+    const NODES: usize = 4096;
+    let mut archive = open_archive(path)?;
+    let mut found = None;
+    for index in 0..archive.len() {
+        let entry = archive.by_index_raw(index)?;
+        if entry.name().eq_ignore_ascii_case("ComicInfo.xml") {
+            // Refuse ambiguous metadata and avoid choosing between duplicates.
+            if found.is_some() {
+                return Ok(None);
+            }
+            if !entry.is_file()
+                || entry.encrypted()
+                || entry.size() > LIMIT
+                || !matches!(
+                    entry.compression(),
+                    CompressionMethod::Stored | CompressionMethod::Deflated
+                )
+            {
+                return Ok(None);
+            }
+            found = Some((index, entry.size()));
+        }
+    }
+    let Some((index, size)) = found else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    archive
+        .by_index(index)?
+        .take(LIMIT + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != size || bytes.len() as u64 > LIMIT {
+        return Ok(None);
+    }
+    let Ok(xml) = std::str::from_utf8(&bytes) else {
+        return Ok(None);
+    };
+    let Ok(document) = roxmltree::Document::parse(xml) else {
+        return Ok(None);
+    };
+    let root = document.root_element();
+    if root.tag_name().name() != "ComicInfo"
+        || document.descendants().take(NODES + 1).count() > NODES
+    {
+        return Ok(None);
+    }
+    let field = |name: &str| {
+        root.children()
+            .find(|node| node.is_element() && node.tag_name().name() == name)
+            .and_then(|node| node.text())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    };
+    let keywords = [field("Genre"), field("Tags")]
+        .into_iter()
+        .flatten()
+        .flat_map(|text| {
+            text.split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .take(128)
+        .collect();
+    Ok(Some(ComicInfo {
+        series: field("Series"),
+        language: field("LanguageISO"),
+        keywords,
+        description: field("Summary"),
+    }))
+}
+
 pub struct Comic {
     source: ComicSource,
 }
