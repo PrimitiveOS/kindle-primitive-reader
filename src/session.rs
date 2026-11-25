@@ -1427,6 +1427,30 @@ impl Reading {
         word: &TextSelection,
     ) -> Result<TextSelection> {
         let anchors = [&saved.start, &saved.end, &word.start, &word.end];
+        if anchors.iter().any(|anchor| anchor.raw_caret.is_some()) {
+            let start_order = self
+                .probe
+                .compare_text_anchors(&saved.start, &word.start)
+                .ok_or("These raw selection positions cannot be compared safely")?;
+            let end_order = self
+                .probe
+                .compare_text_anchors(&saved.end, &word.end)
+                .ok_or("These raw selection positions cannot be compared safely")?;
+            let start = if start_order.is_le() {
+                &saved.start
+            } else {
+                &word.start
+            };
+            let end = if end_order.is_ge() {
+                &saved.end
+            } else {
+                &word.end
+            };
+            return self
+                .probe
+                .select_range(start, end)
+                .ok_or_else(|| "The raw selection cannot be extended safely".into());
+        }
         if let Some(band) = self.probe.foreign_note_bands.iter().find(|band| {
             anchors
                 .iter()

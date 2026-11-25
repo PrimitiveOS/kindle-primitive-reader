@@ -3603,6 +3603,7 @@ impl InterfaceLanguage {
             "Back" => "Quay lại",
             "Grid" => "Lưới",
             "Page browser grid" => "Lưới duyệt trang",
+            "Return to book" => "Về trang đọc",
             "Page browser help" => "Trợ giúp duyệt trang",
             "Help" => "Trợ giúp",
             "Tap a thumbnail to read. Hold it to bookmark or show page actions." => {

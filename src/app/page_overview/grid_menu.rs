@@ -21,6 +21,10 @@ fn grid_button(navigation: NavigationLayout) -> Rect {
     navigation.horizontal(Rect::new(navigation.width - 540, 40, 240, 100))
 }
 
+fn return_to_book_button(navigation: NavigationLayout) -> Rect {
+    navigation.horizontal(Rect::new(navigation.width - 820, 40, 240, 100))
+}
+
 #[derive(Clone, Copy)]
 enum Axis {
     Columns,
@@ -65,6 +69,14 @@ impl Reader {
         canvas: &mut Canvas,
         navigation: NavigationLayout,
     ) {
+        canvas.button(
+            return_to_book_button(navigation),
+            self.controls
+                .interface_language
+                .overview_text("Return to book"),
+            false,
+            false,
+        );
         canvas.button(
             grid_button(navigation),
             self.controls.interface_language.overview_text("Grid"),
@@ -194,6 +206,15 @@ impl Reader {
         let overview = self.overview.as_mut()?;
         let nav = layout.navigation;
         if !overview.grid_menu {
+            if matches!(input, Input::Tap(x, y) if return_to_book_button(nav).contains(x, y)) {
+                let screen = if self.fixed.is_some() {
+                    Screen::Fixed
+                } else {
+                    Screen::Book
+                };
+                self.show(screen);
+                return Some(Change::Full);
+            }
             if matches!(input, Input::Tap(x, y) if grid_button(nav).contains(x, y)) {
                 overview.grid_menu = true;
                 self.notice = None;

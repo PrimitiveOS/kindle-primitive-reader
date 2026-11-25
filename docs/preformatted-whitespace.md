@@ -49,7 +49,10 @@ v1 file still matches the exact bytes last loaded or successfully saved, retains
 digest-named v1 copy, and uses the existing recovery journal to publish a
 validated v2 candidate. It rechecks the journal's captured old state and the
 retained copy before commit. An interrupted or mismatched retained copy blocks
-the transition; it is not silently replaced. Filesystems that cannot sync
+the transition; it is not silently replaced. Promotion also rejects duplicate
+keys, legacy shapes, fields that would not round-trip, and states that v1
+sanitization would change. The original file remains in place on rejection.
+Filesystems that cannot sync
 directories do not provide a guaranteed power-loss durability claim. Promotion
 is triggered only by a raw-bearing save; raw layouts remain disabled and this
 path has not been behaviorally tested.

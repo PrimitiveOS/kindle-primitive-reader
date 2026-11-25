@@ -193,19 +193,30 @@ impl Footnote {
             .preview
             .word_at(self.page, x - content.x as f32, y - content.y as f32)?;
         let range = if extend && let Some(selected) = &self.selection {
-            let first = if (word.start.block, word.start.offset)
-                < (selected.start.block, selected.start.offset)
-            {
+            let raw = [&word.start, &word.end, &selected.start, &selected.end]
+                .iter()
+                .any(|anchor| anchor.raw_caret.is_some());
+            let starts_before = if raw {
+                self.preview
+                    .compare_text_anchors(&word.start, &selected.start)?
+                    .is_lt()
+            } else {
+                (word.start.block, word.start.offset)
+                    < (selected.start.block, selected.start.offset)
+            };
+            let ends_after = if raw {
+                self.preview
+                    .compare_text_anchors(&word.end, &selected.end)?
+                    .is_gt()
+            } else {
+                (word.end.block, word.end.offset) > (selected.end.block, selected.end.offset)
+            };
+            let first = if starts_before {
                 &word.start
             } else {
                 &selected.start
             };
-            let last =
-                if (word.end.block, word.end.offset) > (selected.end.block, selected.end.offset) {
-                    &word.end
-                } else {
-                    &selected.end
-                };
+            let last = if ends_after { &word.end } else { &selected.end };
             self.preview.select_range(first, last)?
         } else {
             word

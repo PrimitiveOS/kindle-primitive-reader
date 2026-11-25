@@ -18,11 +18,17 @@ reading text can expose visible direct `\\pict` PNG or JPEG groups, including
 hex or a single binary payload. It accepts at most 16 images, 1 MiB each and
 4 MiB total, and checks image type and bounded dimensions before constructing
 an in-memory document. Image contents are decoded later by the existing image
-reader. Hidden or object destinations, shape-wrapped pictures, nested picture
-groups, mixed or malformed payloads and other image formats are not supported.
+reader. If the direct-picture pass finds no pictures, a second bounded pass can
+also recover an otherwise visible `\\shppict` wrapper containing exactly one
+direct picture; `\\nonshppict` alternatives are ignored. Hidden or object
+destinations, nested or ambiguous picture groups, mixed or malformed payloads
+and other image formats are not supported. A successful direct-picture pass
+remains unchanged, including its resource ordering and anchors.
 Normal successful text RTF conversion and saved anchors do not change. This
 subset has not been behaviorally compared with KOReader or validated in the
 simulator or on Kindle. [KOReader picture reader](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/rtfimp.cpp#L305-L360)
+The pinned implementation's exact handling of shape wrappers has not been
+established; this narrower wrapper fallback is not a parity claim.
 
 Plain and ZIP RTF now decode DOS CP437 (`\pc`, `\ansicpg437`) and CP850
 (`\pca`, `\ansicpg850`) text as well as their existing encodings. The mapping

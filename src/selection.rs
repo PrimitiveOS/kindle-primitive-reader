@@ -39,6 +39,46 @@ pub struct HighlightRect {
 }
 
 impl Probe {
+    /// Compare two text locations in this chapter without collapsing distinct
+    /// raw whitespace offsets. A mixed coordinate system in one block is
+    /// ambiguous and is rejected until a source-bound conversion is available.
+    pub(crate) fn compare_text_anchors(
+        &self,
+        first: &Anchor,
+        second: &Anchor,
+    ) -> Option<std::cmp::Ordering> {
+        let locate = |anchor: &Anchor| {
+            if anchor.illustration.is_some() {
+                return None;
+            }
+            if let Some(caret) = &anchor.raw_caret {
+                let mut canonical = anchor.clone();
+                canonical.raw_caret = None;
+                self.validate_raw_whitespace_anchor(&crate::source::raw_whitespace::RawAnchor {
+                    canonical,
+                    caret: caret.clone(),
+                })?;
+                Some((
+                    self.selection_block(anchor.block)?,
+                    caret.raw_offset,
+                    Some(caret.raw_sha256),
+                ))
+            } else {
+                let (index, offset) = self.project_anchor(anchor)?;
+                Some((index, offset, None))
+            }
+        };
+        let (a_block, a_offset, a_hash) = locate(first)?;
+        let (b_block, b_offset, b_hash) = locate(second)?;
+        if a_block != b_block {
+            return Some(a_block.cmp(&b_block));
+        }
+        if a_hash != b_hash {
+            return None;
+        }
+        Some(a_offset.cmp(&b_offset))
+    }
+
     /// Build an exact selection with at least one raw endpoint. Mixed raw and
     /// ordinary endpoints are supported across distinct verified blocks.
     #[allow(dead_code)]
@@ -99,29 +139,7 @@ impl Probe {
         } else {
             (b, a, second, first)
         };
-        let Renderer::Parley(renderer) = &self.renderer else {
-            return None;
-        };
-        if renderer
-            .paragraphs()
-            .iter()
-            .any(|paragraph| paragraph.joined_note.is_some())
-        {
-            return None;
-        }
-        let mut raw_blocks = std::collections::BTreeSet::new();
-        for paragraph in renderer.paragraphs() {
-            if paragraph.raw_binding.is_none() {
-                continue;
-            }
-            let index = self.selection_block(paragraph.key)?;
-            if !(first_index..=last_index).contains(&index) {
-                continue;
-            }
-            if !paragraph.is_verified_raw(&self.source.blocks[index]) || !raw_blocks.insert(index) {
-                return None;
-            }
-        }
+        let raw_blocks = self.verified_raw_blocks()?;
         if raw_blocks.contains(&first_index) != start.raw_caret.is_some()
             || raw_blocks.contains(&last_index) != end.raw_caret.is_some()
         {
@@ -185,6 +203,30 @@ impl Probe {
         })
     }
 
+    fn verified_raw_blocks(&self) -> Option<std::collections::BTreeSet<usize>> {
+        let Renderer::Parley(renderer) = &self.renderer else {
+            return None;
+        };
+        if renderer
+            .paragraphs()
+            .iter()
+            .any(|paragraph| paragraph.joined_note.is_some())
+        {
+            return None;
+        }
+        let mut blocks = std::collections::BTreeSet::new();
+        for paragraph in renderer.paragraphs() {
+            if paragraph.raw_binding.is_none() {
+                continue;
+            }
+            let index = self.selection_block(paragraph.key)?;
+            if !paragraph.is_verified_raw(&self.source.blocks[index]) || !blocks.insert(index) {
+                return None;
+            }
+        }
+        Some(blocks)
+    }
+
     /// Select exact raw content inside one verified source block. Reject
     /// cross-block, stale or unrepresentable endpoints rather than snapping.
     #[allow(dead_code)]
@@ -230,6 +272,9 @@ impl Probe {
         selection: &TextSelection,
         words: usize,
     ) -> Option<(String, String)> {
+        if selection.start.raw_caret.is_some() || selection.end.raw_caret.is_some() {
+            return self.raw_word_context(selection, words);
+        }
         #[cfg(feature = "kindle")]
         if let Some(band) = self.foreign_band_for_anchors(&selection.start, &selection.end) {
             return band.layout.note_word_context(selection, words);
@@ -281,10 +326,118 @@ impl Probe {
         Some((before, after))
     }
 
+    /// Preserve the displayed text around raw selections for dictionary and
+    /// translation context, without normalizing away significant whitespace.
+    fn raw_word_context(
+        &self,
+        selection: &TextSelection,
+        words: usize,
+    ) -> Option<(String, String)> {
+        if self.select_raw_anchors(&selection.start, &selection.end)? != *selection {
+            return None;
+        }
+        let first = self.selection_block(selection.start.block)?;
+        let last = self.selection_block(selection.end.block)?;
+        if first > last {
+            return None;
+        }
+        let raw_blocks = self.verified_raw_blocks()?;
+        if raw_blocks.contains(&first) != selection.start.raw_caret.is_some()
+            || raw_blocks.contains(&last) != selection.end.raw_caret.is_some()
+        {
+            return None;
+        }
+        let mut before = String::new();
+        for index in (0..=first).rev() {
+            let block = &self.source.blocks[index];
+            let piece = if raw_blocks.contains(&index) {
+                let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+                let end = if index == first {
+                    selection.start.raw_caret.as_ref()?.raw_offset
+                } else {
+                    bound.raw().len()
+                };
+                bounded_context(bound.raw().get(..end)?, words, true)
+            } else {
+                let view = self.reading_flow.view(&self.source, block).ok()?;
+                let end = if index == first {
+                    view.project_nearest(selection.start.offset, SourceAffinity::Before)?
+                } else {
+                    view.text().len()
+                };
+                bounded_context(view.text().get(..end)?, words, true)
+            };
+            before = bounded_context(&format!("{piece} {before}"), words, true);
+            if word_ranges(&before).count() >= words || before.chars().count() == 512 {
+                break;
+            }
+        }
+        let mut after = String::new();
+        for index in last..self.source.blocks.len() {
+            let block = &self.source.blocks[index];
+            let piece = if raw_blocks.contains(&index) {
+                let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+                let start = if index == last {
+                    selection.end.raw_caret.as_ref()?.raw_offset
+                } else {
+                    0
+                };
+                bounded_context(bound.raw().get(start..)?, words, false)
+            } else {
+                let view = self.reading_flow.view(&self.source, block).ok()?;
+                let start = if index == last {
+                    view.project_nearest(selection.end.offset, SourceAffinity::After)?
+                } else {
+                    0
+                };
+                bounded_context(view.text().get(start..)?, words, false)
+            };
+            after = bounded_context(&format!("{after} {piece}"), words, false);
+            if word_ranges(&after).count() >= words || after.chars().count() == 512 {
+                break;
+            }
+        }
+        Some((before, after))
+    }
+
     /// A bounded automatic-word scan from the original source start. It stops
     /// at punctuation, inline block boundaries and 20 Unicode scalar values.
     /// The returned endpoint is an actual source anchor, never a lookup form.
     pub(crate) fn dictionary_scan(&self, selection: &TextSelection) -> Option<TextSelection> {
+        if selection.start.raw_caret.is_some() || selection.end.raw_caret.is_some() {
+            if self.select_raw_anchors(&selection.start, &selection.end)? != *selection
+                || selection.start.block != selection.end.block
+            {
+                return None;
+            }
+            let index = self.selection_block(selection.start.block)?;
+            if !self.verified_raw_blocks()?.contains(&index) {
+                return None;
+            }
+            let block = &self.source.blocks[index];
+            let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+            let start = selection.start.raw_caret.as_ref()?.raw_offset;
+            let tail = bound.raw().get(start..)?;
+            let length = tail
+                .char_indices()
+                .take(crate::dictionary::MAX_SCAN_CHARACTERS)
+                .take_while(|(_, c)| crate::dictionary::cjk_word_character(*c))
+                .map(|(i, c)| i + c.len_utf8())
+                .last()?;
+            let length = icu_segmenter::GraphemeClusterSegmenter::new()
+                .segment_str(tail)
+                .take_while(|end| *end <= length)
+                .last()
+                .filter(|end| *end > 0)?;
+            let raw = self.raw_whitespace_anchor(
+                block.key,
+                start.checked_add(length)?,
+                crate::source::raw_whitespace::CaretAffinity::Before,
+            )?;
+            let mut end = raw.canonical;
+            end.raw_caret = Some(raw.caret);
+            return self.select_raw_anchors(&selection.start, &end);
+        }
         #[cfg(feature = "kindle")]
         if let Some(band) = self.foreign_band_for_anchors(&selection.start, &selection.end) {
             return band.layout.note_dictionary_scan(selection);

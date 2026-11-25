@@ -582,19 +582,41 @@ impl Reader {
             self.notice = Some("Select a word in this chapter".into());
             return false;
         }
-        let start = if (word.start.block, word.start.offset)
-            < (selection.start.block, selection.start.offset)
-        {
+        let raw = [&word.start, &word.end, &selection.start, &selection.end]
+            .iter()
+            .any(|anchor| anchor.raw_caret.is_some());
+        let start_before = if raw {
+            let Some(order) = active
+                .reading
+                .probe
+                .compare_text_anchors(&word.start, &selection.start)
+            else {
+                self.notice = Some("These selection positions cannot be compared safely".into());
+                return false;
+            };
+            order.is_lt()
+        } else {
+            (word.start.block, word.start.offset) < (selection.start.block, selection.start.offset)
+        };
+        let end_after = if raw {
+            let Some(order) = active
+                .reading
+                .probe
+                .compare_text_anchors(&word.end, &selection.end)
+            else {
+                self.notice = Some("These selection positions cannot be compared safely".into());
+                return false;
+            };
+            order.is_gt()
+        } else {
+            (word.end.block, word.end.offset) > (selection.end.block, selection.end.offset)
+        };
+        let start = if start_before {
             &word.start
         } else {
             &selection.start
         };
-        let end = if (word.end.block, word.end.offset) > (selection.end.block, selection.end.offset)
-        {
-            &word.end
-        } else {
-            &selection.end
-        };
+        let end = if end_after { &word.end } else { &selection.end };
         let extended = active.reading.probe.select_range(start, end);
         if let Some(extended) = extended {
             self.selection = Some(extended);

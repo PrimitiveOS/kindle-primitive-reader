@@ -35,6 +35,35 @@ struct Entry {
     caret: RawCaret,
 }
 
+/// A v1 state may contain legacy fields or entries the v1 loader silently
+/// normalizes. Such a state must not be promoted, even when its raw bytes
+/// match the disk baseline: the v2 candidate would otherwise lose data.
+pub(super) fn validate_v1_for_promotion(bytes: &[u8]) -> io::Result<()> {
+    if bytes.len() as u64 > MAX_STATE_BYTES {
+        return Err(invalid_state("Reader state exceeds its size limit"));
+    }
+    let UniqueValue(value) = serde_json::from_slice(bytes).map_err(io::Error::other)?;
+    if value.get("version").and_then(Value::as_u64) != Some(1) {
+        return Err(invalid_state(
+            "Only a complete version-1 library can be promoted safely",
+        ));
+    }
+    let library: SavedLibrary = serde_json::from_value(value.clone()).map_err(io::Error::other)?;
+    let round_trip = serde_json::to_value(SavedLibraryRef {
+        version: 1,
+        books: &library.books,
+        collections: &library.collections,
+        page_browser_grid: library.page_browser_grid,
+    })
+    .map_err(io::Error::other)?;
+    if round_trip != value {
+        return Err(invalid_state(
+            "The version-1 library contains data that cannot be promoted safely",
+        ));
+    }
+    validate_library(&library)
+}
+
 /// Parse a candidate v2 library while leaving the original bytes untouched.
 /// Raw fields are permitted only at the known persisted-anchor locations.
 pub(super) fn decode(bytes: &[u8]) -> io::Result<SavedLibrary> {

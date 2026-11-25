@@ -7,6 +7,17 @@ const MAX_PICTURES: usize = 16;
 const MAX_PICTURE_BYTES: usize = 1024 * 1024;
 const MAX_PICTURE_TOTAL: usize = 4 * 1024 * 1024;
 
+#[derive(Debug)]
+struct NoPictures;
+
+impl std::fmt::Display for NoPictures {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The RTF contains no supported image-only content")
+    }
+}
+
+impl std::error::Error for NoPictures {}
+
 pub(crate) struct Picture {
     pub(crate) extension: &'static str,
     pub(crate) bytes: Vec<u8>,
@@ -18,6 +29,10 @@ struct Group {
     hidden_text: bool,
     optional: bool,
     first: bool,
+    shape: bool,
+    shape_child: bool,
+    shape_children: u8,
+    picture_started: bool,
 }
 
 #[derive(Default)]
@@ -82,6 +97,13 @@ impl Payload {
 }
 
 pub(crate) fn image_only(input: &[u8]) -> Result<Vec<Picture>> {
+    match scan(input, false) {
+        Err(error) if error.is::<NoPictures>() => scan(input, true),
+        result => result,
+    }
+}
+
+fn scan(input: &[u8], allow_shape: bool) -> Result<Vec<Picture>> {
     let input = input.strip_prefix(b"\xef\xbb\xbf").unwrap_or(input);
     let mut lexer = Lexer {
         remaining: trim_space(input),
@@ -97,11 +119,25 @@ pub(crate) fn image_only(input: &[u8]) -> Result<Vec<Picture>> {
                     return Err("Nested RTF picture groups are unsupported".into());
                 }
                 let parent = groups.last().copied().unwrap_or_default();
+                if parent.shape_child {
+                    return Err("Nested RTF shape picture groups are unsupported".into());
+                }
+                if parent.shape {
+                    let wrapper = groups.last_mut().unwrap();
+                    wrapper.shape_children += 1;
+                    if wrapper.shape_children != 1 {
+                        return Err("The RTF shape picture has ambiguous children".into());
+                    }
+                }
                 groups.push(Group {
                     hidden: parent.hidden || parent.optional,
                     hidden_text: parent.hidden_text,
                     optional: false,
                     first: true,
+                    shape: false,
+                    shape_child: parent.shape,
+                    shape_children: 0,
+                    picture_started: false,
                 });
             }
             Token::Close => {
@@ -119,7 +155,12 @@ pub(crate) fn image_only(input: &[u8]) -> Result<Vec<Picture>> {
                     }
                     pictures.push(picture);
                 }
-                groups.pop().ok_or("Unbalanced RTF group")?;
+                let group = groups.pop().ok_or("Unbalanced RTF group")?;
+                if (group.shape && group.shape_children != 1)
+                    || (group.shape_child && !group.picture_started)
+                {
+                    return Err("The RTF shape picture has no unique direct picture".into());
+                }
             }
             Token::Word(word, number) => {
                 let group = groups.last_mut().ok_or("RTF content outside a group")?;
@@ -137,13 +178,25 @@ pub(crate) fn image_only(input: &[u8]) -> Result<Vec<Picture>> {
                             return Err("The RTF image type is ambiguous".into());
                         }
                     }
+                } else if allow_shape
+                    && group.first
+                    && word == b"shppict"
+                    && !group.hidden
+                    && !group.hidden_text
+                    && !group.shape_child
+                {
+                    group.shape = true;
+                    group.optional = false;
                 } else if group.first
                     && word == b"pict"
                     && !group.hidden
                     && !group.hidden_text
                     && !group.optional
                 {
+                    group.picture_started = true;
                     active = Some((groups.len(), Payload::default()));
+                } else if group.shape || group.shape_child {
+                    return Err("The RTF shape picture contains unsupported content".into());
                 } else if group.optional || hidden_destination(word) || word == b"upr" {
                     group.hidden = true;
                     group.optional = false;
@@ -162,6 +215,9 @@ pub(crate) fn image_only(input: &[u8]) -> Result<Vec<Picture>> {
                 }
                 if let Some(group) = groups.last_mut() {
                     if bytes.iter().any(|b| !b.is_ascii_whitespace()) {
+                        if group.shape || (group.shape_child && active.is_none()) {
+                            return Err("The RTF shape picture contains unsupported text".into());
+                        }
                         group.first = false;
                     }
                 }
@@ -173,11 +229,22 @@ pub(crate) fn image_only(input: &[u8]) -> Result<Vec<Picture>> {
                     }
                     payload.binary = true;
                     payload.append(bytes)?;
+                } else if groups
+                    .last()
+                    .is_some_and(|group| group.shape || group.shape_child)
+                {
+                    return Err("The RTF shape picture has an unsupported binary segment".into());
                 }
             }
             Token::Symbol(symbol) => {
                 if active.is_some() {
                     return Err("The RTF image has an unsupported escaped payload".into());
+                }
+                if groups
+                    .last()
+                    .is_some_and(|group| group.shape || group.shape_child)
+                {
+                    return Err("The RTF shape picture has an unsupported control".into());
                 }
                 if symbol == b'*'
                     && let Some(group) = groups.last_mut()
@@ -186,14 +253,21 @@ pub(crate) fn image_only(input: &[u8]) -> Result<Vec<Picture>> {
                 }
             }
             Token::Byte(_) => {
-                if active.is_some() {
+                if active.is_some()
+                    || groups
+                        .last()
+                        .is_some_and(|group| group.shape || group.shape_child)
+                {
                     return Err("The RTF image has an unsupported escaped payload".into());
                 }
             }
         }
     }
-    if active.is_some() || !groups.is_empty() || pictures.is_empty() {
-        return Err("The RTF contains no supported image-only content".into());
+    if active.is_some() || !groups.is_empty() {
+        return Err("The RTF picture groups are incomplete".into());
+    }
+    if pictures.is_empty() {
+        return Err(Box::new(NoPictures));
     }
     Ok(pictures)
 }

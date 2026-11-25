@@ -3175,18 +3175,7 @@ fn state_hash(bytes: &[u8]) -> [u8; 32] {
 
 #[cfg(feature = "kindle")]
 fn validate_v1_state_bytes(bytes: &[u8]) -> io::Result<()> {
-    if bytes.len() as u64 > MAX_STATE_BYTES {
-        return Err(invalid_state("Reader state exceeds its size limit"));
-    }
-    if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'[') {
-        let _: Vec<BookState> = serde_json::from_slice(bytes).map_err(io::Error::other)?;
-    } else {
-        let saved: SavedLibrary = serde_json::from_slice(bytes).map_err(io::Error::other)?;
-        if saved.version != BACKUP_VERSION {
-            return Err(invalid_state("Reader state version is unsupported"));
-        }
-    }
-    Ok(())
+    raw_v2::validate_v1_for_promotion(bytes)
 }
 
 fn load_library_state(path: &Path) -> io::Result<(SavedLibrary, Option<[u8; 32]>)> {
