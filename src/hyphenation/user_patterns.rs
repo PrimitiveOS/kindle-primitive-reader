@@ -28,6 +28,7 @@ enum Alphabet {
     French,
     Polish,
     Macedonian,
+    BrazilianPortuguese,
 }
 
 #[derive(Default)]
@@ -94,6 +95,26 @@ impl OwnedPatterns {
             return None;
         }
         Self::parse_rules(lines.filter(|line| *line != "'1"), Alphabet::Zulu)
+    }
+
+    /// Accept the UTF-8 Brazilian libhyphen format. KOReader omits its
+    /// apostrophe-only rule, so that rule is not applied here either.
+    pub(crate) fn parse_brazilian(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() as u64 > MAX_FILE_BYTES {
+            return None;
+        }
+        let input = std::str::from_utf8(bytes).ok()?;
+        let mut lines = input
+            .lines()
+            .map(|line| line.split('%').next().unwrap_or("").trim())
+            .filter(|line| !line.is_empty());
+        if lines.next()? != "UTF-8" {
+            return None;
+        }
+        Self::parse_rules(
+            lines.filter(|line| *line != "4'4"),
+            Alphabet::BrazilianPortuguese,
+        )
     }
 
     /// Accept a bounded KOReader pattern XML file as inert data. XML comments
@@ -308,7 +329,10 @@ impl OwnedPatterns {
                     | Alphabet::Romanian
                     | Alphabet::Latvian
                     | Alphabet::French
-                    | Alphabet::Polish => ch.is_lowercase() && scripts.get(ch) == Script::Latin,
+                    | Alphabet::Polish
+                    | Alphabet::BrazilianPortuguese => {
+                        ch.is_lowercase() && scripts.get(ch) == Script::Latin
+                    }
                     Alphabet::SerbianCyrillic | Alphabet::Macedonian => {
                         ch.is_lowercase() && scripts.get(ch) == Script::Cyrillic
                     }

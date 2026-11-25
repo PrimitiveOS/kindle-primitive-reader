@@ -212,9 +212,13 @@ fn row(label: impl Into<String>, command: Command) -> Item {
     Item::new(label, Action::LibraryExport(command))
 }
 
-fn selected(label: impl Into<String>, command: Command, on: bool) -> Item {
+fn selected(label: impl Into<String>, command: Command, on: bool, selected_detail: &str) -> Item {
     let item = row(label, command);
-    if on { item.detail("Selected") } else { item }
+    if on {
+        item.detail(selected_detail)
+    } else {
+        item
+    }
 }
 
 fn has_marks(book: &crate::library::BookState) -> bool {
@@ -264,18 +268,27 @@ impl Reader {
     }
     pub(super) fn library_export_items(&self, page: Page) -> Vec<Item> {
         use Command as C;
+        let language = self.controls.interface_language;
+        let fixed = |label: &str, command| row(language.library_export_text(label), command);
+        let selection_count = |count| {
+            if language.is_english() {
+                format!("{count} selected")
+            } else {
+                format!("Đã chọn {count}")
+            }
+        };
         let export = &self.library_export;
         match page {
             Page::Sources => vec![
-                row("History", C::History),
-                row("Choose books", C::Choose(Page::Books)),
-                row("Collections", C::Choose(Page::Collections)),
+                fixed("History", C::History),
+                fixed("Choose books", C::Choose(Page::Books)),
+                fixed("Collections", C::Choose(Page::Collections)),
             ],
             Page::Books => {
                 let mut rows = vec![
-                    row("Use selected books", C::Apply)
-                        .detail(format!("{} selected", export.books.len())),
-                    row("Select or clear all", C::ToggleAll),
+                    fixed("Use selected books", C::Apply)
+                        .detail(selection_count(export.books.len())),
+                    fixed("Select or clear all", C::ToggleAll),
                 ];
                 rows.extend(
                     self.library
@@ -286,8 +299,13 @@ impl Reader {
                                 &book.title,
                                 C::ToggleBook(book.id),
                                 export.books.contains(&book.id),
+                                language.library_export_text("Selected"),
                             )
-                            .detail(book.author.as_deref().unwrap_or("Unknown author"))
+                            .detail(
+                                book.author.as_deref().unwrap_or_else(|| {
+                                    language.library_export_text("Unknown author")
+                                }),
+                            )
                         }),
                 );
                 // Preserve the selected state alongside the author, including duplicate titles.
@@ -296,7 +314,8 @@ impl Reader {
                         && export.books.contains(&id)
                     {
                         item.detail = Some(format!(
-                            "Selected · {}",
+                            "{} · {}",
+                            language.library_export_text("Selected"),
                             item.detail.as_deref().unwrap_or("")
                         ));
                     }
@@ -305,61 +324,68 @@ impl Reader {
             }
             Page::Collections => {
                 let mut rows = vec![
-                    row("Use selected collections", C::Apply)
-                        .detail(format!("{} selected", export.collections.len())),
+                    fixed("Use selected collections", C::Apply)
+                        .detail(selection_count(export.collections.len())),
                 ];
                 rows.extend(self.library.collections().iter().map(|set| {
                     selected(
                         &set.name,
                         C::ToggleCollection(set.name.clone()),
                         export.collections.contains(&set.name),
+                        language.library_export_text("Selected"),
                     )
                 }));
                 rows
             }
             Page::Options => {
                 let mut rows = vec![
-                    row("Choose export format", C::Choose(Page::Formats)).detail(
+                    fixed("Choose export format", C::Choose(Page::Formats)).detail(
                         match export.books.len() {
-                            1 => "1 book".to_owned(),
-                            count => format!("{count} books"),
+                            1 if language.is_english() => "1 book".to_owned(),
+                            count if language.is_english() => format!("{count} books"),
+                            count => format!("{count} sách"),
                         },
                     ),
                     Item::new(
-                        "Export settings",
+                        language.library_export_text("Export settings"),
                         Action::ExportSettings(
                             super::export_settings::Origin::Library,
                             super::export_settings::Command::Open,
                         ),
                     ),
-                    row("Highlight colors", C::Choose(Page::Colors)).detail(
+                    fixed("Highlight colors", C::Choose(Page::Colors)).detail(
                         export.colors.as_ref().map_or_else(
-                            || "All colors".into(),
-                            |colors| format!("{} selected", colors.len()),
+                            || language.library_export_text("All colors").into(),
+                            |colors| selection_count(colors.len()),
                         ),
                     ),
                     selected(
-                        "All highlight styles",
+                        language.library_export_text("All highlight styles"),
                         C::Style(None),
                         export.styles.is_none(),
+                        language.library_export_text("Selected"),
                     ),
                 ];
                 if export.kindle_clippings.is_some() {
                     rows.push(if export.styles.is_none() && export.colors.is_none() {
-                        row("Kindle clippings", C::ToggleKindleClippings)
+                        fixed("Kindle clippings", C::ToggleKindleClippings)
                     } else {
-                        Item::new("Kindle clippings", Action::Heading)
-                            .detail("Requires all styles and colors")
+                        Item::new(
+                            language.library_export_text("Kindle clippings"),
+                            Action::Heading,
+                        )
+                        .detail(language.library_export_text("Requires all styles and colors"))
                     });
                 }
                 rows.extend(HighlightStyle::ALL.into_iter().map(|style| {
                     selected(
-                        style.label(),
+                        language.library_export_text(style.label()),
                         C::Style(Some(style)),
                         export
                             .styles
                             .as_ref()
                             .is_some_and(|styles| styles.contains(&style)),
+                        language.library_export_text("Selected"),
                     )
                 }));
                 rows
@@ -368,14 +394,20 @@ impl Reader {
             Page::Formats => {
                 let mut rows = Vec::new();
                 if let Some(saved) = &export.saved {
-                    rows.push(Item::new("Export saved", Action::Heading).detail(saved));
+                    rows.push(
+                        Item::new(
+                            language.library_export_text("Export saved"),
+                            Action::Heading,
+                        )
+                        .detail(saved),
+                    );
                 }
                 rows.extend([
-                    row("KOReader JSON", C::Start(Format::Json)),
-                    row("Plain text", C::Start(Format::Text)),
-                    row("Markdown", C::Start(Format::Markdown)),
-                    row("HTML", C::Start(Format::Html)),
-                    row("Kindle clippings text", C::Start(Format::KindleClippings)),
+                    fixed("KOReader JSON", C::Start(Format::Json)),
+                    fixed("Plain text", C::Start(Format::Text)),
+                    fixed("Markdown", C::Start(Format::Markdown)),
+                    fixed("HTML", C::Start(Format::Html)),
+                    fixed("Kindle clippings text", C::Start(Format::KindleClippings)),
                 ]);
                 rows
             }
@@ -388,7 +420,7 @@ impl Reader {
                         format!("{} of {} books checked", job.done, job.total),
                         Action::Heading,
                     ),
-                    row("Cancel export", C::Cancel),
+                    fixed("Cancel export", C::Cancel),
                 ]
             }
         }

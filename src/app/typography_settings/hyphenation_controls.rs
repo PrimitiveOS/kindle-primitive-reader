@@ -236,6 +236,18 @@ impl Reader {
                             "Macedonian pattern file invalid"
                         }
                     }
+                } else if dictionary == Some(Dictionary::PortugueseBrazil) {
+                    match &self.user_hyphenation.brazilian {
+                        crate::user_hyphenation::OptionalPatterns::Loaded(_) => {
+                            "Brazilian Portuguese override loaded"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Missing => {
+                            "Portuguese fallback · override missing"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Invalid => {
+                            "Portuguese fallback · override invalid"
+                        }
+                    }
                 } else {
                     dictionary.map_or("No dictionary for the main language", Dictionary::label)
                 };
@@ -315,6 +327,12 @@ impl Reader {
             items.push(
                 Item::new("Macedonian pattern file", Action::Heading)
                     .detail("Copy hyph-mk.tex to reader/data/hyphenation, then reopen Reader"),
+            );
+        }
+        if dictionary == Some(Dictionary::PortugueseBrazil) {
+            items.push(
+                Item::new("Brazilian Portuguese patterns", Action::Heading)
+                    .detail("Copy hyph-pt-br.dic to reader/data/hyphenation, then reopen Reader"),
             );
         }
         let defaults = self

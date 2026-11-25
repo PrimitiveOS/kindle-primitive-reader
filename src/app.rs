@@ -1262,6 +1262,7 @@ impl Reader {
         user_hyphenation.french = user_hyphenation::load_french(data);
         user_hyphenation.polish = user_hyphenation::load_polish(data);
         user_hyphenation.macedonian = user_hyphenation::load_macedonian(data);
+        user_hyphenation.brazilian = user_hyphenation::load_brazilian(data);
         let user_hyphenation = user_hyphenation.into();
         Ok(Self {
             user_hyphenation,

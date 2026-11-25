@@ -551,6 +551,33 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed library highlight-export controls; user names and saved paths stay untouched.
+const LIBRARY_EXPORT_LABELS: &[(&str, &str)] = &[
+    ("History", "Lịch sử"),
+    ("Choose books", "Chọn sách"),
+    ("Collections", "Bộ sưu tập"),
+    ("Use selected books", "Dùng sách đã chọn"),
+    ("Select or clear all", "Chọn hoặc bỏ chọn tất cả"),
+    ("Unknown author", "Không rõ tác giả"),
+    ("Selected", "Đã chọn"),
+    ("Use selected collections", "Dùng bộ sưu tập đã chọn"),
+    ("Choose export format", "Chọn định dạng xuất"),
+    ("Export settings", "Cài đặt xuất"),
+    ("Highlight colors", "Màu tô sáng"),
+    ("All colors", "Mọi màu"),
+    ("All highlight styles", "Mọi kiểu tô sáng"),
+    ("Kindle clippings", "Trích đoạn Kindle"),
+    ("Requires all styles and colors", "Cần chọn mọi kiểu và màu"),
+    ("Lighten", "Làm sáng"),
+    ("Underline", "Gạch chân"),
+    ("Strikethrough", "Gạch ngang"),
+    ("Invert", "Đảo màu"),
+    ("Export saved", "Đã lưu tệp xuất"),
+    ("Plain text", "Văn bản thuần"),
+    ("Kindle clippings text", "Văn bản trích đoạn Kindle"),
+    ("Cancel export", "Hủy xuất"),
+];
+
 // Fixed backup-preview controls; component identities, counts and user data stay untouched.
 const READING_BACKUP_LABELS: &[(&str, &str)] = &[
     ("Apply backup", "Áp dụng bản sao lưu"),
@@ -2625,6 +2652,18 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn library_export_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = LIBRARY_EXPORT_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn reading_backup_text<'a>(self, english: &'a str) -> &'a str {

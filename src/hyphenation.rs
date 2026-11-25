@@ -147,8 +147,8 @@ impl Dictionary {
             ("en", Some("GB")) => Some(Self::British),
             ("es", _) => Some(Self::Spanish),
             ("it", _) => Some(Self::Italian),
-            ("pt", None | Some("PT")) => Some(Self::Portuguese),
-            ("pt", Some("BR")) => Some(Self::PortugueseBrazil),
+            ("pt" | "por", None | Some("PT")) => Some(Self::Portuguese),
+            ("pt" | "por", Some("BR")) => Some(Self::PortugueseBrazil),
             ("et", _) => Some(Self::Estonian),
             ("fi", _) => Some(Self::Finnish),
             ("da", _) => Some(Self::Danish),
@@ -404,6 +404,7 @@ fn opportunities_text_with_override(
             let override_state = rules.and_then(|rules| match locale {
                 Dictionary::French => Some(&rules.french),
                 Dictionary::Polish => Some(&rules.polish),
+                Dictionary::PortugueseBrazil => Some(&rules.brazilian),
                 _ => None,
             });
             if let Some(crate::user_hyphenation::OptionalPatterns::Loaded(patterns)) =
@@ -646,6 +647,16 @@ pub(crate) fn suggestion(
             HyphenationLimits { left: 2, right: 2 },
             false,
             false,
+            |at| breaks.push(at),
+        );
+    } else if dictionary(&Style::default(), crate::TypographyLocale::parse(language))
+        == Some(Dictionary::PortugueseBrazil)
+        && let crate::user_hyphenation::OptionalPatterns::Loaded(patterns) = &rules.brazilian
+    {
+        optional_pattern_word(
+            patterns.view(),
+            word,
+            HyphenationLimits { left: 2, right: 3 },
             |at| breaks.push(at),
         );
     } else if let Some(locale) =

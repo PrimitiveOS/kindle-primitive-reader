@@ -265,13 +265,17 @@ unchanged. This addition has not yet been built or behaviorally tested.
 [Pinned CRE parser](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L3657-L3670)
 
 Publisher and user CSS `text-transform` support `none`, `uppercase`,
-`lowercase` and `capitalize` on ordinary horizontal ASCII paragraphs, including
-inline styles and inherited resets. Reader shapes a same-length display copy;
-search, selection, source text and saved anchors retain the original bytes.
-Non-ASCII paragraphs, Turkish, Azeri and Crimean Tatar language tags, complex
-projected text, ruby, images, generated content, first-letter/first-line styles,
-vertical layout and Blitz fall back to the original text. Hyphenation uses the
-original text. This bounded implementation has not yet been built or tested.
+`lowercase` and `capitalize` on ordinary horizontal paragraphs with ASCII and
+bounded Latin-1 casing, including inline styles and inherited resets. Reader
+shapes a display copy only if each transformed character retains its UTF-8
+length and stays in the supported repertoire; search, selection, source text
+and saved anchors retain the original bytes and character boundaries. Casing
+expansions, other transformed scripts, combining sequences, unsupported
+punctuation, Turkish, Azeri, Crimean Tatar and Lithuanian language tags,
+complex projected text, ruby, images, generated content, first-letter/first-line
+styles, vertical layout and Blitz fall back to the original text. Hyphenation
+uses the original text. This bounded implementation has not yet been built or
+tested.
 [Pinned CRE parser](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L3674-L3677)
 
 **Spacing between paragraphs** contains three mutually exclusive choices.

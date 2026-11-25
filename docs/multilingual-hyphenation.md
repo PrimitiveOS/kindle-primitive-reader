@@ -11,7 +11,7 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Spanish | 2 / 2 | 4,692 |
 | Italian | 2 / 2 | 326 |
 | Portuguese (Portugal) | 2 / 3 | 308 |
-| Portuguese (Brazil, shared rules) | 2 / 3 | 308 shared Portuguese rules; dedicated Brazilian dictionary remains open |
+| Portuguese (Brazil) | 2 / 3 | 308 shared fallback rules; optional Brazilian override, behavior pending |
 | Estonian | 2 / 3 | 3,691 |
 | Finnish | 2 / 2 | 284 |
 | Danish | 2 / 2 | 1,144 |
@@ -102,11 +102,11 @@ in release packages. [Russian terms](licenses/HYPHENATION-RU.txt)
 Polish uses the 1995 MIT-licensed upstream rules and exceptions with 2 / 2
 minima. The compiled rules have not yet been compared exhaustively with
 KOReader or tested on the computer or Kindle. [Polish source and notice](licenses/HYPHENATION-PL.txt) · [KOReader Polish selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypography.lua#L83)
-Brazilian Portuguese now uses the same BSD-licensed Portuguese TeX rules as a
+Brazilian Portuguese uses the same BSD-licensed Portuguese TeX rules as a
 fallback. KOReader selects a separate Brazilian dictionary with the same 2 / 3
-limits; its word breaks can differ. Reader labels the shared rules in its
-dictionary picker and does not claim Brazilian dictionary parity. This fallback
-has not yet been compiled or tested. [KOReader language selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypography.lua#L84-L85) · [KOReader's Brazilian pattern provenance](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/Portuguese_BR.pattern)
+limits; its word breaks can differ. A permitted user-supplied Brazilian file
+can override the fallback as described below. Reader does not bundle that file
+or claim Brazilian dictionary parity; behavior remains unverified. [KOReader language selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypography.lua#L84-L85) · [KOReader's Brazilian pattern provenance](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/Portuguese_BR.pattern)
 [Pinned language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp#L56-L111) ·
 [Spanish, Italian, and Portuguese sources](licenses/HYPHENATION-ES-IT-PT.txt) ·
 [Estonian and Finnish sources](licenses/HYPHENATION-ET-FI.txt) ·
@@ -619,3 +619,30 @@ The [upstream Macedonian source](https://github.com/hyphenation/tex-hyphen/blob/
 identifies GPL terms without specifying a version. Obtaining or redistributing
 the optional file has separate licensing obligations; keeping it separate from
 Reader does not establish legal compliance. Distribution review remains open.
+
+
+### Optional Brazilian Portuguese pattern override
+
+Reader includes a shared Portuguese fallback for Brazilian Portuguese. If you
+have a permitted `hyph_pt_BR.dic` file, create `reader/data/hyphenation/`,
+copy it there as `hyph-pt-br.dic`, and close and reopen Reader. In a Brazilian
+Portuguese book, Text › Hyphenation reports whether the override loaded, is
+missing or is invalid. A valid file replaces the shared fallback; a missing or
+invalid file leaves the fallback active. Reader reads the file locally as inert
+data and does not download or execute it.
+
+The loader accepts a UTF-8 libhyphen file with its `UTF-8` header, `%`
+comments, lowercase Latin weighted patterns and optional word-edge dots. It
+rejects files over 256 KiB, more than 4,096 rules, tries above 8,192 nodes,
+symlinks, malformed rules and unsupported characters. It omits the source's
+apostrophe-only `4'4` rule as the pinned KOReader dictionary does. The upstream
+version 1.0.8 file otherwise has the same 1,245 rule strings as pinned
+KOReader. Reader uses 2 / 3 minima and emits only original UTF-8 grapheme
+boundaries. Behavior, memory and real-book comparisons remain unverified.
+Reopen Reader after replacing the file.
+
+The [upstream Brazilian source](https://github.com/LibreOffice/dictionaries/blob/master/pt_BR/README_hyph_pt_BR.txt)
+identifies LGPLv3 and Mozilla Public License terms. Obtain or redistribute the
+optional file only with the necessary permissions and license compliance;
+keeping a file separate from Reader does not establish legal compliance.
+Distribution review remains open.

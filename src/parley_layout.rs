@@ -3309,9 +3309,8 @@ fn make_paragraph(
 // A same-length visual copy keeps every canonical byte boundary intact. Avoid
 // synthetic/projection paths and language-sensitive casing until a general
 // many-to-many source mapping is available.
-fn ascii_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<String> {
-    if !block.text.is_ascii()
-        || block.text.len() > MAX_TEXT_BYTES
+fn bounded_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<String> {
+    if block.text.len() > MAX_TEXT_BYTES
         || !matches!(
             &block.styled_text,
             crate::flow_view::StyledRuns::Original(_)
@@ -3327,7 +3326,9 @@ fn ascii_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<String
     }
     let locale_sensitive = |language: Option<Language>| {
         language.is_some_and(|language| {
-            matches!(language.language(), "tr" | "tur" | "az" | "aze" | "crh")
+            ["tr", "tur", "az", "aze", "crh", "lt", "lit"]
+                .iter()
+                .any(|tag| language.language().eq_ignore_ascii_case(tag))
         })
     };
     if locale_sensitive(block.language)
@@ -3363,34 +3364,86 @@ fn ascii_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<String
         }
     }
     let original = block.text.as_bytes();
-    let mut result = original.to_vec();
-    let transform = |range: Range<usize>, value: TextTransform, output: &mut [u8]| {
-        for index in range {
-            output[index] = match value {
-                TextTransform::None => original[index],
-                TextTransform::Uppercase => original[index].to_ascii_uppercase(),
-                TextTransform::Lowercase => original[index].to_ascii_lowercase(),
-                TextTransform::Capitalize if starts[index] => original[index].to_ascii_uppercase(),
-                TextTransform::Capitalize => original[index],
-            };
-        }
-    };
-    transform(0..original.len(), default, &mut result);
     let mut previous_end = 0;
     for run in block.styled_text.iter() {
         if run.bytes.start < previous_end
             || run.bytes.end > original.len()
             || run.bytes.start > run.bytes.end
+            || !block.text.is_char_boundary(run.bytes.start)
+            || !block.text.is_char_boundary(run.bytes.end)
+            || styles.get(run.element).is_none()
         {
             return None;
         }
-        transform(
-            run.bytes.clone(),
-            styles.get(run.element)?.text_transform,
-            &mut result,
-        );
         previous_end = run.bytes.end;
     }
+    let mut result = original.to_vec();
+    let mut run_index = 0;
+    for (index, ch) in block.text.char_indices() {
+        while block
+            .styled_text
+            .get(run_index)
+            .is_some_and(|run| run.bytes.end <= index)
+        {
+            run_index += 1;
+        }
+        let transform = match block.styled_text.get(run_index) {
+            Some(run) if run.bytes.contains(&index) => styles.get(run.element)?.text_transform,
+            _ => default,
+        };
+        if transform == TextTransform::None {
+            continue;
+        }
+        // Accept Latin-1, whitespace and common punctuation. Other scripts,
+        // combining sequences and locale-sensitive forms need richer mapping.
+        if !ch.is_ascii()
+            && !('\u{00a0}'..='\u{00ff}').contains(&ch)
+            && !ch.is_whitespace()
+            && !matches!(
+                ch,
+                '\u{2013}'
+                    | '\u{2014}'
+                    | '\u{2018}'
+                    | '\u{2019}'
+                    | '\u{201c}'
+                    | '\u{201d}'
+                    | '\u{2026}'
+            )
+        {
+            return None;
+        }
+        let uppercase = match transform {
+            TextTransform::None => continue,
+            TextTransform::Uppercase => true,
+            TextTransform::Lowercase => false,
+            TextTransform::Capitalize if starts[index] => true,
+            TextTransform::Capitalize => continue,
+        };
+        let first = if uppercase {
+            let mut converted = ch.to_uppercase();
+            let first = converted.next()?;
+            if converted.next().is_some() {
+                return None;
+            }
+            first
+        } else {
+            let mut converted = ch.to_lowercase();
+            let first = converted.next()?;
+            if converted.next().is_some() {
+                return None;
+            }
+            first
+        };
+        if first.len_utf8() != ch.len_utf8()
+            || (first != ch && !first.is_ascii() && !('\u{00a0}'..='\u{00ff}').contains(&first))
+        {
+            return None;
+        }
+        let mut buf = [0; 4];
+        let encoded = first.encode_utf8(&mut buf).as_bytes();
+        result[index..index + encoded.len()].copy_from_slice(encoded);
+    }
+
     String::from_utf8(result).ok()
 }
 
@@ -3447,7 +3500,7 @@ fn shape_paragraph(
     }
     relaxed_nonbreaking.sort_unstable();
     relaxed_nonbreaking.dedup();
-    let visual_text = ascii_transformed(block, styles);
+    let visual_text = bounded_transformed(block, styles);
     let layout_text = visual_text.as_deref().unwrap_or(block.text);
     let mut builder = context.ranged_builder(fonts, layout_text, 1.0, true);
     builder.set_bidi_controls(&block.bidi_controls);
