@@ -2,6 +2,46 @@
 
 ## Current Mac simulator checkpoint
 
+**Book details** saves title and author edits for the open reflowable book.
+The optional header reflects the edit on return without moving the page
+or changing the pixels below the header. Reset restores imported or
+publication metadata for the selected field. The EPUB and imported
+sidecar retain their original bytes. The native reference replay exercises
+both header changes and the same reading position.
+[Book details comparison and screenshots](top-status-header.md)
+
+**Inline EPUB notes** join single-level text list items into the note
+band and canonical original. Search, selection, and backlinks use their
+original source positions. Unsupported nested and multi-block items keep
+their original layout. [Inline notes comparison](in-page-footnotes.md#inline-all-footnote-content)
+
+**Hyphenation dictionaries** add Spanish, Italian, and European Portuguese
+with the pinned rules and limits. The native and Rust checks compare
+the break positions of ten words, including accented samples, with
+stock and overridden limits. Reader also verifies rendering, word selection
+across line breaks, original search offsets, reopening, and the language
+shown in settings. [Dictionary comparison and screenshots](multilingual-hyphenation.md)
+
+The full Mac run passed 1,602 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. The standard run skipped
+73 opt-in tests. The 33 focused checks passed, and the Reader simulator
+and pinned KOReader replays reproduced 16 new screenshots.
+
+The four original EPUB, PDF, AZW3, and MOBI documents opened through the
+normal picker, turned a page, and resumed with matching file bytes. The
+separate original EPUB note test retained 63 canonical anchors and 65
+bands across eight composed chapters.
+
+The local ARMHF package staged a stripped, statically linked
+39,247,604-byte executable with SHA-256
+`27c2d82a37426322f642bcacd9e6a6154d0556e23c2b9522131470b6ebcd343c`.
+Its 31 files total 48,852,135 bytes. Project licenses, third-party dictionary
+notices, the Launcher icon, SQLite notices, and the OCR model passed
+inspection. Foreground Kindle verification and Store publication remain
+pending.
+
+## Menu, links, archive, and optional header checkpoint
+
 **Menu activation** lets readers control tap, swipe, and automatic opening
 of the bottom bar separately. The stock edge zones and Reader's upper-center
 shortcut both work. If two expanded panels would collide, only the bottom

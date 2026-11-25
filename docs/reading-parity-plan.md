@@ -48,18 +48,19 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 316 of 540 in-scope reading-control rows have
-an implemented workflow, 173 are partial, 44 are gaps, and 7 need audit.
+**Pinned control inventory:** 318 of 540 in-scope reading-control rows have
+an implemented workflow, 171 are partial, 44 are gaps, and 7 need audit.
 The 44 gaps cover interface-language choices. The largest groups of partial
 controls are typography and style tweaks. [Control matrix](koreader-sdl-reference-controls.json)
 
-The Mac replay now covers separate menu gestures, enlarged EPUB link taps,
-archive relocation, alternate-header fields, and inline layout for simple
-in-page notes. Richer note layouts, live header metadata edits, immediate
-charging events, and complete gesture sampling remain open.
-[Menu activation](menu-activation.md) · [Link taps](link-taps.md) ·
-[Archive relocation](book-metadata-archive.md#move-the-archive) ·
-[Top header](top-status-header.md) · [Inline notes](in-page-footnotes.md#inline-all-footnote-content)
+The Mac replay now covers Book details edits that update the active EPUB
+header, inline layout for single-level text lists in notes, and Spanish,
+Italian, and European Portuguese dictionaries. Complex note layouts,
+immediate charging events, broader dictionaries, and complete gesture
+sampling remain open.
+[Top header and Book details](top-status-header.md) ·
+[Inline notes](in-page-footnotes.md#inline-all-footnote-content) ·
+[Multilingual hyphenation](multilingual-hyphenation.md)
 
 The [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The

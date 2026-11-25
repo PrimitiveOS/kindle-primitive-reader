@@ -45,9 +45,9 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
-The latest Mac workflow pass covers menu activation, enlarged EPUB link taps,
-archive relocation, alternate-header controls, and inline layout for simple
-in-page notes. The [implementation checklist](reading-parity-plan.md#execution-checklist)
+The latest Mac workflow pass covers editing the live header’s title and author
+from Book details, inline layout for text lists in notes, and three additional
+hyphenation dictionaries. The [implementation checklist](reading-parity-plan.md#execution-checklist)
 tracks remaining layout, gesture and Kindle checks. The
 [simulator review](simulation-review.md) records the results for this checkpoint.
 
