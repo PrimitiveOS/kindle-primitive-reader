@@ -6,12 +6,14 @@ verified spaces, tabs and line breaks while keeping existing canonical source
 identities. This implementation has not yet been behaviorally tested in the
 simulator or on Kindle and must not be treated as validated or released.
 
-A snapshot is captured only for a leaf block with one direct text node when its
-normalization matches the canonical block exactly. Each block is limited to
+A snapshot is captured for direct text and a bounded set of inline elements
+when the concatenated text normalizes to the canonical block exactly. Inline
+style boundaries must map uniquely and cannot touch whitespace; each run keeps
+its computed style and language. Comments and processing instructions are ignored. Each block is limited to
 64 KiB and 4,096 mapping records; chapter metadata budgets are 768 KiB for
 preferred `<pre>` content and 256 KiB for other content. The ordinary layout
 is used for content outside these bounds, unsupported projections, images,
-ruby, generated or styled inline content, transforms, bidi controls, joined
+ruby, generated content, ambiguous inline style boundaries, transforms, bidi controls, joined
 notes and in-page footnotes. A layout whose source or ordered font stack cannot
 be stamped also uses the canonical path. Folder books retain canonical search.
 

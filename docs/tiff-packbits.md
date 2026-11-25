@@ -131,7 +131,15 @@ reconstructed independently for each 16-bit channel and row. Decoded strip
 plus grayscale output is limited to 32 MiB, with compressed input and the
 Deflate overflow sentinel separately bounded. This conversion is not
 color-managed and has not been compared with KOReader or behaviorally checked
-on the simulator or Kindle. Sixteen-bit RGB alpha and planar RGB remain unsupported.
+on the simulator or Kindle. Sixteen-bit associated alpha and planar RGB remain unsupported.
+
+Contiguous 16-bit RGB may additionally have an explicitly unassociated alpha
+sample. Reader weights the endian-aware 16-bit color samples and composites
+over white before reducing to 8-bit; horizontal predictor history stays
+independent for all four samples. Decoded strip plus output is capped at
+32 MiB. This is not color-managed, and associated alpha, planar data and
+16-bit palette/CMYK alpha remain unsupported. This candidate has not been
+compared with KOReader or behaviorally tested in the simulator or on Kindle.
 
 ## Process CMYK strips
 

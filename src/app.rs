@@ -103,6 +103,7 @@ mod reading_footer;
 pub(crate) mod reading_guides;
 mod reading_orientation;
 mod reading_viewport_stage;
+mod reflow_book_map_exit;
 mod result_context;
 mod saved_highlight_popup;
 mod search_chapter_scope;
@@ -9706,7 +9707,15 @@ impl Reader {
                 canvas.button(navigation.next(), label, false, false);
             }
             if let Some(notice) = &self.notice {
-                canvas.text(navigation.footer_text(310, 104, 80), notice, CAPTION);
+                let area = if self.screen == Screen::BookMap
+                    && self.active.is_some()
+                    && self.fixed.is_none()
+                {
+                    navigation.footer_text(310, 183, 60)
+                } else {
+                    navigation.footer_text(310, 104, 80)
+                };
+                canvas.text(area, notice, CAPTION);
             } else if self.screen.is_bookmark_list() && count > rows {
                 canvas.text(
                     navigation.footer_text(310, 93, 50),
@@ -9715,6 +9724,7 @@ impl Reader {
                 );
             }
         }
+        self.draw_reflow_map_return(canvas);
         if let Some(popup) = &self.result_context {
             popup.draw(canvas);
         }
@@ -10696,6 +10706,9 @@ impl App for Reader {
             return self.handle_page_number(input);
         }
         if self.screen == Screen::BookMap {
+            if let Some(change) = self.reflow_map_return_input(input) {
+                return change;
+            }
             if let Some(change) = self.book_map_tap_option_input(input) {
                 return change;
             }

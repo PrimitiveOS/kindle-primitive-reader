@@ -359,21 +359,58 @@ impl Bound<'_> {
     }
 }
 
-/// Capture only a plain leaf block; markup, multiple text nodes and empty or
-/// nonmatching extraction are left on the existing canonical path.
+/// Capture text within a bounded set of inline elements. Comments and
+/// processing instructions carry no text; non-inline or nonmatching
+/// extraction remains on the canonical path.
 pub(super) fn capture(
     node: Node<'_, '_>,
     canonical: &str,
     budget: &mut Budget,
 ) -> Option<Snapshot> {
-    let mut children = node.children();
-    let child = children.next()?;
-    if !child.is_text() || children.next().is_some() || canonical.is_empty() {
+    if canonical.is_empty() {
         return None;
     }
-    let raw = child.text()?;
+    let mut raw = String::new();
+    for (index, child) in node.descendants().skip(1).enumerate() {
+        if index >= MAX_RECORDS {
+            return None;
+        }
+        if child.is_text() {
+            let text = child.text()?;
+            if raw.len().checked_add(text.len())? > MAX_BLOCK_BYTES {
+                return None;
+            }
+            raw.push_str(text);
+        } else if child.is_element() {
+            if !matches!(
+                child.tag_name().name(),
+                "span"
+                    | "b"
+                    | "i"
+                    | "em"
+                    | "strong"
+                    | "u"
+                    | "s"
+                    | "del"
+                    | "small"
+                    | "big"
+                    | "sup"
+                    | "sub"
+                    | "code"
+                    | "kbd"
+                    | "samp"
+                    | "var"
+                    | "cite"
+                    | "abbr"
+            ) {
+                return None;
+            }
+        } else if !child.is_comment() && !child.is_pi() {
+            return None;
+        }
+    }
     let preferred = node.has_tag_name("pre");
-    if raw == canonical || raw.len() > MAX_BLOCK_BYTES || !budget.may_fit(raw.len(), preferred) {
+    if raw == canonical || raw.is_empty() || !budget.may_fit(raw.len(), preferred) {
         return None;
     }
 

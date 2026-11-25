@@ -115,9 +115,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let predictor = image.scalar(317, SHORT_ONLY, 1)?;
     let orientation = image.scalar(274, SHORT_ONLY, 1)?;
     if !matches!(bits, 1 | 2 | 4 | 8 | 16)
-        || (bits == 16 && !matches!((photometric, samples), (0 | 1, 1 | 2) | (2, 3)))
+        || (bits == 16 && !matches!((photometric, samples), (0 | 1, 1 | 2) | (2, 3 | 4)))
         || (!matches!(photometric, 0 | 1 | 3) && !matches!(bits, 1 | 8) && !(photometric == 2 && bits == 16))
-        || (samples >= 2 && bits != 8 && !(bits == 16 && matches!((photometric, samples), (0 | 1, 2) | (2, 3))))
+        || (samples >= 2 && bits != 8 && !(bits == 16 && matches!((photometric, samples), (0 | 1, 2) | (2, 3 | 4))))
         || bits_values.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != bits))
         || formats.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != 1))
         || !(fill_order == 1 || (bits < 8 && fill_order == 2))
@@ -134,13 +134,16 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     {
         return Err(TiffError::Unsupported);
     }
-    if bits == 16 && samples == 2 && alpha != Some(2) {
+    if bits == 16 && matches!(samples, 2 | 4) && alpha != Some(2) {
         return Err(TiffError::Unsupported);
     }
     if bits == 16 && samples == 2 && u64::from(pixel_count) * 5 > 32 * 1024 * 1024 {
         return Err(TiffError::Limit);
     }
     if bits == 16 && samples == 3 && u64::from(pixel_count) * 7 > 32 * 1024 * 1024 {
+        return Err(TiffError::Limit);
+    }
+    if bits == 16 && samples == 4 && u64::from(pixel_count) * 9 > 32 * 1024 * 1024 {
         return Err(TiffError::Limit);
     }
 
@@ -272,10 +275,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         if predictor == 2 {
             let decoded = unpacked.as_mut().ok_or(TiffError::Unsupported)?;
             if bits == 16 {
-                // The 16-bit path has one or two grayscale samples or three
-                // RGB channels. Differences are per sample, resetting each row.
+                // Differences are per 16-bit sample and reset at each row.
                 for row in decoded.chunks_exact_mut(row_bytes) {
-                    let mut previous = [0u16; 3];
+                    let mut previous = [0u16; 4];
                     for (index, sample) in row.chunks_exact_mut(2).enumerate() {
                         let channel = index % samples as usize;
                         let value = image
@@ -351,11 +353,20 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
             // Composite associated or unassociated alpha over the same white
             // page used by Reader's other transparent-image paths.
             if bits == 16 {
-                // This is restricted above to unassociated grayscale + alpha.
-                pixels.extend(strip.chunks_exact(4).map(|pixel| {
-                    let gray = u64::from(image.order.short([pixel[0], pixel[1]]));
-                    let gray = if photometric == 0 { 65535 - gray } else { gray };
-                    let a = u64::from(image.order.short([pixel[2], pixel[3]]));
+                // This is restricted above to unassociated grayscale or RGB.
+                pixels.extend(strip.chunks_exact(samples as usize * 2).map(|pixel| {
+                    let component = |at| u64::from(image.order.short([pixel[at], pixel[at + 1]]));
+                    let gray = if samples == 2 {
+                        let value = component(0);
+                        if photometric == 0 {
+                            65535 - value
+                        } else {
+                            value
+                        }
+                    } else {
+                        (component(0) * 2126 + component(2) * 7152 + component(4) * 722) / 10000
+                    };
+                    let a = component((samples as usize - 1) * 2);
                     (((gray * a + 65535 * (65535 - a) + 32767) / 65535) >> 8) as u8
                 }));
             } else {

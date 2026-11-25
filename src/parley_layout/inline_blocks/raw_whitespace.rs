@@ -71,14 +71,79 @@ impl Plan {
         {
             return None;
         }
-        let [original] = &*block.styled_text else {
+        let originals = &*block.styled_text;
+        if originals.is_empty()
+            || originals.first()?.bytes.start != 0
+            || originals.last()?.bytes.end != block.text.len()
+            || originals
+                .windows(2)
+                .any(|pair| pair[0].bytes.end != pair[1].bytes.start)
+        {
             return None;
-        };
-        if original.element != block.element || original.bytes != (0..block.text.len()) {
-            return None;
+        }
+        let owner_style = styles.get(block.element)?;
+        for run in originals {
+            let style = styles.get(run.element)?;
+            if !style.preformatted_spaces
+                || style.white_space != owner_style.white_space
+                || style.text_transform != TextTransform::None
+                || style.generated.is_some()
+                || style.first_letter.is_some()
+                || style.first_line.is_some()
+            {
+                return None;
+            }
         }
         let bound = block.raw_whitespace.as_ref()?.bind(block.text)?;
         let raw = bound.raw();
+        let whitespace = |ch: char| matches!(ch, ' ' | '\t' | '\r' | '\n' | '\u{c}');
+        if originals.first()?.element != block.element && raw.chars().next().is_some_and(whitespace)
+            || originals.last()?.element != block.element
+                && raw.chars().next_back().is_some_and(whitespace)
+        {
+            return None;
+        }
+        let mut runs = Vec::with_capacity(originals.len());
+        let mut previous_raw = 0;
+        for (index, original) in originals.iter().enumerate() {
+            let end = if index + 1 == originals.len() {
+                raw.len()
+            } else {
+                let before = bound.canonical_to_raw(
+                    original.bytes.end,
+                    crate::flow_projection::Affinity::Before,
+                )?;
+                let after = bound.canonical_to_raw(
+                    original.bytes.end,
+                    crate::flow_projection::Affinity::After,
+                )?;
+                if before != after
+                    || raw
+                        .get(..before)?
+                        .chars()
+                        .next_back()
+                        .is_some_and(whitespace)
+                    || raw.get(before..)?.chars().next().is_some_and(whitespace)
+                {
+                    return None;
+                }
+                before
+            };
+            if previous_raw >= end
+                || !raw.is_char_boundary(previous_raw)
+                || !raw.is_char_boundary(end)
+            {
+                return None;
+            }
+            runs.push(StyledText {
+                bytes: previous_raw..end,
+                element: original.element,
+                language: original.language,
+                hyphenation_language: original.hyphenation_language,
+                preserve_whitespace: original.preserve_whitespace,
+            });
+            previous_raw = end;
+        }
         let mut segments = Vec::new();
         for span in bound.text_spans() {
             segments.push(Segment {
@@ -128,13 +193,7 @@ impl Plan {
                 generated: true,
                 detached_initial: false,
             },
-            runs: vec![StyledText {
-                bytes: 0..raw.len(),
-                element: block.element,
-                language: original.language,
-                hyphenation_language: original.hyphenation_language,
-                preserve_whitespace: original.preserve_whitespace,
-            }],
+            runs,
             binding: SourceBinding::new(block),
             block: block.key,
             owner: block.element,
