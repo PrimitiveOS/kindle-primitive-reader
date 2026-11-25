@@ -115,20 +115,21 @@ pub(crate) enum Dictionary {
 impl Dictionary {
     pub(crate) fn for_language(lang: Option<Language>) -> Option<Self> {
         let lang = lang?;
-        if matches!(lang.language(), "ml" | "mal") {
+        let primary = crate::typography_language::canonical_dictionary_language(lang.language());
+        if primary == "ml" {
             return matches!(lang.script(), None | Some("Mlym")).then_some(Self::Malayalam);
         }
-        if matches!(lang.language(), "el" | "ell") {
+        if primary == "el" {
             return matches!(lang.script(), None | Some("Grek")).then_some(Self::Greek);
         }
-        if lang.language() == "ka" {
+        if primary == "ka" {
             return matches!(lang.script(), None | Some("Geor")).then_some(Self::Georgian);
         }
-        if matches!(lang.language(), "bg" | "uk" | "ru") {
+        if matches!(primary, "bg" | "uk" | "ru") {
             if !matches!(lang.script(), None | Some("Cyrl")) {
                 return None;
             }
-            return match lang.language() {
+            return match primary {
                 "bg" => Some(Self::Bulgarian),
                 "uk" => Some(Self::Ukrainian),
                 "ru" => Some(match lang.region() {
@@ -142,22 +143,22 @@ impl Dictionary {
         if !matches!(lang.script(), None | Some("Latn")) {
             return None;
         }
-        match (lang.language(), lang.region()) {
+        match (primary, lang.region()) {
             ("en", None | Some("US")) => Some(Self::American),
             ("en", Some("GB")) => Some(Self::British),
             ("es", _) => Some(Self::Spanish),
             ("it", _) => Some(Self::Italian),
-            ("pt" | "por", None | Some("PT")) => Some(Self::Portuguese),
-            ("pt" | "por", Some("BR")) => Some(Self::PortugueseBrazil),
+            ("pt", None | Some("PT")) => Some(Self::Portuguese),
+            ("pt", Some("BR")) => Some(Self::PortugueseBrazil),
             ("et", _) => Some(Self::Estonian),
             ("fi", _) => Some(Self::Finnish),
             ("da", _) => Some(Self::Danish),
             ("nl", _) => Some(Self::Dutch),
-            ("fr" | "fra" | "fre", _) => Some(Self::French),
+            ("fr", _) => Some(Self::French),
             ("de", _) => Some(Self::German),
             ("gl", _) => Some(Self::Galician),
             ("ga", _) => Some(Self::Irish),
-            ("pl" | "pol", _) => Some(Self::Polish),
+            ("pl", _) => Some(Self::Polish),
             ("sv", _) => Some(Self::Swedish),
             ("ca", _) => Some(Self::Catalan),
             ("tr", _) => Some(Self::Turkish),
@@ -173,7 +174,7 @@ impl Dictionary {
             ("fur", _) => Some(Self::Friulian),
             ("eo", _) => Some(Self::Esperanto),
             ("la", _) => Some(Self::Latin),
-            ("hu" | "hun", _) => Some(Self::Hungarian),
+            ("hu", _) => Some(Self::Hungarian),
             ("sk", _) => Some(Self::Slovak),
             ("sl", _) => Some(Self::Slovenian),
             _ => None,

@@ -41,7 +41,11 @@ impl TypographyLocale {
         }
         let language = Language::parse(tag).ok()?;
         if language.language() == "lat" {
-            return Some(Self::Language(Language::parse("la").ok()?));
+            // Keep an explicit script or region while resolving the ISO alias.
+            let suffix = &language.as_str()[language.language().len()..];
+            return Some(Self::Language(
+                Language::parse(&format!("la{suffix}")).ok()?,
+            ));
         }
         Some(Self::Language(language))
     }
@@ -74,6 +78,52 @@ impl TypographyLocale {
             })
             .and_then(|entry| Self::parse(entry.tag))
             .unwrap_or(Self::Language(language))
+    }
+}
+
+/// KOReader's catalogue aliases, normalized only for dictionary selection.
+/// Keep these primary-subtag mappings aligned with `CATALOG` below.
+pub(crate) fn canonical_dictionary_language(language: &str) -> &str {
+    match language {
+        "arm" | "hye" | "hyw" => "hy",
+        "bul" => "bg",
+        "cat" => "ca",
+        "ces" => "cs",
+        "dan" => "da",
+        "nld" => "nl",
+        "eng" => "en",
+        "epo" => "eo",
+        "est" => "et",
+        "fin" => "fi",
+        "fra" | "fre" => "fr",
+        "glg" => "gl",
+        "deu" => "de",
+        "ell" => "el",
+        "hun" => "hu",
+        "isl" => "is",
+        "gle" => "ga",
+        "ita" => "it",
+        "lat" => "la",
+        "lav" => "lv",
+        "lit" => "lt",
+        "mal" => "ml",
+        "nor" => "no",
+        "oci" => "oc",
+        "pol" => "pl",
+        "por" => "pt",
+        "roh" => "rm",
+        "ron" => "ro",
+        "rus" => "ru",
+        "srp" => "sr",
+        "slk" => "sk",
+        "slv" => "sl",
+        "spa" => "es",
+        "swe" => "sv",
+        "tur" => "tr",
+        "ukr" => "uk",
+        "cym" => "cy",
+        "zul" => "zu",
+        _ => language,
     }
 }
 

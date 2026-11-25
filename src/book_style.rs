@@ -604,6 +604,7 @@ pub(crate) struct Style {
     pub alignment: Option<Alignment>,
     pub(crate) last_line_alignment: Option<Alignment>,
     pub(crate) text_transform: TextTransform,
+    pub(crate) optical_sizing: bool,
     pub line_break: Option<LineBreak>,
     /// CRE's private line-break mode, retained separately from standard CSS.
     pub(crate) loose_nonbreaking: bool,
@@ -681,6 +682,7 @@ impl Default for Style {
             alignment: None,
             last_line_alignment: None,
             text_transform: TextTransform::None,
+            optical_sizing: true,
             line_break: None,
             loose_nonbreaking: false,
             word_break: WordBreak::Normal,
@@ -1346,6 +1348,7 @@ impl BookStyle {
                         style.last_line_alignment = *alignment
                     }
                     Property::TextTransform(value) => style.text_transform = *value,
+                    Property::OpticalSizing(value) => style.optical_sizing = *value,
                     Property::Weight(weight) => {
                         style.font_weight = weight.resolve(parent.font_weight)
                     }
@@ -2213,7 +2216,8 @@ const VARIANT_HISTORICAL: usize = 62;
 const LIGATURE_EXTRAS: usize = 63;
 const LAST_LINE_ALIGNMENT: usize = 64;
 const TEXT_TRANSFORM: usize = 65;
-const CASCADE_PROPERTY_COUNT: usize = 66;
+const OPTICAL_SIZING: usize = 66;
+const CASCADE_PROPERTY_COUNT: usize = 67;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2275,6 +2279,7 @@ fn choose<'a>(
             Property::Alignment(_) => 4,
             Property::LastLineAlignment(_) => LAST_LINE_ALIGNMENT,
             Property::TextTransform(_) => TEXT_TRANSFORM,
+            Property::OpticalSizing(_) => OPTICAL_SIZING,
             Property::Weight(_) => 5,
             Property::Slant(_) => 6,
             Property::CommonLigatures(_) => COMMON_LIGATURES,
@@ -2398,6 +2403,7 @@ enum Property {
     Alignment(Alignment),
     LastLineAlignment(Option<Alignment>),
     TextTransform(TextTransform),
+    OpticalSizing(bool),
     Weight(Weight),
     Slant(FontStyle),
     CommonLigatures(bool),
@@ -2753,6 +2759,13 @@ impl<'i> DeclarationParser<'i> for Properties {
                     };
                     Property::Slant(style)
                 }
+                "font-optical-sizing" => Property::OpticalSizing(
+                    match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "auto" => true,
+                        "none" => false,
+                        _ => return Err(ParseError::unexpected_token()),
+                    },
+                ),
                 "font-variant" => {
                     let mut common = None;
                     let mut extra = LigatureExtras::default();

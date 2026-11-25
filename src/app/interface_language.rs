@@ -620,6 +620,9 @@ const VOCABULARY_SETTINGS_LABELS: &[(&str, &str)] = &[
     ),
     ("Reset", "Đặt lại"),
     ("Remove", "Xóa"),
+    ("Due now", "Đến hạn ngay"),
+    ("Previous", "Trước"),
+    ("Next", "Tiếp"),
 ];
 
 // Fixed library highlight-export controls; user names and saved paths stay untouched.

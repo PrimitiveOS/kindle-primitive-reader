@@ -27,33 +27,45 @@ impl PageJump {
 
 impl Reader {
     pub(super) fn draw_page_jump_context(&self, canvas: &mut Canvas) {
+        let language = self.controls.interface_language;
         let bounds = self.navigation_layout().body(LIST_Y + 218, 145);
         let help = if let Some(fixed) = &self.fixed {
             let reading = &fixed.reading;
-            let mut text = format!(
-                "{} of {}",
-                fixed_page_label(reading, reading.page()),
-                reading.count()
-            );
+            let mut text = if language.is_english() {
+                format!(
+                    "{} of {}",
+                    fixed_page_label(reading, reading.page()),
+                    reading.count()
+                )
+            } else {
+                format!(
+                    "{} trên {}",
+                    fixed_page_label(reading, reading.page()),
+                    reading.count()
+                )
+            };
             if reading
                 .hidden_flow_map()
                 .is_some_and(|flow| flow.has_hidden())
             {
-                text.push_str("\nUse [page] for the main flow or [page]flow for a hidden flow.");
+                text.push_str(if language.is_english() {
+                    "\nUse [page] for the main flow or [page]flow for a hidden flow."
+                } else {
+                    "\nDùng [page] cho luồng chính hoặc [page]flow cho luồng ẩn."
+                });
             }
             text
         } else if let Some(book) = &self.active {
             let reading = &book.reading;
             reading.whole_book_screen_pages().map_or_else(
                 || {
-                    format!(
-                        "Chapter {} - Page {} of {}\nUse chapter:page to jump to a known chapter.",
-                        reading.chapter + 1,
-                        reading.page + 1,
-                        reading.probe.page_count()
-                    )
+                    if language.is_english() {
+                        format!("Chapter {} - Page {} of {}\nUse chapter:page to jump to a known chapter.", reading.chapter + 1, reading.page + 1, reading.probe.page_count())
+                    } else {
+                        format!("Chương {} - Trang {} trên {}\nDùng chapter:page để đến một chương đã biết.", reading.chapter + 1, reading.page + 1, reading.probe.page_count())
+                    }
                 },
-                |(page, total)| format!("Document page {page} of {total}"),
+                |(page, total)| if language.is_english() { format!("Document page {page} of {total}") } else { format!("Trang tài liệu {page} trên {total}") },
             )
         } else {
             return;

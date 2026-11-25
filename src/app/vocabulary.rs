@@ -5,7 +5,7 @@ use primitive_ui::{BODY, CAPTION, Canvas, Input, PAPER, Press, Rect, keyboard_ke
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Action, Item, Reader, Result, Screen};
+use super::{Action, Item, Reader, Result, Screen, interface_language::InterfaceLanguage};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
@@ -213,8 +213,9 @@ impl Reader {
                     ));
                 }
                 items.extend(entries.into_iter().map(|(word, entry)| {
-                    Item::new(word, Action::Vocabulary(Command::Open(word.clone())))
-                        .detail(format!("{} · {}", source(entry), due(entry)))
+                    Item::new(word, Action::Vocabulary(Command::Open(word.clone()))).detail(
+                        format!("{} · {}", source(entry, language), due(entry, language)),
+                    )
                 }));
                 items
             }
@@ -309,8 +310,8 @@ impl Reader {
                 };
                 let mut items = vec![Item::new(word, Action::Heading).detail(format!(
                     "{} · {}",
-                    source(entry),
-                    due(entry)
+                    source(entry, language),
+                    due(entry, language)
                 ))];
                 if entry.before.is_some() || entry.after.is_some() || entry.highlight.is_some() {
                     items.push(
@@ -330,7 +331,7 @@ impl Reader {
                         language.vocabulary_settings_text("Change source book"),
                         Action::Vocabulary(Command::AssignBook),
                     )
-                    .detail(source(entry)),
+                    .detail(source(entry, language)),
                     Item::new(
                         language.vocabulary_settings_text("Got it"),
                         Action::Vocabulary(Command::Review(true)),
@@ -633,15 +634,15 @@ impl Reader {
                 &if language.is_english() {
                     format!(
                         "{word}\n{}\n{} · {} consecutive reviews",
-                        source(entry),
-                        due(entry),
+                        source(entry, language),
+                        due(entry, language),
                         entry.streak
                     )
                 } else {
                     format!(
                         "{word}\n{}\n{} · {} lần ôn liên tiếp",
-                        source(entry),
-                        due(entry),
+                        source(entry, language),
+                        due(entry, language),
                         entry.streak
                     )
                 },
@@ -875,9 +876,10 @@ impl Reader {
         let Some(entry) = self.lookup_history.review.words.get(word) else {
             return;
         };
+        let language = self.controls.interface_language;
         canvas.text(
             Rect::new(40, 154, 1184, 90),
-            source(entry),
+            source(entry, language),
             CAPTION.center().lines(2),
         );
         let text = format!(
@@ -898,14 +900,28 @@ impl Reader {
             canvas.text(bounds, &text[range.clone()], style);
         }
         if page > 0 {
-            canvas.button(super::PREV, "Previous", false, false);
+            canvas.button(
+                super::PREV,
+                language.vocabulary_settings_text("Previous"),
+                false,
+                false,
+            );
         }
         if page + 1 < pages.len() {
-            canvas.button(super::NEXT, "Next", false, false);
+            canvas.button(
+                super::NEXT,
+                language.vocabulary_settings_text("Next"),
+                false,
+                false,
+            );
         }
         canvas.text(
             Rect::new(450, 1480, 364, 60),
-            &format!("{} of {}", page + 1, pages.len()),
+            &if language.is_english() {
+                format!("{} of {}", page + 1, pages.len())
+            } else {
+                format!("{} trên {}", page + 1, pages.len())
+            },
             CAPTION.center(),
         );
     }
@@ -954,9 +970,9 @@ const EXIST_CANCEL: Rect = Rect::new(470, 1200, 324, 100);
 fn on_off(value: bool) -> &'static str {
     if value { "On" } else { "Off" }
 }
-fn source(entry: &Entry) -> &str {
+fn source(entry: &Entry, language: InterfaceLanguage) -> &str {
     if entry.book.is_empty() {
-        "Dictionary lookup"
+        language.vocabulary_settings_text("Dictionary lookup")
     } else {
         &entry.book
     }
@@ -974,16 +990,31 @@ fn date(seconds: Option<u64>) -> String {
         local.year, local.month, local.day, local.hour, local.minute
     )
 }
-fn due(entry: &Entry) -> String {
+fn due(entry: &Entry, language: InterfaceLanguage) -> String {
     let remaining = entry.due_at.unwrap_or(0).saturating_sub(now());
     if remaining == 0 {
-        "Due now".into()
+        language.vocabulary_settings_text("Due now").into()
     } else if remaining < 3600 {
-        format!("Due in {} min", remaining.div_ceil(60))
+        let count = remaining.div_ceil(60);
+        if language.is_english() {
+            format!("Due in {count} min")
+        } else {
+            format!("Đến hạn sau {count} phút")
+        }
     } else if remaining < 86_400 {
-        format!("Due in {} h", remaining.div_ceil(3600))
+        let count = remaining.div_ceil(3600);
+        if language.is_english() {
+            format!("Due in {count} h")
+        } else {
+            format!("Đến hạn sau {count} giờ")
+        }
     } else {
-        format!("Due in {} days", remaining.div_ceil(86_400))
+        let count = remaining.div_ceil(86_400);
+        if language.is_english() {
+            format!("Due in {count} days")
+        } else {
+            format!("Đến hạn sau {count} ngày")
+        }
     }
 }
 

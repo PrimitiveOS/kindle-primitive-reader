@@ -37,7 +37,7 @@ use parley::{
     FontWeight, GenericFamily, Language, Layout, LayoutContext, LineBreak, LineHeight,
     OverflowWrap, PositionedLayoutItem, Selection, SoftHyphenAction, StyleProperty, TextWrapMode,
     WordBreak,
-    setting::{FontFeature, Tag},
+    setting::{FontFeature, FontVariation, Tag},
 };
 
 const MAX_TEXT_BYTES: usize = 512 * 1024;
@@ -3142,6 +3142,9 @@ fn marker_layout(
     };
     builder.push_default(StyleProperty::FontFamily(family));
     builder.push_default(StyleProperty::FontSize(size));
+    if let Some(axes) = optical_axes(style, settings, size) {
+        builder.push_default(StyleProperty::FontVariations(axes.as_slice().into()));
+    }
     builder.push_default(StyleProperty::FontWeight(FontWeight::new(
         crate::font_render::font_weight(
             if settings.bold_text && style.font_weight < FontWeight::BOLD {
@@ -3167,6 +3170,16 @@ fn effective_letter_spacing(style: &Style, settings: Settings) -> f32 {
     };
     // Match the existing reader control's safe negative tracking floor.
     (settings.letter_spacing + publisher).max(-1.0)
+}
+
+fn optical_axes(style: &Style, settings: Settings, pixels: f32) -> Option<[FontVariation; 1]> {
+    if !style.optical_sizing || settings.render_dpi < 100 || !pixels.is_finite() || pixels <= 0.0 {
+        return None;
+    }
+    let points = pixels * 72.0 / f32::from(settings.render_dpi);
+    points
+        .is_finite()
+        .then(|| [FontVariation::new(Tag::new(b"opsz"), points)])
 }
 
 fn make_annotation(
@@ -3235,13 +3248,15 @@ fn make_annotation(
     } else {
         style.size_scale * 0.48
     };
-    builder.push_default(StyleProperty::FontSize(
-        if settings.logical_font_size.is_some() {
-            settings.styled_font(scale)
-        } else {
-            (settings.font_size * scale).clamp(8.0, 84.0)
-        },
-    ));
+    let annotation_size = if settings.logical_font_size.is_some() {
+        settings.styled_font(scale)
+    } else {
+        (settings.font_size * scale).clamp(8.0, 84.0)
+    };
+    builder.push_default(StyleProperty::FontSize(annotation_size));
+    if let Some(axes) = optical_axes(style, settings, annotation_size) {
+        builder.push_default(StyleProperty::FontVariations(axes.as_slice().into()));
+    }
     let mut layout = builder.build(text);
     layout.break_all_lines(None);
     layout
@@ -3624,6 +3639,10 @@ fn shape_paragraph(
         builder.push_default(StyleProperty::OverflowWrap(OverflowWrap::Anywhere));
     }
     builder.push_default(StyleProperty::FontSize(font_size(style)));
+    let base_optical = optical_axes(style, settings, font_size(style));
+    if let Some(axes) = base_optical {
+        builder.push_default(StyleProperty::FontVariations(axes.as_slice().into()));
+    }
     if settings.percent_word_spacing.is_none() && settings.word_spacing != 0.0 {
         builder.push_default(StyleProperty::WordSpacing(settings.word_spacing));
     }
@@ -3754,6 +3773,20 @@ fn shape_paragraph(
         }
         if run.size_scale != base.size_scale {
             builder.push(StyleProperty::FontSize(font_size(run)), bytes.clone());
+        }
+        if optical_axes(run, settings, font_size(run)).map(|axes| axes[0].value)
+            != optical_axes(base, settings, font_size(base)).map(|axes| axes[0].value)
+        {
+            match optical_axes(run, settings, font_size(run)) {
+                Some(axes) => builder.push(
+                    StyleProperty::FontVariations(axes.as_slice().into()),
+                    bytes.clone(),
+                ),
+                None => builder.push(
+                    StyleProperty::FontVariations(parley::FontVariations::empty()),
+                    bytes.clone(),
+                ),
+            }
         }
         if run.line_height != base.line_height {
             builder.push(StyleProperty::LineHeight(line_height(run)), bytes.clone());

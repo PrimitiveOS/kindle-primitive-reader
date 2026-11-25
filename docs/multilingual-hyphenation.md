@@ -338,8 +338,11 @@ on the computer or Kindle.
 Classical Latin (`la`, `lat`) and liturgical Latin (`la-lit`, `lat-lit`,
 `la-x-liturgic`) use separate upstream patterns and KOReader's 2 / 2 minima.
 The selected locale is carried separately from the `la` shaping language,
-and respected embedded language tags can change or clear it. Original UTF-8
-source offsets and reading anchors are unchanged. The source files and MIT
+and respected embedded language tags can change or clear it. Book-level
+`la-x-liturgic` metadata currently loses its private-use suffix when parsed,
+so automatic selection cannot distinguish it from classical Latin; select
+liturgical Latin manually. Original UTF-8 source offsets and reading anchors
+are unchanged. The source files and MIT
 terms are included in release packages. Reader includes combining-mark rules
 and uses canonical decomposition for Latin pattern matching while emitting
 only original UTF-8 grapheme boundaries. Latin words exceeding 64 graphemes,
@@ -650,3 +653,10 @@ identifies LGPLv3 and Mozilla Public License terms. Obtain or redistribute the
 optional file only with the necessary permissions and license compliance;
 keeping a file separate from Reader does not establish legal compliance.
 Distribution review remains open.
+
+
+KOReader's catalogue primary-subtag aliases are normalized for built-in
+dictionary selection while preserving an explicit script and region. For
+example, `rus-Cyrl-GB` selects Russian + English (UK), while `rus-Latn` does
+not select a Cyrillic dictionary. Source text and saved offsets are unchanged.
+Alias behavior in embedded tags and full documents remains unverified.
