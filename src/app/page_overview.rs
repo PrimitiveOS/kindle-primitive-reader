@@ -45,6 +45,7 @@ pub(super) struct PageOverview {
     pub(super) map_origin: Option<MapOrigin>,
     pub(super) grid: Option<PageBrowserGrid>,
     pub(super) grid_menu: bool,
+    pub(super) grid_help: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -301,6 +302,7 @@ impl Reader {
         };
         overview.map_origin = map_origin;
         overview.grid_menu = false;
+        overview.grid_help = false;
         self.overview = Some(overview);
         self.show(Screen::PageOverview);
         Ok(())
@@ -331,10 +333,10 @@ impl Reader {
         saved_focus: Option<&OverviewFocus>,
         grid: Option<PageBrowserGrid>,
     ) -> Result<PageOverview> {
-        let (map_origin, grid_menu) = self
-            .overview
-            .as_ref()
-            .map_or((None, false), |view| (view.map_origin, view.grid_menu));
+        let (map_origin, grid_menu, grid_help) =
+            self.overview.as_ref().map_or((None, false, false), |view| {
+                (view.map_origin, view.grid_menu, view.grid_help)
+            });
         let batch = capacity(grid);
         let mut overview = if let Some(fixed) = &self.fixed {
             let count = fixed.reading.count();
@@ -353,6 +355,7 @@ impl Reader {
                 map_origin: None,
                 grid,
                 grid_menu: false,
+                grid_help: false,
             }
         } else {
             let reading = &mut self.active.as_mut().ok_or("Open a book first")?.reading;
@@ -374,6 +377,7 @@ impl Reader {
         };
         overview.map_origin = map_origin;
         overview.grid_menu = grid_menu;
+        overview.grid_help = grid_help;
         Ok(overview)
     }
 
@@ -1054,5 +1058,6 @@ fn reflow_overview(
         map_origin: None,
         grid,
         grid_menu: false,
+        grid_help: false,
     })
 }

@@ -1643,7 +1643,10 @@ pub struct Library {
     root: PathBuf,
     original_root: PathBuf,
     state_path: PathBuf,
-    state_version: u32,
+    state_version: std::cell::Cell<u32>,
+    /// Exact bytes last loaded or successfully saved, used to prevent v2
+    /// promotion and journal saves from overwriting a changed file.
+    state_digest: std::cell::Cell<Option<[u8; 32]>>,
     books: Vec<LibraryBook>,
     recent: Vec<BookState>,
     collections: Vec<Collection>,
@@ -1674,14 +1677,15 @@ impl Library {
         if !fs::symlink_metadata(&original_root)?.is_dir() {
             return Err(denied());
         }
-        let saved = load_library_state(state_path)?;
+        let (saved, state_digest) = load_library_state(state_path)?;
         #[cfg(feature = "kindle")]
         let live_metadata = live_metadata::Store::open(state_path, &saved.books);
         Ok(Self {
             root: original_root.canonicalize()?,
             original_root,
             state_path: state_path.to_owned(),
-            state_version: saved.version,
+            state_version: std::cell::Cell::new(saved.version),
+            state_digest: std::cell::Cell::new(state_digest),
             recent: saved.books,
             collections: saved.collections,
             page_browser_grid: saved.page_browser_grid,
@@ -2423,7 +2427,7 @@ impl Library {
     }
 
     pub fn bytes(&self) -> io::Result<Vec<u8>> {
-        if self.state_version == 2 {
+        if self.state_version.get() == 2 {
             return raw_v2::encode(&SavedLibrary {
                 version: 2,
                 books: self.recent.clone(),
@@ -2441,7 +2445,7 @@ impl Library {
 
     /// Export Reader metadata as a versioned JSON document.
     pub fn backup_bytes(&self) -> io::Result<Vec<u8>> {
-        if self.state_version == 2 {
+        if self.state_version.get() == 2 {
             return self.bytes();
         }
         encode_library(
@@ -2475,7 +2479,7 @@ impl Library {
 
     /// Calculate the effect of an import without touching the library, books, or state file.
     pub fn preview_backup(&self, bytes: &[u8]) -> io::Result<BackupImport> {
-        if self.state_version == 2 {
+        if self.state_version.get() == 2 {
             return Err(invalid_state(
                 "Merging backups into a v2 reader library is not yet supported",
             ));
@@ -2512,7 +2516,7 @@ impl Library {
 
     /// Revalidate the proposed merge against current state, then apply it in memory.
     pub fn merge_backup(&mut self, import: BackupImport) -> io::Result<BackupSummary> {
-        if self.state_version == 2 {
+        if self.state_version.get() == 2 {
             return Err(invalid_state(
                 "Merging backups into a v2 reader library is not yet supported",
             ));
@@ -2631,24 +2635,33 @@ impl Library {
     }
 
     pub fn save_with(&self, write: impl FnOnce(&Path, &[u8]) -> io::Result<()>) -> io::Result<()> {
-        if self.state_version == 2 {
+        if self.state_version.get() == 2 {
             return Err(invalid_state(
                 "This operation cannot yet save a v2 reader library safely",
             ));
         }
-        write(&self.state_path, &self.bytes()?)
+        let bytes = self.bytes()?;
+        write(&self.state_path, &bytes)?;
+        self.state_digest.set(Some(state_hash(&bytes)));
+        Ok(())
     }
 
     #[cfg(feature = "kindle")]
     pub fn persist(&self) -> io::Result<()> {
         primitive_app::with_storage(|| {
-            if self.state_version == 2 {
+            if self.state_version.get() == 1 && self.recent.iter().any(raw_v2::book_has_raw) {
+                self.promote_raw_state()?;
+            } else if self.state_version.get() == 2 {
                 crate::reading_backup::require_no_pending(&self.state_path)?;
                 let bytes = self.bytes()?;
+                let expected = self.state_digest.get().ok_or_else(|| {
+                    invalid_state("The reader state has no verified disk baseline")
+                })?;
                 crate::reading_backup::transaction(
                     &self.state_path,
                     &[(crate::reading_backup::Key::Library, bytes.clone())],
                     || {
+                        crate::reading_backup::verify_captured_state(&self.state_path, &expected)?;
                         let written = crate::reading_backup::read(
                             &self.state_path,
                             crate::reading_backup::Key::Library,
@@ -2660,12 +2673,44 @@ impl Library {
                         Ok(())
                     },
                 )?;
+                self.state_digest.set(Some(state_hash(&bytes)));
             } else {
                 self.save_with(primitive_app::save)?;
             }
             self.live_metadata.checkpoint(self);
             Ok(())
         })
+    }
+
+    #[cfg(feature = "kindle")]
+    fn promote_raw_state(&self) -> io::Result<()> {
+        crate::reading_backup::require_no_pending(&self.state_path)?;
+        let expected = self
+            .state_digest
+            .get()
+            .ok_or_else(|| invalid_state("The reader state has no verified v1 disk baseline"))?;
+        let prior = crate::reading_backup::read_state_strict(&self.state_path)?;
+        if state_hash(&prior) != expected {
+            return Err(invalid_state(
+                "The reader state changed since it was loaded",
+            ));
+        }
+        let next = raw_v2::encode(&SavedLibrary {
+            version: 2,
+            books: self.recent.clone(),
+            collections: self.collections.clone(),
+            page_browser_grid: self.page_browser_grid,
+        })?;
+        crate::reading_backup::publish_raw_anchor_v2(
+            &self.state_path,
+            &prior,
+            &next,
+            validate_v1_state_bytes,
+            |bytes| raw_v2::decode(bytes).map(|_| ()),
+        )?;
+        self.state_version.set(2);
+        self.state_digest.set(Some(state_hash(&next)));
+        Ok(())
     }
 
     #[cfg(feature = "kindle")]
@@ -3102,7 +3147,30 @@ fn valid_highlight(mark: &Highlight) -> bool {
             .is_none_or(|note| note.len() <= MAX_NOTE_BYTES)
 }
 
-fn load_library_state(path: &Path) -> io::Result<SavedLibrary> {
+fn state_hash(bytes: &[u8]) -> [u8; 32] {
+    let digest = ring::digest::digest(&ring::digest::SHA256, bytes);
+    let mut result = [0; 32];
+    result.copy_from_slice(digest.as_ref());
+    result
+}
+
+#[cfg(feature = "kindle")]
+fn validate_v1_state_bytes(bytes: &[u8]) -> io::Result<()> {
+    if bytes.len() as u64 > MAX_STATE_BYTES {
+        return Err(invalid_state("Reader state exceeds its size limit"));
+    }
+    if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'[') {
+        let _: Vec<BookState> = serde_json::from_slice(bytes).map_err(io::Error::other)?;
+    } else {
+        let saved: SavedLibrary = serde_json::from_slice(bytes).map_err(io::Error::other)?;
+        if saved.version != BACKUP_VERSION {
+            return Err(invalid_state("Reader state version is unsupported"));
+        }
+    }
+    Ok(())
+}
+
+fn load_library_state(path: &Path) -> io::Result<(SavedLibrary, Option<[u8; 32]>)> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_STATE_BYTES => {}
         Ok(_) => {
@@ -3112,12 +3180,15 @@ fn load_library_state(path: &Path) -> io::Result<SavedLibrary> {
             ));
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(SavedLibrary {
-                version: BACKUP_VERSION,
-                books: Vec::new(),
-                collections: Vec::new(),
-                page_browser_grid: None,
-            });
+            return Ok((
+                SavedLibrary {
+                    version: BACKUP_VERSION,
+                    books: Vec::new(),
+                    collections: Vec::new(),
+                    page_browser_grid: None,
+                },
+                None,
+            ));
         }
         Err(error) => return Err(error),
     }
@@ -3135,7 +3206,7 @@ fn load_library_state(path: &Path) -> io::Result<SavedLibrary> {
         let envelope: serde_json::Value =
             serde_json::from_slice(&bytes).map_err(io::Error::other)?;
         if envelope.get("version").and_then(serde_json::Value::as_u64) == Some(2) {
-            return raw_v2::decode(&bytes);
+            return Ok((raw_v2::decode(&bytes)?, Some(state_hash(&bytes))));
         }
     }
     let mut saved = if bytes.iter().find(|byte| !byte.is_ascii_whitespace()) == Some(&b'[') {
@@ -3170,7 +3241,7 @@ fn load_library_state(path: &Path) -> io::Result<SavedLibrary> {
         &saved.books,
         &mut BackupSummary::default(),
     );
-    Ok(saved)
+    Ok((saved, Some(state_hash(&bytes))))
 }
 
 fn fingerprint_update(hash: u64, bytes: &[u8]) -> u64 {

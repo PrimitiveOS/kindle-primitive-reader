@@ -40,20 +40,19 @@ raw anchors in the same captured block and return their exact raw substring;
 cross-block and invalid selections fail closed. It is not connected to the UI
 or active rendering. The canonical `Anchor` type has an optional raw caret slot;
 ordinary serialization rejects populated slots, ordinary deserialization rejects
-the field, and the canonical page resolver refuses such anchors. The checked v2
-library codec handles them separately. Legacy anchors serialize as before. The
-existing version-1
-loader rejects other library/backup versions, which prevents older builds
+the field. The checked v2 library codec handles them separately. Legacy anchors
+serialize as before. The existing version-1 loader in older builds rejects other
+library/backup versions, which prevents those builds
 from normally opening and rewriting a version-2 state. Startup also recovers
-any pending backup journal before this check, so the eventual migration must
-coordinate its transaction with that recovery and keep the independent backup.
-An inactive transition helper now verifies exact v1 bytes, retains a
+any pending backup journal before loading. A staged promotion verifies that the
+v1 file still matches the exact bytes last loaded or successfully saved, retains a
 digest-named v1 copy, and uses the existing recovery journal to publish a
 validated v2 candidate. It rechecks the journal's captured old state and the
 retained copy before commit. An interrupted or mismatched retained copy blocks
 the transition; it is not silently replaced. Filesystems that cannot sync
-directories do not provide a guaranteed power-loss durability claim. The
-transition helper is not yet used by Reader and has not been behaviorally tested.
+directories do not provide a guaranteed power-loss durability claim. Promotion
+is triggered only by a raw-bearing save; raw layouts remain disabled and this
+path has not been behaviorally tested.
 A v2 decoder rejects duplicate JSON keys and raw fields
 outside the known resume, bookmark, highlight, custom-contents and hidden-flow
 anchors. It bounds file size and raw-caret count, checks each caret's structural
@@ -68,16 +67,17 @@ without legacy sanitization and save it through the checked encoder and Kindle
 recovery journal. Backup merging into v2 is rejected. Raw resumes and history
 locations are rejected before fixed or reflow page fallback. Operations using
 an unjournaled generic save are rejected for v2, and a pending journal requires
-Reader to reopen before saving its in-memory state. The v1-to-v2 transition, raw
-rendering, source-bound restoration and v2 merging remain incomplete.
+Reader to reopen before saving its in-memory state. Raw rendering, app-level
+raw restoration and v2 merging remain incomplete.
 The decoder also validates book identities, retained collection
 membership, position lists and mark limits without invoking v1 sanitization or
 checking whether each book file is present. Raw-bearing books are explicitly
 excluded from legacy metadata sidecar checkpoints, which cannot represent them;
 the user receives a warning instead of a silently incomplete sidecar.
-Resume, canonical selection, saved-mark validation and old ODT anchor migration
-also reject transient raw carets instead of silently using their collapsed
-canonical positions. Mark comparisons and custom-contents/flow ordering account
+App-level resume, saved-mark validation and old ODT anchor migration reject raw
+carets instead of silently using their collapsed canonical positions. Session
+restoration can resolve one only when the newly shaped source and raw page
+actually match. Mark comparisons and custom-contents/flow ordering account
 for raw endpoints, but active reading cannot yet create or restore them.
 
 A preformatted horizontal layout plan can now build a separate raw text view

@@ -41,15 +41,17 @@ arbitrary CSS image rendering, inline SVG data URLs, and links to separate
 HTML chapters remain unsupported. Imported CSS uses the existing selector and
 property subset; loading an asset does not imply every CSS property renders.
 Well-formed XML-compatible HTML retains its existing conversion and local
-resources. If that path fails, a document starting with an `<html>` element or
-a plain HTML doctype can use a bounded text-only recovery path. This fallback
+resources. If that path fails, a document starting with an `<html>` element,
+a plain HTML doctype, or a supported fragment container such as `<p>`, `<div>`,
+`<ul>`, `<ol>`, `<h1>`–`<h6>`, `<section>`, `<article>` or `<body>` can use a
+bounded text-only recovery path. This fallback
 retains supported text and fragment links, but drops images, publisher CSS,
 external links and head metadata, and does not cover arbitrary malformed HTML.
 External doctypes and entity declarations are rejected. Previously readable
 documents retain their existing conversion and anchors.
 
 The text-only recovery can also recognize an optional XML declaration followed
-by complete HTML comments before the root or plain HTML doctype. This prolog is
+by complete HTML comments before the root, fragment or plain HTML doctype. This prolog is
 limited to 2,048 UTF-8 bytes after leading whitespace, and malformed declarations,
 invalid or unterminated comments, external doctypes and entity declarations are
 rejected. Existing successful conversions keep their original source identity.

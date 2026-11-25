@@ -5,6 +5,7 @@ use primitive_ui::{BODY, TextStyle};
 
 const PANEL: Rect = Rect::new(160, 420, 944, 750);
 const CLOSE: Rect = Rect::new(868, 443, 197, 100);
+const HELP: Rect = Rect::new(666, 443, 170, 100);
 const NUMBER_ROW: i32 = 790;
 const DEFAULT: Rect = Rect::new(196, 930, 416, 100);
 const USE_DEFAULT: Rect = Rect::new(646, 930, 416, 100);
@@ -77,11 +78,39 @@ impl Reader {
         let language = self.controls.interface_language;
         let place = |rect| nav.centered(rect);
         canvas.popup(place(PANEL));
+        if self.overview.as_ref().is_some_and(|view| view.grid_help) {
+            canvas.text(
+                place(Rect::new(196, 449, 624, 84)),
+                language.overview_text("Page browser help"),
+                TextStyle::new(42).bold(),
+            );
+            canvas.button(place(CLOSE), language.overview_text("Back"), true, false);
+            for (index, line) in [
+                "Tap a thumbnail to read. Hold it to bookmark or show page actions.",
+                "Swipe vertically for one row, horizontally or use page buttons for a screen.",
+                "Swipe along the top or left edge to change the grid columns or rows.",
+                "Tap or drag the ribbon to browse. Hold it to open the book map.",
+                "The handle is browsing; the caret is reading. Squares show fixed-page history.",
+                "Icons mark bookmarks, highlights and notes. Some reflow marks may be omitted.",
+                "Page-number mode saves per book. Set as default applies when no choice is saved.",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                canvas.text(
+                    place(Rect::new(196, 555 + index as i32 * 82, 864, 76)),
+                    language.overview_text(line),
+                    TextStyle::new(25).lines(2),
+                );
+            }
+            return;
+        }
         canvas.text(
-            place(Rect::new(196, 449, 624, 84)),
+            place(Rect::new(196, 449, 450, 84)),
             language.overview_text("Page browser grid"),
-            TextStyle::new(48).bold(),
+            TextStyle::new(42).bold(),
         );
+        canvas.button(place(HELP), language.overview_text("Help"), false, false);
         canvas.button(place(CLOSE), language.overview_text("Done"), true, false);
         for axis in Axis::ALL {
             let row = axis.row();
@@ -172,10 +201,30 @@ impl Reader {
             }
             return None;
         }
+        if overview.grid_help {
+            if matches!(input, Input::PageBack)
+                || matches!(input, Input::Tap(x, y) if nav.centered(CLOSE).contains(x, y))
+            {
+                overview.grid_help = false;
+                return Some(Change::Partial);
+            }
+            if matches!(input, Input::Tap(x, y) if !nav.centered(PANEL).contains(x, y)) {
+                overview.grid_help = false;
+                overview.grid_menu = false;
+                return Some(Change::Partial);
+            }
+            return Some(Change::None);
+        }
+        if matches!(input, Input::Tap(x, y) if nav.centered(HELP).contains(x, y)) {
+            overview.grid_help = true;
+            self.notice = None;
+            return Some(Change::Partial);
+        }
         if matches!(input, Input::PageBack)
             || matches!(input, Input::Tap(x, y) if nav.centered(CLOSE).contains(x, y) || !nav.centered(PANEL).contains(x, y))
         {
             overview.grid_menu = false;
+            overview.grid_help = false;
             self.notice = None;
             return Some(Change::Partial);
         }

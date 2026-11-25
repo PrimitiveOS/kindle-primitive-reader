@@ -517,6 +517,27 @@ fn read_nofollow(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     }
     Ok(bytes)
 }
+
+pub(crate) fn read_state_strict(state: &Path) -> io::Result<Vec<u8>> {
+    let root = root(state)?;
+    read_nofollow(
+        &target(&root, state, Key::Library, false)?,
+        crate::library::MAX_STATE_BYTES,
+    )
+}
+
+/// Called only inside a single-library journal transaction before commit.
+pub(crate) fn verify_captured_state(state: &Path, expected: &[u8; 32]) -> io::Result<()> {
+    let root = root(state)?;
+    let old = read_nofollow(
+        &root.join(DIRECTORY).join("old-0"),
+        crate::library::MAX_STATE_BYTES,
+    )?;
+    if ring::digest::digest(&ring::digest::SHA256, &old).as_ref() != expected {
+        return Err(invalid("The reader state changed since it was loaded"));
+    }
+    Ok(())
+}
 fn transaction_observed<T>(
     state: &Path,
     updates: &[(Key, Vec<u8>)],

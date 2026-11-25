@@ -1277,7 +1277,7 @@ fn html_document_with_text_fallback(input: &str, fallback_title: &str) -> Result
             .as_bytes()
             .get(5)
             .is_some_and(|byte| *byte == b'>' || byte.is_ascii_whitespace());
-    if !html_root && !plain_doctype {
+    if !html_root && !plain_doctype && !html_recovery_fragment(start) {
         return Err(original_error);
     }
     // Do not silently recover XML entity declarations or external doctypes.
@@ -1303,6 +1303,24 @@ fn html_document_with_text_fallback(input: &str, fallback_title: &str) -> Result
     let xhtml = crate::mobi::html_xhtml(recovery_input)?;
     check_output(&xhtml)?;
     html_document(&xhtml, fallback_title)
+}
+
+/// A conservative subset of common HTML fragment containers. Checking the
+/// complete tag boundary avoids accepting similarly prefixed unknown tags.
+fn html_recovery_fragment(input: &str) -> bool {
+    const TAGS: &[&str] = &[
+        "<p", "<div", "<ul", "<ol", "<h1", "<h2", "<h3", "<h4", "<h5", "<h6", "<section",
+        "<article", "<body",
+    ];
+    TAGS.iter().any(|tag| {
+        input
+            .get(..tag.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(tag))
+            && input
+                .as_bytes()
+                .get(tag.len())
+                .is_some_and(|byte| matches!(*byte, b'>' | b'/') || byte.is_ascii_whitespace())
+    })
 }
 
 /// Recognize only a short, well-formed XML declaration and HTML comments.

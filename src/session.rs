@@ -628,14 +628,16 @@ impl Reading {
         anchor: Option<&Anchor>,
         scroll_history_top: Option<f32>,
     ) -> Result<Self> {
-        if anchor.is_some_and(|anchor| anchor.raw_caret.is_some()) {
-            return Err("Raw whitespace positions cannot yet be restored safely".into());
-        }
         let start = Instant::now();
         let ChapterLayout {
             mut probe,
             mut marker,
         } = config.reading_chapter(chapter)?;
+        if anchor
+            .is_some_and(|anchor| anchor.raw_caret.is_some() && probe.page_for(anchor).is_none())
+        {
+            return Err("The raw whitespace position cannot be restored in this layout".into());
+        }
         let typography = &mut config.settings.typography;
         if typography.fallback.is_some() {
             // Once opened, each chapter and subsequent reflow use the book's
@@ -661,7 +663,13 @@ impl Reading {
         });
         // Keep a valid canonical focus while CSS temporarily hides its passage.
         // A real reading motion clears this focus; layout changes alone do not.
-        let anchor = anchor.filter(|anchor| probe.project_anchor(anchor).is_some());
+        let anchor = anchor.filter(|anchor| {
+            if anchor.raw_caret.is_some() {
+                probe.page_for(anchor).is_some()
+            } else {
+                probe.project_anchor(anchor).is_some()
+            }
+        });
         let page = focused_page.unwrap_or(fallback_page.min(probe.page_count() - 1));
         let scroll_top = (config.scroll && !probe.is_vertical()).then(|| {
             let page_start = probe.page_range(page).start;

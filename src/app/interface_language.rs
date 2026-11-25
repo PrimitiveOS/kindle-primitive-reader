@@ -3603,6 +3603,29 @@ impl InterfaceLanguage {
             "Back" => "Quay lại",
             "Grid" => "Lưới",
             "Page browser grid" => "Lưới duyệt trang",
+            "Page browser help" => "Trợ giúp duyệt trang",
+            "Help" => "Trợ giúp",
+            "Tap a thumbnail to read. Hold it to bookmark or show page actions." => {
+                "Chạm ảnh thu nhỏ để đọc. Giữ để đánh dấu hoặc xem tùy chọn trang."
+            }
+            "Swipe vertically for one row, horizontally or use page buttons for a screen." => {
+                "Vuốt dọc để chuyển một hàng; vuốt ngang hoặc nhấn nút trang để chuyển một màn hình."
+            }
+            "Swipe along the top or left edge to change the grid columns or rows." => {
+                "Vuốt dọc mép trên hoặc mép trái để đổi số cột hoặc hàng."
+            }
+            "Tap or drag the ribbon to browse. Hold it to open the book map." => {
+                "Chạm hoặc kéo thanh để duyệt. Giữ thanh để mở sơ đồ sách."
+            }
+            "The handle is browsing; the caret is reading. Squares show fixed-page history." => {
+                "Nút kéo là vị trí đang duyệt; mũi tên là vị trí đọc. Ô vuông là lịch sử trang cố định."
+            }
+            "Icons mark bookmarks, highlights and notes. Some reflow marks may be omitted." => {
+                "Biểu tượng đánh dấu trang, tô sáng và ghi chú. Một số dấu trong sách dàn trang lại có thể bị bỏ qua."
+            }
+            "Page-number mode saves per book. Set as default applies when no choice is saved." => {
+                "Chế độ số trang lưu theo sách. Mặc định áp dụng khi sách chưa có lựa chọn riêng."
+            }
             "Done" => "Xong",
             "Thumbnail columns" => "Số cột ảnh thu nhỏ",
             "Thumbnail rows" => "Số hàng ảnh thu nhỏ",
