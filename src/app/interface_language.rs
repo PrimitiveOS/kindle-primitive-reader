@@ -3099,6 +3099,9 @@ impl InterfaceLanguage {
             "Current book" => "Sách đang đọc",
             "Show current page in results" => "Hiện trang đang đọc trong kết quả",
             "No matching marks in the current book" => "Không có dấu phù hợp trong sách đang đọc",
+            "No matching marks in the current chapter" => {
+                "Không có dấu phù hợp trong chương đang đọc"
+            }
             "Collections" => "Bộ sưu tập",
             "Selected books" => "Sách đã chọn",
             "Archived books" => "Sách đã lưu trữ",

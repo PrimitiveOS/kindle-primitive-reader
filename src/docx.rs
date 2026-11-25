@@ -53,6 +53,17 @@ const CORE_TYPE: &str = "application/vnd.openxmlformats-package.core-properties+
 const PACKAGE_RELS: &str = "_rels/.rels";
 const CONTENT_TYPES: &str = "[content_types].xml";
 
+#[derive(Debug)]
+struct NoReadableContent;
+
+impl fmt::Display for NoReadableContent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("The Word document has no supported reading text or images")
+    }
+}
+
+impl std::error::Error for NoReadableContent {}
+
 pub(crate) fn open(input: impl Read + Seek, len: u64, fallback_title: &str) -> Result<Document> {
     open_word(input, len, fallback_title, false)
 }
@@ -150,14 +161,33 @@ fn open_word(
         }
         None => (None, None, Default::default()),
     };
-    let (images, resources) = read_images(
+    let (images, mut resources) = read_images(
         &mut archive,
         &parts,
         &main,
         &main_relations.images,
         docm.then_some((&types, &blocked)),
+        false,
     )?;
-    let output = convert_main_with_images(&main, &styles, images)?;
+    let output = match convert_main_with_images(&main, &styles, images) {
+        Ok(output) => output,
+        Err(error) if error.downcast_ref::<NoReadableContent>().is_some() => {
+            // Only previously rejected image-only documents take this path;
+            // successful Word sources retain the exact old XHTML and anchors.
+            let (images, extended_resources) = read_images(
+                &mut archive,
+                &parts,
+                &main,
+                &main_relations.images,
+                docm.then_some((&types, &blocked)),
+                true,
+            )?;
+            let output = convert_main_with_images(&main, &styles, images)?;
+            resources = extended_resources;
+            output
+        }
+        Err(error) => return Err(error),
+    };
     Ok(Document {
         fb2_note_sections: Default::default(),
         metadata,
@@ -278,6 +308,7 @@ fn read_images<R: Read + Seek>(
     main: &str,
     relationships: &BTreeMap<String, String>,
     docm_policy: Option<(&ContentTypes, &BTreeSet<String>)>,
+    extended: bool,
 ) -> Result<(BTreeMap<String, String>, BTreeMap<String, Vec<u8>>)> {
     let xml = xml(main)?;
     let mut images = BTreeMap::new();
@@ -296,6 +327,8 @@ fn read_images<R: Read + Seek>(
         let extension = match path.rsplit_once('.').map(|(_, ext)| ext) {
             Some("png") => "png",
             Some("jpg" | "jpeg") => "jpg",
+            Some("bmp") if extended => "bmp",
+            Some("gif") if extended => "gif",
             _ => continue,
         };
         if let Some((types, blocked)) = docm_policy {
@@ -303,10 +336,12 @@ fn read_images<R: Read + Seek>(
             require_type(
                 types,
                 path,
-                if extension == "png" {
-                    "image/png"
-                } else {
-                    "image/jpeg"
+                match extension {
+                    "png" => "image/png",
+                    "jpg" => "image/jpeg",
+                    "bmp" => "image/bmp",
+                    "gif" => "image/gif",
+                    _ => unreachable!(),
                 },
             )?;
         }
@@ -331,7 +366,10 @@ fn read_images<R: Read + Seek>(
         }
         let valid_signature = match extension {
             "png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
-            _ => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+            "jpg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+            "bmp" => bytes.starts_with(b"BM"),
+            "gif" => crate::gif_image::has_signature(&bytes),
+            _ => false,
         };
         if !valid_signature {
             return Err("A Word image does not match its declared format".into());
@@ -824,7 +862,7 @@ fn convert_main_with_images(
     })()
     .map_err(|_| "The Word document exceeds Reader's reflow output limit")?;
     if !output.has_text {
-        return Err("The Word document has no supported reading text or images".into());
+        return Err(NoReadableContent.into());
     }
     Ok(output)
 }

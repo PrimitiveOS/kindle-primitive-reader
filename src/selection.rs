@@ -39,6 +39,34 @@ pub struct HighlightRect {
 }
 
 impl Probe {
+    /// Convert two raw-bearing anchors into an exact quote while retaining the
+    /// raw endpoints in Reader's selection value. Mixed or cross-block ranges
+    /// are rejected until their projection rules can be proved end to end.
+    #[allow(dead_code)]
+    pub(crate) fn select_raw_anchors(
+        &self,
+        first: &Anchor,
+        second: &Anchor,
+    ) -> Option<TextSelection> {
+        let wrap = |anchor: &Anchor| {
+            let caret = anchor.raw_caret.clone()?;
+            let mut canonical = anchor.clone();
+            canonical.raw_caret = None;
+            Some(crate::source::raw_whitespace::RawAnchor { canonical, caret })
+        };
+        let selection = self.select_raw_whitespace(&wrap(first)?, &wrap(second)?)?;
+        let unwrap = |raw: crate::source::raw_whitespace::RawAnchor| {
+            let mut anchor = raw.canonical;
+            anchor.raw_caret = Some(raw.caret);
+            anchor
+        };
+        Some(TextSelection {
+            start: unwrap(selection.start),
+            end: unwrap(selection.end),
+            text: selection.text,
+        })
+    }
+
     /// Select exact raw content inside one verified source block. Reject
     /// cross-block, stale or unrepresentable endpoints rather than snapping.
     #[allow(dead_code)]
@@ -260,6 +288,9 @@ impl Probe {
     /// Select an anchored range across adjacent blocks and pages of the loaded
     /// chapter. The caller may supply the endpoints in either direction.
     pub fn select_range(&self, start: &Anchor, end: &Anchor) -> Option<TextSelection> {
+        if start.raw_caret.is_some() || end.raw_caret.is_some() {
+            return self.select_raw_anchors(start, end);
+        }
         #[cfg(feature = "kindle")]
         if let Some(band) = self.foreign_band_for_anchors(start, end) {
             return band.layout.note_select_range(start, end);
@@ -274,6 +305,9 @@ impl Probe {
         start: &Anchor,
         end: &Anchor,
     ) -> Option<TextSelection> {
+        if start.raw_caret.is_some() || end.raw_caret.is_some() {
+            return self.select_raw_anchors(start, end);
+        }
         #[cfg(feature = "kindle")]
         if let Some(band) = self.foreign_band_for_anchors(start, end) {
             return band.layout.note_select_range(start, end);

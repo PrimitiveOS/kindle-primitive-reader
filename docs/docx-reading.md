@@ -15,6 +15,15 @@ effects are not yet reproduced; images appear in the reflow text order.
 External hyperlinks remain plain text. Complex fields, notes and broader
 WordprocessingML features remain incomplete.
 
+If the normal conversion finds no readable text or supported images, Reader
+now retries previously rejected image-only DOCX/DOCM files with local BMP and
+first-frame GIF drawings. The same package, relationship, image-size and
+aggregate limits apply, and DOCM content types and blocked targets are still
+checked. The normal successful conversion remains unchanged, so BMP/GIF
+drawings in documents that already opened are not added by this fallback.
+Exact KOReader BMP/GIF behavior, real-document rendering, simulation and
+Kindle verification remain open.
+
 Numbered and bulleted Word paragraphs currently lose their list markers.
 KOReader reads the numbering part and renders nested list structures. Reader
 cannot simply add those structures to its generated XHTML: its existing saved

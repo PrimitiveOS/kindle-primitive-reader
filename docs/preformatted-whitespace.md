@@ -106,6 +106,14 @@ The chapter page model can also hold verified raw line boundaries and resolve
 a raw page anchor back to a line with its explicit affinity. All active
 renderers still leave this field empty; installing it, coordinating ordinary
 and raw lines on the same page, and integrating resume remain future work.
+The detached shaped-block search can use Reader's existing literal-query
+case/accent folding and return exact raw quotes with grapheme-checked endpoints.
+If any result has an unsupported boundary it fails closed; it is not yet used
+by the whole-book search UI or regular-expression search.
+Reader's selection value can now carry a verified raw quote and raw endpoints
+within one captured block, including through the reading-session quote API.
+Mixed raw/canonical endpoints and selections across blocks or sections are
+rejected, and selection geometry is not yet installed in the active renderer.
 
 This stage does **not** change rendering, copying, selection, source revisions,
 existing anchors or saved state. It does not yet implement preformatted EPUB

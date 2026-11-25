@@ -663,15 +663,16 @@ impl Reader {
                 }
             }
             Command::FocusCurrentPage => {
-                // Use only filtered, already displayed rows of the active fixed
-                // document. Sorting the result list must not affect the target.
+                // Use only filtered, already displayed rows of the open book.
+                // Sorting the result list must not affect the target.
                 let target = (|| {
-                    if self.bookmark_browser.origin != Screen::Fixed {
-                        return None;
-                    }
-                    let book = self.fixed.as_ref()?;
-                    let current = self.current_position()?.page;
-                    let state = self.library.state(book.id)?;
+                    let current = self.current_position()?;
+                    let book_id = match self.bookmark_browser.origin {
+                        Screen::Fixed => self.fixed.as_ref()?.id,
+                        Screen::Book => self.active.as_ref()?.id,
+                        _ => return None,
+                    };
+                    let state = self.library.state(book_id)?;
                     self.bookmark_browser
                         .rows
                         .iter()
@@ -680,23 +681,60 @@ impl Reader {
                             let RowKey::Mark(key) = row else {
                                 return None;
                             };
-                            if key.book != book.id {
+                            if key.book != book_id {
                                 return None;
                             }
-                            let page = match key.locator {
-                                Locator::Bookmark(index) => {
-                                    state.bookmarks.get(index)?.position.page
+                            let page = match self.bookmark_browser.origin {
+                                Screen::Fixed => {
+                                    let book = self.fixed.as_ref()?;
+                                    let page = match key.locator {
+                                        Locator::Bookmark(index) => {
+                                            state.bookmarks.get(index)?.position.page
+                                        }
+                                        Locator::Fixed(index) => {
+                                            state.pdf_highlights.get(index)?.page
+                                        }
+                                        Locator::Reflow(_) => return None,
+                                    };
+                                    (page < book.reading.count()).then_some(page)?
                                 }
-                                Locator::Fixed(index) => state.pdf_highlights.get(index)?.page,
-                                Locator::Reflow(_) => return None,
+                                Screen::Book => {
+                                    let book = self.active.as_ref()?;
+                                    let reading = &book.reading;
+                                    let probe = &reading.probe;
+                                    let anchor_page = |anchor: &crate::Anchor| {
+                                        (probe.chapter_index(&anchor.chapter)
+                                            == Some(reading.chapter))
+                                        .then_some(())?;
+                                        let resolved = probe.restore_anchor(anchor)?;
+                                        probe.page_for(&resolved)
+                                    };
+                                    match key.locator {
+                                        Locator::Bookmark(index) => {
+                                            let position = &state.bookmarks.get(index)?.position;
+                                            if let Some(anchor) = &position.anchor {
+                                                anchor_page(anchor)?
+                                            } else {
+                                                (position.chapter == reading.chapter
+                                                    && position.page < probe.page_count())
+                                                .then_some(position.page)?
+                                            }
+                                        }
+                                        Locator::Reflow(index) => anchor_page(
+                                            &state.highlights.get(index)?.selection.start,
+                                        )?,
+                                        Locator::Fixed(_) => return None,
+                                    }
+                                }
+                                _ => return None,
                             };
-                            (page < book.reading.count()).then_some((ordinal, page))
+                            Some((ordinal, page))
                         })
                         .min_by_key(|&(ordinal, page)| {
-                            if page >= current {
-                                (false, page - current, ordinal)
+                            if page >= current.page {
+                                (false, page - current.page, ordinal)
                             } else {
-                                (true, current - page, ordinal)
+                                (true, current.page - page, ordinal)
                             }
                         })
                         .map(|(ordinal, _)| ordinal)
@@ -709,7 +747,11 @@ impl Reader {
                     self.notice = Some(
                         self.controls
                             .interface_language
-                            .bookmark_text("No matching marks in the current book")
+                            .bookmark_text(if self.bookmark_browser.origin == Screen::Book {
+                                "No matching marks in the current chapter"
+                            } else {
+                                "No matching marks in the current book"
+                            })
                             .to_owned(),
                     );
                 }
@@ -1210,7 +1252,9 @@ impl Reader {
                     selection_row("Date added", C::SortByDate(true), browser.sort_by_date),
                     item("All types", C::SetKind(None)).detail(kind),
                 ];
-                if browser.origin == Screen::Fixed && self.fixed.is_some() {
+                if (browser.origin == Screen::Fixed && self.fixed.is_some())
+                    || (browser.origin == Screen::Book && self.active.is_some())
+                {
                     rows.insert(0, item("Show current page in results", C::FocusCurrentPage));
                 }
                 rows.extend(

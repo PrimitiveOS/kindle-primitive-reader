@@ -335,7 +335,7 @@ impl Query {
         Self::prepare(text, match_case, ignore_accents, false)
     }
 
-    fn reflow(text: &str, match_case: bool, ignore_accents: bool) -> Result<Self> {
+    pub(crate) fn reflow(text: &str, match_case: bool, ignore_accents: bool) -> Result<Self> {
         Self::prepare(text, match_case, ignore_accents, true)
     }
 

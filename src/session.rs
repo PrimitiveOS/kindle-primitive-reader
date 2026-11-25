@@ -1401,6 +1401,29 @@ impl Reading {
         end: &Anchor,
         canonical: bool,
     ) -> Result<TextSelection> {
+        if start.raw_caret.is_some() || end.raw_caret.is_some() {
+            if start.chapter != end.chapter {
+                return Err("Raw whitespace selection across sections is not yet supported".into());
+            }
+            let index = self
+                .probe
+                .chapter_index(&start.chapter)
+                .ok_or("The saved section is unavailable")?;
+            let loaded;
+            let probe = if index == self.chapter {
+                &self.probe
+            } else {
+                loaded = self.config.chapter(index)?;
+                &loaded
+            };
+            let selection = probe
+                .select_raw_anchors(start, end)
+                .ok_or("The raw whitespace selection cannot be resolved safely")?;
+            if selection.text.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES {
+                return Err("This selection exceeds the saved highlight size limit".into());
+            }
+            return Ok(selection);
+        }
         let first = self
             .probe
             .chapter_index(&start.chapter)

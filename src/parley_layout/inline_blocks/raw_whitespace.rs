@@ -244,14 +244,64 @@ impl Plan {
 }
 
 impl Prepared {
-    /// Transfer one line's verified raw boundaries into the chapter page model.
-    /// The caller must retain the same source block and use the same line
-    /// index; this does not install the detached layout into the renderer.
-    pub(in crate::parley_layout) fn page_line(
+    /// Search a verified raw-shaped block using the same folded literal query
+    /// as ordinary reflow search. Returned quotes and both endpoints retain
+    /// raw whitespace; callers must still validate them through the open Probe.
+    pub(in crate::parley_layout) fn search_raw(
         &self,
         block: &Block,
-        index: usize,
-    ) -> Option<crate::RawLinePosition> {
+        context: &AnchorContext<'_>,
+        query: &crate::search::Query,
+    ) -> Option<Vec<RawTextSelection>> {
+        if !self.binding.matches(block) || block.key != context.block {
+            return None;
+        }
+        let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+        if self.text.text.as_str() != bound.raw() || self.layout.text_len() != bound.raw().len() {
+            return None;
+        }
+        let matches = query.matches(bound.raw(), crate::search::MAX_SEARCH_HITS);
+        let mut requests = Vec::with_capacity(matches.len().checked_mul(2)?);
+        for range in &matches {
+            if range.start >= range.end || bound.raw().get(range.clone()).is_none() {
+                return None;
+            }
+            requests.push((range.start, CaretAffinity::After));
+            requests.push((range.end, CaretAffinity::Before));
+        }
+        let mut carets = bound.carets_at(&requests)?.into_iter();
+        let mut results = Vec::with_capacity(matches.len());
+        for range in matches {
+            let start = carets.next()?;
+            let end = carets.next()?;
+            let anchor = |caret: RawCaret| RawAnchor {
+                canonical: crate::Anchor {
+                    raw_caret: None,
+                    book: context.book,
+                    chapter: context.chapter.to_owned(),
+                    revision: context.revision,
+                    block: context.block,
+                    offset: caret.canonical_offset,
+                    illustration: None,
+                },
+                caret,
+            };
+            results.push(RawTextSelection {
+                start: anchor(start),
+                end: anchor(end),
+                text: bound.raw().get(range)?.to_owned(),
+            });
+        }
+        Some(results)
+    }
+
+    /// Transfer all verified raw line boundaries in layout order. The caller
+    /// must retain the same source block; this does not install the detached
+    /// layout into the renderer. Grapheme segmentation is performed once.
+    pub(in crate::parley_layout) fn page_lines(
+        &self,
+        block: &Block,
+    ) -> Option<Vec<crate::RawLinePosition>> {
         if !self.binding.matches(block) {
             return None;
         }
@@ -259,16 +309,25 @@ impl Prepared {
         if self.text.text.as_str() != bound.raw() || self.layout.text_len() != bound.raw().len() {
             return None;
         }
-        let line = self.lines.get(index)?;
-        bound.validate_caret(&line.start)?;
-        bound.validate_caret(&line.end)?;
-        if line.start.raw_offset != line.bytes.start || line.end.raw_offset != line.bytes.end {
-            return None;
+        let mut requests = Vec::with_capacity(self.lines.len().checked_mul(2)?);
+        for line in &self.lines {
+            if line.start.raw_offset != line.bytes.start || line.end.raw_offset != line.bytes.end {
+                return None;
+            }
+            requests.push((line.bytes.start, CaretAffinity::After));
+            requests.push((line.bytes.end, CaretAffinity::Before));
         }
-        Some(crate::RawLinePosition {
-            start: line.start.clone(),
-            end: line.end.clone(),
-        })
+        let mut verified = bound.carets_at(&requests)?.into_iter();
+        let mut positions = Vec::with_capacity(self.lines.len());
+        for line in &self.lines {
+            let start = verified.next()?;
+            let end = verified.next()?;
+            if start != line.start || end != line.end {
+                return None;
+            }
+            positions.push(crate::RawLinePosition { start, end });
+        }
+        Some(positions)
     }
 
     /// Resolve a point in paragraph-local layout coordinates without snapping
