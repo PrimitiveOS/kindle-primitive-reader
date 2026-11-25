@@ -10,9 +10,10 @@ Pseudo-elements › Disable before/after pseudo elements** to suppress both
 sides. The choice can apply to the open book or become its default.
 [Pinned KOReader setting](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L810-L820)
 
-The **Disable first-letter pseudo elements** option in the same menu has its
-own default and book choice. A before/after prefix can remain visible when
-the initial style is disabled. [Publisher initials](first-letter.md)
+The **Disable first-letter pseudo elements** and **Disable first-line pseudo
+elements** options in the same menu each have their own default and book
+choice. A generated prefix can remain visible with either typography tweak
+disabled. [Publisher initials](first-letter.md) · [Publisher first lines](first-line.md)
 
 Book-specific CSS can also set inline generated text and typography, or hide
 an individual pseudo-element. The editor rejects declarations that the

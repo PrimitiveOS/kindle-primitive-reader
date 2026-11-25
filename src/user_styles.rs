@@ -111,6 +111,7 @@ pub(crate) struct LayoutTweaks {
     pub(crate) native_table_widths: bool,
     pub(crate) disable_generated_content: bool,
     pub(crate) disable_first_letter: bool,
+    pub(crate) disable_first_line: bool,
 }
 
 #[repr(u8)]
@@ -242,6 +243,9 @@ impl Snapshot {
         if layout.disable_first_letter {
             digest.consume(b"\0disable-first-letter");
         }
+        if layout.disable_first_line {
+            digest.consume(b"\0disable-first-line");
+        }
         Ok(Self {
             css: css.into(),
             digest: digest.finalize().0,
@@ -343,6 +347,7 @@ pub(crate) enum Effect {
     IgnoreTableHints,
     DisableGeneratedContent,
     DisableFirstLetter,
+    DisableFirstLine,
     InPageEpubFootnotes,
     FullWidthImages,
     InPageClassicFootnotes,
@@ -685,6 +690,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::DisableFirstLetter,
     },
     Preset {
+        id: "no_pseudo_element_first_line",
+        title: "Disable first-line pseudo elements",
+        group: "pseudo-elements-first-line",
+        priority: 0,
+        effect: Effect::DisableFirstLine,
+    },
+    Preset {
         id: "table_no_presentational_hints",
         title: "Ignore HTML table presentation",
         group: "table-presentation",
@@ -951,6 +963,7 @@ impl Data {
                 Effect::IgnoreTableHints => layout.ignore_table_hints = true,
                 Effect::DisableGeneratedContent => layout.disable_generated_content = true,
                 Effect::DisableFirstLetter => layout.disable_first_letter = true,
+                Effect::DisableFirstLine => layout.disable_first_line = true,
                 Effect::InPageEpubFootnotes => {
                     notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
                     notes.explicit_epub = true;

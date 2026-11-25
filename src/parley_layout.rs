@@ -1,4 +1,5 @@
 mod cjk_width;
+mod first_line;
 #[cfg(test)]
 mod hanging_punctuation_tests;
 #[cfg(test)]
@@ -382,7 +383,7 @@ pub(crate) struct ParleyChapter {
     illustrations: Vec<Illustration>,
     markers: Vec<PaintedMarker>,
     table_frames: Vec<crate::table_borders::Frame>,
-    pub(crate) note_table_extents:
+    pub(crate) in_page_table_extents:
         HashMap<crate::table_layout::TableKey, crate::footnotes::in_page::TableCopy>,
     note_table_fit_failed: bool,
     padded_backgrounds: Vec<crate::vertical_padding::Fill>,
@@ -567,7 +568,7 @@ impl ParleyChapter {
             illustrations: Vec::new(),
             markers: Vec::new(),
             table_frames: Vec::new(),
-            note_table_extents: HashMap::new(),
+            in_page_table_extents: HashMap::new(),
             note_table_fit_failed: false,
             padded_backgrounds: Vec::new(),
             physical_break_runs: Vec::new(),
@@ -588,6 +589,10 @@ impl ParleyChapter {
         let mut lines: Vec<Line> = Vec::new();
         let mut remaining_inline_boxes = inline_blocks::MAX_CHAPTER_BOXES;
         let note_tables = footnotes.map_or_else(HashMap::new, |notes| notes.native_tables(source));
+        let in_page_tables: HashSet<_> = footnotes
+            .into_iter()
+            .flat_map(|_| source.table_cells.iter().map(|(_, cell)| cell.table))
+            .collect();
         let mut y = 0.0_f32;
         let mut image_budget = MAX_IMAGE_PIXELS;
         let fallback = Arc::new(GrayImage::from_pixel(
@@ -654,6 +659,7 @@ impl ParleyChapter {
                         styles,
                     );
                 }
+                input.first_line = block.table_cell.is_none();
                 let indent = LineIndent::resolve(
                     &styles[block.element],
                     outer_width,
@@ -912,6 +918,7 @@ impl ParleyChapter {
                 &projection,
                 styles,
             );
+            input.first_line = source_block.table_cell.is_none() && caption.is_none();
             let note = joined.remove(&index);
             let note_layout = note.as_ref().map(|note| Arc::clone(&note.layout));
             let mut note_table = None;
@@ -1424,6 +1431,7 @@ impl ParleyChapter {
                         std::mem::take(&mut generated.runs),
                     );
                     outer.generated = &generated.typography;
+                    outer.first_line = block.first_line;
                     outer.first_letter = block.first_letter.as_ref().and_then(|run| {
                         generated.text.layout_spans(&run.bytes).next().map(|bytes| {
                             crate::book_style::pseudo::LetterRun {
@@ -1602,7 +1610,7 @@ impl ParleyChapter {
                                     .bottom
                                     .max(origin + position.y + position.height);
                                 bottom = bottom.max(source_line.bottom);
-                                chapter.note_table_extents.insert(
+                                chapter.in_page_table_extents.insert(
                                     candidate.key,
                                     crate::footnotes::in_page::TableCopy::Inline,
                                 );
@@ -1849,7 +1857,7 @@ impl ParleyChapter {
                 }
             }
             if let Some(c) = cell.filter(|&c| {
-                note_tables.contains_key(&c.table) || borders.as_ref().is_some_and(|b| b.tracks(c))
+                in_page_tables.contains(&c.table) || borders.as_ref().is_some_and(|b| b.tracks(c))
             }) {
                 positions.record(c, start_of_cell, (y - gap).max(start_of_cell));
             }
@@ -1947,8 +1955,8 @@ impl ParleyChapter {
             );
         }
         chapter
-            .note_table_extents
-            .extend(note_tables.keys().filter_map(|&key| {
+            .in_page_table_extents
+            .extend(in_page_tables.into_iter().filter_map(|key| {
                 let extent = positions.outer_extent(key)?;
                 (extent.start.is_finite() && extent.end.is_finite() && extent.start < extent.end)
                     .then_some((key, crate::footnotes::in_page::TableCopy::Grid(extent)))
@@ -2975,6 +2983,45 @@ fn make_paragraph(
     automatic: &crate::user_hyphenation::Opportunities,
     contour: Option<crate::float_layout::Contour>,
 ) -> Layout<PaintBrush> {
+    first_line::layout(
+        block,
+        &styles[block.element],
+        width.is_some() && images.is_empty(),
+        |pass| {
+            shape_paragraph(
+                context,
+                fonts,
+                block,
+                width,
+                settings,
+                styles,
+                ruby,
+                images,
+                fit_font_metrics,
+                indent,
+                automatic,
+                contour,
+                pass,
+            )
+        },
+    )
+}
+
+fn shape_paragraph(
+    context: &mut LayoutContext<PaintBrush>,
+    fonts: &mut FontContext,
+    block: &LayoutBlock<'_>,
+    width: Option<u32>,
+    settings: Settings,
+    styles: &[Style],
+    ruby: &[RubyCandidate],
+    images: &[parley::InlineBox],
+    fit_font_metrics: bool,
+    indent: LineIndent,
+    automatic: &crate::user_hyphenation::Opportunities,
+    contour: Option<crate::float_layout::Contour>,
+    pass: first_line::Pass,
+) -> Layout<PaintBrush> {
     let style = &styles[block.element];
     let language = block.language;
     let trusted_words = if settings.trust_soft_hyphens && block.text.contains('\u{ad}') {
@@ -3115,15 +3162,20 @@ fn make_paragraph(
     let mut has_nowrap = style.inline_nowrap;
     builder.set_base_direction(block.direction);
     let letter = block.first_letter.as_ref();
-    let letter_style = letter.map(|run| run.rule.apply(&styles[run.owner]));
-    let letter_run = letter.zip(letter_style.as_ref()).map(|(run, style)| {
+    let letter_run = letter.map(|run| {
         let language = block
             .styled_text
             .iter()
             .find(|text| text.bytes.contains(&run.bytes.start))
             .and_then(|text| text.language)
             .or(language);
-        (run.bytes.clone(), style, language)
+        (
+            run.bytes.clone(),
+            &styles[run.owner],
+            language,
+            Some(run.owner),
+            Some(run.rule),
+        )
     });
     let ordinary = block.styled_text.iter().flat_map(|text| {
         let style = &styles[text.element];
@@ -3132,17 +3184,17 @@ fn make_paragraph(
         [text.bytes.start..first, after..text.bytes.end]
             .into_iter()
             .filter(|range| !range.is_empty())
-            .map(move |range| (range, style, text.language))
+            .map(move |range| (range, style, text.language, Some(text.element), None))
     });
     let runs = ordinary
         .chain(
             block
                 .generated
                 .iter()
-                .map(|run| (run.bytes.clone(), run.style, language)),
+                .map(|run| (run.bytes.clone(), run.style, language, run.host, None)),
         )
         .chain(letter_run);
-    for (bytes, run, run_language) in runs {
+    let mut emit_run = |bytes: Range<usize>, run: &Style, run_language, base: &Style| {
         if run_language != language {
             builder.push(StyleProperty::Locale(run_language), bytes.clone());
         }
@@ -3150,9 +3202,9 @@ fn make_paragraph(
         if run_line_break != paragraph_line_break {
             builder.push(StyleProperty::LineBreak(run_line_break), bytes.clone());
         }
-        if run.decoration != style.decoration
-            || run.link_ink != style.link_ink
-            || run.flow.painted != style.flow.painted
+        if run.decoration != base.decoration
+            || run.link_ink != base.link_ink
+            || run.flow.painted != base.flow.painted
         {
             builder.push(
                 StyleProperty::Brush(PaintBrush {
@@ -3182,23 +3234,56 @@ fn make_paragraph(
             builder.push(StyleProperty::TextWrapMode(mode), bytes.clone());
             has_nowrap |= run.inline_nowrap;
         }
-        if !settings.override_fonts && run.font_family != style.font_family {
+        if !settings.override_fonts && run.font_family != base.font_family {
             builder.push(
                 StyleProperty::FontFamily(run.font_family.layout()),
                 bytes.clone(),
             );
         }
-        if run.size_scale != style.size_scale {
+        if run.size_scale != base.size_scale {
             builder.push(StyleProperty::FontSize(font_size(run)), bytes.clone());
         }
-        if run.line_height != style.line_height {
+        if run.line_height != base.line_height {
             builder.push(StyleProperty::LineHeight(line_height(run)), bytes.clone());
         }
-        if run.font_weight != style.font_weight {
+        if run.font_weight != base.font_weight {
             builder.push(StyleProperty::FontWeight(weight(run)), bytes.clone());
         }
-        if run.font_style != style.font_style {
+        if run.font_style != base.font_style {
             builder.push(StyleProperty::FontStyle(run.font_style), bytes.clone());
+        }
+    };
+    let first_end = pass.styled_end(block.text);
+    let first_base = style
+        .first_line
+        .as_ref()
+        .filter(|_| first_end > 0)
+        .map(|line| line.apply(style));
+    if let Some(first) = &first_base {
+        emit_run(0..first_end, first, language, style);
+    }
+    for (mut bytes, run, run_language, owner, letter_rule) in runs {
+        if let Some(first) = &first_base
+            && bytes.start < first_end
+        {
+            let line = owner
+                .and_then(|element| styles[element].first_line.as_deref())
+                .filter(|line| line.host == block.element);
+            let alternate = line.map(|line| line.apply(run));
+            let alternate = alternate.as_ref().unwrap_or(run);
+            let letter = letter_rule.map(|rule| rule.apply(alternate));
+            let end = bytes.end.min(first_end);
+            emit_run(
+                bytes.start..end,
+                letter.as_ref().unwrap_or(alternate),
+                run_language,
+                first,
+            );
+            bytes.start = end;
+        }
+        if !bytes.is_empty() {
+            let letter = letter_rule.map(|rule| rule.apply(run));
+            emit_run(bytes, letter.as_ref().unwrap_or(run), run_language, style);
         }
     }
     for annotation in ruby {
@@ -3248,9 +3333,13 @@ fn make_paragraph(
         );
     }
     let Some(width) = width else { return layout };
-    if let Some(contour) = contour {
+    let exact = pass.exact_break();
+    if contour.is_some() || exact.is_some() || matches!(pass, first_line::Pass::Measure) {
         let mut breaker = layout.break_lines();
         breaker.state_mut().set_layout_max_advance(width as f32);
+        if let Some(boundary) = exact {
+            breaker.require_first_break(boundary.end, boundary.reason, boundary.hyphen);
+        }
         let strut = match line_height(style) {
             LineHeight::FontSizeRelative(ratio) => ratio * font_size(style),
             LineHeight::Absolute(pixels) => pixels,
@@ -3260,16 +3349,25 @@ fn make_paragraph(
             }
         };
         while !breaker.is_done() {
-            let (y, x, advance) = contour.for_line(breaker.committed_y(), strut);
+            let start = breaker.committed_y();
+            let (y, x, advance) = contour.map_or((start, 0., width as f32), |contour| {
+                contour.for_line(start, strut)
+            });
             let state = breaker.state_mut();
             state.set_line_y(y);
             state.set_line_x(x);
             state.set_line_max_advance(advance);
             breaker.break_next();
+            if matches!(pass, first_line::Pass::Measure) {
+                break;
+            }
         }
         breaker.finish();
     } else {
         layout.break_all_lines(Some(width as f32));
+    }
+    if matches!(pass, first_line::Pass::Measure) {
+        return layout;
     }
     if settings.hanging_punctuation
         && contour.is_none()
@@ -5550,6 +5648,8 @@ mod word_expansion_cases;
 mod cjk_width_tests;
 #[cfg(test)]
 mod pseudo_first_letter_tests;
+#[cfg(test)]
+mod pseudo_first_line_tests;
 #[cfg(test)]
 mod pseudo_generated_tests;
 #[cfg(test)]

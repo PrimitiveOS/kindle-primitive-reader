@@ -52,6 +52,7 @@ impl Plan {
                 let typography = [Run {
                     bytes: 0..text.len(),
                     style,
+                    host: None,
                 }];
                 fragment.generated = &typography;
                 make_paragraph(

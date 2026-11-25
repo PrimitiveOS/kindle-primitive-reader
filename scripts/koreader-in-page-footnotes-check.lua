@@ -12,7 +12,8 @@ local BB = require("ffi/blitbuffer")
 
 local source, cache, font, captures = assert(arg[1]), assert(arg[2]), assert(arg[3]), assert(arg[4])
 local narrow_ruby = arg[5] == "inline-ruby-narrow"
-local width, height, margin = narrow_ruby and 310 or 720, 480, 32
+local body_table = arg[5] == "body-table"
+local width, height, margin = narrow_ruby and 310 or 720, body_table and 520 or 480, 32
 local fb2 = arg[5] == "fb2"
 local classic = arg[5] == "classic"
 local wikipedia = arg[5] == "wikipedia" or arg[5] == "inline-root-wiki"
@@ -502,7 +503,7 @@ if arg[5] == "inline-ruby" or narrow_ruby then
     return
 end
 
-if arg[5] == "inline-table" then
+if arg[5] == "inline-table" or body_table then
     controller:onReadSettings(Settings:wrap({}))
     local option = assert(find_tweak(menu.style_tweaks.sub_item_table, "inpage_footnote_all_inline"))
     local function geometry(view, phrase)
@@ -543,6 +544,61 @@ if arg[5] == "inline-table" then
             for x = x0, x1 - 1 do data[#data + 1] = string.char(frame:getPixel(x, y):getColor8().a) end
         end
         return table.concat(data)
+    end
+    if body_table then
+        local function measure_body(phase, enabled)
+            local view = open(assert(controller:getCssText()))
+            local reference, body = geometry(view, "The harbor census")
+            local table_page, first, first_pointer = geometry(view, "Well list")
+            local inlet_page, inlet, inlet_pointer = geometry(view, "Eastern inlet")
+            local beacon_page, beacon, beacon_pointer = geometry(view, "Red beacon")
+            local gate_page, gate, gate_pointer = geometry(view, "Gate stays open")
+            local note, _, note_pointer = geometry(view, "The gauge was calibrated")
+            local backlink_page, backlink = geometry(view, "Return to the census")
+            assert(table_page == inlet_page and inlet_page == beacon_page and beacon_page == gate_page)
+            assert(first.y0 == inlet.y0 and inlet.y0 < beacon.y0 and beacon.y0 < gate.y0)
+            assert(math.abs(first.x0 - gate.x0) <= 2 and math.abs(inlet.x0 - beacon.x0) <= 2 and first.x0 < inlet.x0,
+                ("cell starts x=%d,%d,%d,%d"):format(first.x0, inlet.x0, beacon.x0, gate.x0))
+            assert(note > table_page and note == backlink_page)
+            assert(view:getLinkFromPosition(backlink.x0 + 6, math.floor((backlink.y0 + backlink.y1)/2)):match(" body%-grid%-ref$"))
+            if enabled then
+                assert(table_page == reference + 1)
+                assert(capture(view, reference, "stock-body-table-notes-band"))
+                assert(not capture(view, table_page, "stock-body-table-notes-grid"))
+            else
+                assert(table_page == reference)
+                local name = phase == "off" and "stock-body-table-notes-off" or "stock-body-table-notes-restored"
+                assert(not capture(view, reference, name))
+            end
+            view:gotoPage(table_page)
+            local x, y = first.x0 + 6, math.floor((first.y0 + first.y1)/2)
+            assert(view:getLinkFromPosition(x, y):match(" body%-grid%-target$"))
+            assert(view:getTextFromPositions(x, y, x, y, false, false).text:find("Well", 1, true))
+            local frame = draw(view, table_page)
+            local x0, x1, y0, y1 = outlined_rows(frame, math.max(margin, first.y0 - 12),
+                math.min(height - margin - 1, gate.y1 + 12))
+            local pixels = raster(frame, x0, x1, y0, y1)
+            assert(pixels:find(string.char(221), 1, true) and pixels:find(string.char(238), 1, true))
+            print(("mixed table %.0fx%.0f x=%d y=%d page-offset=%d"):format(x1-x0, y1-y0, x0, y0, table_page-reference))
+            frame:free()
+            view:close()
+            return table.concat({body.y0, x0, x1, first_pointer, inlet_pointer, beacon_pointer,
+                gate_pointer, note_pointer}, "|"), pixels
+        end
+        assert(row.checked_func())
+        row.callback()
+        assert(not row.checked_func())
+        local before, raster_before = measure_body("off", false)
+        row.callback()
+        assert(row.checked_func())
+        local after, raster_after = measure_body("on", true)
+        assert(after == before and raster_after == raster_before)
+        row.callback()
+        assert(not row.checked_func())
+        local restored, raster_restored = measure_body("restored", false)
+        assert(restored == before and raster_restored == raster_before)
+        print("Pinned body table stays intact while the preceding footnote gets a reference band")
+        return
     end
     local function measure(phase, inline)
         local view = open(assert(controller:getCssText()))

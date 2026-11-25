@@ -1,15 +1,16 @@
-//! CSS-generated inline decoration. The host's style and source bytes stay intact.
+//! CSS pseudo-element typography and generated text backed by the normal cascade.
 use super::{
     BookStyle, BoxMargin, CascadeOrigin, CssResult, Display, Element, Family, Priority, Property,
     Rule, Size, Style, TextDecoration, Weight, flow,
 };
 use cssparser::{Parser, Token};
-use parley::{FontStyle, GenericFamily};
+use parley::{FontStyle, FontWeight, GenericFamily};
 use std::{ops::Range, sync::Arc};
 
 const MAX_CONTENT_PARTS: usize = 16;
 const MAX_CONTENT_BYTES: usize = 1024;
 const MAX_GENERATED_HOSTS: usize = 1024;
+const MAX_FIRST_LINE_STYLES: usize = 4096;
 pub(crate) const MAX_ATTRIBUTE_BYTES: usize = 64 * 1024;
 const MAX_ATTRIBUTE_VALUE: usize = 256;
 const MAX_BLOCK_EDGES: usize = 512;
@@ -24,6 +25,7 @@ pub(crate) enum Side {
 pub(crate) enum Target {
     Generated(Side),
     FirstLetter,
+    FirstLine,
 }
 
 impl Target {
@@ -34,6 +36,8 @@ impl Target {
             Some(Self::Generated(Side::After))
         } else if name.eq_ignore_ascii_case("first-letter") {
             Some(Self::FirstLetter)
+        } else if name.eq_ignore_ascii_case("first-line") {
+            Some(Self::FirstLine)
         } else {
             None
         }
@@ -231,6 +235,7 @@ impl Typography {
         let mut style = base.clone();
         style.generated = None;
         style.first_letter = None;
+        style.first_line = None;
         style.display = Display::Inline;
         if let Some(visibility) = self.visibility {
             style.visibility = visibility;
@@ -270,6 +275,89 @@ impl FirstLetter {
 
     pub(crate) fn gap(&self, width: u32, font: f32) -> f32 {
         self.trailing_margin.length().box_pixels(width, font)
+    }
+}
+
+/// The typography of a host or descendant during the first line only.
+/// Descendants that inherit the same values share the host's record.
+#[derive(Clone, PartialEq)]
+pub(crate) struct FirstLine {
+    pub(crate) host: usize,
+    family: Family,
+    size: f32,
+    weight: FontWeight,
+    slant: FontStyle,
+    line_height: Option<f32>,
+    decoration: TextDecoration,
+}
+
+impl FirstLine {
+    fn new(host: usize, style: &Style) -> Self {
+        Self {
+            host,
+            family: style.font_family.clone(),
+            size: style.size_scale,
+            weight: style.font_weight,
+            slant: style.font_style,
+            line_height: style.line_height,
+            decoration: style.decoration,
+        }
+    }
+
+    pub(crate) fn apply(&self, source: &Style) -> Style {
+        let mut style = source.clone();
+        style.font_family = self.family.clone();
+        style.size_scale = self.size;
+        style.font_weight = self.weight;
+        style.font_style = self.slant;
+        style.line_height = self.line_height;
+        style.decoration = style.decoration.including(self.decoration);
+        style
+    }
+
+    fn descendant(&self, style: &Style, tag: &str, winners: &super::Winners<'_>) -> Self {
+        use super::user_css::Reset;
+        let declaration = |slot: usize| winners[slot].map(|(_, property)| property);
+        let inherits = |slot| {
+            matches!(
+                declaration(slot),
+                None | Some(Property::Reset(_, Reset::Inherit | Reset::Unset))
+            )
+        };
+        let size = match declaration(1) {
+            Some(Property::Size(Size::Parent(scale))) => self.size * scale,
+            None if matches!(tag, "sup" | "sub") => self.size * 0.7,
+            _ if inherits(1) => self.size,
+            _ => style.size_scale,
+        };
+        let weight = match declaration(5) {
+            Some(Property::Weight(weight)) => weight.resolve(self.weight),
+            None if matches!(tag, "b" | "strong") => Weight::Bolder.resolve(self.weight),
+            _ if inherits(5) => self.weight,
+            _ => style.font_weight,
+        };
+        Self {
+            host: self.host,
+            family: if inherits(0) {
+                &self.family
+            } else {
+                &style.font_family
+            }
+            .clone(),
+            size: size.clamp(0.125, 8.0),
+            weight,
+            slant: match declaration(6) {
+                None if matches!(tag, "em" | "i") => FontStyle::Italic,
+                _ if inherits(6) => self.slant,
+                _ => style.font_style,
+            },
+            line_height: if inherits(2) {
+                self.line_height
+            } else {
+                style.line_height
+            },
+            decoration: self.decoration.including(style.decoration),
+        }
     }
 }
 
@@ -369,6 +457,7 @@ pub(super) fn accepts_user_declaration(target: Target, property: &Property) -> b
     match (target, property) {
         (_, Property::Display(value)) => matches!(value, Display::Inline | Display::None),
         (Target::Generated(_), _) => property_slot(property).is_some_and(|slot| slot <= 8),
+        (Target::FirstLine, _) => is_first_line_typography(property),
         (
             Target::FirstLetter,
             Property::GeneratedContent(_) | Property::Float(Some(crate::float_layout::Side::Right)),
@@ -380,6 +469,19 @@ pub(super) fn accepts_user_declaration(target: Target, property: &Property) -> b
 pub(crate) struct Run<'a> {
     pub(crate) bytes: Range<usize>,
     pub(crate) style: &'a Style,
+    pub(crate) host: Option<usize>,
+}
+
+fn is_first_line_typography(property: &Property) -> bool {
+    matches!(
+        property,
+        Property::Size(_)
+            | Property::Family(_)
+            | Property::Weight(_)
+            | Property::Slant(_)
+            | Property::Decoration(_)
+            | Property::LineHeight(_)
+    )
 }
 
 const SLOTS: usize = 12;
@@ -391,6 +493,7 @@ pub(super) struct Rules<'a> {
     remaining: usize,
     hosts: usize,
     letter_hosts: usize,
+    first_line_styles: usize,
 }
 
 impl<'a> Rules<'a> {
@@ -398,6 +501,7 @@ impl<'a> Rules<'a> {
         let mut rules = Vec::new();
         if !book_style.layout_tweaks.disable_generated_content
             || !book_style.layout_tweaks.disable_first_letter
+            || !book_style.layout_tweaks.disable_first_line
         {
             for (origin, sheet) in [
                 (CascadeOrigin::UserAgent, &book_style.base_rules),
@@ -414,6 +518,7 @@ impl<'a> Rules<'a> {
                             Some(Target::FirstLetter) => {
                                 !book_style.layout_tweaks.disable_first_letter
                             }
+                            Some(Target::FirstLine) => !book_style.layout_tweaks.disable_first_line,
                             None => false,
                         })
                         .then_some((origin, rule))
@@ -426,6 +531,7 @@ impl<'a> Rules<'a> {
             remaining: 64 * 1024,
             hosts: MAX_GENERATED_HOSTS,
             letter_hosts: MAX_GENERATED_HOSTS,
+            first_line_styles: MAX_FIRST_LINE_STYLES,
         }
     }
 
@@ -435,18 +541,30 @@ impl<'a> Rules<'a> {
         index: usize,
         host: &Style,
         root_scale: f32,
-    ) -> (Option<Arc<Pair>>, Option<Arc<FirstLetter>>) {
+        parent: &Style,
+        inline_winners: &super::Winners<'_>,
+    ) -> (
+        Option<Arc<Pair>>,
+        Option<Arc<FirstLetter>>,
+        Option<Arc<FirstLine>>,
+    ) {
         let generated_enabled = self.remaining > 0
             && self.hosts > 0
             && !self.book_style.layout_tweaks.disable_generated_content;
         let letter_enabled =
             self.letter_hosts > 0 && !self.book_style.layout_tweaks.disable_first_letter;
-        if (!generated_enabled && !letter_enabled) || self.rules.is_empty() || host.flow.suppressed
+        let line_enabled =
+            self.first_line_styles > 0 && !self.book_style.layout_tweaks.disable_first_line;
+        if (!generated_enabled && !letter_enabled && !line_enabled)
+            || self.rules.is_empty()
+            || host.flow.suppressed
         {
-            return (None, None);
+            return (None, None, None);
         }
+        let block = host.display == Display::Block || host.display.is_list_item();
         let mut winners: [Winners<'_>; 2] = [[None; SLOTS]; 2];
         let mut letter_winners = [None; SLOTS];
+        let mut line_winners = [None; SLOTS];
         for (origin, rule) in &self.rules {
             for selector in &rule.selectors {
                 let Some(target) = selector
@@ -458,9 +576,16 @@ impl<'a> Rules<'a> {
                 let winners = match target {
                     Target::Generated(side) if generated_enabled => &mut winners[side as usize],
                     Target::FirstLetter if letter_enabled => &mut letter_winners,
+                    Target::FirstLine if line_enabled && block => &mut line_winners,
                     _ => continue,
                 };
                 for decl in &rule.declarations {
+                    if matches!(target, Target::FirstLine)
+                        && !matches!(decl.property, Property::Display(_))
+                        && !is_first_line_typography(&decl.property)
+                    {
+                        continue;
+                    }
                     let Some(slot) = property_slot(&decl.property) else {
                         continue;
                     };
@@ -522,7 +647,28 @@ impl<'a> Rules<'a> {
                 trailing_margin,
             })
         });
-        (generated, letter)
+        let first_line = if !line_enabled {
+            None
+        } else if block {
+            (!matches!(line_winners[1], Some((_, Property::Display(Display::None))))
+                && line_winners[3..=8].iter().any(Option::is_some))
+            .then(|| {
+                self.first_line_styles -= 1;
+                let style = self.typography(line_winners, root_scale).apply(host);
+                Arc::new(FirstLine::new(index, &style))
+            })
+        } else {
+            parent.first_line.as_ref().map(|current| {
+                let alternate = current.descendant(host, &elements[index].tag, inline_winners);
+                if *current.as_ref() == alternate {
+                    Arc::clone(current)
+                } else {
+                    self.first_line_styles -= 1;
+                    Arc::new(alternate)
+                }
+            })
+        };
+        (generated, letter, first_line)
     }
 
     fn typography(&self, slots: Winners<'_>, root_scale: f32) -> Typography {

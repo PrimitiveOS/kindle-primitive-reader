@@ -75,6 +75,7 @@ impl<'a> Plan<'a> {
                 result.typography.push(Run {
                     bytes: start..end,
                     style: &part.style,
+                    host: Some(edge.host),
                 });
             }
         }

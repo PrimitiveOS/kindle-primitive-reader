@@ -347,6 +347,7 @@ pub(crate) struct Style {
     pub(crate) native_table_widths: bool,
     pub(crate) generated: Option<Arc<pseudo::Pair>>,
     pub(crate) first_letter: Option<Arc<pseudo::FirstLetter>>,
+    pub(crate) first_line: Option<Arc<pseudo::FirstLine>>,
     pub page_breaks: crate::publisher_breaks::Rules,
     pub orphans: u8,
     pub widows: u8,
@@ -407,6 +408,7 @@ impl Default for Style {
             native_table_widths: false,
             generated: None,
             first_letter: None,
+            first_line: None,
             page_breaks: Default::default(),
             orphans: 1,
             widows: 1,
@@ -801,6 +803,7 @@ impl BookStyle {
             let mut style = parent.clone();
             style.generated = None;
             style.first_letter = None;
+            style.first_line = None;
             if element.tag == "a" {
                 style.link_ink = self.layout_tweaks.link_ink.map(|ink| ink as u8);
             }
@@ -1244,8 +1247,8 @@ impl BookStyle {
             let root_scale = result
                 .first()
                 .map_or(style.size_scale, |root| root.size_scale);
-            (style.generated, style.first_letter) =
-                pseudo_rules.for_element(elements, index, &style, root_scale);
+            (style.generated, style.first_letter, style.first_line) =
+                pseudo_rules.for_element(elements, index, &style, root_scale, parent, &winners);
             result.push(style);
         }
         result

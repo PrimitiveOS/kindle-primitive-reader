@@ -151,6 +151,32 @@ fn pseudo_generated_user_css_accepts_supported_rules_and_rejects_inert_declarati
 }
 
 #[test]
+fn pseudo_first_line_user_css_keeps_paragraph_rules_separate_and_rejects_box_properties() {
+    let markup =
+        r#"<html><body><p id="target" style="font-weight:400">Harbor lights</p></body></html>"#;
+    let (source, computed) = styles(
+        markup,
+        "#target::first-line {font-weight:700;font-size:150%;line-height:1.2}",
+    );
+    let host = at(&source, &computed, "target");
+    assert!(host.first_line.is_some());
+    assert_eq!(host.font_weight.value(), 400.);
+    assert_eq!(host.size_scale, 1.);
+    assert_eq!(source.blocks[0].text, "Harbor lights");
+    for (css, detail) in [
+        (
+            "p::first-line{content:'Unreachable'}",
+            "needs a before/after",
+        ),
+        ("p::first-line{padding-left:4px}", "Unsupported declaration"),
+        ("p::first-line{display:block}", "Unsupported declaration"),
+    ] {
+        let error = validate_user_css(css).unwrap_err().to_string();
+        assert!(error.contains(detail), "{error}");
+    }
+}
+
+#[test]
 fn user_rules_remain_effective_without_author_css_and_never_mutate_source() {
     let markup =
         "<html><body><p id='target' style='padding-left:90px'>Canonical text</p></body></html>";

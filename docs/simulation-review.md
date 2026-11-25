@@ -2,6 +2,41 @@
 
 ## Current Mac simulator checkpoint
 
+**First-line typography** measures the styled first break and preserves its
+source endpoint after later text returns to ordinary typography. The pinned
+replays cover font size, weight, explicit inline overrides, generated prefixes,
+first-letter styling, and right-to-left paragraphs. The exact Arabic wrap
+still differs. Reader also tests an authored soft hyphen at the boundary and
+all three pseudo-element controls through restart.
+[First-line comparison and screenshots](first-line.md)
+
+**Body tables with in-page footnotes** keep supported grids together when the
+note band leaves too little room under a reference. The shared chapter verifies
+spans, identical table pixels, original cell and note links, and source anchors
+when the body grid moves to the following page.
+[Table and footnote comparison](in-page-footnotes.md#body-tables-with-in-page-footnotes)
+
+The full Mac suite passed 1,673 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. It skipped 73 opt-in cases.
+The focused run passed 39 checks and skipped one private input case. The
+separate Parley suite passed 12 tests. The Reader simulator and pinned
+native replays reproduced 15 published screenshots.
+
+Original EPUB, PDF, AZW3, and MOBI files opened through the picker, turned
+a page, and resumed with identical source bytes. The original EPUB note
+check covered 14 chapters, with 68 note bands across eight composed chapters
+and all 63 checked source anchors preserved.
+
+The staged ARMHF binary is stripped and statically linked. It contains
+39,900,468 bytes with SHA-256
+`b830ecc5765288953aaf4648fb89f01a10f0823fb36f60c51d24acd60ab4f6d9`.
+The 33 staged files total 49,509,094 bytes. Both project licenses, the latest
+dictionary notice, SQLite notices, the Launcher icon, and the OCR model
+passed inspection. Foreground Kindle testing and Store publication remain
+pending.
+
+## Floating tables, publisher initials, list items, and tables in note bands checkpoint
+
 **Floating tables** wrap surrounding text around the captioned grid. Book
 and Web tests cover publisher sizing, physical left and right in RTL, CSS
 and HTML precedence, clearance, and a full-width table’s caption hit.

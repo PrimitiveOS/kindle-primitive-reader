@@ -655,6 +655,7 @@ impl Reader {
                     "no_pseudo_element_first_letter" => {
                         "Suppress the publisher’s first-letter styling"
                     }
+                    "no_pseudo_element_first_line" => "Suppress the publisher’s first-line styling",
                     "paragraph_web_browser_style" => {
                         "Use block paragraphs with no default first-line indent"
                     }

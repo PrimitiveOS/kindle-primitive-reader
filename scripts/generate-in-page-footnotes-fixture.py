@@ -201,6 +201,27 @@ chapters = {
  </table>
  <p id="grid-tail"><a href="#grid-ref" role="doc-backlink">Grid ends.</a></p>
 </aside>""",
+    "body-table-notes": """<div style="line-height:39px">
+ <p id="body-grid-start">The harbor census cites the gauge<a id="body-grid-ref" epub:type="noteref" href="#body-grid-note"><sup>10</sup></a>.</p>
+ <p>The sounding rod was left beside the rope.</p>
+ <p>The ferry keeper counted the outer pilings.</p>
+ <p>Rain had drawn a line across the wet quay.</p>
+ <p>Two brass lanterns remained in the shed.</p>
+ <p>The inner gate swung open at noon.</p>
+ <p>The final schedule gives the three bearings.</p>
+</div>
+<table id="body-grid" style="border-collapse:collapse;border:2px solid black;background:#eee;page-break-inside:avoid">
+ <tr><td id="body-grid-well" rowspan="2" style="vertical-align:top;border:1px solid black;padding:3px"><a href="#body-grid-target">Well list</a></td>
+     <th id="body-grid-inlet" style="border:1px solid black;padding:3px;text-align:left;background:#ddd">Eastern inlet</th></tr>
+ <tr><td id="body-grid-red" style="border:1px solid black;padding:3px">Red beacon</td></tr>
+ <tr><td id="body-grid-gate" colspan="2" style="border:1px solid black;padding:3px">Gate stays open</td></tr>
+</table>
+<p id="body-grid-target">The watch ends at the dock.</p>
+<p style="page-break-before:always">The original gauge note follows.</p>
+<aside id="body-grid-note" epub:type="footnote">
+ <p id="body-grid-gauge">The gauge was calibrated at dusk.</p>
+ <p><a href="#body-grid-ref" role="doc-backlink">Return to the census</a>.</p>
+</aside>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)

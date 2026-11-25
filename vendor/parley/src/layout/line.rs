@@ -31,6 +31,11 @@ impl<'a, B: Brush> Line<'a, B> {
         self.data.break_reason
     }
 
+    /// Whether this line committed a discretionary line-end hyphen.
+    pub fn has_discretionary_hyphen(&self) -> bool {
+        self.data.soft_hyphen.is_some()
+    }
+
     /// Returns the range of text for the line.
     pub fn text_range(&self) -> Range<usize> {
         self.data.text_range.clone()

@@ -6,6 +6,8 @@ use parley::{
 use skrifa::{FontRef, MetadataProvider};
 use std::sync::Arc;
 
+mod first_break;
+
 fn measure(
     text: &str,
     width: f32,

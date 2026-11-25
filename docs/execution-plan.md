@@ -45,8 +45,8 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
-The latest Mac workflow pass covers floating tables, publisher initials,
-list-marker overrides, and native and joined tables in footnote bands. The
+The latest Mac workflow pass covers first-line reflow and native body tables
+in chapters with in-page note bands. The
 [implementation checklist](reading-parity-plan.md#execution-checklist) tracks
 remaining layout, language, gesture, and Kindle checks. The
 [simulator review](simulation-review.md) records this checkpoint.

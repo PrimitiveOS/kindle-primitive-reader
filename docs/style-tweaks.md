@@ -110,8 +110,8 @@ rollback is implemented.
 | --- | --- |
 | Book snippet/imported file | 8 KiB UTF-8. |
 | Effective combined user CSS | 64 KiB, 128 rules, 32 source declarations per rule. |
-| Selectors | Type, universal, class, ID, descendant, child, adjacent sibling, `[href]`, link/any-link, first-child, first-of-type and terminal `::before`, `::after` or `::first-letter`. 128 bytes/selector, 8 steps, 24 selectors/rule. |
-| Supported properties | Existing reflow typography, padding and indentation, breaks, widows and orphans, table borders, spacing and caption side, and supported image/table dimensions. Pseudo-element rules can set type, visibility, and inline display or suppression. Before/after rules can set `content`. First-letter rules can use numeric `initial-letter`, a trailing margin or a left float in supported layouts. [Generated text](generated-reading-content.md) · [Publisher initials](first-letter.md) |
+| Selectors | Type, universal, class, ID, descendant, child, adjacent sibling, `[href]`, link/any-link, first-child, first-of-type and terminal `::before`, `::after`, `::first-letter` or `::first-line`. 128 bytes/selector, 8 steps, 24 selectors/rule. |
+| Supported properties | Existing reflow typography, padding and indentation, breaks, widows and orphans, table borders, spacing and caption side, and supported image/table dimensions. Before/after rules can set content, typography, visibility and inline display. First-letter rules can use numeric `initial-letter`, a trailing margin or a left float in supported layouts. First-line rules can set typography and text decoration. `display: none` on first-letter or first-line restores ordinary text styling. [Generated text](generated-reading-content.md) · [Publisher initials](first-letter.md) · [Publisher first lines](first-line.md) |
 | Unsupported | Publisher block margins, ordinary element display/visibility or floats, clearance, general positioned/block layout, arbitrary attribute selectors, `:not`, nth-child, other pseudo-elements, text colors, vendor hints and at-rules including import/font-face. |
 
 Unsupported user CSS is rejected as a complete proposed change, rather than

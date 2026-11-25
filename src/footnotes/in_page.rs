@@ -267,8 +267,8 @@ impl Targets {
         self.formatting.inline_all
     }
 
-    /// Only a complete native table contained in one note can be copied as a
-    /// unit. Tables in the body retain the ordinary chapter fallback.
+    /// Only a complete native table contained in one note can be flattened
+    /// into an inline row. The ordinary grids use their own page geometry.
     pub(crate) fn native_tables(&self, source: &Source) -> HashMap<TableKey, usize> {
         let mut ownership = HashMap::new();
         for &(element, cell) in &source.table_cells {
@@ -578,22 +578,31 @@ fn discover(
     let mut regions = vec![None::<Range<usize>>; targets.roots.len()];
     let mut checked_directions = BTreeSet::new();
     let mut block_lines = BTreeMap::<_, Vec<_>>::new();
-    let mut tables = HashMap::<TableKey, LineGroup>::new();
+    let mut tables = HashMap::<TableKey, (Option<usize>, LineGroup)>::new();
     for (index, line) in lines.iter().enumerate() {
         let block = blocks.get(&line.block)?;
         let owner = targets.ancestry[block.element];
-        if let Some(cell) = block.table_cell
-            && let TableCopy::Grid(extent) = table_extents.get(&cell.table)?
-        {
-            owner?;
-            let table = tables.entry(cell.table).or_insert_with(|| LineGroup {
-                lines: index..index,
-                extent: extent.clone(),
-            });
-            if table.lines.end != index {
-                return None;
+        if let Some(cell) = block.table_cell {
+            match table_extents.get(&cell.table)? {
+                TableCopy::Grid(extent) => {
+                    let (table_owner, table) = tables.entry(cell.table).or_insert_with(|| {
+                        (
+                            owner,
+                            LineGroup {
+                                lines: index..index,
+                                extent: extent.clone(),
+                            },
+                        )
+                    });
+                    if *table_owner != owner || table.lines.end != index {
+                        return None;
+                    }
+                    table.lines.end += 1;
+                }
+                TableCopy::Inline => {
+                    owner?;
+                }
             }
-            table.lines.end += 1;
         }
         if checked_directions.insert(line.block)
             && crate::publisher_padding::paragraph_is_rtl(block.direction, &block.text)
@@ -653,7 +662,7 @@ fn discover(
             used.insert(id);
         }
     }
-    let mut tables: Vec<_> = tables.into_values().collect();
+    let mut tables: Vec<_> = tables.into_values().map(|(_, group)| group).collect();
     tables.sort_unstable_by_key(|table| table.lines.start);
     (used.len() == targets.roots.len()).then_some((regions, references, tables))
 }
@@ -860,8 +869,8 @@ mod tests {
             let crate::Renderer::Parley(layout) = &probe.renderer else {
                 unreachable!()
             };
-            assert_eq!(layout.note_table_extents.len(), 1);
-            let table = layout.note_table_extents.values().next().unwrap();
+            assert_eq!(layout.in_page_table_extents.len(), 1);
+            let table = layout.in_page_table_extents.values().next().unwrap();
             if let TableCopy::Grid(extent) = table {
                 assert!(!flattened);
                 for current in [page, original] {
@@ -951,6 +960,165 @@ mod tests {
         );
         assert_eq!(grid.capture(page).unwrap(), inline.capture(page).unwrap());
         assert_eq!(grid.matches("Shoal ledger"), inline.matches("Shoal ledger"));
+    }
+
+    #[test]
+    fn in_page_body_table_moves_as_a_grid_and_keeps_notes_and_saved_cell_positions() {
+        use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
+        let viewport = Settings {
+            height: 520,
+            ..settings(false)
+        };
+        let mut ordinary = advanced_note_layout_at(25, &[], viewport);
+        let mut composed = advanced_note_layout_at(25, &[EPUB_FOOTNOTES], viewport);
+        let mut inline =
+            advanced_note_layout_at(25, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT], viewport);
+        let reference = ordinary.fragment("body-grid-ref").unwrap();
+        let table = ordinary.fragment("body-grid-well").unwrap();
+        let saved: crate::Anchor =
+            serde_json::from_slice(&serde_json::to_vec(&table).unwrap()).unwrap();
+        let page = ordinary.page_for(&reference).unwrap();
+        assert_eq!(ordinary.page_for(&saved), Some(page));
+        let original_table = phrase_rects(&ordinary, page, "Well list")[0];
+
+        for probe in [&composed, &inline] {
+            let pages = probe.in_page_notes.as_ref().unwrap();
+            let table_page = probe.page_for(&saved).unwrap();
+            assert_eq!(probe.page_for(&reference), Some(page));
+            assert!(table_page > page);
+            assert!(pages[page].separator.is_some() && pages[table_page].separator.is_none());
+            assert_eq!(probe.fragment("body-grid-well"), Some(saved.clone()));
+            assert_eq!(probe.coverage(), ordinary.coverage());
+            assert!(phrase_rects(probe, page, "Well list").is_empty());
+            let aside = phrase_rects(probe, page, "The gauge was calibrated")[0];
+            assert!(
+                aside.y > (pages[page].separator.unwrap() + probe.settings.top_margin()) as i32
+            );
+            let note = probe.fragment("body-grid-gauge").unwrap();
+            assert_eq!(ordinary.fragment("body-grid-gauge"), Some(note.clone()));
+            assert!(probe.page_for(&note).unwrap() > table_page);
+            let band_back = phrase_rects(probe, page, "Return to the census")[0];
+            assert_eq!(
+                probe
+                    .link_at(
+                        page,
+                        (band_back.x + 4) as f32,
+                        (band_back.y + band_back.height / 2) as f32
+                    )
+                    .unwrap()
+                    .fragment
+                    .as_deref(),
+                Some("body-grid-ref")
+            );
+
+            let cells = [
+                "Well list",
+                "Eastern inlet",
+                "Red beacon",
+                "Gate stays open",
+            ]
+            .map(|phrase| {
+                assert_eq!(probe.matches(phrase), ordinary.matches(phrase));
+                let rects = phrase_rects(probe, table_page, phrase);
+                assert_eq!(rects.len(), 1);
+                rects[0]
+            });
+            assert_eq!(cells[0].x, original_table.x);
+            assert_eq!(cells[0].y, cells[1].y);
+            assert!(cells[0].x < cells[1].x && cells[1].y < cells[2].y);
+            assert_eq!(cells[1].x, cells[2].x);
+            assert_eq!(cells[0].x, cells[3].x);
+            assert!(cells[2].y < cells[3].y);
+            let x = (cells[0].x + 4) as f32;
+            let y = (cells[0].y + cells[0].height / 2) as f32;
+            assert_eq!(probe.word_at(table_page, x, y).unwrap().start, saved);
+            assert_eq!(
+                probe.link_at(table_page, x, y).unwrap().fragment.as_deref(),
+                Some("body-grid-target")
+            );
+            let crate::Renderer::Parley(layout) = &probe.renderer else {
+                unreachable!()
+            };
+            let Some(TableCopy::Grid(extent)) = layout.in_page_table_extents.values().next() else {
+                panic!("the table stays a native grid")
+            };
+            assert_eq!(layout.in_page_table_extents.len(), 1);
+            assert!(
+                pages[table_page]
+                    .parts
+                    .iter()
+                    .any(|part| part.source.start <= extent.start && extent.end <= part.source.end)
+            );
+        }
+
+        let table_page = composed.page_for(&saved).unwrap();
+        let reopened = advanced_note_layout_at(25, &[EPUB_FOOTNOTES], viewport);
+        assert_eq!(reopened.page_for(&saved), Some(table_page));
+        assert_eq!(reopened.matches("Well list"), vec![saved]);
+        let before = capture(&mut ordinary, page, "reader-body-table-notes-off.png");
+        let band = capture(&mut composed, page, "reader-body-table-notes-band.png");
+        let grid = capture(
+            &mut composed,
+            table_page,
+            "reader-body-table-notes-grid.png",
+        );
+        assert_eq!(
+            grid,
+            inline.capture(inline.page_for(&table).unwrap()).unwrap()
+        );
+        let has_fill = |frame: &[u8], gray| {
+            frame.chunks_exact(viewport.width as usize).any(|row| {
+                row.windows(24)
+                    .any(|run| run.iter().all(|&pixel| pixel == gray))
+            })
+        };
+        assert!(!has_fill(&band, 0xdd));
+        let table_raster = |frame: &[u8]| {
+            assert!(has_fill(frame, 0xdd) && has_fill(frame, 0xee));
+            let stride = viewport.width as usize;
+            let mut rules = frame
+                .chunks_exact(stride)
+                .enumerate()
+                .filter_map(|(y, row)| {
+                    let left = row
+                        .windows(150)
+                        .position(|run| run.iter().all(|&ink| ink == 0))?;
+                    let right = left + row[left..].iter().take_while(|&&ink| ink == 0).count();
+                    Some((y, left, right))
+                });
+            let (top, left, right) = rules.next().unwrap();
+            let (last, _, _) = rules
+                .filter(|&(_, a, b)| (a, b) == (left, right))
+                .last()
+                .unwrap();
+            let pixels: Vec<_> = (top..=last)
+                .flat_map(|y| &frame[y * stride + left..y * stride + right])
+                .copied()
+                .collect();
+            (left, right - left, last + 1 - top, pixels)
+        };
+        assert_eq!(table_raster(&before), table_raster(&grid));
+    }
+
+    #[test]
+    fn in_page_body_table_falls_back_when_the_grid_exceeds_one_reading_page() {
+        use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
+        let viewport = Settings {
+            height: 154,
+            ..settings(false)
+        };
+        let mut first = advanced_note_layout_at(25, &[], viewport);
+        let mut second =
+            advanced_note_layout_at(25, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT], viewport);
+        assert!(second.in_page_notes.is_none());
+        let table = first.fragment("body-grid-well").unwrap();
+        assert_eq!(second.fragment("body-grid-well"), Some(table.clone()));
+        let grid_page = first.page_for(&table).unwrap();
+        assert_eq!(second.page_for(&table), Some(grid_page));
+        assert_eq!(
+            first.capture(grid_page).unwrap(),
+            second.capture(grid_page).unwrap()
+        );
     }
 
     #[test]
@@ -1565,7 +1733,7 @@ mod tests {
     }
 
     #[test]
-    fn whole_note_inline_keeps_unsupported_note_contents_ordinary() {
+    fn whole_note_inline_requires_note_composition_and_keeps_a_separate_body_grid_ordinary() {
         use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
         let ordinary = advanced_note_layout(12, &[]);
         let disabled = advanced_note_layout(12, &[INLINE_ALL_FOOTNOTE_CONTENT]);
@@ -1578,17 +1746,24 @@ mod tests {
                 .all(|line| line.additional_sources.is_none())
         );
 
-        // The note is simple, but a table in the body prevents composition.
-        let mut ordinary = advanced_note_layout(14, &[EPUB_FOOTNOTES]);
-        let mut option = advanced_note_layout(14, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
-        assert!(ordinary.in_page_notes.is_none() && option.in_page_notes.is_none());
+        let ordinary = advanced_note_layout(14, &[EPUB_FOOTNOTES]);
+        let option = advanced_note_layout(14, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        let location = ordinary.fragment("fallback-start").unwrap();
+        let page = ordinary.page_for(&location).unwrap();
+        for probe in [&ordinary, &option] {
+            assert!(
+                probe.in_page_notes.as_ref().unwrap()[page]
+                    .separator
+                    .is_some()
+            );
+            assert_eq!(probe.matches("Lantern"), ordinary.matches("Lantern"));
+        }
         assert!(
             option
                 .lines
                 .iter()
-                .all(|line| line.additional_sources.is_none())
+                .any(|line| line.additional_sources.is_some())
         );
-        assert!(ordinary.capture(0).unwrap() == option.capture(0).unwrap());
     }
 
     #[test]

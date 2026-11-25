@@ -396,6 +396,7 @@ fn pseudo_generated_menu_keeps_the_reading_place_and_source_selection() {
         .labeled::before { content: "Notice: "; }
         .labeled::after { content: " [end]"; }
         .labeled::first-letter { font-size:160%; font-weight:bold; }
+        .labeled::first-line { font-size:135%; }
         </style></head><body><p class="labeled">
         <a href="#destination" id="passage">Harbor lights</a></p>
         <p id="destination">Boats head home.</p></body></html>"##,
@@ -440,15 +441,23 @@ fn pseudo_generated_menu_keeps_the_reading_place_and_source_selection() {
     assert_eq!(app.screen, Screen::PseudoElementStyles);
     tap_contents_item(&mut app, "Disable first-letter pseudo elements");
     tap_contents_item(&mut app, "On for this book");
+    let plain_initial = capture(&mut app);
+    assert_ne!(plain_initial, after);
+    assert_ne!(plain_initial, before);
+    assert_eq!(selection(&app), passage);
+    assert_eq!(app.current_history_location(), origin);
+    tap(&mut app, back);
+    tap_contents_item(&mut app, "Disable first-line pseudo elements");
+    tap_contents_item(&mut app, "Use on all books");
     let plain = capture(&mut app);
-    assert_ne!(plain, after);
-    assert_ne!(plain, before);
+    assert_ne!(plain, plain_initial);
     assert_eq!(selection(&app), passage);
     assert_eq!(app.current_history_location(), origin);
     let book = app.open_book_id().unwrap();
     for preset in [
         "no_pseudo_element_before_after",
         "no_pseudo_element_first_letter",
+        "no_pseudo_element_first_line",
     ] {
         assert!(app.style_store.data.enabled(book, preset));
     }

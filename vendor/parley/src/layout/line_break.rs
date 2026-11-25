@@ -873,7 +873,15 @@ pub struct BreakLines<'a, B: Brush> {
     lines: LineLayout,
     state: BreakerState,
     prev_state: Option<BreakerState>,
+    first_break: Option<FirstBreak>,
     done: bool,
+}
+
+#[derive(Clone, Copy)]
+struct FirstBreak {
+    byte_end: usize,
+    reason: BreakReason,
+    has_discretionary_hyphen: bool,
 }
 
 impl<'a, B: Brush> BreakLines<'a, B> {
@@ -890,6 +898,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             lines,
             state: BreakerState::default(),
             prev_state: None,
+            first_break: None,
             done: false,
         };
         this.reset_line();
@@ -1089,6 +1098,82 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         self.done
     }
 
+    /// Request a previously measured first soft wrap before calling [Self::break_next].
+    ///
+    /// The request uses the logical UTF-8 end of the line, its [BreakReason], and
+    /// [Line::has_discretionary_hyphen](crate::Line::has_discretionary_hyphen).
+    /// This supports text-only layouts and interior Regular or Emergency
+    /// breaks at a finite width. Width, height, explicit breaks, and available
+    /// shaped boundaries still apply. An accepted request can therefore commit a different line.
+    /// Check the finished line's range, reason, and discretionary mark to detect
+    /// that case. Further lines use ordinary breaking.
+    pub fn require_first_break(
+        &mut self,
+        byte_end: usize,
+        reason: BreakReason,
+        has_discretionary_hyphen: bool,
+    ) -> bool {
+        if self.prev_state.is_some()
+            || self.state.lines != 0
+            || self.state.item_idx != 0
+            || self.state.cluster_idx != 0
+            || self.done
+            || !self.layout.data.inline_boxes.is_empty()
+            || !(1..self.layout.data.text_len).contains(&byte_end)
+            || !matches!(reason, BreakReason::Regular | BreakReason::Emergency)
+            || has_discretionary_hyphen && reason != BreakReason::Regular
+        {
+            return false;
+        }
+        self.first_break = Some(FirstBreak {
+            byte_end,
+            reason,
+            has_discretionary_hyphen,
+        });
+        true
+    }
+
+    fn first_break_boundary(
+        state: &mut BreakerState,
+        data: &LayoutData<B>,
+        request: FirstBreak,
+    ) -> Option<PrevBoundaryState> {
+        // Match the preceding consumed atom as well as the incoming character.
+        // Text shaping can omit characters between two apparent caret positions.
+        let clusters = &state.line.clusters;
+        if clusters.is_empty() {
+            return None;
+        }
+        let shaped = &data.shaped_text;
+        let last = &shaped.shaped_clusters()[clusters.end as usize - 1];
+        let char_end = last.chars_range().end as usize;
+        if shaped
+            .characters()
+            .get(char_end.checked_sub(1)?)?
+            .text_byte_range()
+            .end
+            != request.byte_end
+        {
+            return None;
+        }
+
+        let item = state.item_idx;
+        let cluster = state.cluster_idx;
+        let matches = |boundary: &mut PrevBoundaryState| {
+            boundary.item_idx == item
+                && boundary.cluster_idx == cluster
+                && boundary.state.soft_hyphen.is_some() == request.has_discretionary_hyphen
+        };
+        match request.reason {
+            BreakReason::Regular => state
+                .prev_boundary
+                .take_if(matches)
+                .or_else(|| state.nowrap_boundary.take_if(matches)),
+            BreakReason::Emergency => state.emergency_boundary.take_if(matches),
+            BreakReason::Explicit | BreakReason::None => None,
+        }
+    }
+
     /// Computes the next line in the paragraph. Returns the advance and size
     /// (width and height for horizontal layouts) of the line.
     pub fn break_next(&mut self) -> Option<YieldData> {
@@ -1118,6 +1203,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         let line_indent = self.resolve_indent();
 
         let max_advance = max_advance - line_indent;
+        let first_break = self.first_break.filter(|_| {
+            self.state.lines == 0 && max_advance.is_finite() && max_advance < f32::MAX
+        });
 
         // Iterate over remaining runs in the Layout
         let item_count = self.layout.data.items.len();
@@ -1295,6 +1383,20 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         && self.state.line.x != 0.0
                         {
                             self.state.mark_emergency_break_opportunity();
+                        }
+
+                        if !max_height_exceeded
+                            && let Some(request) = first_break
+                            && first_character.text_byte_range().start == request.byte_end
+                            && let Some(boundary) =
+                                Self::first_break_boundary(&mut self.state, &self.layout.data, request)
+                        {
+                            self.state.reset_to(boundary);
+                            return self.start_new_line(
+                                request.reason,
+                                max_advance,
+                                line_indent,
+                            );
                         }
 
                         // Breaking an atom requires reshaping, which we don't do here, so it is

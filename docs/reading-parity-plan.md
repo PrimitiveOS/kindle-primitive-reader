@@ -48,21 +48,19 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 334 of 539 in-scope reading-control rows have
-an implemented workflow, 156 are partial, 44 are gaps, and 5 need audit.
+**Pinned control inventory:** 335 of 539 in-scope reading-control rows have
+an implemented workflow, 155 are partial, 44 are gaps, and 5 need audit.
 The 44 gaps cover interface-language choices. The largest groups of partial
 controls are typography and style tweaks. The audited SDL fullscreen row
 belongs to the host window and is unavailable in KOReader’s Kindle menu.
 [Control matrix](koreader-sdl-reference-controls.json)
 
-The current Mac comparison covers native horizontal table floats, list marker
-overrides, publisher initials, and tables inside eligible footnote bands. The
-replays verify link and selection geometry and preserve saved source positions.
-First-line styling, generated block boxes, richer joined tables, additional
-initial layouts, and more dictionaries remain open. Foreground Kindle
-verification is pending.
-[Floating tables](floating-tables.md) · [List items](list-marker-presets.md) ·
-[Publisher initials](first-letter.md) · [Footnotes](in-page-footnotes.md#inline-all-footnote-content)
+The current Mac comparison covers first-line typography and wrap points, plus
+native body tables in chapters with in-page notes. The replays verify original
+links, selections, and saved positions when a line or table moves. Generated
+block boxes and quote tokens, richer joined tables, additional initial layouts,
+and more dictionaries remain open. Foreground Kindle verification is pending.
+[First-line comparison](first-line.md) · [Body table and footnote comparison](in-page-footnotes.md#body-tables-with-in-page-footnotes)
 
 The [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The

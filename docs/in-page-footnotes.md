@@ -30,7 +30,7 @@ stays on one page, its links and opening position use its source identity, and
 ordinary forced page breaks still start a new page.
 Overlapping glyphs within a text band stay together. A note whose boundaries
 overlap adjacent content, an illustration without a source line, nested or
-cross-spine notes, tables, complex publisher breaks,
+cross-spine notes, grids that cannot fit on one page, complex publisher breaks,
 FictionBook, facing pages, continuous reading and custom flows use the normal
 layout. The reading position uses the same source anchor when the layout changes.
 
@@ -364,6 +364,30 @@ chapter pagination.
 [KOReader flattened grid](screenshots/stock-note-inline-table-after.png) ·
 [KOReader original flattened note](screenshots/stock-note-inline-table-original.png)
 
+## Body tables with in-page footnotes
+
+The `body-table` replay places a linked, three-row table in the chapter body
+after an unrelated footnote reference. The table has a row span, a column
+span, a shaded heading and a ruled frame. At 720 × 520 px, KOReader paints the
+grid beside the reference with notes off. Adding the note band keeps the
+reference in place and moves the entire 217 × 120 px grid to the next page.
+Its raster, canonical cell pointers and link target match across layouts.
+Turning the note style off restores the initial page raster.
+
+Reader reserves the measured table extent so page breaks preserve its spans,
+borders, padding and fills. All 26,620 pixels of the 220 × 121 px Reader grid
+match after the move. The independent note still appears at its
+reference and can be flattened with the existing style switch. The Mac
+workflow reopens a saved cell on its new page and checks the destination
+from both the cell and the note backlink. A grid too tall for the reading
+area follows ordinary chapter pagination and keeps its anchors.
+[Reader notes off](screenshots/reader-body-table-notes-off.png) ·
+[Reader footnote band](screenshots/reader-body-table-notes-band.png) ·
+[Reader following table page](screenshots/reader-body-table-notes-grid.png) ·
+[KOReader notes off](screenshots/stock-body-table-notes-off.png) ·
+[KOReader footnote band](screenshots/stock-body-table-notes-band.png) ·
+[KOReader following table page](screenshots/stock-body-table-notes-grid.png)
+
 ## Replay on macOS
 
 Run the Reader tests on the [deterministic authored EPUB](../tests/fixtures/in-page-footnotes.epub).
@@ -394,8 +418,8 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
 
 Pass `cosmetic`, `wikipedia`, `inline-all`, `inline-list`, `inline-nested`,
 `inline-root-epub`, `inline-root-wiki`, `inline-ruby`, `inline-ruby-narrow`,
-`inline-image`, `inline-block-image`, or `inline-table` as the fifth argument to select an
-advanced style replay.
+`inline-image`, `inline-block-image`, `inline-table`, or `body-table` as the
+fifth argument to select an advanced style replay.
 
 Run the combined note flow checks with the same stock runtime and scratch
 paths.
