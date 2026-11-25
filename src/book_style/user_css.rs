@@ -23,7 +23,24 @@ impl Reset {
             || matches!(self, Self::Unset)
                 && matches!(
                     key,
-                    0 | 1 | 2 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 14 | 15 | 20 | 21 | 24 | 37 | 41 | 53
+                    0 | 1
+                        | 2
+                        | 4
+                        | 5
+                        | 6
+                        | 7
+                        | 8
+                        | 9
+                        | 10
+                        | 14
+                        | 15
+                        | 20
+                        | 21
+                        | 24
+                        | 37
+                        | 41
+                        | 53
+                        | CAPTION_SIDE
                 )
     }
 }
@@ -71,6 +88,7 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "padding" => vec![22, 23, 38, 39],
         "border-collapse" => vec![24],
         "border-spacing" => vec![37],
+        "caption-side" => vec![CAPTION_SIDE],
         _ => return None,
     };
     Some(Property::ResetMany(keys, kind))
@@ -122,6 +140,7 @@ pub(super) fn apply_reset(
         }
         38 => style.vertical_padding[0] = value.vertical_padding[0],
         39 => style.vertical_padding[1] = value.vertical_padding[1],
+        CAPTION_SIDE => style.caption_bottom = value.caption_bottom,
         _ => unreachable!("expanded supported reset key"),
     }
 }
@@ -133,7 +152,9 @@ pub(super) fn decoration(reset: Reset, parent: TextDecoration) -> TextDecoration
     }
 }
 
-struct StrictProperties;
+struct StrictProperties {
+    generated_only: bool,
+}
 impl<'i> DeclarationParser<'i> for StrictProperties {
     type Declaration = Declaration;
     type Error = String;
@@ -146,16 +167,13 @@ impl<'i> DeclarationParser<'i> for StrictProperties {
         let before = input.state();
         let reset = input.try_parse(Parser::expect_ident_cloned).ok();
         input.reset(&before);
+        let property_name = name.to_ascii_lowercase();
+        let property_name = property_name.as_str();
         if matches!(
-            name.to_ascii_lowercase().as_str(),
-            "display"
-                | "visibility"
-                | "margin"
-                | "margin-top"
-                | "margin-bottom"
-                | "float"
-                | "clear"
-        ) {
+            property_name,
+            "margin" | "margin-top" | "margin-bottom" | "float" | "clear"
+        ) || !self.generated_only && matches!(property_name, "display" | "visibility")
+        {
             return Err(error(
                 input,
                 format!("Unsupported user CSS until reading consumers are migrated: {name}"),
@@ -227,13 +245,30 @@ impl<'i> QualifiedRuleParser<'i> for StrictSheet {
         let mut declarations = Vec::new();
         let mut count = 0;
         let location = input.current_source_location();
-        for result in RuleBodyParser::new(input, &mut StrictProperties) {
+        let has_generated = selectors.iter().any(|selector| selector.pseudo.is_some());
+        let generated_only = selectors.iter().all(|selector| selector.pseudo.is_some());
+        for result in RuleBodyParser::new(input, &mut StrictProperties { generated_only }) {
             let declaration = result.map_err(|(e, _, location)| match e.kind {
                 ParseErrorKind::Custom(text) if text.starts_with("Line ") => {
                     ParseError::custom(text)
                 }
                 other => ParseError::custom(message(location, other)),
             })?;
+            if matches!(declaration.property, Property::GeneratedContent(_)) && !generated_only {
+                return Err(ParseError::custom(message(
+                    location,
+                    "The content property needs a before/after pseudo-element selector",
+                )));
+            }
+            if has_generated
+                && (pseudo::property_slot(&declaration.property).is_none()
+                    || matches!(declaration.property, Property::Display(value) if !matches!(value, Display::Inline | Display::None)))
+            {
+                return Err(ParseError::custom(message(
+                    location,
+                    "Unsupported declaration for an inline before/after pseudo-element",
+                )));
+            }
             count += 1;
             if count > crate::user_styles::MAX_DECLARATIONS {
                 return Err(ParseError::custom(message(

@@ -209,6 +209,7 @@ impl Screen {
                 | Self::StylePreset
                 | Self::ImageStyles
                 | Self::TableStyles
+                | Self::PseudoElementStyles
                 | Self::InPageFootnoteSize(_)
                 | Self::StyleFiles
                 | Self::StyleReview

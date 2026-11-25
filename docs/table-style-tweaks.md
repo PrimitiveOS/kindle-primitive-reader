@@ -17,9 +17,10 @@ links, and saved locations continue to use the original source.
 | Show borders on all tables | Adds 1px collapsed borders, including on tables with one column. Publisher border choices retain their normal cascade priority. [Border comparison](publisher-table-borders.md) |
 | Force table borders (legacy) | Retains the original Reader preset for saved profiles that explicitly override table and cell borders. |
 
-Caption placement, legacy floating table alignment, and some table background
-and border details remain open. Differences in the layout engines can still
-move a line break within a cell.
+Native horizontal grids honor top and bottom caption placement. Legacy
+floating table alignment and some table background and border details remain
+open. Differences in the layout engines can still move a line break within a
+cell. [Caption comparison](table-caption-placement.md)
 
 ## HTML presentation
 

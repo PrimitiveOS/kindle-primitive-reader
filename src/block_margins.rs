@@ -67,6 +67,7 @@ pub(crate) fn before_blocks(
     styles: &[Style],
     boxes: Option<&[BoxArea]>,
     settings: Settings,
+    order: Option<&[usize]>,
 ) -> Option<Vec<Space>> {
     let mode = settings.block_margins;
     let ignore_publisher = mode == BlockMarginMode::Ignore;
@@ -88,7 +89,8 @@ pub(crate) fn before_blocks(
     let mut spans = vec![None; source.elements.len()];
     let mut following = vec![None; source.blocks.len()];
     let mut next = None;
-    for (index, block) in source.blocks.iter().enumerate().rev() {
+    for index in (0..source.blocks.len()).rev() {
+        let block = &source.blocks[crate::table_layout::captions::source_index(order, index)];
         following[index] = next;
         if !styles[block.element].flow.suppressed {
             Span::include(
@@ -334,7 +336,7 @@ mod tests {
         )
         .unwrap()
         .compute(&source.elements);
-        let gaps = before_blocks(&source, &styles, None, settings)
+        let gaps = before_blocks(&source, &styles, None, settings, None)
             .unwrap_or_else(|| vec![Space::default(); source.blocks.len()]);
         source
             .blocks

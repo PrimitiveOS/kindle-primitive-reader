@@ -5,7 +5,7 @@ use crate::{
     Line, Source,
     book_style::Style,
     flow_projection::{Affinity, OwnedProjection},
-    flow_view::{ChapterFlow, LayoutImage},
+    flow_view::{ChapterFlow, LayoutImage, LayoutRuby},
     footnotes::in_page::Targets,
     source::StyledText,
 };
@@ -13,12 +13,16 @@ use crate::{
 const MAX_BLOCKS: usize = 64;
 const MAX_BYTES: usize = 32 * 1024;
 
+#[cfg(test)]
+mod tests;
+
 pub(super) struct Fragment<'a> {
     pub(super) element: usize,
     pub(super) end_index: usize,
     pub(super) runs: Vec<StyledText>,
     // The box uses the joined paragraph's offset and the original image's owner.
     pub(super) images: Vec<(usize, LayoutImage<'a>)>,
+    pub(super) ruby: Vec<LayoutRuby<'a>>,
     pub(super) layout: Arc<JoinedNote>,
 }
 
@@ -85,12 +89,12 @@ fn join<'a>(
     };
     let mut runs = Vec::new();
     let mut images = Vec::new();
+    let mut ruby = Vec::new();
     let mut artwork_blocks = 0;
     let mut inside_marker = false;
     for block in &source.blocks[indices] {
         let style = &styles[block.element];
         if block.table_cell.is_some()
-            || !block.ruby.is_empty()
             || style.preformatted_spaces
             || style.page_breaks != Default::default()
             || style.writing_mode == crate::book_style::WritingMode::VerticalRl
@@ -145,6 +149,10 @@ fn join<'a>(
             image.offset += offset;
             (block.key, image)
         }));
+        ruby.extend(input.ruby.iter().map(|mut annotation| {
+            annotation.bytes = offset + annotation.bytes.start..offset + annotation.bytes.end;
+            annotation
+        }));
         if input.text.is_empty() {
             // Keep the inline box between its neighboring source blocks.
             // The separating space has no canonical text offset.
@@ -165,6 +173,7 @@ fn join<'a>(
                 end_index,
                 runs,
                 images,
+                ruby,
                 layout: Arc::new(joined),
             }),
     )

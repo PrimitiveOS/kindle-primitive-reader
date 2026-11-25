@@ -106,6 +106,13 @@ impl TableHints {
                 set(Property::HorizontalMargin(side, Some(BoxMargin::Auto)));
             }
         }
+        if tag == "caption"
+            && node
+                .attribute("align")
+                .is_some_and(|value| value.eq_ignore_ascii_case("bottom"))
+        {
+            set(Property::CaptionBottom(true));
+        }
         if root && let Some(space) = table.attribute("cellspacing").and_then(pixels) {
             set(Property::BorderSpacing(Some([space; 2])));
         }
@@ -203,6 +210,68 @@ impl TableHints {
 mod tests {
     use super::*;
     use crate::{Settings, book_style::BookStyle, source::Source, table_layout::TableFlow};
+
+    #[test]
+    fn table_caption_side_resolves_html_hints_inheritance_and_publisher_resets() {
+        let chapter = r#"<html><head><style>
+            .start { caption-side: top; }
+            .end { caption-side: bottom; }
+            .reset { caption-side: initial; }
+        </style></head><body>
+            <table><caption id="default" style="caption-side:left">Default</caption>
+                <tr><td>Cell</td></tr></table>
+            <table><caption id="html" align="BoTtOm">HTML</caption>
+                <tr><td>Cell</td></tr></table>
+            <table><caption id="css" class="end">CSS</caption>
+                <tr><td>Cell</td></tr></table>
+            <table><caption id="priority" class="start" align="bottom">Priority</caption>
+                <tr><td>Cell</td></tr></table>
+            <section style="caption-side:bottom">
+                <table><caption id="inherit" style="caption-side:inherit">Inherit</caption>
+                    <tr><td>Cell</td></tr></table>
+                <table><caption id="unset" style="caption-side:unset">Unset</caption>
+                    <tr><td>Cell</td></tr></table>
+                <table><caption id="initial" class="reset">Initial</caption>
+                    <tr><td>Cell</td></tr></table>
+                <table><caption id="unknown" style="caption-side:right">Unknown</caption>
+                    <tr><td>Cell</td></tr></table>
+            </section>
+        </body></html>"#;
+        let source = Source::parse(chapter).unwrap();
+        let path = crate::test_fixture("field-notes-epub3.epub");
+        let mut book = crate::Book::open(&path).unwrap();
+        let href = book.chapters[0].href.clone();
+        let mut fonts =
+            crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+        let styles = BookStyle::load(&mut book, &href, &source, &mut fonts);
+        let original = styles.compute(&source.elements);
+        let mut data = crate::user_styles::Data::default();
+        data.choose(1, "table_no_presentational_hints", Some(true))
+            .unwrap();
+        let filtered = styles
+            .with_user_css(&data.snapshot(1).unwrap())
+            .unwrap()
+            .compute(&source.elements);
+        let expected = [
+            ("default", false, false),
+            ("html", true, false),
+            ("css", true, true),
+            ("priority", false, false),
+            ("inherit", true, true),
+            ("unset", true, true),
+            ("initial", false, false),
+            ("unknown", true, true),
+        ];
+        for (id, before, after) in expected {
+            let index = source
+                .elements
+                .iter()
+                .position(|element| element.id.as_deref() == Some(id))
+                .unwrap();
+            assert_eq!(original[index].caption_bottom, before, "{id}");
+            assert_eq!(filtered[index].caption_bottom, after, "{id}");
+        }
+    }
 
     #[test]
     fn table_defaults_and_cell_alignments_follow_the_selected_book_stylesheet() {

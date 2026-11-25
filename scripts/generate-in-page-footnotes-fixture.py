@@ -175,6 +175,21 @@ chapters = {
  <li id="root-none-note" epub:type="footnote" style="list-style-type:none"><p id="root-none-first">Date unknown.</p><p id="root-none-second">The entry was undated.</p></li>
  <li id="root-solo-note" epub:type="footnote" value="42"><p id="root-solo-first">Only the afternoon is known.</p></li>
 </ol>""",
+    "inline-ruby": """<p>The ferry reports<a id="ruby-ref" epub:type="noteref" href="#ruby-note"><sup>7</sup></a>.</p>
+<p style="page-break-before:always">Later ordinary passage.</p>
+<aside id="ruby-note" epub:type="footnote">
+ <p id="ruby-head">Ledger head.</p>
+ <p id="ruby-first"><a href="#ruby-ref" role="doc-backlink"><ruby>bright water<rt style="font-size:55%">reading gloss</rt></ruby></a></p>
+ <div id="ruby-second"><ruby><span style="display:none">Unseen draft </span>quiet letter<rt id="ruby-second-gloss" style="font-size:55%">silent gloss</rt></ruby></div>
+ <p id="ruby-tail"><a href="#ruby-ref" role="doc-backlink">Ledger tail</a>.</p>
+</aside>""",
+    "inline-ruby-paint": """<p>The survey uses new labels<a id="ruby-paint-ref" epub:type="noteref" href="#ruby-paint-note"><sup>8</sup></a>.</p>
+<p style="page-break-before:always">The canonical labels follow.</p>
+<aside id="ruby-paint-note" epub:type="footnote">
+ <p>Blue prints.</p>
+ <p><ruby>anchor chain<rt>visible hint</rt></ruby></p>
+ <p><ruby>mooring rope<rt style="visibility:hidden">paint mask</rt></ruby></p>
+</aside>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)

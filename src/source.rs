@@ -34,6 +34,7 @@ pub(crate) struct Block {
     pub styled_text: Vec<StyledText>,
     /// Layout-only origins. These never participate in canonical text or revisions.
     pub flow_origins: crate::flow_projection::Origins,
+    pub(crate) pseudo_edges: Box<[crate::book_style::pseudo::Edge]>,
     pub list_item: Option<crate::list_marker::ListItem>,
     #[cfg(test)]
     pub emphasis: Vec<(Range<usize>, Emphasis)>,
@@ -160,6 +161,7 @@ pub(crate) struct Element {
     pub list_kind: Option<crate::list_marker::MarkerKind>,
     pub id: Option<String>,
     pub inline_style: Option<String>,
+    pub(crate) pseudo_attributes: Box<[(String, String)]>,
     pub(crate) table_hints: Option<crate::book_style::table_hints::TableHints>,
     pub parent: Option<usize>,
     pub previous_sibling: Option<usize>,
@@ -499,6 +501,7 @@ impl Source {
         let mut selector_only_nodes = Vec::new();
         let mut seen_types = HashSet::new();
         let mut last_children = HashMap::new();
+        let mut pseudo_attribute_bytes = crate::book_style::pseudo::MAX_ATTRIBUTE_BYTES;
         for node in root.descendants().filter(Node::is_element) {
             let parent: Option<usize> = node
                 .parent()
@@ -571,6 +574,11 @@ impl Source {
                 } else {
                     node.attribute("style").map(str::to_owned)
                 },
+                pseudo_attributes: if selector_only {
+                    Default::default()
+                } else {
+                    crate::book_style::pseudo::read_attributes(node, &mut pseudo_attribute_bytes)
+                },
                 table_hints: if selector_only {
                     None
                 } else {
@@ -592,6 +600,7 @@ impl Source {
         let mut list_items = crate::list_marker::Items::read(body, &element_ids);
         let tables = crate::table_layout::TableCells::read(body, &element_ids);
         let mut blocks = Vec::new();
+        let mut pseudo_edges_remaining = 32 * 1024;
         let mut fragments = BTreeMap::new();
         let mut fragment_owners = BTreeMap::new();
         let mut insertions = Vec::new();
@@ -612,6 +621,7 @@ impl Source {
             let mut text = String::new();
             let mut styled_text: Vec<StyledText> = Vec::new();
             let mut flow_origins = crate::flow_projection::Origins::new(&flow_budget);
+            let mut pseudo_edges = crate::book_style::pseudo::Edges::default();
             #[cfg(test)]
             let mut emphasis: Vec<(Range<usize>, Emphasis)> = Vec::new();
             let mut links: Vec<InlineLink> = Vec::new();
@@ -639,6 +649,19 @@ impl Source {
                         legacy.push(content);
                     }
                     continue;
+                }
+                if pseudo_edges_remaining > 0 {
+                    pseudo_edges.close_before(raw.start, text.len());
+                    if descendant != node
+                        && descendant.is_element()
+                        && !matches!(descendant.tag_name().name(), "br" | "img")
+                        && let Some(&host) = element_ids.get(&descendant.id())
+                        && !elements[host].anonymous
+                    {
+                        let at = text.len()
+                            + usize::from(spaces && !text.is_empty() && !text.ends_with('\n'));
+                        pseudo_edges.open(raw.end, at, host);
+                    }
                 }
                 for id in fragment_ids(descendant, &navigation_ids) {
                     ids.push((
@@ -847,6 +870,7 @@ impl Source {
                 .ok_or("The chapter has an incomplete tag")?;
             insertions.push((key + tag_end, key));
             ruby_exclusions.extend(exclusions);
+            let pseudo_edges = pseudo_edges.finish(text.len(), &mut pseudo_edges_remaining);
             blocks.push(Block {
                 table_cell: tables.containing(node),
                 key,
@@ -861,6 +885,7 @@ impl Source {
                 element: element_ids[&node.id()],
                 styled_text,
                 flow_origins,
+                pseudo_edges,
                 list_item: list_items.block(node),
                 #[cfg(test)]
                 emphasis,

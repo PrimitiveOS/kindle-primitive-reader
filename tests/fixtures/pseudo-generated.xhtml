@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title>Harbor report</title>
+  <style type="text/css">
+    p {text-indent:0;margin:0.6em 0;text-align:left}
+    .record::before {content:"[Chart " attr(data-number) "] ";font-weight:bold}
+    .record:after {content:" END";font-style:italic}
+    .emphasis::before {content:"("}
+    .emphasis::after {content:")"}
+    .icon::before {content:"SIGNAL ";font-size:140%}
+    .closed::after {content:"IGNORE";display:none}
+    .silent::after {content:none}
+    .secret {display:none}
+    .secret::before {content:"SECRET"}
+  </style>
+</head>
+<body>
+  <h1>Harbor report</h1>
+  <p class="record" data-number="seven" id="report"><span id="alpha">Alpha tide</span> <em class="emphasis" id="amber">amber</em> <span class="icon"/> <a href="#beacon" id="trail">follows</a> the pilings.<span class="closed"/><span class="silent"/><span class="secret">secret</span></p>
+  <p id="beacon">A beacon marks the eastern channel past the old pier.</p>
+</body>
+</html>

@@ -280,6 +280,7 @@ pub(crate) fn layout_with_flow(
         && !styles.iter().zip(&source.elements).any(|(style, element)| {
             !style.flow.suppressed
                 && ((element.tag == "table" && style.border_collapse)
+                    || (element.tag == "caption" && !flow.cells().is_empty())
                     || (matches!(element.tag.as_str(), "th" | "td") && style.image_width.is_some())
                     || (style.background.is_some()
                         && style
@@ -357,7 +358,21 @@ pub(crate) fn layout_with_flow(
             boxes.push(BoxArea::new(parent.x, parent.width, None));
             continue;
         }
+        let caption_table = table.filter(|&t| {
+            element.tag == "caption"
+                && styles[idx].display == crate::book_style::flow::Display::TableCaption
+                && native_grids[t].is_some()
+        });
         let mut area = BoxArea::new(parent.x, parent.width, parent.cell);
+        if let Some(table) = caption_table {
+            let root = boxes[table];
+            let mut inner = BoxArea::new(root.outer_x, root.outer_width, None);
+            // The caption sits inside the outer stroke and outside table padding.
+            if let Some(edges) = borders.and_then(|b| b.outer_edges(table)) {
+                inner.add_border(edges);
+            }
+            area = BoxArea::new(inner.x, inner.width, None);
+        }
         let css_root = flow.css_root(idx);
         if css_root {
             if constrained
@@ -452,9 +467,15 @@ pub(crate) fn layout_with_flow(
         if let Some(edges) = borders.and_then(|b| b.outer_edges(idx)) {
             area.add_border(edges);
         }
+        if caption_table.is_some()
+            && let Some(edges) = &styles[idx].borders
+        {
+            area.add_border(edges.map(|edge| crate::table_borders::Stroke::read(edge, font)));
+        }
         if !element.selector_only
             && !(element.tag == "table" && styles[idx].border_collapse)
             && (is_block_tag(&element.tag)
+                || caption_table.is_some()
                 || matches!(element.tag.as_str(), "html" | "dl" | "ul" | "ol" | "table"))
         {
             area.pad(&styles[idx].padding, font);

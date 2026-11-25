@@ -46,6 +46,7 @@ const MAX_SELECTORS_PER_RULE: usize = 24;
 const MAX_SELECTOR_STEPS: usize = 8;
 #[cfg(feature = "kindle")]
 mod embedded_inventory;
+pub(crate) mod pseudo;
 pub(crate) mod table_hints;
 #[cfg(feature = "kindle")]
 pub(crate) use embedded_inventory::MAX_INVENTORY_SHEETS;
@@ -344,6 +345,7 @@ pub(crate) struct Style {
     pub(crate) link_ink: Option<u8>,
     pub(crate) ignore_table_hints: bool,
     pub(crate) native_table_widths: bool,
+    pub(crate) generated: Option<Arc<pseudo::Pair>>,
     pub page_breaks: crate::publisher_breaks::Rules,
     pub orphans: u8,
     pub widows: u8,
@@ -363,6 +365,7 @@ pub(crate) struct Style {
     pub borders: Option<Arc<[borders::Border; 4]>>,
     pub border_spacing: [CssLength; 2],
     pub(crate) has_table_spacing: bool,
+    pub(crate) caption_bottom: bool,
     pub background: Option<u8>,
     pub marker: crate::list_marker::MarkerKind,
     pub image_width: Option<ImageLength>,
@@ -400,6 +403,7 @@ impl Default for Style {
             link_ink: None,
             ignore_table_hints: false,
             native_table_widths: false,
+            generated: None,
             page_breaks: Default::default(),
             orphans: 1,
             widows: 1,
@@ -419,6 +423,7 @@ impl Default for Style {
             borders: None,
             border_spacing: [CssLength::Pixels(1.); 2],
             has_table_spacing: false,
+            caption_bottom: false,
             background: None,
             marker: crate::list_marker::MarkerKind::None,
             image_width: None,
@@ -777,6 +782,7 @@ impl BookStyle {
             native_table_widths: self.layout_tweaks.native_table_widths,
             ..Style::default()
         };
+        let mut pseudo_rules = pseudo::Rules::new(self);
         let mut result: Vec<Style> = Vec::with_capacity(elements.len());
         for (index, element) in elements.iter().enumerate() {
             let parent = element.parent.map_or(&defaults, |parent| &result[parent]);
@@ -789,6 +795,7 @@ impl BookStyle {
                 continue;
             }
             let mut style = parent.clone();
+            style.generated = None;
             if element.tag == "a" {
                 style.link_ink = self.layout_tweaks.link_ink.map(|ink| ink as u8);
             }
@@ -872,7 +879,7 @@ impl BookStyle {
                 .as_deref()
                 .filter(|text| self.author_inline && text.len() <= MAX_INLINE_BYTES)
                 .map_or_else(Vec::new, |text| declarations(&mut Parser::new(text)));
-            let mut winners: Winners = [None; 54];
+            let mut winners: Winners = [None; CASCADE_PROPERTY_COUNT];
             let accept_fit = fit_content && element.tag == "p";
             if !style.ignore_table_hints
                 && let Some(hints) = &element.table_hints
@@ -1046,7 +1053,7 @@ impl BookStyle {
                     Property::Border(side, value)
                         if matches!(
                             element.tag.as_str(),
-                            "td" | "th" | "tr" | "thead" | "tbody" | "tfoot" | "table"
+                            "td" | "th" | "tr" | "thead" | "tbody" | "tfoot" | "table" | "caption"
                         ) || (structural_borders
                             && crate::source::is_block_tag(&element.tag))
                             || ((nested_margin_collapse || fit_content)
@@ -1077,6 +1084,7 @@ impl BookStyle {
                         value.apply(&mut Arc::make_mut(target)[*side], inherited, font, root);
                     }
                     Property::Border(..) => (),
+                    Property::CaptionBottom(bottom) => style.caption_bottom = *bottom,
                     Property::BorderSpacing(value) => {
                         style.has_table_spacing = value.is_some() || parent.has_table_spacing;
                         style.border_spacing = value.map_or(parent.border_spacing, |values| {
@@ -1153,6 +1161,7 @@ impl BookStyle {
                         }
                     }
                     Property::MinHeight(value) => style.min_height = Some(*value),
+                    Property::GeneratedContent(_) => (),
                     Property::VerticalAlign(value) => {
                         style.image_align = *value;
                         style.table_valign_explicit = table_valign_element;
@@ -1223,6 +1232,10 @@ impl BookStyle {
                     }
                 }
             }
+            let root_scale = result
+                .first()
+                .map_or(style.size_scale, |root| root.size_scale);
+            style.generated = pseudo_rules.for_element(elements, index, &style, root_scale);
             result.push(style);
         }
         result
@@ -1423,6 +1436,7 @@ type Specificity = (u8, u8, u8);
 struct Selector {
     steps: Vec<Compound>,
     specificity: Specificity,
+    pseudo: Option<pseudo::Side>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1494,6 +1508,7 @@ impl Selector {
         let mut compound = Compound::default();
         let mut separated = false;
         let mut specificity: Specificity = (0, 0, 0);
+        let mut pseudo = None;
         while let Ok(token) = input.next_including_whitespace().cloned() {
             if matches!(token, Token::WhiteSpace(_)) {
                 separated = !compound.is_empty();
@@ -1532,7 +1547,23 @@ impl Selector {
                     specificity.1 = specificity.1.saturating_add(1);
                 }
                 Token::Colon => {
-                    match input.next_including_whitespace()? {
+                    let doubled = input.try_parse(Parser::expect_colon).is_ok();
+                    let token = input.next_including_whitespace()?.clone();
+                    if let Token::Ident(name) = &token
+                        && let Some(side) = pseudo::Side::parse(name)
+                    {
+                        if compound.is_empty() {
+                            compound.universal = true;
+                        }
+                        pseudo = Some(side);
+                        specificity.2 = specificity.2.saturating_add(1);
+                        input.expect_exhausted()?;
+                        break;
+                    }
+                    if doubled {
+                        return Err(ParseError::unexpected_token());
+                    }
+                    match token {
                         Token::Ident(name) if name.eq_ignore_ascii_case("first-of-type") => {
                             compound.first_of_type = true;
                         }
@@ -1590,10 +1621,18 @@ impl Selector {
             return Err(ParseError::unexpected_token());
         }
         steps.push(compound);
-        Ok(Self { steps, specificity })
+        Ok(Self {
+            steps,
+            specificity,
+            pseudo,
+        })
     }
 
     fn matches(&self, elements: &[Element], index: usize) -> bool {
+        self.pseudo.is_none() && self.matches_host(elements, index)
+    }
+
+    fn matches_host(&self, elements: &[Element], index: usize) -> bool {
         // Check each uninterrupted chain of child/sibling relationships as a unit.
         // A nearer ancestor that fails the chain must not hide a higher matching
         // ancestor. Searching outward only between chains bounds work by depth × steps.
@@ -1786,13 +1825,32 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 }
 
 type Priority = (u8, bool, Specificity);
-type Winners<'a> = [Option<(Priority, &'a Property)>; 54];
+const CAPTION_SIDE: usize = 54;
+const CASCADE_PROPERTY_COUNT: usize = 55;
+type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
 enum CascadeOrigin {
     UserAgent,
     User,
     Author,
+}
+
+fn cascade_priority(
+    origin: CascadeOrigin,
+    important: bool,
+    inline: bool,
+    specificity: Specificity,
+) -> Priority {
+    let tier = match (origin, important) {
+        (CascadeOrigin::UserAgent, false) => 0,
+        (CascadeOrigin::UserAgent, true) => 1,
+        (CascadeOrigin::User, false) => 2,
+        (CascadeOrigin::Author, false) => 3,
+        (CascadeOrigin::Author, true) => 4,
+        (CascadeOrigin::User, true) => 5,
+    };
+    (tier, inline, specificity)
 }
 
 fn choose<'a>(
@@ -1851,6 +1909,7 @@ fn choose<'a>(
             Property::BorderCollapse(_) => 24,
             Property::Border(side, part) => 25 + 3 * side + part.component(),
             Property::BorderSpacing(_) => 37,
+            Property::CaptionBottom(_) => CAPTION_SIDE,
             Property::BorderParts(_) => continue,
             Property::Padding(side, _) => {
                 if side < 2 {
@@ -1859,19 +1918,14 @@ fn choose<'a>(
                     36 + side
                 }
             }
-            Property::PaddingBoth(_) | Property::Margins(_) | Property::FontSource(_) => {
+            Property::PaddingBoth(_)
+            | Property::Margins(_)
+            | Property::FontSource(_)
+            | Property::GeneratedContent(_) => {
                 continue;
             }
         };
-        let tier = match (origin, declaration.important) {
-            (CascadeOrigin::UserAgent, false) => 0,
-            (CascadeOrigin::UserAgent, true) => 1,
-            (CascadeOrigin::User, false) => 2,
-            (CascadeOrigin::Author, false) => 3,
-            (CascadeOrigin::Author, true) => 4,
-            (CascadeOrigin::User, true) => 5,
-        };
-        let priority = (tier, inline, specificity);
+        let priority = cascade_priority(origin, declaration.important, inline, specificity);
         if winners[index].is_none_or(|(current, _)| priority >= current) {
             winners[index] = Some((priority, &declaration.property));
         }
@@ -1909,6 +1963,7 @@ impl Weight {
 }
 
 enum Property {
+    GeneratedContent(Vec<pseudo::ContentPart>),
     Display(Display),
     Visibility(Visibility),
     Reset(usize, user_css::Reset),
@@ -1943,6 +1998,7 @@ enum Property {
     LineBreak(Option<LineBreak>),
     WordBreak(WordBreak),
     NoWrap(bool),
+    CaptionBottom(bool),
     Hyphens(Hyphens),
     WritingMode(WritingMode),
     Width(ImageLength),
@@ -1975,6 +2031,7 @@ impl<'i> DeclarationParser<'i> for Properties {
             }
             input.reset(&before);
             let property = match name.to_ascii_lowercase().as_ref() {
+                "content" => Property::GeneratedContent(pseudo::parse_content(input)?),
                 "display" => Property::Display(
                     Display::parse(&input.expect_ident()?.to_ascii_lowercase())
                         .ok_or_else(ParseError::unexpected_token)?,
@@ -2317,6 +2374,13 @@ impl<'i> DeclarationParser<'i> for Properties {
                         _ => return Err(ParseError::unexpected_token()),
                     })
                 }
+                "caption-side" => Property::CaptionBottom(
+                    match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "top" => false,
+                        "bottom" => true,
+                        _ => return Err(ParseError::unexpected_token()),
+                    },
+                ),
                 "white-space" => {
                     Property::NoWrap(match input.expect_ident()?.to_ascii_lowercase().as_str() {
                         "normal" => false,

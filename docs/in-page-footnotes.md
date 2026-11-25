@@ -215,10 +215,10 @@ and backlinks keep their targets.
 [Reader original note](screenshots/reader-note-inline-original.png)
 
 Formatting applies to supported horizontal in-page notes. Inline and
-standalone pictures can flow with the surrounding note text. Tables, ruby,
-inline boxes, preformatted blocks, and authored page breaks inside a note
-keep their original layout. When the note itself is a list item, its
-generated marker moves inside the first line. The marker follows the
+standalone pictures and ruby annotations can flow with the surrounding
+note text. Tables, inline boxes, preformatted blocks, and authored page
+breaks inside a note keep their original layout. When the note itself is a
+list item, its generated marker moves inside the first line. The marker follows the
 publisher's numbering and stays outside search results and selected text.
 If the chapter cannot fit the joined notes, Reader retries the original
 layout. The publication stays unchanged.
@@ -316,6 +316,28 @@ pictures that share a source block.
 [Stock strip rendering](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L2172-L2204) ·
 [Stock main-page hit testing](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L2597-L2666)
 
+The `inline-ruby` replay uses two ruby bases in separate note blocks.
+KOReader places the bases at y=132 and y=185, then at y=92 on a shared
+line after the switch. Both annotations sit above the joined bases at y=72.
+Their canonical locations and the original backlink remain stable. The
+replay matches both annotation rasters in the bottom strip against the
+original. KOReader search includes the annotation text in the original.
+Its bottom copy paints both annotations and exposes the backlink only
+at the original location.
+
+Reader preserves the original base selections, search results and
+backlinks. Annotation text stays outside canonical search and saved
+selections. Backlinks and base selection work in the original and the
+bottom copy. A 310 px native replay and Mac regression check that each
+supported base wraps as a unit. The Mac tests also verify that a hidden
+annotation keeps its spacing.
+[Reader ruby before](screenshots/reader-note-inline-ruby-before.png) ·
+[Reader ruby after](screenshots/reader-note-inline-ruby-after.png) ·
+[Reader original ruby note](screenshots/reader-note-inline-ruby-original.png) ·
+[KOReader ruby before](screenshots/stock-note-inline-ruby-before.png) ·
+[KOReader ruby after](screenshots/stock-note-inline-ruby-after.png) ·
+[KOReader original ruby note](screenshots/stock-note-inline-ruby-original.png)
+
 ## Replay on macOS
 
 Run the Reader tests on the [deterministic authored EPUB](../tests/fixtures/in-page-footnotes.epub).
@@ -345,8 +367,9 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
 ```
 
 Pass `cosmetic`, `wikipedia`, `inline-all`, `inline-list`, `inline-nested`,
-`inline-root-epub`, `inline-root-wiki`, `inline-image`, or
-`inline-block-image` as the fifth argument to select an advanced style replay.
+`inline-root-epub`, `inline-root-wiki`, `inline-ruby`, `inline-ruby-narrow`,
+`inline-image`, or `inline-block-image` as the fifth argument to select an
+advanced style replay.
 
 Run the combined note flow checks with the same stock runtime and scratch
 paths.

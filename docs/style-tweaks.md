@@ -110,9 +110,9 @@ rollback is implemented.
 | --- | --- |
 | Book snippet/imported file | 8 KiB UTF-8. |
 | Effective combined user CSS | 64 KiB, 128 rules, 32 source declarations per rule. |
-| Selectors | Type, universal, class, ID, descendant, child, adjacent sibling, `[href]`, link/any-link, first-child and first-of-type. 128 bytes/selector, 8 steps, 24 selectors/rule. |
-| Supported properties | Existing reflow typography, padding/indentation, breaks/widows/orphans, simple-table borders/spacing and supported image/table dimensions. |
-| Unsupported | Publisher block margins, CSS display/visibility, floats/clear, general positioned/block layout, arbitrary attribute selectors, `:not`, nth-child, pseudo content, text colors, vendor hints and at-rules including import/font-face. |
+| Selectors | Type, universal, class, ID, descendant, child, adjacent sibling, `[href]`, link/any-link, first-child, first-of-type and terminal `::before`/`::after`. 128 bytes/selector, 8 steps, 24 selectors/rule. |
+| Supported properties | Existing reflow typography, padding/indentation, breaks/widows/orphans, table borders/spacing and caption side, supported image/table dimensions, and inline pseudo-element content and typography. `display: inline`, `display: none` and `visibility` apply in pseudo-element-only rules. [Generated reading content](generated-reading-content.md) |
+| Unsupported | Publisher block margins, ordinary element display/visibility, floats/clear, general positioned/block layout, arbitrary attribute selectors, `:not`, nth-child, other pseudo-elements, text colors, vendor hints and at-rules including import/font-face. |
 
 Unsupported user CSS is rejected as a complete proposed change, rather than
 silently applying a partial sheet. Publisher parsing remains forgiving. The

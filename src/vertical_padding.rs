@@ -26,6 +26,7 @@ pub(crate) fn layout(
         boxes,
         cfg,
         &crate::table_layout::TableFlow::identity(source),
+        None,
     )
 }
 pub(crate) fn layout_with_flow(
@@ -34,6 +35,7 @@ pub(crate) fn layout_with_flow(
     boxes: Option<&[BoxArea]>,
     cfg: Settings,
     flow: &crate::table_layout::TableFlow<'_>,
+    order: Option<&[usize]>,
 ) -> Option<Vec<Space>> {
     let width = cfg.text_width();
     let font = cfg.font_size;
@@ -46,7 +48,9 @@ pub(crate) fn layout_with_flow(
         return None;
     }
     let mut ranges: Vec<Option<(usize, usize)>> = vec![None; source.elements.len()];
-    for (n, b) in source.blocks.iter().enumerate() {
+    let block = |slot| &source.blocks[crate::table_layout::captions::source_index(order, slot)];
+    for n in 0..source.blocks.len() {
+        let b = block(n);
         if styles[b.element].flow.suppressed {
             continue;
         }
@@ -85,7 +89,7 @@ pub(crate) fn layout_with_flow(
         };
         let base = boxes.map(|b| b[idx].outer_width).unwrap_or_else(|| {
             if inside
-                && let Some(cell) = flow.block_cell(&source.blocks[first])
+                && let Some(cell) = flow.block_cell(block(first))
                 && width as f32 / f32::from(cell.columns) >= 2.5 * font
             {
                 cell.bounds(width, (font * 0.22).round() as u32).1
@@ -97,25 +101,25 @@ pub(crate) fn layout_with_flow(
             .vertical_padding
             .map(|p| (p.box_pixels(base, font) as u32).min(max));
         let lead = &mut spaces[first];
-        let before = if !inside && flow.block_cell(&source.blocks[first]).is_some() {
+        let before = if !inside && flow.block_cell(block(first)).is_some() {
             &mut lead.before_grid
         } else {
             &mut lead.before
         };
         let old = *before;
         *before = before.saturating_add(top).min(max);
-        if first == last && source.blocks[first].element == idx {
+        if first == last && block(first).element == idx {
             lead.own[0] = *before - old;
         }
         let trail = &mut spaces[last];
-        let after = if !inside && flow.block_cell(&source.blocks[last]).is_some() {
+        let after = if !inside && flow.block_cell(block(last)).is_some() {
             &mut trail.after_grid
         } else {
             &mut trail.after
         };
         let old = *after;
         *after = after.saturating_add(bottom).min(max);
-        if first == last && source.blocks[last].element == idx {
+        if first == last && block(last).element == idx {
             trail.own[1] = *after - old;
         }
     }

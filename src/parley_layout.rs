@@ -9,6 +9,8 @@ mod inline_blocks_tests;
 mod note_inline;
 #[cfg(test)]
 mod special_glyph_tests;
+#[cfg(test)]
+mod table_caption_tests;
 mod table_vertical;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -562,6 +564,7 @@ impl ParleyChapter {
             ),
         };
         let mut context = LayoutContext::new();
+        let has_generated = styles.iter().any(|style| style.generated.is_some());
         let mut lines: Vec<Line> = Vec::new();
         let mut remaining_inline_boxes = inline_blocks::MAX_CHAPTER_BOXES;
         let mut y = 0.0_f32;
@@ -650,18 +653,53 @@ impl ParleyChapter {
         if let (Some(b), Some(boxes)) = (&mut borders, &publisher_boxes) {
             b.resolve_padding(boxes, styles, settings);
         }
+        let mut joined = match footnotes {
+            Some(targets) if float_plan.is_none() && targets.inlines_all() => {
+                note_inline::plan(source, styles, flow, targets)?
+            }
+            _ => BTreeMap::new(),
+        };
+        let column_for = |block: &Block| {
+            if let Some(boxes) = &publisher_boxes {
+                return boxes[block.element].cell;
+            }
+
+            table_flow.block_cell(block).filter(|cell| {
+                outer_width as f32 / f32::from(cell.columns) >= 2.5 * settings.font_size
+            })
+        };
+        let captions = crate::table_layout::captions::Plan::new(
+            source,
+            &table_flow,
+            styles,
+            &column_for,
+            float_plan.is_none(),
+            &joined
+                .iter()
+                .map(|(&first, note)| first..note.end_index)
+                .collect::<Vec<_>>(),
+        );
+        let order = captions.order();
+        let source_index = |slot| crate::table_layout::captions::source_index(order, slot);
+        if let Some(borders) = &mut borders {
+            for band in captions.bands() {
+                borders.place_caption(band.table, band.bottom);
+            }
+        }
         let vertical_padding = crate::vertical_padding::layout_with_flow(
             source,
             styles,
             publisher_boxes.as_deref(),
             settings,
             &table_flow,
+            order,
         );
         let block_margins = crate::block_margins::before_blocks(
             source,
             styles,
             publisher_boxes.as_deref(),
             settings,
+            order,
         );
         let height_candidates = if settings.publisher_block_height {
             text_box_candidates(source, styles, |style| {
@@ -678,15 +716,6 @@ impl ParleyChapter {
         chapter.float_geometry = float_plan.is_some();
         let mut float_flow = crate::float_layout::Flow::default();
         let mut float_fills = Vec::new();
-        let column_for = |block: &Block| {
-            if let Some(boxes) = &publisher_boxes {
-                return boxes[block.element].cell;
-            }
-
-            table_flow.block_cell(block).filter(|cell| {
-                outer_width as f32 / f32::from(cell.columns) >= 2.5 * settings.font_size
-            })
-        };
         let bounds_for = |block: &Block| {
             if let Some(boxes) = &publisher_boxes {
                 let area = boxes[block.element];
@@ -722,12 +751,6 @@ impl ParleyChapter {
             settings,
             outer_width,
         );
-        let mut joined = match footnotes {
-            Some(targets) if float_plan.is_none() && targets.inlines_all() => {
-                note_inline::plan(source, styles, flow, targets)?
-            }
-            _ => BTreeMap::new(),
-        };
         // Share the bounded grayscale cache across distinct renderings. Duplicate icons
         // reuse one preview, while large later illustrations still receive space.
         let mut variants = HashSet::new();
@@ -769,6 +792,9 @@ impl ParleyChapter {
         let mut trailing_gap = normal_gap;
         let mut row_flow = crate::table_layout::RowFlow::default();
         let mut positions = crate::table_borders::Positions::default();
+        let mut caption_start = (0.0, 0);
+        let mut caption_frames = Vec::new();
+        let mut caption_fills = Vec::new();
         let mut table_alignment =
             table_vertical::Pass::new(&table_flow, styles, float_plan.is_none() && !source_order);
         let wrapper_backgrounds = publisher_boxes.as_ref().is_some_and(|boxes| {
@@ -809,7 +835,9 @@ impl ParleyChapter {
             }
         }
         let mut joined_until = 0;
-        for (index, source_block) in source.blocks.iter().enumerate() {
+        for slot in 0..source.blocks.len() {
+            let index = source_index(slot);
+            let source_block = &source.blocks[index];
             if index < joined_until {
                 if let Some(points) = &mut fill_positions {
                     points.push((y, y));
@@ -828,14 +856,24 @@ impl ParleyChapter {
             let projection = flow
                 .view(source, source_block)
                 .map_err(|error| error.to_string())?;
-            let input = flow.layout_block(source, source_block)?;
+            let caption = captions.placement(index);
+            let mut input = flow.layout_block(source, source_block)?;
+            if let Some(caption) = caption
+                && source.elements[input.element].anonymous
+            {
+                input.element = caption.element;
+            }
             let note = joined.remove(&index);
             let note_layout = note.as_ref().map(|note| Arc::clone(&note.layout));
             let (flattened, note_images) = match note.zip(note_layout.as_ref()) {
                 Some((note, layout)) => {
                     joined_until = note.end_index;
                     (
-                        Some(input.text_fragment(note.element, &layout.text, note.runs)),
+                        Some(
+                            input
+                                .text_fragment(note.element, &layout.text, note.runs)
+                                .with_joined_ruby(note.ruby),
+                        ),
                         note.images,
                     )
                 }
@@ -884,14 +922,15 @@ impl ParleyChapter {
             }
             let padding = vertical_padding
                 .as_ref()
-                .map_or_else(Default::default, |g| g[index]);
+                .map_or_else(Default::default, |g| g[slot]);
             let margin_space = block_margins
                 .as_ref()
-                .map_or_else(Default::default, |g| g[index]);
-            let last = index.max(joined_until.saturating_sub(1));
-            let gap = if block_margins
-                .as_ref()
-                .is_some_and(|spaces| spaces[last].suppress_gap_after)
+                .map_or_else(Default::default, |g| g[slot]);
+            let last = slot.max(joined_until.saturating_sub(1));
+            let gap = if caption.is_some()
+                || block_margins
+                    .as_ref()
+                    .is_some_and(|spaces| spaces[last].suppress_gap_after)
             {
                 0.0
             } else {
@@ -928,6 +967,23 @@ impl ParleyChapter {
                 chapter.physical_break_runs.push(positioned);
             }
             let start_of_cell = y;
+            let caption_decoration = caption.map(|caption| {
+                crate::table_layout::captions::Decoration::new(
+                    caption,
+                    &styles[caption.element],
+                    publisher_boxes.as_deref(),
+                    borders.as_ref(),
+                    settings,
+                )
+            });
+            if let (Some(caption), Some(decoration)) = (caption, &caption_decoration)
+                && caption.first
+            {
+                let [stroke, inset] = decoration.leading(caption);
+                y += stroke;
+                caption_start = (y, lines.len());
+                y += inset;
+            }
             let decorated = cell.and_then(|cell| Some((cell, borders.as_ref()?.cells.get(&cell)?)));
             if let Some((c, _)) = decorated
                 && Some(c) != last_cell
@@ -1203,6 +1259,11 @@ impl ParleyChapter {
                         remaining_inline_boxes,
                     );
                 }
+                let mut generated = if plan.is_none() && note_layout.is_none() && has_generated {
+                    inline_blocks::generated::Plan::new(block, &projection, styles)
+                } else {
+                    None
+                };
                 let (layout, ruby) = if let Some(boxed) = &mut plan {
                     let outer = block.text_fragment(
                         block.element,
@@ -1222,6 +1283,25 @@ impl ParleyChapter {
                         user_rules,
                         contour,
                     )
+                } else if let Some(generated) = &mut generated {
+                    let mut outer = block.text_fragment(
+                        block.element,
+                        &generated.text.text,
+                        std::mem::take(&mut generated.runs),
+                    );
+                    outer.generated = &generated.typography;
+                    layout_with_images(
+                        &mut context,
+                        &mut fonts,
+                        &outer,
+                        text_width - indent.common,
+                        settings,
+                        styles,
+                        &[],
+                        indent,
+                        user_rules,
+                        contour,
+                    )
                 } else {
                     layout_with_images(
                         &mut context,
@@ -1236,7 +1316,9 @@ impl ParleyChapter {
                         contour,
                     )
                 };
-                let mut inline_text = plan.map(|boxed| boxed.text);
+                let mut inline_text = plan
+                    .map(|boxed| boxed.text)
+                    .or_else(|| generated.map(|generated| generated.text));
                 if lines.len() + layout.len() > MAX_LINES {
                     return Err("The chapter exceeds the Parley line limit".into());
                 }
@@ -1526,9 +1608,20 @@ impl ParleyChapter {
                 points.push(fitted_extent.unwrap_or((block_y, (y - gap).max(block_y))));
             }
             y += (padding.after - fitted_extent.map_or(0, |_| padding.own[1])) as f32;
+            if let (Some(caption), Some(decoration)) = (caption, caption_decoration)
+                && caption.last
+            {
+                y += decoration.trailing();
+                let content = caption_start.0..y;
+                let outer = decoration.outer(caption, content.clone());
+                keep_fitted_edges(&mut lines[caption_start.1..], outer.clone(), settings);
+                y = outer.end;
+                positions.record_caption(caption.table, outer);
+                decoration.paint(caption, content, &mut caption_frames, &mut caption_fills);
+            }
             if let Some((c, _)) = decorated {
-                let following = source.blocks[index + 1..]
-                    .iter()
+                let following = (slot + 1..source.blocks.len())
+                    .map(|slot| &source.blocks[source_index(slot)])
                     .find(|next| !styles[next.element].flow.suppressed)
                     .and_then(&column_for);
                 if following != Some(c) {
@@ -1589,12 +1682,19 @@ impl ParleyChapter {
             maximum = maximum.max(p.bottom);
             p.max_bottom = maximum;
         }
-        if let Some(points) = &fill_positions {
+        if let Some(mut points) = fill_positions {
+            if let Some(indices) = order {
+                let mut canonical = vec![(0.0, 0.0); points.len()];
+                for (&index, point) in indices.iter().zip(points) {
+                    canonical[index] = point;
+                }
+                points = canonical;
+            }
             chapter.padded_backgrounds = crate::vertical_padding::fills(
                 source,
                 styles,
                 publisher_boxes.as_deref(),
-                points,
+                &points,
                 settings,
                 |element| fitted_padding_elements.contains(&element),
             );
@@ -1611,6 +1711,10 @@ impl ParleyChapter {
             if let Some(boxes) = &publisher_boxes {
                 chapter.table_frames = positions.finish(b, boxes);
             }
+        }
+        chapter.table_frames.extend(caption_frames);
+        chapter.padded_backgrounds.extend(caption_fills);
+        if order.is_some() || borders.is_some() {
             chapter.padded_backgrounds.sort_by_key(|f| f.element);
         }
         chapter.padded_backgrounds.extend(float_fills);
@@ -2747,14 +2851,23 @@ fn make_paragraph(
     }
     let mut has_nowrap = style.inline_nowrap;
     builder.set_base_direction(block.direction);
-    for text in block.styled_text.iter() {
-        let run = &styles[text.element];
-        if text.language != language {
-            builder.push(StyleProperty::Locale(text.language), text.bytes.clone());
+    let runs = block
+        .styled_text
+        .iter()
+        .map(|text| (&text.bytes, &styles[text.element], text.language))
+        .chain(
+            block
+                .generated
+                .iter()
+                .map(|run| (&run.bytes, run.style, language)),
+        );
+    for (bytes, run, run_language) in runs {
+        if run_language != language {
+            builder.push(StyleProperty::Locale(run_language), bytes.clone());
         }
-        let run_line_break = line_break_for(run, text.language);
+        let run_line_break = line_break_for(run, run_language);
         if run_line_break != paragraph_line_break {
-            builder.push(StyleProperty::LineBreak(run_line_break), text.bytes.clone());
+            builder.push(StyleProperty::LineBreak(run_line_break), bytes.clone());
         }
         if run.decoration != style.decoration
             || run.link_ink != style.link_ink
@@ -2766,18 +2879,18 @@ fn make_paragraph(
                     link_ink: run.link_ink,
                     painted: run.flow.painted,
                 }),
-                text.bytes.clone(),
+                bytes.clone(),
             );
         }
         if run.text_rise != style.text_rise {
             builder.push(
                 StyleProperty::VerticalAlign(run.text_rise.from_block_at(style, settings)),
-                text.bytes.clone(),
+                bytes.clone(),
             );
         }
         let run_word_break = word_break_for(run);
         if run_word_break != paragraph_word_break {
-            builder.push(StyleProperty::WordBreak(run_word_break), text.bytes.clone());
+            builder.push(StyleProperty::WordBreak(run_word_break), bytes.clone());
         }
         if run.inline_nowrap != style.inline_nowrap {
             let mode = if run.inline_nowrap {
@@ -2785,29 +2898,26 @@ fn make_paragraph(
             } else {
                 TextWrapMode::Wrap
             };
-            builder.push(StyleProperty::TextWrapMode(mode), text.bytes.clone());
+            builder.push(StyleProperty::TextWrapMode(mode), bytes.clone());
             has_nowrap |= run.inline_nowrap;
         }
         if !settings.override_fonts && run.font_family != style.font_family {
             builder.push(
                 StyleProperty::FontFamily(run.font_family.layout()),
-                text.bytes.clone(),
+                bytes.clone(),
             );
         }
         if run.size_scale != style.size_scale {
-            builder.push(StyleProperty::FontSize(font_size(run)), text.bytes.clone());
+            builder.push(StyleProperty::FontSize(font_size(run)), bytes.clone());
         }
         if run.line_height != style.line_height {
-            builder.push(
-                StyleProperty::LineHeight(line_height(run)),
-                text.bytes.clone(),
-            );
+            builder.push(StyleProperty::LineHeight(line_height(run)), bytes.clone());
         }
         if run.font_weight != style.font_weight {
-            builder.push(StyleProperty::FontWeight(weight(run)), text.bytes.clone());
+            builder.push(StyleProperty::FontWeight(weight(run)), bytes.clone());
         }
         if run.font_style != style.font_style {
-            builder.push(StyleProperty::FontStyle(run.font_style), text.bytes.clone());
+            builder.push(StyleProperty::FontStyle(run.font_style), bytes.clone());
         }
     }
     for annotation in ruby {
@@ -2815,6 +2925,21 @@ fn make_paragraph(
             StyleProperty::LineHeight(LineHeight::Absolute(annotation.line_height)),
             annotation.bytes.clone(),
         );
+    }
+    if block.ruby.keep_bases_together {
+        for annotation in block
+            .ruby
+            .iter()
+            .filter(|annotation| annotation.bytes.len() <= MAX_RUBY_BASE_BYTES)
+        {
+            // A joined note can move the whole ruby base to the next line.
+            // Preserve the emergency breaks for a base wider than the page.
+            builder.push(
+                StyleProperty::TextWrapMode(TextWrapMode::NoWrap),
+                annotation.bytes,
+            );
+            has_nowrap = true;
+        }
     }
     for image in images {
         builder.push_inline_box(image.clone());
@@ -5142,6 +5267,8 @@ mod word_expansion_cases;
 
 #[cfg(test)]
 mod cjk_width_tests;
+#[cfg(test)]
+mod pseudo_generated_tests;
 #[cfg(test)]
 mod style_presets_tests;
 

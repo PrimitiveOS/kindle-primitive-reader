@@ -109,6 +109,7 @@ pub(crate) struct LayoutTweaks {
     pub(crate) link_ink: Option<LinkInk>,
     pub(crate) ignore_table_hints: bool,
     pub(crate) native_table_widths: bool,
+    pub(crate) disable_generated_content: bool,
 }
 
 #[repr(u8)]
@@ -234,6 +235,9 @@ impl Snapshot {
         if layout.native_table_widths {
             digest.consume(b"\0native-table-widths");
         }
+        if layout.disable_generated_content {
+            digest.consume(b"\0disable-generated-content");
+        }
         Ok(Self {
             css: css.into(),
             digest: digest.finalize().0,
@@ -333,6 +337,7 @@ pub(crate) enum Effect {
     ParagraphSpacing(ParagraphSpacing),
     LinkInk(LinkInk),
     IgnoreTableHints,
+    DisableGeneratedContent,
     InPageEpubFootnotes,
     FullWidthImages,
     InPageClassicFootnotes,
@@ -661,6 +666,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("img {vertical-align:middle;}"),
     },
     Preset {
+        id: "no_pseudo_element_before_after",
+        title: "Disable before/after pseudo elements",
+        group: "pseudo-elements",
+        priority: 0,
+        effect: Effect::DisableGeneratedContent,
+    },
+    Preset {
         id: "table_no_presentational_hints",
         title: "Ignore HTML table presentation",
         group: "table-presentation",
@@ -911,6 +923,7 @@ impl Data {
                 }
                 Effect::LinkInk(ink) => layout.link_ink = Some(ink),
                 Effect::IgnoreTableHints => layout.ignore_table_hints = true,
+                Effect::DisableGeneratedContent => layout.disable_generated_content = true,
                 Effect::InPageEpubFootnotes => {
                     notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
                     notes.explicit_epub = true;

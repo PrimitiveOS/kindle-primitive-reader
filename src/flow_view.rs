@@ -197,6 +197,7 @@ impl ChapterFlow {
             element: block.element,
             text,
             styled_text,
+            generated: &[],
             images: Images {
                 source: &block.images,
                 projected: projected.map(OwnedProjection::images),
@@ -206,6 +207,7 @@ impl ChapterFlow {
                 source: &block.ruby,
                 projected: projected.is_some().then_some(ruby),
                 masks: &self.masks,
+                keep_bases_together: false,
             },
         })
     }
@@ -218,6 +220,7 @@ pub(crate) struct LayoutBlock<'a> {
     pub element: usize,
     pub text: &'a str,
     pub styled_text: StyledRuns<'a>,
+    pub(crate) generated: &'a [crate::book_style::pseudo::Run<'a>],
     pub images: Images<'a>,
     pub ruby: Rubies<'a>,
 }
@@ -236,6 +239,7 @@ impl<'a> LayoutBlock<'a> {
             element: source.element,
             text: &source.text,
             styled_text: StyledRuns::Original(&source.styled_text),
+            generated: &[],
             images: Images {
                 source: &source.images,
                 projected: None,
@@ -245,6 +249,7 @@ impl<'a> LayoutBlock<'a> {
                 source: &source.ruby,
                 projected: None,
                 masks: &[],
+                keep_bases_together: false,
             },
         }
     }
@@ -262,6 +267,7 @@ impl<'a> LayoutBlock<'a> {
             element,
             text,
             styled_text: StyledRuns::Projected(runs),
+            generated: &[],
             images: Images {
                 source: &[],
                 projected: None,
@@ -271,8 +277,15 @@ impl<'a> LayoutBlock<'a> {
                 source: &[],
                 projected: None,
                 masks: &[],
+                keep_bases_together: false,
             },
         }
+    }
+
+    pub(crate) fn with_joined_ruby(mut self, annotations: Vec<LayoutRuby<'a>>) -> Self {
+        self.ruby.keep_bases_together = !annotations.is_empty();
+        self.ruby.projected = Some(annotations);
+        self
     }
 }
 
@@ -366,22 +379,23 @@ pub(crate) struct Rubies<'a> {
     source: &'a [Ruby],
     projected: Option<Vec<LayoutRuby<'a>>>,
     masks: &'a [ElementFlow],
+    pub(crate) keep_bases_together: bool,
 }
 
-impl Rubies<'_> {
+impl<'a> Rubies<'a> {
     pub(crate) fn is_empty(&self) -> bool {
         self.iter().next().is_none()
     }
     pub(crate) fn len(&self) -> usize {
         self.iter().count()
     }
-    pub(crate) fn iter(&self) -> impl Iterator<Item = LayoutRuby<'_>> + '_ {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = LayoutRuby<'a>> + '_ {
         let count = self.projected.as_ref().map_or(self.source.len(), Vec::len);
         (0..count).filter_map(|index| {
             let owner = self
                 .projected
                 .as_ref()
-                .map_or(self.source[index].element, |items| items[index].element);
+                .map_or_else(|| self.source[index].element, |items| items[index].element);
             if self.masks.get(owner).is_some_and(|flow| flow.suppressed) {
                 return None;
             }

@@ -105,6 +105,38 @@ fn strict_css_diagnostics_reject_unimplemented_features_and_bound_work() {
         }
     }
 }
+
+#[test]
+fn pseudo_generated_user_css_accepts_supported_rules_and_rejects_inert_declarations() {
+    let markup = r#"<html><head><style>
+        #target::before {content:"Publisher"}
+        #target::after {content:"Suffix"}
+        </style></head><body><p id="target">Original text</p></body></html>"#;
+    let (source, computed) = styles(
+        markup,
+        "#target::before {content:'Reader' !important;font-weight:700}\
+         #target::after {display:none !important}",
+    );
+    let host = at(&source, &computed, "target");
+    let generated = host.generated.as_deref().unwrap();
+    let before = generated[0].as_ref().unwrap();
+    assert_eq!(before.text, "Reader");
+    assert_eq!(before.style.font_weight.value(), 700.);
+    assert_eq!(host.font_weight.value(), 400.);
+    assert!(generated[1].is_none());
+    assert_eq!(source.blocks[0].text, "Original text");
+
+    for (css, detail) in [
+        ("p{content:'Inert'}", "needs a before/after"),
+        ("p, p::before{content:'Mixed'}", "needs a before/after"),
+        ("p::before{display:block}", "Unsupported declaration"),
+        ("p::before{padding-left:4px}", "Unsupported declaration"),
+    ] {
+        let error = validate_user_css(css).unwrap_err().to_string();
+        assert!(error.contains(detail), "{error}");
+    }
+}
+
 #[test]
 fn user_rules_remain_effective_without_author_css_and_never_mutate_source() {
     let markup =

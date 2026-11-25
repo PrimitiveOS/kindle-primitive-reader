@@ -46,6 +46,7 @@ const LINE_HEIGHT: i32 = 48;
 // Use the same wrap in both orientations so that an open draft keeps its line.
 const COLUMNS: usize = 40;
 const PARAGRAPH_SPACING: &str = "paragraph-spacing";
+const PSEUDO_ELEMENTS: &str = "pseudo-elements";
 const TABLE_STYLES: [&str; 8] = [
     "table_no_presentational_hints",
     "table_full_width",
@@ -170,6 +171,7 @@ impl Reader {
             Some(preset) if preset.group.starts_with("link-") => Screen::LinkStyles,
             Some(preset) if image_preset(&preset) => Screen::ImageStyles,
             Some(preset) if TABLE_STYLES.contains(&preset.id) => Screen::TableStyles,
+            Some(preset) if preset.group == PSEUDO_ELEMENTS => Screen::PseudoElementStyles,
             _ => Screen::StyleTweaks,
         }
     }
@@ -481,6 +483,15 @@ impl Reader {
                         }
                         continue;
                     }
+                    if p.group == PSEUDO_ELEMENTS {
+                        if p.id == "no_pseudo_element_before_after" {
+                            items.push(Item::new(
+                                "Pseudo-elements",
+                                Action::Show(Screen::PseudoElementStyles),
+                            ));
+                        }
+                        continue;
+                    }
                     if advanced_note(p.id) {
                         continue;
                     }
@@ -560,6 +571,11 @@ impl Reader {
                 .filter_map(|id| user_styles::preset(id))
                 .map(|preset| preset_item(preset, data, &b))
                 .collect(),
+            Screen::PseudoElementStyles => PRESETS
+                .iter()
+                .filter(|preset| preset.group == PSEUDO_ELEMENTS)
+                .map(|preset| preset_item(*preset, data, &b))
+                .collect(),
             Screen::FootnoteTweaks => PRESETS
                 .iter()
                 .copied()
@@ -615,6 +631,9 @@ impl Reader {
                         "Use stylesheet rules without layout hints from HTML attributes"
                     }
                     "td_vertical_align_none" => "Align body cells to the row’s first text baseline",
+                    "no_pseudo_element_before_after" => {
+                        "Hide generated text before or after the original content"
+                    }
                     "paragraph_web_browser_style" => {
                         "Use block paragraphs with no default first-line indent"
                     }

@@ -123,6 +123,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
             | Screen::StyleTweaks
             | Screen::ParagraphSpacing
             | Screen::TableStyles
+            | Screen::PseudoElementStyles
             | Screen::StylePreset
             | Screen::StyleFiles
             | Screen::StyleReview

@@ -15,6 +15,8 @@ use parley::{
 };
 use std::ops::Range;
 
+pub(super) mod generated;
+
 pub(super) const MAX_CHAPTER_BOXES: usize = 256;
 const MAX_PARAGRAPH_BOXES: usize = 16;
 const MAX_BOX_BYTES: usize = 1024;
@@ -23,6 +25,7 @@ pub(crate) struct InlineText {
     pub(super) text: String,
     segments: Vec<Segment>,
     pub(crate) boxes: Vec<TextBox>,
+    generated: bool,
 }
 
 struct Segment {
@@ -91,6 +94,15 @@ impl InlineText {
     }
 
     pub(crate) fn visible_offset(&self, offset: usize, affinity: Affinity) -> Option<usize> {
+        if self.generated
+            && offset < self.text.len()
+            && !self
+                .segments
+                .iter()
+                .any(|part| part.layout().contains(&offset))
+        {
+            return None;
+        }
         let mut matches = self.segments.iter().filter_map(|part| {
             let range = part.layout();
             (range.start <= offset && offset <= range.end)
@@ -149,6 +161,14 @@ impl InlineText {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         output.set_source_spans(canonical.into_iter().flatten(), || {
             self.visible_offset(range.start, Affinity::After)
+                .or_else(|| {
+                    self.generated.then(|| {
+                        self.segments
+                            .iter()
+                            .find(|part| part.offset >= range.end)
+                            .map_or(view.text().len(), |part| part.source.start)
+                    })
+                })
                 .and_then(|offset| view.source_offset(offset, Affinity::After))
                 .unwrap_or(0)
         });
@@ -265,6 +285,7 @@ pub(super) fn plan(
 
     let mut plan = Plan {
         text: InlineText {
+            generated: false,
             text: String::new(),
             segments: Vec::new(),
             boxes: Vec::new(),

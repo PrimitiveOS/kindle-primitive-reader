@@ -2,6 +2,41 @@
 
 ## Current Mac simulator checkpoint
 
+**Table captions** follow inherited CSS or the legacy HTML bottom hint within
+native horizontal grids. The Mac and pinned native checks cover late captions,
+caption borders and spacing, preserved links, and source locations across pages.
+[Caption comparison and screenshots](table-caption-placement.md)
+
+**Ruby in joined footnotes** retains the annotation above each base in the
+original note and its in-page copy. Reader verifies wrapping, publisher-hidden
+annotations, canonical selections, and backlinks.
+[Footnote comparison and screenshots](in-page-footnotes.md#inline-all-footnote-content)
+
+**Generated reading content** adds inline before/after strings and attribute
+values, plus a per-book or global suppression control. Generated-only pages
+paint without introducing selectable source text. Both engines preserve the
+original clipboard text and search results.
+[Generated text comparison and screenshots](generated-reading-content.md)
+
+The full Mac run passed 1,659 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. It skipped 73 opt-in cases.
+The focused run passed 35 checks, and the two renderers reproduced all
+15 published screenshots.
+
+The original EPUB, PDF, AZW3, and MOBI documents opened through the picker,
+turned a page, and resumed with unchanged source bytes. The separate original
+EPUB note check verified 65 bands and 63 canonical anchors across eight
+composed chapters.
+
+The staged ARMHF executable is stripped and statically linked. It contains
+39,794,300 bytes with SHA-256
+`0858cc78a5834cf648c21f6e25a60be297d337086dcd3be26eb6f493f865f52e`.
+The 33 staged files total 49,402,926 bytes. Project and dictionary licenses,
+SQLite notices, the Launcher icon, and the OCR model passed inspection.
+Foreground Kindle testing and Store publication remain pending.
+
+## Table alignment, cell wrapping, and Danish and Dutch hyphenation checkpoint
+
 **Table alignment and defaults** add the seventh stock table preset. The
 pinned replay checks that the override moves data cells to the first-line
 baseline and keeps header alignment. Reader tests cover merged rows, links,

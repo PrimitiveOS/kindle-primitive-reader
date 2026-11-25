@@ -11,7 +11,8 @@ local Cre = require("libs/libkoreader-cre")
 local BB = require("ffi/blitbuffer")
 
 local source, cache, font, captures = assert(arg[1]), assert(arg[2]), assert(arg[3]), assert(arg[4])
-local width, height, margin = 720, 480, 32
+local narrow_ruby = arg[5] == "inline-ruby-narrow"
+local width, height, margin = narrow_ruby and 310 or 720, 480, 32
 local fb2 = arg[5] == "fb2"
 local classic = arg[5] == "classic"
 local wikipedia = arg[5] == "wikipedia" or arg[5] == "inline-root-wiki"
@@ -397,6 +398,107 @@ if arg[5] == "inline-all" then
     option.callback()
     assert(not option.checked_func())
     print("Pinned whole-note inline toggle shares the canonical line and keeps ordinary body unchanged")
+    return
+end
+
+if arg[5] == "inline-ruby" or narrow_ruby then
+    controller:onReadSettings(Settings:wrap({}))
+    local option = assert(find_tweak(menu.style_tweaks.sub_item_table,
+        "inpage_footnote_all_inline"))
+    local prefix = "stock-note-" .. arg[5] .. "-"
+    local function placed(view, phrase)
+        local page, y = position(view, phrase)
+        local hit = view:findAllText(phrase, false, false, 8, true, 0, 255)[1]
+        local boxes = view:getWordBoxesFromPositions(hit.start, hit["end"], true)
+        local box = boxes[1]
+        assert(box.y0 == y)
+        return {page = page, box = box, one_line = #boxes == 1, pointer = hit.start}
+    end
+    local function frame(view, page)
+        view:gotoPage(page)
+        local buffer = BB.new(width, height, BB.TYPE_BB8)
+        view:drawCurrentPage(buffer, false, false, false, false)
+        return buffer
+    end
+    local function raster(buffer, box, y)
+        local data = {}
+        for row = y, y + box.y1 - box.y0 - 1 do
+            for x = box.x0, box.x1 - 1 do
+                data[#data + 1] = string.char(buffer:getPixel(x, row):getColor8().a)
+            end
+        end
+        return table.concat(data)
+    end
+    local function measure(phase, inline)
+        local view = open(assert(controller:getCssText()))
+        local body = placed(view, "The ferry reports")
+        local head = placed(view, "Ledger head")
+        local first = placed(view, "bright water")
+        local second = placed(view, "quiet letter")
+        local first_rt = placed(view, "reading gloss")
+        local second_rt = placed(view, "silent gloss")
+        local tail = placed(view, "Ledger tail")
+        assert(body.page < head.page)
+        for _, item in ipairs({first, second, first_rt, second_rt, tail}) do
+            assert(item.page == head.page)
+        end
+        assert(first_rt.box.y0 < first.box.y0 and second_rt.box.y0 < second.box.y0)
+        assert(first.one_line and second.one_line)
+        if inline then
+            if narrow_ruby then
+                assert(first.box.y0 < second.box.y0)
+                assert(tail.box.y0 == second_rt.box.y0 and tail.box.x0 > second.box.x0)
+            else
+                assert(first.box.y0 == second.box.y0 and first.box.x0 < second.box.x0)
+                assert(head.box.y0 == first_rt.box.y0 and first_rt.box.y0 == second_rt.box.y0)
+                assert(tail.box.y0 == head.box.y0 and tail.box.x0 > second.box.x0)
+            end
+            assert(not capture(view, head.page, prefix .. "original"))
+        else
+            assert(head.box.y0 < first.box.y0 and first.box.y0 < second.box.y0)
+            assert(second.box.y0 < tail.box.y0)
+        end
+        local separator = assert(capture(view, body.page, prefix .. phase))
+        local original, copy = frame(view, head.page), frame(view, body.page)
+        local offset
+        for _, item in ipairs({first_rt, second_rt}) do
+            local box = item.box
+            local ink = raster(original, box, box.y0)
+            assert(ink:find("[%z\1-\128]"), "annotation must paint dark pixels")
+            if not offset then
+                for y = separator + 1, height - margin - (box.y1 - box.y0) do
+                    if raster(copy, box, y) == ink then
+                        offset = y - box.y0
+                        break
+                    end
+                end
+            end
+            assert(offset and raster(copy, box, box.y0 + offset) == ink)
+        end
+        original:free()
+        copy:free()
+        local x = first.box.x0 + 5
+        local y = math.floor((first.box.y0 + first.box.y1) / 2)
+        assert(view:getLinkFromPosition(x, y + offset) == "")
+        local copy_hit = view:getTextFromPositions(x, y + offset, x, y + offset, false, false)
+        assert(not copy_hit or not copy_hit.text:find("bright", 1, true))
+        view:gotoPage(head.page)
+        assert(view:getLinkFromPosition(x, y):match(" ruby%-ref$"))
+        local canonical_hit = assert(view:getTextFromPositions(x, y, x, y, false, false))
+        assert(canonical_hit.text:match("^bright"))
+        view:close()
+        return table.concat({body.box.y0, first.pointer, second.pointer, first_rt.pointer,
+            second_rt.pointer}, "|")
+    end
+    assert(not option.checked_func())
+    local before = measure("before", false)
+    option.callback()
+    assert(option.checked_func())
+    assert(measure("after", true) == before)
+    option.callback()
+    assert(not option.checked_func())
+    assert(measure("restored", false) == before)
+    print("Pinned EPUB note keeps both ruby annotations and their canonical text positions")
     return
 end
 

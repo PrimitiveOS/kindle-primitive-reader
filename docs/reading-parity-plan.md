@@ -55,14 +55,13 @@ controls are typography and style tweaks. The audited SDL fullscreen row
 belongs to the host window and is unavailable in KOReader’s Kindle menu.
 [Control matrix](koreader-sdl-reference-controls.json)
 
-The current Mac comparison covers all seven table style controls, including
-the TD baseline override, Traditional EPUB defaults, and legacy cell wrapping.
-The Danish and Dutch comparisons distinguish matching dictionary candidates
-from differences in fitted lines. Caption placement, some table presentation
-rules, additional dictionaries, and rich notes with tables or ruby remain open.
-Foreground Kindle verification is pending.
-[Table comparison](table-style-tweaks.md) · [Cell wrapping](table-cell-nowrap.md) ·
-[Hyphenation](multilingual-hyphenation.md) · [Numbered notes](in-page-footnotes.md#inline-all-footnote-content)
+The current Mac comparison checks captions above and below native table grids,
+ruby on joined footnotes, and generated before/after text. The replays preserve
+canonical links and can restore the original geometry. Floating tables, tables
+inside note bands, generated block boxes, first-letter and first-line styling,
+and additional dictionaries remain open. Foreground Kindle verification is pending.
+[Table captions](table-caption-placement.md) · [Ruby notes](in-page-footnotes.md#inline-all-footnote-content) ·
+[Generated text](generated-reading-content.md) · [Hyphenation](multilingual-hyphenation.md)
 
 The [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The

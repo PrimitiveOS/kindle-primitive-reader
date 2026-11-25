@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 
 const MAX_COLUMNS: usize = 32;
 
+pub(crate) mod captions;
 mod css;
 mod flow;
 pub(crate) mod vertical;

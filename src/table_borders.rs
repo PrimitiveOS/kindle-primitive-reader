@@ -56,6 +56,17 @@ struct Table {
     spacing: [u32; 2],
     padding: [u32; 2],
     painted: bool,
+    caption_bottom: Option<bool>,
+}
+
+impl Table {
+    fn grid_stroke(&self, bottom: bool) -> u32 {
+        if self.caption_bottom == Some(bottom) {
+            0
+        } else {
+            self.border[if bottom { 2 } else { 0 }].width
+        }
+    }
 }
 pub(crate) struct CellBorder {
     pub element: usize,
@@ -180,6 +191,7 @@ impl Borders {
                                     .min(64)
                             }),
                             painted: styles[i].flow.painted,
+                            caption_bottom: None,
                         });
                         t.rows = t.rows.max(cell.after_row);
                         t.active |= shaded_cell(element);
@@ -337,6 +349,17 @@ impl Borders {
     pub(crate) fn tracks(&self, cell: Cell) -> bool {
         self.table.contains_key(&cell.table)
     }
+    pub(crate) fn place_caption(&mut self, table: TableKey, bottom: bool) {
+        if let Some(table) = self.table.get_mut(&table) {
+            table.caption_bottom = Some(bottom);
+        }
+    }
+    pub(crate) fn caption_stroke(&self, table: TableKey, bottom: bool) -> u32 {
+        self.table
+            .get(&table)
+            .filter(|t| t.active && !t.collapsed)
+            .map_or(0, |t| t.border[if bottom { 2 } else { 0 }].width)
+    }
     pub(crate) fn resolve_padding(
         &mut self,
         boxes: &[crate::publisher_padding::BoxArea],
@@ -372,13 +395,13 @@ impl Borders {
             c.edges[0].width
                 + c.spacing[1]
                 + if !t.collapsed && cell.row == 0 {
-                    t.border[0].width + t.padding[0]
+                    t.grid_stroke(false) + t.padding[0]
                 } else {
                     0
                 },
             c.edges[2].width
                 + if !t.collapsed && cell.after_row == t.rows {
-                    c.spacing[1] + t.border[2].width + t.padding[1]
+                    c.spacing[1] + t.grid_stroke(true) + t.padding[1]
                 } else {
                     0
                 },
@@ -393,9 +416,9 @@ impl Borders {
             return crate::table_layout::vertical::Insets::default();
         };
         crate::table_layout::vertical::Insets {
-            head: t.spacing[1] + t.border[0].width + t.padding[0],
+            head: t.spacing[1] + t.grid_stroke(false) + t.padding[0],
             spacing: t.spacing[1],
-            tail: t.spacing[1] + t.border[2].width + t.padding[1],
+            tail: t.spacing[1] + t.grid_stroke(true) + t.padding[1],
         }
     }
 }
@@ -404,8 +427,21 @@ impl Borders {
 pub(crate) struct Positions {
     rows: HashMap<TableKey, BTreeMap<usize, f32>>,
     bottom: HashMap<TableKey, f32>,
+    captions: HashMap<TableKey, Range<f32>>,
 }
 impl Positions {
+    pub(crate) fn record_caption(&mut self, table: TableKey, span: Range<f32>) {
+        self.captions.insert(table, span);
+    }
+
+    fn outer_extent(&self, table: TableKey) -> Option<Range<f32>> {
+        let top = *self.rows.get(&table)?.first_key_value()?.1;
+        let bottom = self.bottom[&table];
+        Some(self.captions.get(&table).map_or(top..bottom, |caption| {
+            top.min(caption.start)..bottom.max(caption.end)
+        }))
+    }
+
     pub(crate) fn record_tracks(
         &mut self,
         table: TableKey,
@@ -451,12 +487,12 @@ impl Positions {
         if spec.active && !spec.collapsed {
             let before = spec.spacing[1]
                 + if first == 0 {
-                    spec.border[0].width + spec.padding[0]
+                    spec.grid_stroke(false) + spec.padding[0]
                 } else {
                     0
                 };
             let after = if after == spec.rows {
-                spec.spacing[1] + spec.border[2].width + spec.padding[1]
+                spec.spacing[1] + spec.grid_stroke(true) + spec.padding[1]
             } else {
                 0
             };
@@ -480,7 +516,7 @@ impl Positions {
             let Some(color) = style.background.filter(|_| style.flow.painted) else {
                 continue;
             };
-            let Some((_, &top)) = self.rows.get(&id).and_then(BTreeMap::first_key_value) else {
+            let Some(extent) = self.outer_extent(id) else {
                 continue;
             };
             let outer = boxes.map_or(0..width, |b| {
@@ -490,8 +526,8 @@ impl Positions {
             out.push(Fill::rectangle(
                 spec.element,
                 outer,
-                top,
-                self.bottom[&id],
+                extent.start,
+                extent.end,
                 color,
             ));
         }
@@ -540,16 +576,15 @@ impl Positions {
         for (id, t) in &borders.table {
             if t.active
                 && !t.collapsed
-                && let Some(rows) = self.rows.get(id)
-                && let Some((_, &top)) = rows.first_key_value()
+                && let Some(extent) = self.outer_extent(*id)
             {
                 let b = boxes[t.element];
                 Frame::push(
                     &mut frames,
                     b.outer_x,
                     b.outer_width,
-                    top,
-                    self.bottom[id],
+                    extent.start,
+                    extent.end,
                     if t.painted {
                         t.border
                     } else {
@@ -570,7 +605,14 @@ pub(crate) struct Frame {
     edges: [Stroke; 4],
 }
 impl Frame {
-    fn push(out: &mut Vec<Self>, x: u32, width: u32, top: f32, bottom: f32, edges: [Stroke; 4]) {
+    pub(crate) fn push(
+        out: &mut Vec<Self>,
+        x: u32,
+        width: u32,
+        top: f32,
+        bottom: f32,
+        edges: [Stroke; 4],
+    ) {
         if bottom > top && edges.iter().any(|s| s.width > 0 && s.gray.is_some()) {
             out.push(Self {
                 x,

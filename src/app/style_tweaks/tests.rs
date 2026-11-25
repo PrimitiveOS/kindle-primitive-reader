@@ -333,6 +333,127 @@ fn table_vertical_alignment_menu_applies_to_the_open_book_and_reopens_at_its_sou
 }
 
 #[test]
+fn table_caption_hint_menu_moves_the_linked_caption_and_keeps_its_source() {
+    let f = Fixture::new();
+    let path = f.root.join("Table captions.xhtml");
+    fs::write(
+        &path,
+        r##"<html><body><p>Harbor survey.</p><table style="width:75%">
+        <tr><td id="reading">Current</td><td>Two knots</td></tr>
+        <caption align="bottom"><a id="legend" href="#destination">North pier</a></caption>
+        </table><p id="destination">Measurements and notes.</p></body></html>"##,
+    )
+    .unwrap();
+    let mut app = open(&f);
+    app.open_path(&path).unwrap();
+    let origin = app.current_history_location();
+    let geometry = |app: &Reader| {
+        let probe = &app.active.as_ref().unwrap().reading.probe;
+        let at = |id: &str, text: &str| {
+            let first = probe.fragment(id).unwrap();
+            let end = crate::Anchor {
+                offset: first.offset + text.len(),
+                ..first.clone()
+            };
+            let selected = probe.select_range(&first, &end).unwrap();
+            assert_eq!(selected.text, text);
+            let page = probe.page_for(&first).unwrap();
+            (first, page, probe.selection_rects(page, &selected)[0])
+        };
+        let (caption, page, caption_rect) = at("legend", "North pier");
+        let (_, table_page, cell_rect) = at("reading", "Current");
+        assert_eq!(page, table_page);
+        let target = probe
+            .link_at(page, caption_rect.x as f32 + 3., caption_rect.y as f32 + 5.)
+            .expect("the caption still links to the notes");
+        (caption, target, caption_rect.y - cell_rect.y)
+    };
+    let (anchor, target, before) = geometry(&app);
+    assert!(before > 0, "publisher caption below the table");
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "Tables");
+    tap_contents_item(&mut app, "Ignore HTML table presentation");
+    tap_contents_item(&mut app, "On for this book");
+    let (updated_anchor, updated_target, after) = geometry(&app);
+    assert_eq!(updated_anchor, anchor);
+    assert_eq!(updated_target, target);
+    assert!(after < 0, "caption above the table after ignoring HTML");
+    app.save().unwrap();
+
+    let mut reopened = open(&f);
+    reopened.open_path(&path).unwrap();
+    assert_eq!(geometry(&reopened), (anchor, target, after));
+    assert_eq!(reopened.current_history_location(), origin);
+}
+
+#[test]
+fn pseudo_generated_menu_keeps_the_reading_place_and_source_selection() {
+    let f = Fixture::new();
+    let path = f.root.join("Generated book text.xhtml");
+    fs::write(
+        &path,
+        r##"<html><head><style>
+        .labeled::before { content: "Notice: "; }
+        .labeled::after { content: " [end]"; }
+        </style></head><body><p class="labeled">
+        <a href="#destination" id="passage">Harbor lights</a></p>
+        <p id="destination">Boats head home.</p></body></html>"##,
+    )
+    .unwrap();
+    let mut app = open(&f);
+    app.open_path(&path).unwrap();
+    let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
+    let origin = app.current_history_location();
+    let before = capture(&mut app);
+    let selection = |app: &Reader| {
+        let probe = &app.active.as_ref().unwrap().reading.probe;
+        let first = probe.fragment("passage").unwrap();
+        let end = crate::Anchor {
+            offset: first.offset + "Harbor lights".len(),
+            ..first.clone()
+        };
+        let selected = probe.select_range(&first, &end).unwrap();
+        assert_eq!(selected.text, "Harbor lights");
+        let page = probe.page_for(&first).unwrap();
+        let rect = probe.selection_rects(page, &selected)[0];
+        let target = probe
+            .link_at(page, rect.x as f32 + 3., rect.y as f32 + 5.)
+            .expect("the original link remains active");
+        (first, target)
+    };
+    let passage = selection(&app);
+    app.open_reading_edge(true, 630.0);
+    crate::app::tests::tap_reading_control(&mut app, "Settings");
+    crate::app::tests::tap_reading_control(&mut app, "Style tweaks");
+    tap_contents_item(&mut app, "Pseudo-elements");
+    assert_eq!(app.screen, Screen::PseudoElementStyles);
+    tap_contents_item(&mut app, "Disable before/after pseudo elements");
+    tap_contents_item(&mut app, "On for this book");
+    assert_eq!(app.style_preset_parent(), Screen::PseudoElementStyles);
+    let after = capture(&mut app);
+    assert_ne!(before, after);
+    assert_eq!(selection(&app), passage);
+    assert_eq!(app.current_history_location(), origin);
+    let back = app.navigation_layout().back();
+    tap(&mut app, back);
+    assert_eq!(app.screen, Screen::PseudoElementStyles);
+    capture_viewport(
+        &app,
+        &mut canvas,
+        "reader-pseudo-element-controls.png",
+        false,
+    );
+    app.save().unwrap();
+
+    let mut reopened = open(&f);
+    reopened.open_path(&path).unwrap();
+    adopt(&mut reopened, ReadingViewport::PORTRAIT, 1);
+    assert_eq!(selection(&reopened), passage);
+    assert_eq!(reopened.current_history_location(), origin);
+    assert_eq!(capture(&mut reopened), after);
+}
+
+#[test]
 fn styles_live_defaults_and_book_overrides_survive_profiles_defaults_restart_and_source_selections()
 {
     let f = Fixture::new();
