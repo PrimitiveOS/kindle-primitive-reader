@@ -41,7 +41,10 @@ impl Plan {
             || !block.images.is_empty()
             || !block.ruby.is_empty()
             || styles[block.element].preformatted_spaces
-            || crate::publisher_padding::paragraph_is_rtl(block.direction, block.text)
+            || crate::publisher_padding::paragraph_is_rtl(
+                styles[block.element].direction,
+                block.text,
+            )
         {
             return None;
         }

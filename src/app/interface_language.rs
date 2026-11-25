@@ -957,6 +957,54 @@ impl InterfaceLanguage {
         match english {
             "Sources" => "Nguồn",
             "Filters" => "Bộ lọc",
+            "History" => "Lịch sử",
+            "Collections" => "Bộ sưu tập",
+            "Selected books" => "Sách đã chọn",
+            "Archived books" => "Sách đã lưu trữ",
+            "Documents" => "Tài liệu",
+            "Documents and subfolders" => "Tài liệu và thư mục con",
+            "Choose a folder" => "Chọn thư mục",
+            "Choose a folder with subfolders" => "Chọn thư mục và thư mục con",
+            "Hold a source to make it the default" => "Nhấn giữ nguồn để đặt mặc định",
+            "Default source" => "Nguồn mặc định",
+            "Clear default source" => "Xóa nguồn mặc định",
+            "Apply book selection" => "Áp dụng sách đã chọn",
+            "Select or clear all" => "Chọn hoặc bỏ chọn tất cả",
+            "Select by author" => "Chọn theo tác giả",
+            "Select by series" => "Chọn theo bộ sách",
+            "Select by language" => "Chọn theo ngôn ngữ",
+            "Select by keyword" => "Chọn theo từ khóa",
+            "Unknown author" => "Tác giả không rõ",
+            "Apply collections" => "Áp dụng bộ sưu tập",
+            "Use this folder and subfolders" => "Dùng thư mục này và thư mục con",
+            "Use this folder" => "Dùng thư mục này",
+            "Up" => "Lên",
+            "Clear filters" => "Xóa bộ lọc",
+            "Highlight color" => "Màu tô sáng",
+            "All colors" => "Mọi màu",
+            "Books with matches" => "Sách có kết quả",
+            "Filter by book" => "Lọc theo sách",
+            "Sort direction" => "Thứ tự sắp xếp",
+            "Reverse" => "Đảo ngược",
+            "Forward" => "Xuôi",
+            "Reading order" => "Thứ tự đọc",
+            "Date added" => "Ngày thêm",
+            "All types" => "Mọi loại",
+            "All styles" => "Mọi kiểu",
+            "Selected" => "Đã chọn",
+            "Lighten" => "Làm sáng",
+            "Underline" => "Gạch dưới",
+            "Strikethrough" => "Gạch ngang",
+            "Invert" => "Đảo màu",
+            "Red" => "Đỏ",
+            "Orange" => "Cam",
+            "Yellow" => "Vàng",
+            "Green" => "Xanh lá",
+            "Olive" => "Ô liu",
+            "Cyan" => "Xanh lơ",
+            "Blue" => "Xanh dương",
+            "Purple" => "Tím",
+            "Gray" => "Xám",
             "Find" => "Tìm",
             "Bookmark, highlighted text or note" => "Dấu trang, đoạn tô sáng hoặc ghi chú",
             "Match case" => "Phân biệt hoa thường",
@@ -982,6 +1030,22 @@ impl InterfaceLanguage {
             let mark = if marks == 1 { "mark" } else { "marks" };
             let book = if books == 1 { "book" } else { "books" };
             format!("{marks} {mark} in {books} {book}")
+        }
+    }
+
+    pub(super) fn bookmark_selected_count(self, count: usize) -> String {
+        if self == Self::Vietnamese {
+            format!("Đã chọn {count}")
+        } else {
+            format!("{count} selected")
+        }
+    }
+
+    pub(super) fn bookmark_mark_count(self, count: usize) -> String {
+        if self == Self::Vietnamese {
+            format!("{count} dấu")
+        } else {
+            format!("{count} {}", if count == 1 { "mark" } else { "marks" })
         }
     }
 

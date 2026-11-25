@@ -34,6 +34,16 @@ Blitz rendering remain outside this subset. Saved source anchors do not
 change. This addition has not yet been built or behaviorally tested.
 [Pinned KOReader choices](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L486-L505)
 
+**Document direction RTL** and **Document direction LTR** are mutually
+exclusive overrides on the document body. They are intended for books with
+missing or incorrect base direction, while supported block descendants with
+explicit `dir` attributes and CSS can still establish their own direction. The horizontal
+Parley reader uses the computed direction for paragraph shaping and supported
+text-box geometry. Existing HTML table column ordering, inline bidi controls,
+vertical text and Blitz rendering do not yet fully follow this CSS setting.
+Document text, revisions and saved source anchors remain unchanged; the
+visual result has not yet been tested. [Pinned KOReader controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L312-L340)
+
 Four additional per-book and default choices use the supported native CSS
 cascade:
 

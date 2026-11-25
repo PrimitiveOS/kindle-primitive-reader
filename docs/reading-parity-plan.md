@@ -127,6 +127,11 @@ Contents controls are implemented in the current candidate. The combined Mac
 build-only check passes; the Norwegian memory footprint and behavior, style
 rendering and user-interface fit still need the deferred validation pass.
 
+Occitan patterns and horizontal CSS document-direction controls are implemented
+in the current candidate. The Mac build-only check passes; full table direction,
+advanced inline bidirectional behavior, vertical rendering and device
+comparisons remain open.
+
 Lithuanian and Icelandic patterns, separate widow/orphan controls and
 Vietnamese bookmark-browser labels are now implemented and pass a Mac
 build-only check. Their behavior, layout and device comparisons remain open.

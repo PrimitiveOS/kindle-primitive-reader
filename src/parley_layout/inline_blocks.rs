@@ -290,7 +290,7 @@ pub(super) fn plan(
     remaining: usize,
 ) -> Option<Plan> {
     if remaining == 0
-        || matches!(block.direction, BaseDirection::Rtl)
+        || matches!(styles[block.element].direction, BaseDirection::Rtl)
         || !block.images.is_empty()
         || !block.ruby.is_empty()
     {

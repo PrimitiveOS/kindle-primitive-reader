@@ -42,6 +42,7 @@ impl Reset {
                         | 53
                         | CAPTION_SIDE
                         | COMMON_LIGATURES
+                        | DIRECTION
                 )
     }
 }
@@ -68,6 +69,7 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "text-align" => vec![4],
         "font-weight" => vec![5],
         "font-style" => vec![6],
+        "direction" => vec![DIRECTION],
         "font-variant" | "font-variant-ligatures" | "-webkit-font-variant-ligatures" => {
             vec![COMMON_LIGATURES]
         }
@@ -126,6 +128,13 @@ pub(super) fn apply_reset(
         5 => style.font_weight = value.font_weight,
         6 => style.font_style = value.font_style,
         COMMON_LIGATURES => style.common_ligatures = value.common_ligatures,
+        DIRECTION => {
+            style.direction = if reset.parent(DIRECTION) {
+                parent.direction
+            } else {
+                parley::BaseDirection::Ltr
+            };
+        }
         7 => style.line_break = value.line_break,
         8 => style.word_break = value.word_break,
         53 => style.inline_nowrap = value.inline_nowrap,

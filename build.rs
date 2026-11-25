@@ -170,6 +170,7 @@ fn main() {
         ("no", "NORWEGIAN"),
         ("lt", "LITHUANIAN"),
         ("is", "ICELANDIC"),
+        ("oc", "OCCITAN"),
         ("sk", "SLOVAK"),
         ("sl", "SLOVENIAN"),
     ] {

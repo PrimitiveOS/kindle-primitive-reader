@@ -269,7 +269,7 @@ impl<'a> SourceCells<'a> {
                 {
                     unsupported.insert(host);
                 }
-                if matches!(block.direction, parley::BaseDirection::Rtl) {
+                if matches!(styles[block.element].direction, parley::BaseDirection::Rtl) {
                     rtl.insert(host);
                 }
             }

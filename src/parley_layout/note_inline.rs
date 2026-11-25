@@ -135,7 +135,7 @@ fn join<'a>(
         if style.preformatted_spaces
             || style.page_breaks != Default::default()
             || style.writing_mode == crate::book_style::WritingMode::VerticalRl
-            || crate::publisher_padding::paragraph_is_rtl(block.direction, &block.text)
+            || crate::publisher_padding::paragraph_is_rtl(style.direction, &block.text)
             || table_root.is_some() && block.table_cell.is_none()
             || has_table
                 && (!block.images.is_empty()

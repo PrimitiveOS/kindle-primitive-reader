@@ -66,6 +66,7 @@ pub(crate) enum Dictionary {
     Norwegian,
     Lithuanian,
     Icelandic,
+    Occitan,
     Slovak,
     Slovenian,
 }
@@ -114,6 +115,7 @@ impl Dictionary {
             ("no", _) => Some(Self::Norwegian),
             ("lt", _) => Some(Self::Lithuanian),
             ("is", _) => Some(Self::Icelandic),
+            ("oc", _) => Some(Self::Occitan),
             ("sk", _) => Some(Self::Slovak),
             ("sl", _) => Some(Self::Slovenian),
             _ => None,
@@ -150,6 +152,7 @@ impl Dictionary {
             Self::Norwegian => "Norwegian",
             Self::Lithuanian => "Lithuanian",
             Self::Icelandic => "Icelandic",
+            Self::Occitan => "Occitan",
             Self::Slovak => "Slovak",
             Self::Slovenian => "Slovenian",
         }
@@ -177,6 +180,7 @@ impl Dictionary {
             | Self::Norwegian
             | Self::Lithuanian
             | Self::Icelandic
+            | Self::Occitan
             | Self::Slovenian => HyphenationLimits { left: 2, right: 2 },
             Self::French => HyphenationLimits { left: 2, right: 1 },
             Self::American
@@ -216,6 +220,7 @@ impl Dictionary {
             Self::Norwegian => &NORWEGIAN,
             Self::Lithuanian => &LITHUANIAN,
             Self::Icelandic => &ICELANDIC,
+            Self::Occitan => &OCCITAN,
             Self::Slovak => &SLOVAK,
             Self::Slovenian => &SLOVENIAN,
         }

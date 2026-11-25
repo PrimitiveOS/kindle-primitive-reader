@@ -356,6 +356,7 @@ pub(crate) struct Style {
     pub(crate) common_ligatures: bool,
     /// Whether a ruby annotation has its own computed font-size declaration.
     pub(crate) ruby_size_explicit: bool,
+    pub(crate) direction: parley::BaseDirection,
     pub line_height: Option<f32>,
     pub(crate) normal_line_height_percent: Option<u8>,
     pub text_indent: TextIndent,
@@ -420,6 +421,7 @@ impl Default for Style {
             font_style: FontStyle::Normal,
             common_ligatures: true,
             ruby_size_explicit: false,
+            direction: parley::BaseDirection::Auto,
             line_height: None,
             normal_line_height_percent: None,
             text_indent: TextIndent::default(),
@@ -829,6 +831,9 @@ impl BookStyle {
             }
             let mut style = parent.clone();
             style.ruby_size_explicit = false;
+            if let Some(direction) = element.direction_hint {
+                style.direction = direction;
+            }
             style.generated = None;
             style.first_letter = None;
             style.first_line = None;
@@ -1089,6 +1094,7 @@ impl BookStyle {
                     }
                     Property::Slant(slant) => style.font_style = *slant,
                     Property::CommonLigatures(enabled) => style.common_ligatures = *enabled,
+                    Property::Direction(direction) => style.direction = *direction,
                     Property::LineBreak(breaking) => style.line_break = *breaking,
                     Property::WordBreak(breaking) => style.word_break = *breaking,
                     Property::NoWrap(nowrap) => style.inline_nowrap = *nowrap,
@@ -1884,7 +1890,8 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 type Priority = (u8, bool, Specificity);
 const CAPTION_SIDE: usize = 54;
 const COMMON_LIGATURES: usize = 55;
-const CASCADE_PROPERTY_COUNT: usize = 56;
+const DIRECTION: usize = 56;
+const CASCADE_PROPERTY_COUNT: usize = 57;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -1945,6 +1952,7 @@ fn choose<'a>(
             Property::Weight(_) => 5,
             Property::Slant(_) => 6,
             Property::CommonLigatures(_) => COMMON_LIGATURES,
+            Property::Direction(_) => DIRECTION,
             Property::LineBreak(_) => 7,
             Property::WordBreak(_) => 8,
             Property::NoWrap(_) => 53,
@@ -2058,6 +2066,7 @@ enum Property {
     Weight(Weight),
     Slant(FontStyle),
     CommonLigatures(bool),
+    Direction(parley::BaseDirection),
     LineBreak(Option<LineBreak>),
     WordBreak(WordBreak),
     NoWrap(bool),
@@ -2398,6 +2407,13 @@ impl<'i> DeclarationParser<'i> for Properties {
                         _ => return Err(ParseError::unexpected_token()),
                     };
                     Property::CommonLigatures(enabled)
+                }
+                "direction" => {
+                    Property::Direction(match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "ltr" => parley::BaseDirection::Ltr,
+                        "rtl" => parley::BaseDirection::Rtl,
+                        _ => return Err(ParseError::unexpected_token()),
+                    })
                 }
                 "line-height" => {
                     if input

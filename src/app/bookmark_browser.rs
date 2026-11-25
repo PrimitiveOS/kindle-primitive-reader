@@ -1073,6 +1073,7 @@ impl Reader {
 
     fn bookmark_rows(&self, page: Page) -> Vec<Item> {
         let browser = &self.bookmark_browser;
+        let language = self.controls.interface_language;
         use Command as C;
         match page {
             Page::Sources => {
@@ -1105,6 +1106,13 @@ impl Reader {
                         "Clear default source",
                         C::ToggleDefault(source.clone()),
                     ));
+                }
+                // Only fixed source names and statuses occur in this branch.
+                for row in &mut rows {
+                    row.title = language.bookmark_text(&row.title).to_owned();
+                    if let Some(detail) = &mut row.detail {
+                        *detail = language.bookmark_text(detail).to_owned();
+                    }
                 }
                 rows
             }
@@ -1145,6 +1153,13 @@ impl Reader {
                         browser.style == Some(style),
                     )
                 }));
+                // Filter rows use only built-in labels and enum values.
+                for row in &mut rows {
+                    row.title = language.bookmark_text(&row.title).to_owned();
+                    if let Some(detail) = &mut row.detail {
+                        *detail = language.bookmark_text(detail).to_owned();
+                    }
+                }
                 rows
             }
             Page::Colors => Vec::new(),
@@ -1158,7 +1173,7 @@ impl Reader {
                             author_title(self.library.state(book.id)?),
                             C::GotoBook(book.id),
                         )
-                        .detail(mark_count(book.count)),
+                        .detail(language.bookmark_mark_count(book.count)),
                     )
                 })
                 .collect(),
@@ -1166,7 +1181,7 @@ impl Reader {
                 let chosen = browser.picking.as_ref().unwrap_or(&browser.picked_books);
                 let mut rows = vec![
                     item("Apply book selection", C::ApplyChoices)
-                        .detail(format!("{} selected", chosen.len())),
+                        .detail(language.bookmark_selected_count(chosen.len())),
                     item("Select or clear all", C::ToggleAllBooks),
                     item("Select by author", C::Go(Page::Authors)),
                     item(
@@ -1182,6 +1197,10 @@ impl Reader {
                         C::Go(Page::Property(metadata::Property::Keywords)),
                     ),
                 ];
+                // Only the fixed control rows exist before the book rows are appended.
+                for row in &mut rows {
+                    row.title = language.bookmark_text(&row.title).to_owned();
+                }
                 let mut candidates = self
                     .library
                     .recents()
@@ -1194,11 +1213,13 @@ impl Reader {
                     .collect::<Vec<_>>();
                 candidates.sort_by_key(|book| fold_search(&author_title(book)));
                 rows.extend(candidates.into_iter().map(|book| {
-                    selection_row(
-                        author_title(book),
-                        C::ToggleBook(book.id),
-                        chosen.contains(&book.id),
-                    )
+                    let selected = chosen.contains(&book.id);
+                    let mut row =
+                        selection_row(author_title(book), C::ToggleBook(book.id), selected);
+                    if selected {
+                        row.detail = Some(language.bookmark_text("Selected").to_owned());
+                    }
+                    row
                 }));
                 rows
             }
@@ -1216,7 +1237,10 @@ impl Reader {
                     .filter(|author| !author.is_empty())
                     .map(str::to_owned)
                     .collect();
-                let mut rows = vec![item("Unknown author", C::SelectAuthor(None))];
+                let mut rows = vec![item(
+                    language.bookmark_text("Unknown author"),
+                    C::SelectAuthor(None),
+                )];
                 rows.extend(
                     authors
                         .into_iter()
@@ -1227,26 +1251,31 @@ impl Reader {
             Page::Property(property) => self.bookmark_property_rows(property),
             Page::Collections => {
                 let mut rows = vec![
-                    item("Apply collections", C::ApplyChoices)
-                        .detail(format!("{} selected", browser.picked_collections.len())),
+                    item(language.bookmark_text("Apply collections"), C::ApplyChoices)
+                        .detail(language.bookmark_selected_count(browser.picked_collections.len())),
                 ];
                 rows.extend(self.library.collections().iter().map(|collection| {
-                    selection_row(
+                    let selected = browser.picked_collections.contains(&collection.name);
+                    let mut row = selection_row(
                         &collection.name,
                         C::ToggleCollection(collection.name.clone()),
-                        browser.picked_collections.contains(&collection.name),
-                    )
+                        selected,
+                    );
+                    if selected {
+                        row.detail = Some(language.bookmark_text("Selected").to_owned());
+                    }
+                    row
                 }));
                 rows
             }
             Page::Folder => {
                 let mut rows = vec![
                     item(
-                        if browser.recursive {
+                        language.bookmark_text(if browser.recursive {
                             "Use this folder and subfolders"
                         } else {
                             "Use this folder"
-                        },
+                        }),
                         C::Use(Source::Folder(browser.folder.clone(), browser.recursive)),
                     )
                     .detail(crate::library::display_filename(
@@ -1255,7 +1284,7 @@ impl Reader {
                 ];
                 if let Some(parent) = browser.folder.parent() {
                     rows.push(item(
-                        "Up",
+                        language.bookmark_text("Up"),
                         C::OpenFolder(parent.to_owned(), browser.recursive),
                     ));
                 }

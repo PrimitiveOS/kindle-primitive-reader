@@ -165,6 +165,8 @@ pub(crate) struct Element {
     pub inline_style: Option<String>,
     pub(crate) pseudo_attributes: Box<[(String, String)]>,
     pub(crate) quote_language: Option<Box<str>>,
+    /// This element's own HTML direction hint, independent of inherited style.
+    pub(crate) direction_hint: Option<BaseDirection>,
     pub(crate) table_hints: Option<crate::book_style::table_hints::TableHints>,
     pub parent: Option<usize>,
     pub previous_sibling: Option<usize>,
@@ -395,6 +397,7 @@ impl Source {
                 || element.classes != original.classes
                 || element.id != original.id
                 || element.inline_style != original.inline_style
+                || element.direction_hint != original.direction_hint
                 || element.anonymous != original.anonymous
                 || element.selector_only != original.selector_only
                 || parent != original.parent
@@ -740,6 +743,7 @@ impl Source {
                 quote_language: language_attribute(node)
                     .filter(|tag| !tag.is_empty() && tag.len() <= MAX_LANGUAGE_BYTES)
                     .map(Box::from),
+                direction_hint: node.attribute("dir").and_then(parse_direction),
                 table_hints: if selector_only {
                     None
                 } else {
@@ -1436,18 +1440,20 @@ fn language_attribute<'a>(node: Node<'a, '_>) -> Option<&'a str> {
 fn base_direction(node: Node<'_, '_>) -> BaseDirection {
     node.ancestors()
         .filter_map(|ancestor| ancestor.attribute("dir"))
-        .find_map(|direction| {
-            if direction.eq_ignore_ascii_case("ltr") {
-                Some(BaseDirection::Ltr)
-            } else if direction.eq_ignore_ascii_case("rtl") {
-                Some(BaseDirection::Rtl)
-            } else if direction.eq_ignore_ascii_case("auto") {
-                Some(BaseDirection::Auto)
-            } else {
-                None
-            }
-        })
+        .find_map(parse_direction)
         .unwrap_or_default()
+}
+
+fn parse_direction(direction: &str) -> Option<BaseDirection> {
+    if direction.eq_ignore_ascii_case("ltr") {
+        Some(BaseDirection::Ltr)
+    } else if direction.eq_ignore_ascii_case("rtl") {
+        Some(BaseDirection::Rtl)
+    } else if direction.eq_ignore_ascii_case("auto") {
+        Some(BaseDirection::Auto)
+    } else {
+        None
+    }
 }
 
 fn may_be_illustration(node: Node<'_, '_>) -> bool {

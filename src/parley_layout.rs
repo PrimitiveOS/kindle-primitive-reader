@@ -1142,7 +1142,7 @@ impl ParleyChapter {
             let width = column_width - gutter + hanging;
             let block_y = y;
             let mut fitted_extent = None;
-            let mut rtl = matches!(block.direction, parley::BaseDirection::Rtl);
+            let mut rtl = matches!(styles[block.element].direction, parley::BaseDirection::Rtl);
             let mut marker_baseline = None;
             let mut float_height = 0.0_f32;
             let first_image = chapter.illustrations.len();
@@ -1238,7 +1238,7 @@ impl ParleyChapter {
                         .as_ref()
                         .map_or((column_x, width, image_width), |area| {
                             let (x, expanded) = area.paragraph_bounds_for_text(
-                                block.direction,
+                                style.direction,
                                 block.text,
                                 style,
                                 settings.font_size,
@@ -1288,7 +1288,7 @@ impl ParleyChapter {
                         parent_width,
                         style,
                         settings,
-                        crate::publisher_padding::paragraph_is_rtl(block.direction, block.text),
+                        crate::publisher_padding::paragraph_is_rtl(style.direction, block.text),
                         intrinsic,
                     );
                     (fitted.map(|area| (area.left, area.width)), fitted)
@@ -1301,7 +1301,7 @@ impl ParleyChapter {
                             column_width,
                             style,
                             settings,
-                            crate::publisher_padding::paragraph_is_rtl(block.direction, block.text),
+                            crate::publisher_padding::paragraph_is_rtl(style.direction, block.text),
                         ),
                         None,
                     )
@@ -3273,7 +3273,7 @@ fn shape_paragraph(
         builder.push_default(StyleProperty::TextWrapMode(TextWrapMode::NoWrap));
     }
     let mut has_nowrap = style.inline_nowrap;
-    builder.set_base_direction(block.direction);
+    builder.set_base_direction(style.direction);
     let letter = block.first_letter.as_ref();
     let letter_run = letter.map(|run| {
         let language = block

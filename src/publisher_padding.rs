@@ -123,7 +123,7 @@ impl BoxArea {
         style: &Style,
         font: f32,
     ) -> (u32, u32) {
-        self.paragraph_bounds_for_text(block.direction, &block.text, style, font)
+        self.paragraph_bounds_for_text(style.direction, &block.text, style, font)
     }
 
     /// The auto direction must use the same text that is shaped. Removed inline
@@ -344,7 +344,7 @@ pub(crate) fn layout_with_flow(
         let mut rtl = vec![false; styles.len()];
         for block in &source.blocks {
             if width_candidates[block.element] == TextBoxCandidate::Simple {
-                rtl[block.element] = paragraph_is_rtl(block.direction, &block.text);
+                rtl[block.element] = paragraph_is_rtl(styles[block.element].direction, &block.text);
             }
         }
         rtl

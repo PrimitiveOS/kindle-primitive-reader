@@ -596,6 +596,20 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("h1,h2,h3,h4,h5,h6 {text-align:center !important;}"),
     },
     Preset {
+        id: "body_direction_rtl",
+        title: "Document direction RTL",
+        group: "document-direction",
+        priority: 2,
+        effect: Effect::Css("body {direction:rtl !important;}"),
+    },
+    Preset {
+        id: "body_direction_ltr",
+        title: "Document direction LTR",
+        group: "document-direction",
+        priority: 0,
+        effect: Effect::Css("body {direction:ltr !important;}"),
+    },
+    Preset {
         id: "text_align_most_right",
         title: "Right-align common text",
         group: "right-alignment",

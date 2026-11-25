@@ -31,6 +31,7 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Norwegian | 2 / 2 | Upstream single-word patterns and exceptions; stock comparison pending |
 | Lithuanian | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Icelandic | 2 / 2 | Upstream single-word patterns; stock comparison pending |
+| Occitan | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
 | Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
 | Russian + English (US) | 2 / 2 | Combined existing Russian and US English tries; stock comparison pending |
 | Slovak | 2 / 3 | 2,467 upstream word patterns and four active exceptions; stock comparison pending |
@@ -219,3 +220,17 @@ Icelandic (`is`) uses Jörgen Pind's upstream TeX patterns with KOReader's
 release packages. The compiled rules and word breaks have not been compared
 with the pinned KOReader dictionary, built, or tested on the computer or Kindle.
 [Icelandic terms](licenses/HYPHENATION-IS.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+Occitan (`oc`) uses Claudio Beccari's upstream TeX patterns with KOReader's
+2 / 2 minima. Reader compiles the supported single-word alphabetic patterns.
+The upstream TeX source also contains 29 apostrophe-bearing tokens; Reader does
+not apply them, and the pinned KOReader Occitan pattern file does not contain
+them either. KOReader's hyphenation word-boundary code selects alphabetic runs.
+Reader likewise splits straight and curly apostrophes for this dictionary
+without changing the original source text or UTF-8 offsets. The original source
+and MIT terms are included in release packages. Exact stock comparison,
+apostrophe behavior and real-document checks remain open; the change has not
+been built or tested on the computer or Kindle.
+[Pinned Occitan patterns](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/Occitan.pattern) ·
+[Pinned word boundaries](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstring.cpp) [Occitan terms](licenses/HYPHENATION-OC.txt) ·
+[KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
