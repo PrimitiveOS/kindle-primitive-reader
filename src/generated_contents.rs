@@ -107,6 +107,7 @@ impl GeneratedContents {
                 let target = OutlineTarget::Heading(
                     chapter,
                     Anchor {
+                        raw_caret: None,
                         illustration: None,
                         book,
                         chapter: href.to_owned(),
@@ -151,6 +152,7 @@ impl GeneratedContents {
                     target: OutlineTarget::Heading(
                         chapter,
                         Anchor {
+                            raw_caret: None,
                             illustration: None,
                             book,
                             chapter: href.to_owned(),

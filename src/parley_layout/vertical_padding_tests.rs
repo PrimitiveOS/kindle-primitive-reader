@@ -247,6 +247,7 @@ fn compares_real_vertical_cells_and_saved_checkpoint_with_installed_reference() 
             assert_eq!(found.len(), 1, "unique source {index}");
             let a = &found[0];
             let end = Anchor {
+                raw_caret: None,
                 offset: a.offset + phrase.split_whitespace().next().unwrap().len(),
                 ..a.clone()
             };

@@ -25,6 +25,7 @@ fn spec(settings: Settings, document: Option<String>) -> Probe {
 fn quote(probe: &Probe, phrase: &str) -> TextSelection {
     let start = probe.matches(phrase).remove(0);
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + phrase.split_whitespace().next().unwrap().len(),
         ..start.clone()
     };

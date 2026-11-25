@@ -82,6 +82,7 @@ fn conditional_text_keeps_fill_the_current_page_and_restore_source_positions() {
         .select_range(
             &anchor,
             &Anchor {
+                raw_caret: None,
                 offset: anchor.offset + "Long".len(),
                 ..anchor.clone()
             },

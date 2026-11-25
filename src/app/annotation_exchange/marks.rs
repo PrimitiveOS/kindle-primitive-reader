@@ -173,7 +173,14 @@ impl Reader {
                 ranges,
                 cutoff,
                 |mark| mark.updated_at.or(mark.created_at),
-                |a, b| a.selection.start == b.selection.start,
+                |a, b| {
+                    crate::library::raw_positions::same_selection_start(
+                        &a.selection,
+                        None,
+                        &b.selection,
+                        None,
+                    )
+                },
                 &mut summary,
             );
         }

@@ -29,6 +29,7 @@ fn book(mode: BlockWidthMode, height: u32, styles: bool, authored: Option<String
 fn word(probe: &Probe, phrase: &str) -> TextSelection {
     let start = probe.matches(phrase).remove(0);
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + phrase.split_whitespace().next().unwrap().len(),
         ..start.clone()
     };

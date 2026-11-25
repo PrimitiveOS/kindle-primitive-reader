@@ -1,0 +1,17 @@
+Isolated lossless WebP decoder
+
+Reader includes a separately named local copy of image-webp 0.2.4 for simple
+lossless VP8L images. The original crate is available at:
+https://crates.io/crates/image-webp/0.2.4
+Registry package SHA-256:
+525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3
+
+The source is distributed under MIT OR Apache-2.0. The original LICENSE-MIT
+and LICENSE-APACHE accompany this notice as WEBP-LOSSLESS-MIT.txt and
+WEBP-LOSSLESS-APACHE.txt. The local package/library name is changed and a
+16-Huffman-group limit is added to src/lossless.rs. The existing registry
+decoder remains unchanged for other consumers. The separately vendored source
+is available in the project repository under vendor/reader-image-webp.
+
+This provenance notice is not a legal determination. Distribution review,
+resource-limit validation and real-device comparisons remain open.

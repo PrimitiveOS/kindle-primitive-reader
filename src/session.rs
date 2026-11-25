@@ -2696,6 +2696,7 @@ mod tests {
                 .unwrap();
             let offset = block.text.find("six").unwrap();
             let anchor = |offset| Anchor {
+                raw_caret: None,
                 book: band.layout.note.book,
                 chapter: band.layout.note.chapter.clone(),
                 revision: band.layout.note.source.revision,
@@ -2775,6 +2776,7 @@ mod tests {
         for (phrase, outer_x, href) in [("Ashore", 43, "#west"), ("wind", 1222, "#east")] {
             let saved = regular.probe.matches(phrase).pop().unwrap();
             let end = crate::Anchor {
+                raw_caret: None,
                 offset: saved.offset + phrase.len(),
                 ..saved.clone()
             };

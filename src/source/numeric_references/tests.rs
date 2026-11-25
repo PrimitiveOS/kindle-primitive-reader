@@ -296,11 +296,13 @@ fn search_display_and_saved_selection_use_normalized_quotes() {
     for prior in [&old, &old_flat] {
         let before = prior.blocks.iter().find(|b| b.key == sample.block).unwrap();
         let start = Anchor {
+            raw_caret: None,
             revision: prior.revision,
             offset: before.text.find('A').unwrap(),
             ..sample.clone()
         };
         let end = Anchor {
+            raw_caret: None,
             offset: before.text.len(),
             ..start.clone()
         };

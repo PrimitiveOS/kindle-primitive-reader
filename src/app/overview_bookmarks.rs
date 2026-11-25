@@ -87,16 +87,30 @@ impl PageActions {
             .map(|(_, _, rect)| rect)
     }
 
-    pub(super) fn draw(&self, canvas: &mut Canvas, layout: NavigationLayout) {
+    pub(super) fn draw(
+        &self,
+        canvas: &mut Canvas,
+        layout: NavigationLayout,
+        language: super::interface_language::InterfaceLanguage,
+    ) {
         let panel = self.panel(layout);
         canvas.popup(panel);
         canvas.text(
             Rect::new(panel.x + 36, panel.y + 20, panel.w - 72, 66),
-            &format!("Page {} actions", self.page + 1),
+            &if language.is_english() {
+                format!("Page {} actions", self.page + 1)
+            } else {
+                format!("Tùy chọn trang {}", self.page + 1)
+            },
             BODY.bold(),
         );
         for (_, label, rect) in self.buttons(layout) {
-            canvas.button(rect, label, false, false);
+            canvas.button(
+                rect,
+                language.overview_page_action_text(label),
+                false,
+                false,
+            );
         }
     }
 

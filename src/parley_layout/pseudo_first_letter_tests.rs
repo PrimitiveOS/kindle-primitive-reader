@@ -33,10 +33,12 @@ fn anchor(probe: &Probe, word: &str) -> Anchor {
 fn rect(probe: &Probe, within: &str, offset: usize, len: usize) -> crate::selection::HighlightRect {
     let original = anchor(probe, within);
     let start = Anchor {
+        raw_caret: None,
         offset: original.offset + offset,
         ..original.clone()
     };
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + len,
         ..original
     };

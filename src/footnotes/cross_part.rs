@@ -419,6 +419,7 @@ impl Layout {
             return None;
         }
         Some(Anchor {
+            raw_caret: None,
             book: self.note.book,
             chapter: self.note.chapter.clone(),
             revision: self.note.source.revision,

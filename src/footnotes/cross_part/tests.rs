@@ -615,6 +615,7 @@ fn cross_part_multiple_reference_pages_keep_original_note_sources() {
         .find(|block| block.text.contains("Rainfall"))
         .unwrap();
     let start = Anchor {
+        raw_caret: None,
         book: rain.layout.note.book,
         chapter: rain.layout.note.chapter.clone(),
         revision: rain.layout.note.source.revision,

@@ -87,6 +87,7 @@ fn main() -> Result<()> {
                     continue;
                 };
                 let end = Anchor {
+                    raw_caret: None,
                     offset: start.offset + phrase.len(),
                     ..start.clone()
                 };

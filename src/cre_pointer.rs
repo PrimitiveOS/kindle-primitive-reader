@@ -373,6 +373,7 @@ pub fn resolve(book: &mut Book, value: &str, version: Option<u32>) -> Result<Epu
     Ok(EpubPosition {
         chapter: index,
         anchor: Anchor {
+            raw_caret: None,
             illustration: None,
             book: book.revision(),
             chapter: path,

@@ -277,6 +277,7 @@ mod tests {
             let first_anchor = baseline.matches(&first)[0].clone();
             let start = baseline.matches(&last)[0].clone();
             let end = Anchor {
+                raw_caret: None,
                 offset: start.offset + last.len(),
                 ..start.clone()
             };
@@ -464,6 +465,7 @@ mod tests {
             let phrase = format!("Test {name} last marker");
             let start = baseline.matches(&phrase)[0].clone();
             let end = Anchor {
+                raw_caret: None,
                 offset: start.offset + phrase.len(),
                 ..start.clone()
             };

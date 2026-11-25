@@ -27,6 +27,7 @@ fn open(settings: Settings, document: Option<String>) -> Probe {
 fn known_quote(probe: &Probe, phrase: &str) -> TextSelection {
     let start = probe.matches(phrase).pop().unwrap();
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + phrase.len(),
         ..start.clone()
     };

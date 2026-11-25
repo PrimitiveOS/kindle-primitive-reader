@@ -106,6 +106,7 @@ def collect():
         "For the compiled Bulgarian, Galician, Irish and Ukrainian patterns, see HYPHENATION-BG-GL-GA.txt.",
         "For the compiled Polish patterns, see HYPHENATION-PL.txt.",
         "For the RTF OEM code-page mappings, see RTF-OEM.txt and UNICODE-DATA.txt.",
+        "For the isolated lossless WebP decoder, see WEBP-LOSSLESS.txt.",
         "For Wuff WOFF 2 decoding, see WUFF.txt.",
         "",
     ]

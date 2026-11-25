@@ -36,6 +36,7 @@ fn specimen(settings: Settings, document: Option<String>) -> Probe {
 fn quote(probe: &Probe, phrase: &str) -> crate::selection::TextSelection {
     let start = probe.matches(phrase).remove(0);
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + phrase.len(),
         ..start.clone()
     };

@@ -59,6 +59,7 @@ fn main() -> Result<()> {
         .or_else(|| (hits.len() == 1 && hits[0].offset == 0).then(|| &hits[0]))
         .ok_or("Could not uniquely match the expected paragraph at a source boundary")?;
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + text.len(),
         ..start.clone()
     };

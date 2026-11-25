@@ -543,6 +543,7 @@ pub(super) fn heading_pages(probe: &Probe) -> HeadingPages {
         .take(MAX_CHAPTER_HEADINGS)
         .filter_map(|block| {
             let anchor = Anchor {
+                raw_caret: None,
                 book: probe.book,
                 chapter: probe.chapter.clone(),
                 revision: probe.source.revision,

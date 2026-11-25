@@ -42,6 +42,7 @@ fn publisher_box_padding_shapes_wrapped_text_and_preserves_source_positions() {
         let a = plain.matches(phrase).remove(0);
         assert_eq!(styled.matches(phrase), [a.clone()]);
         let b = crate::Anchor {
+            raw_caret: None,
             offset: a.offset + phrase.len(),
             ..a.clone()
         };
@@ -161,6 +162,7 @@ fn compares_publisher_padding_in_an_original_document() {
             let Some(first) = words.next() else { continue };
             let start = styled.anchor(block.key, block.text.find(first).unwrap());
             let end = crate::Anchor {
+                raw_caret: None,
                 offset: start.offset + first.len(),
                 ..start.clone()
             };
@@ -288,6 +290,7 @@ fn an_inset_paragraph_resolves_its_visible_link_at_the_new_word_position() {
     .unwrap();
     let start = p.matches("Harbor charts").remove(0);
     let end = crate::Anchor {
+        raw_caret: None,
         offset: start.offset + "Harbor".len(),
         ..start.clone()
     };
@@ -460,6 +463,7 @@ fn compares_original_table_coordinates_and_source_hits() {
             let start = hits.remove(0);
             let word = phrase.split_whitespace().next().unwrap();
             let end = crate::Anchor {
+                raw_caret: None,
                 offset: start.offset + word.len(),
                 ..start.clone()
             };
@@ -543,6 +547,7 @@ fn collapsed_table_uses_its_header_widths_and_preserves_cross_column_word_hits()
     let rect = |p: &Probe, id: &str, word: &str| {
         let start = p.fragment(id).unwrap();
         let end = crate::Anchor {
+            raw_caret: None,
             offset: start.offset + word.len(),
             ..start.clone()
         };
@@ -611,6 +616,7 @@ fn intrinsic_measurement_reserves_an_entire_word_across_inline_formatting() {
     .unwrap();
     let start = p.fragment("long").unwrap();
     let end = crate::Anchor {
+        raw_caret: None,
         offset: "Intercontinental".len(),
         ..start.clone()
     };

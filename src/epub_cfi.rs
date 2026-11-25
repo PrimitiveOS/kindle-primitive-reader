@@ -91,6 +91,7 @@ pub fn resolve(book: &mut Book, value: &str) -> Result<CfiPosition> {
     Ok(CfiPosition {
         chapter,
         anchor: Anchor {
+            raw_caret: None,
             illustration: None,
             book: book.revision(),
             chapter: path,

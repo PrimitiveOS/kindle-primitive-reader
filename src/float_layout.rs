@@ -400,6 +400,7 @@ mod tests {
     pub(super) fn marker(probe: &Probe, text: &str) -> (Anchor, HighlightRect) {
         let start = probe.matches(text)[0].clone();
         let end = Anchor {
+            raw_caret: None,
             offset: start.offset + text.len(),
             ..start.clone()
         };

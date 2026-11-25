@@ -3,6 +3,7 @@ use crate::epub::Destination;
 
 fn anchor(original: &Source, xhtml: &str, block: usize, offset: usize) -> Anchor {
     Anchor {
+        raw_caret: None,
         book: crate::revision(xhtml),
         chapter: "document.xhtml".into(),
         revision: original.revision,

@@ -30,6 +30,7 @@ fn config() -> Settings {
 fn span(probe: &Probe, id: &str, word: &str) -> (usize, crate::selection::TextSelection) {
     let start = probe.fragment(id).unwrap();
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + word.len(),
         ..start.clone()
     };

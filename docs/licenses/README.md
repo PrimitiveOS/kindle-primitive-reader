@@ -51,6 +51,9 @@ Launcher. [Launcher artwork terms](https://github.com/PrimitiveOS/kindle-primiti
 - [RTF OEM mappings](RTF-OEM.txt) records Unicode's CP437/CP850 source tables
   and the accompanying [Unicode notice](UNICODE-DATA.txt). Distribution review
   remains open.
+- [Isolated lossless WebP](WEBP-LOSSLESS.txt) records the pinned decoder, local
+  allocation-limit patch and packaged MIT/Apache notices. Distribution review
+  remains open.
 - The MIT-licensed [vendored DjVu BZZ decoder](../../vendor/djvu-bzz) pins the
   upstream source and adds Reader's decoded-output limit.
 - [Rust Standard Library notices](runtime/RUST-COPYRIGHT.html),

@@ -256,6 +256,7 @@ impl NearbySearch {
                             continue;
                         };
                         let start = Anchor {
+                            raw_caret: None,
                             book: text.book,
                             chapter: text.href.clone(),
                             revision: source.revision,
@@ -264,6 +265,7 @@ impl NearbySearch {
                             illustration: None,
                         };
                         let end = Anchor {
+                            raw_caret: None,
                             offset: source_spans.last().unwrap().end,
                             ..start.clone()
                         };

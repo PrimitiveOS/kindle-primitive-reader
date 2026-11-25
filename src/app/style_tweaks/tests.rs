@@ -300,6 +300,7 @@ fn table_vertical_alignment_menu_applies_to_the_open_book_and_reopens_at_its_sou
         let probe = &app.active.as_ref().unwrap().reading.probe;
         let first = probe.fragment("linked").unwrap();
         let end = crate::Anchor {
+            raw_caret: None,
             offset: first.offset + "Harbor light".len(),
             ..first.clone()
         };
@@ -352,6 +353,7 @@ fn table_caption_hint_menu_moves_the_linked_caption_and_keeps_its_source() {
         let at = |id: &str, text: &str| {
             let first = probe.fragment(id).unwrap();
             let end = crate::Anchor {
+                raw_caret: None,
                 offset: first.offset + text.len(),
                 ..first.clone()
             };
@@ -411,6 +413,7 @@ fn pseudo_generated_menu_keeps_the_reading_place_and_source_selection() {
         let probe = &app.active.as_ref().unwrap().reading.probe;
         let first = probe.fragment("passage").unwrap();
         let end = crate::Anchor {
+            raw_caret: None,
             offset: first.offset + "Harbor lights".len(),
             ..first.clone()
         };

@@ -57,6 +57,7 @@ fn publisher_width_matches_the_pinned_web_text_boxes_and_restores_the_original_c
         assert_eq!(longest_band(&next, shade), (pinned_x, pinned_width));
         let start = plain.matches(phrase).remove(0);
         let end = Anchor {
+            raw_caret: None,
             offset: start.offset + phrase.len(),
             ..start.clone()
         };
@@ -136,6 +137,7 @@ fn publisher_width_cascades_margin_shorthand_and_wraps_only_supported_text_boxes
         "Centered title wraps because it has an authored column. Read this whole sentence.";
     let start = plain.matches(phrase).remove(0);
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + phrase.len(),
         ..start.clone()
     };
@@ -157,6 +159,7 @@ fn publisher_width_cascades_margin_shorthand_and_wraps_only_supported_text_boxes
     ] {
         let start = bounded.matches(name).remove(0);
         let end = Anchor {
+            raw_caret: None,
             offset: start.offset + name.len(),
             ..start.clone()
         };
@@ -188,6 +191,7 @@ fn constrained() -> Settings {
 fn find_quoted(probe: &Probe, label: &str) -> crate::selection::TextSelection {
     let start = probe.matches(label).remove(0);
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + label.len(),
         ..start.clone()
     };

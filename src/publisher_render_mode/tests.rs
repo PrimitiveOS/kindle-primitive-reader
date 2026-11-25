@@ -35,6 +35,7 @@ fn open(book: &str, chapter: usize, settings: Settings) -> Probe {
 fn mark(probe: &Probe, phrase: &str) -> (Anchor, usize, HighlightRect) {
     let start = probe.matches(phrase).remove(0);
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + phrase.len(),
         ..start.clone()
     };

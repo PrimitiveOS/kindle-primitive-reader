@@ -35,6 +35,7 @@ fn table_presentational_hints_change_rendered_positions_and_retain_the_link() {
     let measure = |probe: &Probe, id: &str, text: &str| {
         let first = probe.fragment(id).unwrap();
         let last = crate::Anchor {
+            raw_caret: None,
             offset: first.offset + text.len(),
             ..first.clone()
         };

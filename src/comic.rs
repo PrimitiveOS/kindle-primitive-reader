@@ -790,6 +790,9 @@ impl ImagePage {
     }
 
     fn decode_webp(bytes: &[u8]) -> Result<Self> {
+        if bytes.get(8..16) == Some(b"WEBPVP8L") {
+            return Self::decode_lossless_webp(bytes);
+        }
         let (width, height) = simple_webp_dimensions(bytes)?;
         let rgb_bytes = u64::from(width) * u64::from(height) * 3;
         let rgb = std::panic::catch_unwind(|| -> Result<Vec<u8>> {
@@ -811,6 +814,43 @@ impl ImagePage {
             .0
             .iter()
             .map(|&pixel| image::Rgb(pixel).to_luma().0[0])
+            .collect();
+        Self::from_grayscale(width, height, gray)
+    }
+
+    fn decode_lossless_webp(bytes: &[u8]) -> Result<Self> {
+        let (width, height, alpha) = simple_lossless_webp_dimensions(bytes)?;
+        let channels = if alpha { 4usize } else { 3usize };
+        let expected = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(channels))
+            .ok_or("The lossless WebP output is too large")?;
+        let pixels = std::panic::catch_unwind(|| -> Result<Vec<u8>> {
+            let mut decoder = reader_image_webp::WebPDecoder::new(Cursor::new(bytes))?;
+            decoder.set_memory_limit(MAX_DECODE_BYTES as usize);
+            if decoder.dimensions() != (width, height)
+                || decoder.has_alpha() != alpha
+                || decoder.is_animated()
+                || decoder.output_buffer_size() != Some(expected)
+            {
+                return Err("The lossless WebP decoder reports an unsupported image".into());
+            }
+            let mut output = vec![0; expected];
+            decoder.read_image(&mut output)?;
+            Ok(output)
+        })
+        .map_err(|_| "The lossless WebP frame could not be decoded")??;
+        let gray = pixels
+            .chunks_exact(channels)
+            .map(|pixel| {
+                let luma = u32::from(image::Rgb([pixel[0], pixel[1], pixel[2]]).to_luma().0[0]);
+                if alpha {
+                    let opacity = u32::from(pixel[3]);
+                    ((luma * opacity + 255 * (255 - opacity) + 127) / 255) as u8
+                } else {
+                    luma as u8
+                }
+            })
             .collect();
         Self::from_grayscale(width, height, gray)
     }
@@ -839,6 +879,42 @@ pub(crate) fn raster_input_limit(path: &Path) -> u64 {
         .and_then(|extension| extension.to_str())
         .and_then(crate::library::DocumentFormat::raster_for_extension)
         .map_or(MAX_IMAGE_BYTES, crate::library::DocumentFormat::max_bytes)
+}
+
+// Accept one bounded VP8L image only; extended metadata and animation remain
+// unsupported. Inspect dimensions before invoking the isolated decoder.
+fn simple_lossless_webp_dimensions(bytes: &[u8]) -> Result<(u32, u32, bool)> {
+    const HEADER: usize = 20;
+    const FRAME_HEADER: usize = 5;
+    if bytes.len() as u64 > MAX_WEBP_BYTES {
+        return Err("The WebP exceeds Reader's input size limit".into());
+    }
+    let header = bytes.get(..HEADER).ok_or("The WebP header is incomplete")?;
+    if !header.starts_with(b"RIFF") || &header[8..16] != b"WEBPVP8L" {
+        return Err("Reader requires one simple lossless WebP image".into());
+    }
+    let riff_size = u64::from(u32::from_le_bytes(header[4..8].try_into().unwrap()));
+    let chunk_size = u64::from(u32::from_le_bytes(header[16..20].try_into().unwrap()));
+    let padding = chunk_size % 2;
+    if riff_size + 8 != bytes.len() as u64
+        || HEADER as u64 + chunk_size + padding != bytes.len() as u64
+        || (padding != 0 && bytes.last() != Some(&0))
+        || chunk_size < FRAME_HEADER as u64
+    {
+        return Err("The lossless WebP chunk is incomplete or ambiguous".into());
+    }
+    let frame = &bytes[HEADER..HEADER + FRAME_HEADER];
+    let dimensions = u32::from_le_bytes(frame[1..5].try_into().unwrap());
+    if frame[0] != 0x2f || dimensions >> 29 != 0 {
+        return Err("The lossless WebP signature or version is unsupported".into());
+    }
+    let width = (dimensions & 0x3fff) + 1;
+    let height = ((dimensions >> 14) & 0x3fff) + 1;
+    let pixels = u64::from(width) * u64::from(height);
+    if width > 2048 || height > 2048 || pixels > 1_048_576 {
+        return Err("The lossless WebP exceeds Reader's decoded image limit".into());
+    }
+    Ok((width, height, dimensions & (1 << 28) != 0))
 }
 
 // Simple lossy WebP contains only RIFF/WEBP and one VP8 key-frame chunk.

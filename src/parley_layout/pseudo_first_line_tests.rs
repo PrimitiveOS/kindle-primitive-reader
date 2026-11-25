@@ -201,6 +201,7 @@ fn pseudo_first_line_preserves_logical_wrap_selection_and_independent_controls()
 
         let end = found(&styled, "Lagoon");
         let end = Anchor {
+            raw_caret: None,
             offset: end.offset + "Lagoon".len(),
             ..end
         };
@@ -216,6 +217,7 @@ fn pseudo_first_line_preserves_logical_wrap_selection_and_independent_controls()
             for word in ["Ternbird", "ساحل"] {
                 let target = found(probe, word);
                 let tail = Anchor {
+                    raw_caret: None,
                     offset: target.offset + word.len(),
                     ..target.clone()
                 };

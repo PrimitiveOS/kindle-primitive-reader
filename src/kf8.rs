@@ -1593,6 +1593,7 @@ pub(crate) mod tests {
                     .map(|word| (b.text.rfind(word).unwrap(), word))
                     .unwrap();
                 let a = crate::Anchor {
+                    raw_caret: None,
                     book: book.revision(),
                     chapter: book.chapters[ci].href.clone(),
                     revision: original.revision,
@@ -1601,6 +1602,7 @@ pub(crate) mod tests {
                     illustration: None,
                 };
                 let end = crate::Anchor {
+                    raw_caret: None,
                     offset: a.offset + word.len(),
                     ..a.clone()
                 };

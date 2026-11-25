@@ -122,12 +122,13 @@ impl Reader {
         let Some(inspection) = self.embedded_font_report.as_ref() else {
             return;
         };
+        let language = self.controls.interface_language;
         let panel = Panel::new(self);
         let bounds = panel.bounds;
         canvas.popup(bounds);
         canvas.text(
             Rect::new(bounds.x + 44, bounds.y + 34, bounds.w - 88, 60),
-            "Embedded fonts",
+            language.reading_font_text("Embedded fonts"),
             TextStyle::new(46).bold(),
         );
         let state = match inspection.report.scope {
@@ -138,12 +139,16 @@ impl Reader {
         };
         canvas.text(
             Rect::new(bounds.x + 46, bounds.y + 95, bounds.w - 92, 48),
-            state,
+            language.reading_font_text(state),
             CAPTION.ink(85),
         );
         if inspection.report.families.is_empty() && inspection.report.scope != Scope::Checking {
             let row = panel.row(0);
-            canvas.text(row, "No supported bundled fonts found", CAPTION);
+            canvas.text(
+                row,
+                language.reading_font_text("No supported bundled fonts found"),
+                CAPTION,
+            );
         }
         for (index, family) in inspection
             .report
@@ -170,17 +175,22 @@ impl Reader {
             );
             canvas.text(
                 Rect::new(row.right() - 244, row.y + 7, 244, row.h - 14),
-                status,
+                language.reading_font_text(status),
                 CAPTION.ink(85),
             );
         }
         if inspection.page > 0 {
-            canvas.button(panel.previous, "Previous", false, false);
+            canvas.button(
+                panel.previous,
+                language.reading_font_text("Previous"),
+                false,
+                false,
+            );
         }
         if inspection.page < inspection.last_page() {
-            canvas.button(panel.next, "Next", false, false);
+            canvas.button(panel.next, language.reading_font_text("Next"), false, false);
         }
-        canvas.button(panel.done, "Done", true, false);
+        canvas.button(panel.done, language.reading_font_text("Done"), true, false);
     }
 
     pub(in crate::app) fn embedded_font_report_press(

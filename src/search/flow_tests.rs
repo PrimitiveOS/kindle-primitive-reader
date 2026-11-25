@@ -112,6 +112,7 @@ fn directional_matches_cross_hidden_joins_in_both_directions_and_do_not_leak_con
     let source = canonical(&mut book);
     let block = &source.blocks[0];
     let origin = Anchor {
+        raw_caret: None,
         illustration: None,
         book: book.revision(),
         chapter: book.chapters[0].href.clone(),

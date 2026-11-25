@@ -90,7 +90,7 @@ pub(crate) enum CaretAffinity {
 /// the enclosing book, chapter, revision and block identity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RawCaret {
+pub struct RawCaret {
     pub(crate) raw_offset: usize,
     pub(crate) canonical_offset: usize,
     pub(crate) raw_sha256: [u8; 32],
@@ -245,6 +245,7 @@ impl Bound<'_> {
             || canonical.block != context.block
             || context.block != self.snapshot.block_key
             || canonical.illustration.is_some()
+            || canonical.raw_caret.is_some()
             || canonical.offset != anchor.caret.canonical_offset
             || canonical.chapter.is_empty()
             || canonical.chapter.len() > 4096

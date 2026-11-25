@@ -41,6 +41,7 @@ fn publisher_styles_off_changes_rendering_without_losing_anchors_links_or_images
     }
     let start = plain.matches("[1]").remove(0);
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + "[1]".len(),
         ..start.clone()
     };
@@ -206,6 +207,7 @@ fn vertical_pages_keep_links_selection_and_source_anchors() {
     assert_eq!(covered, total);
     let word = probe.matches("office").remove(0);
     let end = Anchor {
+        raw_caret: None,
         offset: word.offset + "office".len(),
         ..word.clone()
     };

@@ -106,6 +106,7 @@ pub mod selection;
 #[cfg(feature = "kindle")]
 mod session;
 mod source;
+pub use source::raw_whitespace::RawCaret;
 mod svg_image;
 #[cfg(feature = "kindle")]
 mod synthetic_pages;
@@ -758,6 +759,15 @@ impl Settings {
 /// Offsets are UTF-8 bytes in the whitespace-normalized text of a block.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Anchor {
+    /// Transient, source-verified raw whitespace location. Serialization and
+    /// deserialization reject it until versioned persistence is complete.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "reject_raw_caret_output",
+        deserialize_with = "reject_raw_caret_input"
+    )]
+    pub raw_caret: Option<source::raw_whitespace::RawCaret>,
     pub book: u64,
     pub chapter: String,
     pub revision: u64,
@@ -766,6 +776,24 @@ pub struct Anchor {
     /// Zero-based picture within a text-empty block holding several illustrations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub illustration: Option<usize>,
+}
+
+fn reject_raw_caret_output<S: serde::Serializer>(
+    _: &Option<RawCaret>,
+    _: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    Err(serde::ser::Error::custom(
+        "raw whitespace anchors cannot yet be persisted",
+    ))
+}
+
+fn reject_raw_caret_input<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<RawCaret>, D::Error> {
+    let _ = <serde::de::IgnoredAny as serde::Deserialize>::deserialize(deserializer)?;
+    Err(serde::de::Error::custom(
+        "raw whitespace anchors are not yet supported in saved data",
+    ))
 }
 
 struct Line {
@@ -2561,7 +2589,8 @@ impl Probe {
     }
 
     fn project_anchor(&self, anchor: &Anchor) -> Option<(usize, usize)> {
-        if self.book != anchor.book || self.chapter != anchor.chapter {
+        if anchor.raw_caret.is_some() || self.book != anchor.book || self.chapter != anchor.chapter
+        {
             return None;
         }
         let blocks = &self.source.blocks;
@@ -2754,6 +2783,7 @@ impl Probe {
 
     fn anchor(&self, block: usize, offset: usize) -> Anchor {
         Anchor {
+            raw_caret: None,
             illustration: None,
             book: self.book,
             chapter: self.chapter.clone(),

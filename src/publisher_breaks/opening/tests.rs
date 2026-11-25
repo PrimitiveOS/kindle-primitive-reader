@@ -81,6 +81,7 @@ fn publisher_opening_breaks_match_enhanced_native_directionality_and_resume() {
         let start = anchor(&regular, after);
         let first_word = after.split_whitespace().next().unwrap();
         let end = Anchor {
+            raw_caret: None,
             offset: start.offset + first_word.len(),
             ..start.clone()
         };

@@ -84,6 +84,7 @@ fn forced_page_margins_follow_both_unambiguous_publisher_directions() {
             assert!(retained.word_at(1, 72.0, 90.0).is_none());
             let start = anchor(&regular, next);
             let end = Anchor {
+                raw_caret: None,
                 offset: start.offset + "Margin".len(),
                 ..start.clone()
             };

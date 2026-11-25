@@ -4829,6 +4829,7 @@ mod tests {
         assert_eq!(engine.paragraphs[2].x, first.x);
         let start = probe.matches("lantern")[0].clone();
         let end = crate::Anchor {
+            raw_caret: None,
             offset: start.offset + "lantern".len(),
             ..start.clone()
         };
@@ -4963,6 +4964,7 @@ mod tests {
             assert_eq!(plain.matches(word), styled.matches(word));
             let start = styled.matches(word).remove(0);
             let end = crate::Anchor {
+                raw_caret: None,
                 offset: start.offset + word.len(),
                 ..start.clone()
             };
@@ -5432,6 +5434,7 @@ mod tests {
         let mut authored = open(false, 234);
         let start = auto.matches("hyphenation").remove(0);
         let end = crate::Anchor {
+            raw_caret: None,
             offset: start.offset + "hyphenation".len(),
             ..start.clone()
         };

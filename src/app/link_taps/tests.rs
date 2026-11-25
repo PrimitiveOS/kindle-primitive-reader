@@ -763,6 +763,7 @@ fn latest_bookmark_swipe_yields_to_links_and_uses_the_newest_reflow_annotation()
     assert!(!app.0.controls.swipe_to_latest_bookmark);
     let start = app.0.current_position().unwrap().anchor.unwrap();
     let end = crate::Anchor {
+        raw_caret: None,
         offset: start.offset + 1,
         ..start.clone()
     };

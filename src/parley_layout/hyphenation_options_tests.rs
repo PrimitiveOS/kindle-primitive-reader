@@ -161,6 +161,7 @@ fn assert_dictionary_rendering(specimen: &str, width: u32, words: &[&[&str]]) {
     for word in words.iter().flat_map(|language| language.iter().copied()) {
         let start = dictionary.matches(word).remove(0);
         let end = crate::Anchor {
+            raw_caret: None,
             offset: start.offset + word.len(),
             ..start.clone()
         };

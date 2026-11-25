@@ -93,6 +93,7 @@ fn mark(probe: &Probe, phrase: &str) -> (Anchor, usize, crate::selection::Highli
     assert_eq!(matches.len(), 1, "{phrase}");
     let start = matches.into_iter().next().unwrap();
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + phrase.len(),
         ..start.clone()
     };

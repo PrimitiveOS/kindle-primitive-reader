@@ -1,8 +1,9 @@
 # Lossless WebP allocation audit
 
-This is an implementation proposal, not enabled support. Reader currently
-accepts only a simple lossy VP8 still image through the comic/standalone image
-path. KOReader registers WebP through its picture provider and its base uses
+Reader has an unverified candidate for simple lossless VP8L still images in
+the comic/standalone image path, alongside its existing simple lossy VP8 path.
+The candidate uses a separately named pinned decoder copy with the group cap
+below; the existing decoder remains in use elsewhere. KOReader registers WebP through its picture provider and its base uses
 libwebp, including a frame interface. [Provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/picdocument.lua#L56-L62) · [KOReader WebP adapter](https://github.com/koreader/koreader-base/blob/6e4bc81af4e04f78d81677a323a780a71b29702a/ffi/pic.lua#L276-L308)
 
 ## Allocation points
@@ -11,9 +12,9 @@ The locked `image-webp` 0.2.4 decoder parses VP8L dimensions before reading
 the frame. A simple VP8L-only RIFF preflight must independently validate the
 single chunk, its exact length and padding, lossless signature and version,
 and width and height before calling the decoder. Reject VP8X, animation and
-metadata chunks in this first scope. Proposed bounds are 4 MiB compressed,
-2,048 per side, and **1,048,576 pixels**. Confirm the decoder dimensions and
-RGB/RGBA layout again before allocating its output.
+metadata chunks in this first scope. Bounds are 4 MiB compressed, 2,048 per
+side, and **1,048,576 pixels**. Reader checks decoder dimensions, alpha flag
+and RGB/RGBA output size before allocation; alpha is composited on white.
 
 The decoder may keep an RGBA scratch image of `4P` bytes for an opaque RGB
 result, in addition to a `3P` output; an alpha result uses a `4P` output.
@@ -31,7 +32,7 @@ group owns five Huffman trees, so input length and dimensions alone do not
 bound memory to an acceptable device budget. `WebPDecoder::set_memory_limit`
 limits ICC/EXIF/XMP reads; it does not cap these lossless allocations.
 
-A patched decoder must reject **more than 16 groups immediately after the
+The isolated candidate rejects **more than 16 groups immediately after the
 entropy map is decoded and before constructing the group vector**. With the
 existing 11-bit cache cap, the largest alphabet sizes are 2,328, 256, 256,
 256 and 40 symbols. Each tree's lookup table holds at most 1,024 `u32`s, and
@@ -52,10 +53,9 @@ and resource-limit tests.
 `src/online_lookup/media.rs` also accepts WebP from Wikipedia. Its limits cap
 response size, dimensions and output allocation, but do not reach the VP8L
 Huffman group allocation. A global crate patch would constrain this path and
-the general `image` dependency as well as standalone/comic pages. Any cap must
-be reviewed for these consumers and compatibility-tested against their real
-images. A separate patched package used only by the comic provider avoids
-changing them but duplicates codec code and leaves the online path unresolved.
+the general `image` dependency as well as standalone/comic pages. The separate
+patched package is used only by the comic provider, avoiding changes to those
+consumers but duplicating codec code and leaving the online path unresolved.
 An isolated, resource-limited decoder process is another option to evaluate.
 
 ## License and provenance
@@ -69,6 +69,8 @@ Its packaged `LICENSE-MIT` SHA-256 is
 `0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594`.
 The inspected upstream `src/lossless.rs` SHA-256 is
 `dd14e7d8dd72c8ec76ffc27b4847d58b9ff83818dc1b25e3f4cf6169be89ea1f`.
-Any vendored copy must retain the selected upstream license and required
-notices in source and release packages, identify the local patch, and update
-the third-party notice. No source has been copied or modified for this audit.
+The separately named vendored copy retains both upstream licenses, identifies
+the local patch and stages licenses and provenance in release packages.
+Distribution review remains open. No behavioral tests, memory measurements,
+simulator checks, Kindle checks or KOReader comparisons have been run for this
+candidate; the inventory above is not a proven process-wide memory bound.

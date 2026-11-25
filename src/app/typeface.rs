@@ -76,15 +76,22 @@ impl Reader {
     }
 
     pub(super) fn reading_font_rows(&self) -> Vec<Item> {
-        let mut items = vec![Item::new("Device fonts", Action::SetFont(None))];
+        let language = self.controls.interface_language;
+        let mut items = vec![Item::new(
+            language.reading_font_text("Device fonts"),
+            Action::SetFont(None),
+        )];
         items.extend(
             self.available_fonts
                 .iter()
                 .map(|filename| Item::new(filename, Action::SetFont(Some(filename.clone())))),
         );
         items.push(
-            Item::new("Add more fonts", Action::Heading)
-                .detail("Copy fonts to reader/data/fonts or a subfolder"),
+            Item::new(
+                language.reading_font_text("Add more fonts"),
+                Action::Heading,
+            )
+            .detail(language.reading_font_text("Copy fonts to reader/data/fonts or a subfolder")),
         );
         items
     }
@@ -109,6 +116,7 @@ impl Reader {
             .iter()
             .map(|path| path.display().to_string())
             .collect();
+        let language = self.controls.interface_language;
         let selected = self.selected_reading_font();
         canvas.card(group.bounds);
         for (index, item) in items.iter().enumerate() {
@@ -129,17 +137,17 @@ impl Reader {
                     let description = if preview.is_some() {
                         filename.as_str()
                     } else {
-                        "Preview unavailable"
+                        language.reading_font_text("Preview unavailable")
                     };
                     detail = Some(if selected == Some(filename.as_str()) {
-                        format!("Selected · {description}")
+                        format!("{} · {description}", language.reading_font_text("Selected"))
                     } else {
                         description.to_owned()
                     });
                     preview
                 }
                 Action::SetFont(None) if selected.is_none() => {
-                    detail = Some("Selected".into());
+                    detail = Some(language.reading_font_text("Selected").into());
                     None
                 }
                 _ => None,

@@ -51,6 +51,7 @@ fn anchor(probe: &Probe, phrase: &str) -> Anchor {
 fn selection(probe: &Probe, phrase: &str) -> (usize, crate::selection::HighlightRect) {
     let start = anchor(probe, phrase);
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + phrase.len(),
         ..start.clone()
     };

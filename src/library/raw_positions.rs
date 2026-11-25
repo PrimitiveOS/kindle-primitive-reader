@@ -5,6 +5,7 @@
 //! its canonical anchor; these helpers do not validate untrusted data.
 
 use super::ReadingPosition;
+use crate::selection::TextSelection;
 use crate::source::raw_whitespace::{CaretAffinity, RawCaret};
 
 /// Keep legacy positions distinct from raw positions until a source-bound
@@ -21,6 +22,28 @@ pub(super) fn same(
         _ => false,
     };
     canonical && left_raw == right_raw
+}
+
+/// Exact-range equality for additive highlight merges. Do not compare quotes:
+/// metadata updates may change those independently of their source endpoints.
+pub(crate) fn same_selection(
+    left: &TextSelection,
+    left_raw: Option<(&RawCaret, &RawCaret)>,
+    right: &TextSelection,
+    right_raw: Option<(&RawCaret, &RawCaret)>,
+) -> bool {
+    left.start == right.start && left.end == right.end && left_raw == right_raw
+}
+
+/// Annotation synchronization historically identifies a mark by its start.
+/// Preserve that rule for legacy input while keeping distinct raw starts apart.
+pub(crate) fn same_selection_start(
+    left: &TextSelection,
+    left_raw: Option<&RawCaret>,
+    right: &TextSelection,
+    right_raw: Option<&RawCaret>,
+) -> bool {
+    left.start == right.start && left_raw == right_raw
 }
 
 /// A tie-break for canonical positions with equal legacy ordering keys. The

@@ -424,6 +424,42 @@ const FOOTER_SETTINGS_TITLES: &[(&str, &str)] = &[
     ("12-hour clock", "Đồng hồ 12 giờ"),
 ];
 
+// Fixed reading-font chooser/report controls; font filenames and family names stay untouched.
+const READING_FONT_LABELS: &[(&str, &str)] = &[
+    ("Device fonts", "Phông chữ thiết bị"),
+    ("Add more fonts", "Thêm phông chữ"),
+    (
+        "Copy fonts to reader/data/fonts or a subfolder",
+        "Sao chép phông chữ vào reader/data/fonts hoặc thư mục con",
+    ),
+    ("Preview unavailable", "Không thể xem trước"),
+    ("Selected", "Đã chọn"),
+    ("Embedded fonts", "Phông chữ nhúng"),
+    (
+        "Checking the book’s font families…",
+        "Đang kiểm tra các họ phông của sách…",
+    ),
+    ("Usage in the whole book", "Mức sử dụng trong toàn bộ sách"),
+    (
+        "Usage checked in the current chapter",
+        "Đã kiểm tra sử dụng trong chương hiện tại",
+    ),
+    (
+        "Embedded fonts are off for this layout",
+        "Phông chữ nhúng đang tắt cho bố cục này",
+    ),
+    (
+        "No supported bundled fonts found",
+        "Không tìm thấy phông đi kèm được hỗ trợ",
+    ),
+    ("Used", "Được dùng"),
+    ("Not used", "Không được dùng"),
+    ("Usage unchecked", "Chưa kiểm tra sử dụng"),
+    ("Previous", "Trước"),
+    ("Next", "Tiếp"),
+    ("Done", "Xong"),
+];
+
 // Fixed footer settings values; user font names, custom text and numeric values stay untouched.
 const FOOTER_SETTINGS_STATUSES: &[(&str, &str)] = &[
     ("On", "Bật"),
@@ -553,6 +589,33 @@ const STATUS_BAR_SETTINGS_LABELS: &[(&str, &str)] = &[
         "Two percent signs stay literal",
         "Hai dấu phần trăm được giữ nguyên",
     ),
+    (
+        "About the top status header",
+        "Giới thiệu thanh trạng thái trên",
+    ),
+    (
+        "For reflowable books, the header can appear above the footer in page-turn mode. It hides in continuous scroll.",
+        "Với sách có thể dàn trang lại, thanh trên có thể hiện phía trên chân trang khi lật trang. Thanh này ẩn khi cuộn liên tục.",
+    ),
+    (
+        "Swipe up from the bottom and open Screen. Turn on Top status header for this book or set Default for new books. Choose what it shows here.",
+        "Vuốt lên từ dưới và mở Màn hình. Bật Thanh trạng thái trên cho sách này hoặc đặt mặc định cho sách mới. Chọn nội dung hiển thị tại đây.",
+    ),
+    ("Done", "Xong"),
+    (
+        "Default top status header",
+        "Thanh trạng thái trên mặc định",
+    ),
+    (
+        "Show the top status header when you open a new book in page-turn mode?",
+        "Hiện thanh trạng thái trên khi mở sách mới ở chế độ lật trang?",
+    ),
+    (
+        "Hide the top status header when you open a new book?",
+        "Ẩn thanh trạng thái trên khi mở sách mới?",
+    ),
+    ("Set as default", "Đặt làm mặc định"),
+    ("Cancel", "Hủy"),
 ];
 
 // Fixed selection settings labels; selected text and settings values stay untouched.
@@ -595,6 +658,16 @@ const SELECTION_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Style", "Kiểu"),
     ("Color", "Màu"),
     ("Style and color", "Kiểu và màu"),
+];
+
+// Fixed Page Browser action labels; page and publisher content stay untouched.
+const OVERVIEW_PAGE_ACTION_LABELS: &[(&str, &str)] = &[
+    ("Remove page bookmark", "Xóa dấu trang này"),
+    ("Bookmark page", "Đánh dấu trang"),
+    ("Edit chapter", "Sửa chương"),
+    ("Start chapter here", "Bắt đầu chương tại đây"),
+    ("Mark flow boundary", "Đánh dấu ranh giới luồng"),
+    ("Cancel", "Hủy"),
 ];
 
 // Fixed saved-mark list settings and paging controls; mark text stays untouched.
@@ -650,6 +723,11 @@ const BOOKMARK_LIST_SETTINGS_LABELS: &[(&str, &str)] = &[
     ),
     ("Previous", "Trước"),
     ("Next", "Tiếp"),
+    (
+        "No matching bookmarks, highlights, or notes",
+        "Không có dấu trang, đoạn tô sáng hoặc ghi chú phù hợp",
+    ),
+    ("No matching saved marks", "Không có dấu đã lưu phù hợp"),
 ];
 
 // Fixed end-of-document action and preference labels only. The destructive
@@ -2516,6 +2594,17 @@ impl InterfaceLanguage {
     }
 
     /// Translate only fixed end-of-document UI labels and status text.
+    pub(super) fn reading_font_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                READING_FONT_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
     pub(super) fn footer_settings_status<'a>(self, english: &'a str) -> &'a str {
         if self == Self::Vietnamese {
             if let Some((_, vietnamese)) = FOOTER_SETTINGS_STATUSES
@@ -2608,6 +2697,18 @@ impl InterfaceLanguage {
             }
         }
         value.to_owned()
+    }
+
+    pub(super) fn overview_page_action_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = OVERVIEW_PAGE_ACTION_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn bookmark_list_settings_text<'a>(self, english: &'a str) -> &'a str {
@@ -2823,6 +2924,8 @@ impl InterfaceLanguage {
             }
             "Use headings" => "Dùng tiêu đề",
             "Restore" => "Khôi phục",
+            "Building the outline" => "Đang tạo dàn mục",
+            "No readable chapters found" => "Không tìm thấy chương có thể đọc",
             "Building contents…" => "Đang tạo mục lục…",
             "Showing publisher contents" => "Đang hiện mục lục nhà xuất bản",
             "The alternative contents could not be built" => "Không thể tạo mục lục thay thế",

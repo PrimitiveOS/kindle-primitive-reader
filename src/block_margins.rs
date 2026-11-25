@@ -439,6 +439,7 @@ mod tests {
         let original = control.capture(0).unwrap();
         let start = control.matches("After joined margins")[0].clone();
         let end = Anchor {
+            raw_caret: None,
             offset: start.offset + "After".len(),
             ..start.clone()
         };
@@ -511,6 +512,7 @@ mod tests {
         let baseline = Probe::open(&book, Engine::Parley, &fonts, settings, 0).unwrap();
         let start = baseline.matches(phrase)[0].clone();
         let end = Anchor {
+            raw_caret: None,
             offset: start.offset + phrase.len(),
             ..start.clone()
         };

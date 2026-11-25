@@ -49,6 +49,7 @@ fn reading_style_table_nowrap_preserves_cascade_breaks_and_source_positions() {
         for (id, phrase) in phrases {
             let start = probe.fragment(id).unwrap();
             let end = Anchor {
+                raw_caret: None,
                 offset: start.offset + phrase.len(),
                 ..start.clone()
             };
@@ -76,10 +77,12 @@ fn reading_style_table_nowrap_preserves_cascade_breaks_and_source_positions() {
         let start = probe.fragment("storm").unwrap();
         for word in crate::selection::word_ranges(long) {
             let from = Anchor {
+                raw_caret: None,
                 offset: start.offset + word.start,
                 ..start.clone()
             };
             let to = Anchor {
+                raw_caret: None,
                 offset: start.offset + word.end,
                 ..start.clone()
             };
@@ -140,6 +143,7 @@ fn reading_style_table_nowrap_bounds_an_oversize_unbroken_word() {
     let probe = open(&markup, &Default::default());
     let start = probe.fragment("sample").unwrap();
     let end = Anchor {
+        raw_caret: None,
         offset: start.offset + word.len(),
         ..start.clone()
     };

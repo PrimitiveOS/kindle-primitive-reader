@@ -428,6 +428,7 @@ mod layout_tests {
         let mut baseline = opener(original, &plain, true);
         let anchor = got.matches("hyphenation").remove(0);
         let end = crate::Anchor {
+            raw_caret: None,
             offset: anchor.offset + "hyphenation".len(),
             ..anchor.clone()
         };

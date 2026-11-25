@@ -9519,13 +9519,18 @@ impl Reader {
         if rows.is_empty() {
             let empty = match self.screen {
                 Screen::MenuSearchResults => "No matching menu entries",
-                Screen::Bookmarks | Screen::FixedBookmarks | Screen::Highlights => {
-                    "No saved marks in this book"
-                }
-                Screen::BookmarkMatches => "No matching bookmarks, highlights, or notes",
-                Screen::BookmarkBrowser(bookmark_browser::Page::Results) => {
-                    "No matching saved marks"
-                }
+                Screen::Bookmarks | Screen::FixedBookmarks | Screen::Highlights => self
+                    .controls
+                    .interface_language
+                    .bookmark_list_settings_text("No saved marks in this book"),
+                Screen::BookmarkMatches => self
+                    .controls
+                    .interface_language
+                    .bookmark_list_settings_text("No matching bookmarks, highlights, or notes"),
+                Screen::BookmarkBrowser(bookmark_browser::Page::Results) => self
+                    .controls
+                    .interface_language
+                    .bookmark_list_settings_text("No matching saved marks"),
                 Screen::DictionaryHistory => "No lookups yet",
                 Screen::OnlineHistory => "No completed online lookups",
                 Screen::SearchHistory => "No recent searches",
@@ -9537,9 +9542,14 @@ impl Reader {
                         .as_ref()
                         .is_some_and(|outline| outline.deadline.is_some()) =>
                 {
-                    "Building the outline"
+                    self.controls
+                        .interface_language
+                        .contents_text("Building the outline")
                 }
-                Screen::GeneratedContents => "No readable chapters found",
+                Screen::GeneratedContents => self
+                    .controls
+                    .interface_language
+                    .contents_text("No readable chapters found"),
                 Screen::BookMap => self.controls.interface_language.book_map_text("No entries"),
                 _ => "No entries",
             };

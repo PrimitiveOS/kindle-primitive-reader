@@ -68,6 +68,7 @@ fn region(probe: &Probe, id: &str, phrase: &str) -> HighlightRect {
     let begin = probe.fragment(id).unwrap();
     assert_eq!(probe.page_for(&begin), Some(0));
     let end = crate::Anchor {
+        raw_caret: None,
         offset: begin.offset + phrase.len(),
         ..begin.clone()
     };
@@ -190,6 +191,7 @@ fn reading_style_link_ink_reaches_the_vertical_text_renderer() {
     let rects = |text: &str| {
         let start = probe.matches(text)[0].clone();
         let end = crate::Anchor {
+            raw_caret: None,
             offset: start.offset + text.len(),
             ..start.clone()
         };

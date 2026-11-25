@@ -178,6 +178,7 @@ mod tests {
         );
         assert!(styled.page_for(&old).is_none());
         let end = crate::Anchor {
+            raw_caret: None,
             offset: plain.source.blocks[0].text.len(),
             ..old.clone()
         };
@@ -217,6 +218,7 @@ mod tests {
         assert_eq!(styled.fragment("hidden"), Some(anchor.clone()));
         assert_eq!(plain.matches("GHOST"), [anchor.clone()]);
         let end = crate::Anchor {
+            raw_caret: None,
             offset: anchor.offset + "GHOST".len(),
             ..anchor.clone()
         };
@@ -278,6 +280,7 @@ mod tests {
             let a = plain.matches(word)[0].clone();
             assert_eq!(styled.matches(word), [a.clone()]);
             let end = crate::Anchor {
+                raw_caret: None,
                 offset: a.offset + word.len(),
                 ..a.clone()
             };
@@ -312,12 +315,14 @@ mod tests {
         );
         let book = shown.matches("BOOK")[0].clone();
         let end = crate::Anchor {
+            raw_caret: None,
             offset: book.offset + 4,
             ..book.clone()
         };
         let selection = shown.select_range(&book, &end).unwrap();
         let hidden_start = hidden.matches("BOOK")[0].clone();
         let hidden_end = crate::Anchor {
+            raw_caret: None,
             offset: hidden_start.offset + 4,
             ..hidden_start.clone()
         };
@@ -364,6 +369,7 @@ mod tests {
             Some(SourcePresentation::VisibilityHidden)
         );
         let end = crate::Anchor {
+            raw_caret: None,
             offset: ghost.offset + 5,
             ..ghost.clone()
         };
@@ -374,6 +380,7 @@ mod tests {
         assert!(!rects.is_empty());
         let visible_start = visible.matches("GHOST")[0].clone();
         let visible_end = crate::Anchor {
+            raw_caret: None,
             offset: visible_start.offset + 5,
             ..visible_start.clone()
         };
@@ -465,6 +472,7 @@ mod tests {
         );
         let cafe = probe.matches("cafe\u{301}")[0].clone();
         let text_end = crate::Anchor {
+            raw_caret: None,
             offset: block.text.find(' ').unwrap(),
             ..cafe.clone()
         };
@@ -507,6 +515,7 @@ mod tests {
             .next()
             .expect("preceding visible text");
         let last_character = crate::Anchor {
+            raw_caret: None,
             offset: visible.offset + "Visible before the marker.".len() - 1,
             ..visible.clone()
         };

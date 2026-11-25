@@ -127,6 +127,7 @@ fn combined_footnote_flows_leave_reference_bands_in_the_regular_reading_path() {
     );
     let first_note = reading.probe.matches("Red lantern schedule").remove(0);
     let end = crate::Anchor {
+        raw_caret: None,
         offset: first_note.offset + "Red lantern schedule".len(),
         ..first_note.clone()
     };

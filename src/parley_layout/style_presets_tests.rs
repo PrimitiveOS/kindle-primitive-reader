@@ -104,6 +104,7 @@ fn list_marker_presets_change_only_their_list_kind_and_keep_source_anchors() {
         ] {
             let start = probe.matches(phrase).pop().unwrap();
             let end = crate::Anchor {
+                raw_caret: None,
                 offset: start.offset + phrase.len(),
                 ..start.clone()
             };
@@ -178,6 +179,7 @@ fn reading_style_table_width_presets_keep_cells_spans_and_their_source_anchors()
         for (id, phrase) in phrases {
             let start = probe.fragment(id).unwrap();
             let end = crate::Anchor {
+                raw_caret: None,
                 offset: start.offset + phrase.len(),
                 ..start.clone()
             };
@@ -387,6 +389,7 @@ fn reading_style_cjk_grid_centers_lines_and_rounds_the_existing_signed_indent() 
     );
     let start = plain.fragment("sample").unwrap();
     let end = crate::Anchor {
+        raw_caret: None,
         offset: start.offset + "港".len(),
         ..start.clone()
     };
@@ -512,6 +515,7 @@ fn reading_style_monochrome_clears_backgrounds_and_paints_existing_borders_black
         assert_eq!(paragraph(&high_contrast, start.block).background, None);
         assert_eq!(base.matches(text), high_contrast.matches(text));
         let end = crate::Anchor {
+            raw_caret: None,
             offset: start.offset + text.len(),
             ..start.clone()
         };

@@ -63,6 +63,7 @@ fn pseudo_generated_publisher_geometry_preserves_source_search_copy_links_and_an
     let geometry = |probe: &Probe, start: &Anchor, word: &str| {
         let page = probe.page_for(start).unwrap();
         let end = Anchor {
+            raw_caret: None,
             offset: start.offset + word.len(),
             ..start.clone()
         };
@@ -72,6 +73,7 @@ fn pseudo_generated_publisher_geometry_preserves_source_search_copy_links_and_an
     };
     let original = "Alpha tide amber follows the pilings.";
     let end = Anchor {
+        raw_caret: None,
         offset: anchor.offset + original.len(),
         ..anchor.clone()
     };

@@ -275,6 +275,7 @@ impl Prepared {
         let caret = bound.caret_at(cursor.index(), affinity)?;
         let anchor = RawAnchor {
             canonical: crate::Anchor {
+                raw_caret: None,
                 book: context.book,
                 chapter: context.chapter.to_owned(),
                 revision: context.revision,
@@ -315,6 +316,7 @@ impl Prepared {
             .find(|line| line.bottom > page.start && line.top < page.end)?;
         let anchor = RawAnchor {
             canonical: crate::Anchor {
+                raw_caret: None,
                 book: context.book,
                 chapter: context.chapter.to_owned(),
                 revision: context.revision,

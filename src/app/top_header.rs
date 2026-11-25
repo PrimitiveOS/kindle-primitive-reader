@@ -104,15 +104,29 @@ impl Reader {
         if !self.top_header_about {
             return;
         }
+        let language = self.controls.interface_language;
         canvas.popup(ABOUT);
         canvas.text(
             ABOUT_TITLE,
-            "About the top status header",
+            language.status_bar_settings_text("About the top status header"),
             TextStyle::new(50).bold(),
         );
-        canvas.text(ABOUT_BEHAVIOR, ABOUT_BEHAVIOR_TEXT, BODY.lines(4));
-        canvas.text(ABOUT_SETUP, ABOUT_SETUP_TEXT, BODY.lines(4));
-        canvas.button(ABOUT_DONE, "Done", true, false);
+        canvas.text(
+            ABOUT_BEHAVIOR,
+            language.status_bar_settings_text(ABOUT_BEHAVIOR_TEXT),
+            BODY.lines(4),
+        );
+        canvas.text(
+            ABOUT_SETUP,
+            language.status_bar_settings_text(ABOUT_SETUP_TEXT),
+            BODY.lines(4),
+        );
+        canvas.button(
+            ABOUT_DONE,
+            language.status_bar_settings_text("Done"),
+            true,
+            false,
+        );
     }
 
     pub(super) fn top_header_about_input(&mut self, input: Input) -> Option<Change> {
@@ -143,7 +157,26 @@ impl Reader {
 
     pub(super) fn draw_top_header_default_prompt(&self, canvas: &mut Canvas) {
         if let Some(enabled) = self.top_header_default_prompt {
-            Self::top_header_default_sheet(enabled).draw(canvas, None);
+            let language = self.controls.interface_language;
+            let sheet = Sheet::centered(
+                Rect::new(0, 0, WIDTH as i32, HEIGHT as i32),
+                language.status_bar_settings_text("Default top status header"),
+                language.status_bar_settings_text(if enabled {
+                    "Show the top status header when you open a new book in page-turn mode?"
+                } else {
+                    "Hide the top status header when you open a new book?"
+                }),
+                language.status_bar_settings_text("Set as default"),
+            );
+            sheet.draw(canvas, None);
+            if !language.is_english() {
+                canvas.button(
+                    sheet.button(SheetAction::Cancel),
+                    language.status_bar_settings_text("Cancel"),
+                    false,
+                    false,
+                );
+            }
         }
     }
 

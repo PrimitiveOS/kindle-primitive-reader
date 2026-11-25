@@ -505,6 +505,7 @@ fn idpf_embedded_faces_restore_original_reading_pixels_and_exclude_nonfonts() {
         assert_eq!(
             restored,
             crate::Anchor {
+                raw_caret: None,
                 book: restored.book,
                 ..anchor.clone()
             }

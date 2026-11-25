@@ -24,6 +24,7 @@ fn config() -> Settings {
 fn placed(p: &Probe, id: &str, word: &str) -> (Anchor, crate::selection::HighlightRect) {
     let start = p.fragment(id).unwrap();
     let e = Anchor {
+        raw_caret: None,
         offset: start.offset + word.len(),
         ..start.clone()
     };
@@ -272,6 +273,7 @@ fn compares_original_table_borders_and_source_geometry() {
             assert_eq!(found.len(), 1);
             let start = found[0].clone();
             let end = Anchor {
+                raw_caret: None,
                 offset: start.offset + phrase.split_whitespace().next().unwrap().len(),
                 ..start.clone()
             };

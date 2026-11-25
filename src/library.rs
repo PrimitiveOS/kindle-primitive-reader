@@ -13,7 +13,7 @@ pub(crate) mod metadata_archive;
 mod nearby_custom_metadata;
 #[cfg(feature = "kindle")]
 mod odt_migration;
-mod raw_positions;
+pub(crate) mod raw_positions;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
@@ -2927,8 +2927,7 @@ pub(crate) fn merge_text_marks(
         if !valid_highlight(mark) {
             summary.skipped += 1;
         } else if let Some(existing) = target.highlights.iter_mut().find(|existing| {
-            existing.selection.start == mark.selection.start
-                && existing.selection.end == mark.selection.end
+            raw_positions::same_selection(&existing.selection, None, &mark.selection, None)
         }) {
             merge_created_at(&mut existing.created_at, mark.created_at, summary);
             merge_chapter_title(&mut existing.chapter_title, mark.chapter_title.as_deref());
@@ -3623,6 +3622,7 @@ mod tests {
         assert_ne!(id, other_id);
 
         let anchor = Anchor {
+            raw_caret: None,
             illustration: None,
             book: 1,
             chapter: "chapter.xhtml".into(),
@@ -3655,6 +3655,7 @@ mod tests {
             selection: TextSelection {
                 start: anchor.clone(),
                 end: Anchor {
+                    raw_caret: None,
                     offset: 8,
                     ..anchor
                 },
@@ -4239,6 +4240,7 @@ mod tests {
         let id = target.identify(&target_entry).unwrap();
         assert_eq!(id, source.identify(&source_entry).unwrap());
         let anchor = |offset| Anchor {
+            raw_caret: None,
             illustration: None,
             book: 1,
             chapter: "chapter.xhtml".into(),

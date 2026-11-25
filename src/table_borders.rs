@@ -849,6 +849,7 @@ mod flow_tests {
             assert_eq!(matches.len(), 1, "{word}");
             let start = matches.pop().unwrap();
             let end = Anchor {
+                raw_caret: None,
                 offset: start.offset + word.len(),
                 ..start.clone()
             };

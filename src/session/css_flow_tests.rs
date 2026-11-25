@@ -73,6 +73,7 @@ fn css_restore_retains_canonical_focus_across_scroll_spread_reflow_and_reopen_un
         let mut reading = Reading::open(config).unwrap();
         let saved = reading.probe.matches("HIDDEN SAVED PASSAGE")[0].clone();
         let end = Anchor {
+            raw_caret: None,
             offset: saved.offset + 20,
             ..saved.clone()
         };

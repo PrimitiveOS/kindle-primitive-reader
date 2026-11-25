@@ -527,6 +527,7 @@ mod tests {
                 .unwrap();
             let offset = block.text.find("six").unwrap();
             let anchor = |offset| crate::Anchor {
+                raw_caret: None,
                 book: band.layout.note.book,
                 chapter: band.layout.note.chapter.clone(),
                 revision: band.layout.note.source.revision,

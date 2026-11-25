@@ -38,7 +38,10 @@ publication, or project an existing canonical anchor to a raw edge without
 rewriting the saved anchor. A transient selection consumer can validate two
 raw anchors in the same captured block and return their exact raw substring;
 cross-block and invalid selections fail closed. It is not connected to the UI
-or persistence. Before raw carets are
+or persistence. The canonical `Anchor` type has an optional transient raw
+caret slot, but serialization fails if it is populated, deserialization rejects
+the field if present, and the canonical page resolver refuses such anchors.
+Legacy anchors serialize exactly as before; this is not v2 persistence. Before raw carets are
 persisted, the library and backup format must support version 2, preserve an
 atomic version-1 backup and reject unsupported raw data. The existing version-1
 loader rejects other library/backup versions, which prevents older builds

@@ -50,6 +50,7 @@ fn parent_margin_groups_match_the_native_contributions_and_preserve_text_positio
         .select_range(
             &anchor,
             &Anchor {
+                raw_caret: None,
                 offset: anchor.offset + "Nested".len(),
                 ..anchor.clone()
             },

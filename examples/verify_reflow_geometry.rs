@@ -133,6 +133,7 @@ fn table(args: &[PathBuf], chapter: usize) -> Result<serde_json::Value> {
     for (anchor, term) in row.into_iter().zip(&terms) {
         let page = probe.page_for(anchor).ok_or("no page for table cell")?;
         let end = Anchor {
+            raw_caret: None,
             offset: anchor.offset + term.len(),
             ..anchor.clone()
         };

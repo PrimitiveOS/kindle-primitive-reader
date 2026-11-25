@@ -123,6 +123,7 @@ impl CharacterPages {
 
     pub(crate) fn anchor(&self, chapter: usize, point: TextPoint, href: &str) -> Option<Anchor> {
         Some(Anchor {
+            raw_caret: None,
             book: self.book,
             chapter: href.to_owned(),
             revision: self.chapters.get(chapter)?.revision,

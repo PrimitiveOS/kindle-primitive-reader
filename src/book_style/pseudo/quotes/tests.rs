@@ -175,6 +175,7 @@ fn position(probe: &Probe, phrase: &str) -> (Anchor, crate::selection::Highlight
     assert_eq!(matches.len(), 1, "{phrase}");
     let anchor = matches.pop().unwrap();
     let end = Anchor {
+        raw_caret: None,
         offset: anchor.offset + phrase.len(),
         ..anchor.clone()
     };

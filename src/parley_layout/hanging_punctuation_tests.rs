@@ -80,6 +80,7 @@ fn hanging_punctuation_uses_physical_edges_without_moving_source_boundaries() {
     let p = paragraph(&on, "Harbor opening marker");
     let start = on.anchor(p.key, 0);
     let end = Anchor {
+        raw_caret: None,
         offset: '“'.len_utf8(),
         ..start.clone()
     };
