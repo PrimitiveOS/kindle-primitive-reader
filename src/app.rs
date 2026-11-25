@@ -8427,7 +8427,7 @@ impl Reader {
                 }
             }
             if let Some(popup) = &self.link_popup {
-                popup.draw(canvas);
+                popup.draw(canvas, self.controls.interface_language);
             }
             if self.screen == Screen::OnlineLookup {
                 self.draw_online(canvas);
@@ -8613,10 +8613,14 @@ impl Reader {
                 self.draw_search_steps(canvas);
             }
             if let Some(note) = &self.footnote {
-                note.draw(canvas, self.uses_night_pages());
+                note.draw(
+                    canvas,
+                    self.uses_night_pages(),
+                    self.controls.interface_language,
+                );
             }
             if let Some(popup) = &self.link_popup {
-                popup.draw(canvas);
+                popup.draw(canvas, self.controls.interface_language);
             }
             if self.screen == Screen::OnlineLookup {
                 self.draw_online(canvas);

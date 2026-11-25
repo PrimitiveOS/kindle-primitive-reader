@@ -1416,6 +1416,55 @@ impl InterfaceLanguage {
         }
     }
 
+    /// Fixed footnote/link controls only; never pass document text or addresses.
+    pub(super) fn navigation_popup_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Footnote" => "Chú thích",
+            "Close" => "Đóng",
+            "Open in book" => "Mở trong sách",
+            "Look up" => "Tra cứu",
+            "Scan link" => "Quét liên kết",
+            "Back" => "Quay lại",
+            "Link address" => "Địa chỉ liên kết",
+            "Copy" => "Sao chép",
+            "QR code" => "Mã QR",
+            "Next" => "Tiếp",
+            _ => english,
+        }
+    }
+
+    /// Fixed Skim overlay labels, never chapter or publisher page labels.
+    pub(super) fn skim_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Skim" => "Đọc lướt",
+            "Page" => "Trang",
+            "of" => "trên",
+            "No open document" => "Chưa mở tài liệu",
+            "Chapter back" => "Chương trước",
+            "Mark back" => "Dấu trước",
+            "Saved" => "Đã lưu",
+            "Save page" => "Lưu trang",
+            "Mark next" => "Dấu tiếp",
+            "Chapter next" => "Chương tiếp",
+            "Previous  ›" => "Trước  ›",
+            "‹  Previous" => "‹  Trước",
+            "Go to" => "Đến trang",
+            "‹  Next" => "‹  Tiếp",
+            "Next  ›" => "Tiếp  ›",
+            "Cancel" => "Hủy",
+            "Origin" => "Vị trí gốc",
+            "Waiting…" => "Đang chờ…",
+            "Read here" => "Đọc tại đây",
+            _ => english,
+        }
+    }
+
     /// Return the canonical English search alias for a known Screen-panel row.
     /// This deliberately excludes user-supplied names and other menu surfaces.
     pub(super) fn screen_row_english<'a>(self, label: &'a str) -> &'a str {

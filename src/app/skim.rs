@@ -507,10 +507,12 @@ impl Reader {
     }
 
     fn skim_label(&self) -> String {
+        let language = self.controls.interface_language;
         if let Some(fixed) = &self.fixed {
             format!(
-                "{} of {}",
+                "{} {} {}",
                 fixed_page_label(&fixed.reading, fixed.reading.page()),
+                language.skim_text("of"),
                 fixed.reading.count(),
             )
         } else if let Some(active) = &self.active {
@@ -522,22 +524,31 @@ impl Reader {
                 |chapter| (chapter.page, chapter.pages),
             );
             if title.is_empty() {
-                format!("Page {page} of {count}")
+                format!(
+                    "{} {page} {} {count}",
+                    language.skim_text("Page"),
+                    language.skim_text("of")
+                )
             } else {
-                format!("{title} · Page {page} of {count}")
+                format!(
+                    "{title} · {} {page} {} {count}",
+                    language.skim_text("Page"),
+                    language.skim_text("of")
+                )
             }
         } else {
-            "No open document".into()
+            language.skim_text("No open document").into()
         }
     }
 
     pub(super) fn draw_skim(&self, canvas: &mut Canvas) {
+        let language = self.controls.interface_language;
         let progress = self.skim_progress();
         let layout = self.skim_layout();
         let panel = layout.panel;
         let track = layout.track;
         canvas.popup(panel);
-        let title = format!("Skim  ·  {}", self.skim_label());
+        let title = format!("{}  ·  {}", language.skim_text("Skim"), self.skim_label());
         canvas.text(
             Rect::new(panel.x + 28, panel.y + 20, panel.w - 56, 46),
             self.notice.as_deref().unwrap_or(&title),
@@ -601,7 +612,7 @@ impl Reader {
             } else {
                 FIRST_PAGE
             },
-            "Chapter back",
+            language.skim_text("Chapter back"),
             false,
         );
         skim_icon_button(
@@ -612,7 +623,7 @@ impl Reader {
             } else {
                 MARK_BACK
             },
-            "Mark back",
+            language.skim_text("Mark back"),
             false,
         );
         let marked = self.page_is_bookmarked();
@@ -620,7 +631,7 @@ impl Reader {
             canvas,
             layout.marks[1],
             BOOKMARK,
-            if marked { "Saved" } else { "Save page" },
+            language.skim_text(if marked { "Saved" } else { "Save page" }),
             marked,
         );
         skim_icon_button(
@@ -631,7 +642,7 @@ impl Reader {
             } else {
                 MARK_FORWARD
             },
-            "Mark next",
+            language.skim_text("Mark next"),
             false,
         );
         skim_icon_button(
@@ -642,38 +653,38 @@ impl Reader {
             } else {
                 LAST_PAGE
             },
-            "Chapter next",
+            language.skim_text("Chapter next"),
             false,
         );
         canvas.button(layout.previous_ten, "-10", false, false);
         canvas.button(
             layout.previous,
             if layout.mirrored {
-                "Previous  ›"
+                language.skim_text("Previous  ›")
             } else {
-                "‹  Previous"
+                language.skim_text("‹  Previous")
             },
             false,
             false,
         );
-        canvas.button(layout.number, "Go to", false, false);
+        canvas.button(layout.number, language.skim_text("Go to"), false, false);
         canvas.button(
             layout.next,
             if layout.mirrored {
-                "‹  Next"
+                language.skim_text("‹  Next")
             } else {
-                "Next  ›"
+                language.skim_text("Next  ›")
             },
             false,
             false,
         );
         canvas.button(layout.next_ten, "+10", false, false);
-        canvas.button(layout.cancel, "Cancel", false, false);
-        canvas.button(layout.origin, "Origin", false, false);
+        canvas.button(layout.cancel, language.skim_text("Cancel"), false, false);
+        canvas.button(layout.origin, language.skim_text("Origin"), false, false);
         let waiting = self.skim.as_ref().is_some_and(|skim| skim.commit_when_idle);
         canvas.button(
             layout.commit,
-            if waiting { "Waiting…" } else { "Read here" },
+            language.skim_text(if waiting { "Waiting…" } else { "Read here" }),
             true,
             false,
         );

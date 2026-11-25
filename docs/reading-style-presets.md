@@ -98,10 +98,12 @@ fall back to zero. `::first-letter` and `::first-line` may specify their own
 spacing, including inherited first-line descendants; absolute units follow the
 reading DPI. Relative pseudo-element lengths use Reader's existing pseudo font
 scale, which may differ from KOReader's logical-font metrics. Text and source
-anchors remain unchanged. Pseudo-element reset keywords, generated-content
-declarations, ruby annotations, vertical text and Blitz rendering do not yet
-have equivalent support. The visual result and precise KOReader parity have
-not yet been tested.
+anchors remain unchanged. Ruby annotations use the same computed spacing and
+tracking as ordinary runs. Relative letter spacing declared directly on ruby
+without an explicit ruby font size can differ from the fallback visual font
+scale. Pseudo-element reset keywords, generated-content declarations,
+vertical text and Blitz rendering do not yet have equivalent support. The
+visual result and precise KOReader parity have not yet been tested.
 [CRE inherited value](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L11524-L11526) · [CRE text layout](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L4568-L4574)
 
 **Ignore publisher line-break restrictions** applies KOReader's non-important
@@ -124,6 +126,14 @@ existing 48% fallback remains. Reader's font override and bold-text settings
 still apply, and complex ruby or other renderers are not covered. The
 annotation styling leaves source text and saved anchors unchanged. Simulator
 and Kindle behavior have not yet been verified. [Pinned ruby tweaks](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L384-L400)
+
+An annotation wider than its base may extend into the neighboring annotation
+space when it fits inside the reading column. Reader avoids overlapping two
+painted ruby annotations on the same line; a later conflicting annotation,
+one wider than the column, or one without sufficient vertical clearance is
+omitted. This bounded layout does not widen or reflow the base to fit the
+annotation. Complex ruby arrangements remain outside the supported subset.
+These changes have not yet been built or behaviorally tested.
 
 **Allow hyphenation on all text** overrides publisher hyphenation restrictions
 and excludes heading elements, using KOReader's selectors. Automatic

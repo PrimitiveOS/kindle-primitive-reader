@@ -107,14 +107,20 @@ impl Footnote {
         Rect::new(p.right() - 636, p.y + 10, 178, 58)
     }
 
-    pub(super) fn draw(&self, canvas: &mut Canvas, dark: bool) {
+    pub(super) fn draw(
+        &self,
+        canvas: &mut Canvas,
+        dark: bool,
+        language: super::interface_language::InterfaceLanguage,
+    ) {
         let panel = self.panel();
         canvas.popup(panel);
         let title = if self.preview.page_count() == 1 {
-            "Footnote".to_owned()
+            language.navigation_popup_text("Footnote").to_owned()
         } else {
             format!(
-                "Footnote  ·  {} / {}",
+                "{}  ·  {} / {}",
+                language.navigation_popup_text("Footnote"),
                 self.page + 1,
                 self.preview.page_count()
             )
@@ -124,10 +130,25 @@ impl Footnote {
             &title,
             TextStyle::new(29).bold(),
         );
-        canvas.button(self.close_button(), "Close", false, false);
-        canvas.button(self.follow_button(), "Open in book", false, false);
+        canvas.button(
+            self.close_button(),
+            language.navigation_popup_text("Close"),
+            false,
+            false,
+        );
+        canvas.button(
+            self.follow_button(),
+            language.navigation_popup_text("Open in book"),
+            false,
+            false,
+        );
         if self.selection.is_some() {
-            canvas.button(self.lookup_button(), "Look up", false, false);
+            canvas.button(
+                self.lookup_button(),
+                language.navigation_popup_text("Look up"),
+                false,
+                false,
+            );
         }
         let mut frame = self.frame.clone();
         if dark && !self.preview.settings.invert_night_images {

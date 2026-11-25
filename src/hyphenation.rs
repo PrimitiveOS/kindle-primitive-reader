@@ -75,6 +75,7 @@ pub(crate) enum Dictionary {
     Friulian,
     Esperanto,
     Georgian,
+    Greek,
     Latin,
     LiturgicalLatin,
     Slovak,
@@ -84,6 +85,9 @@ pub(crate) enum Dictionary {
 impl Dictionary {
     pub(crate) fn for_language(lang: Option<Language>) -> Option<Self> {
         let lang = lang?;
+        if matches!(lang.language(), "el" | "ell") {
+            return matches!(lang.script(), None | Some("Grek")).then_some(Self::Greek);
+        }
         if lang.language() == "ka" {
             return matches!(lang.script(), None | Some("Geor")).then_some(Self::Georgian);
         }
@@ -180,6 +184,7 @@ impl Dictionary {
             Self::Friulian => "Friulian",
             Self::Esperanto => "Esperanto",
             Self::Georgian => "Georgian",
+            Self::Greek => "Greek",
             Self::Latin => "Latin",
             Self::LiturgicalLatin => "Latin (liturgical)",
             Self::Slovak => "Slovak",
@@ -220,6 +225,7 @@ impl Dictionary {
             | Self::Slovenian => HyphenationLimits { left: 2, right: 2 },
             Self::French => HyphenationLimits { left: 2, right: 1 },
             Self::Georgian => HyphenationLimits { left: 1, right: 2 },
+            Self::Greek => HyphenationLimits { left: 1, right: 1 },
             Self::American
             | Self::British
             | Self::Portuguese
@@ -265,6 +271,7 @@ impl Dictionary {
             Self::Friulian => &FRIULIAN,
             Self::Esperanto => &ESPERANTO,
             Self::Georgian => &GEORGIAN,
+            Self::Greek => &GREEK,
             Self::Latin => &LATIN,
             Self::LiturgicalLatin => &LITURGICAL_LATIN,
             Self::Basque => {
@@ -511,8 +518,11 @@ fn word_breaks_with_limits(
     let mut offset = 0;
     for part in word.split_inclusive(separators) {
         let text = part.trim_end_matches(separators);
-        if matches!(locale, Dictionary::Latin | Dictionary::LiturgicalLatin) {
-            latin_pattern_breaks(patterns, text, limits, |at| emit(offset + at));
+        if matches!(
+            locale,
+            Dictionary::Latin | Dictionary::LiturgicalLatin | Dictionary::Greek
+        ) {
+            decomposed_pattern_breaks(patterns, text, limits, |at| emit(offset + at));
         } else {
             pattern_breaks(
                 patterns,
@@ -528,9 +538,9 @@ fn word_breaks_with_limits(
     }
 }
 
-// Latin pattern rules may describe several Unicode scalars in a single
-// grapheme. Match NFD scalars, but emit only original grapheme boundaries.
-fn latin_pattern_breaks(
+// Some pattern rules describe several Unicode scalars in a single grapheme.
+// Match NFD scalars, but emit only original grapheme boundaries.
+fn decomposed_pattern_breaks(
     patterns: &Patterns,
     word: &str,
     limits: HyphenationLimits,

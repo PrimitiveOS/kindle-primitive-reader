@@ -117,6 +117,11 @@ These changes pass a Mac build-only check. Exact Catalan middle-dot line breaks,
 complex ruby, complete interface translation and behavioral validation remain
 open.
 
+Greek patterns based on KOReader's pinned Ancient Greek source, bounded ruby
+overhang and Vietnamese footnote, link and Skim controls are implemented and
+pass a Mac build-only check. Greek apostrophe/final-sigma cases, ruby collisions,
+visual fit and behavioral/device comparisons remain open.
+
 The current local candidate also includes Croatian hyphenation, independent
 heading-level page-break presets, and Vietnamese dictionary picker controls.
 It passes a Mac build-only check; behavior, layout and device comparisons are

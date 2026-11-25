@@ -99,16 +99,18 @@ fn is_mark(ch: char) -> bool {
 // Normalize only runs between pattern weights: boundaries with explicit
 // weights must retain their position while canonically equivalent unweighted
 // combining sequences receive the same trie representation as input words.
-fn latin_rules(tex: &str) -> Vec<String> {
+fn decomposed_rules(tex: &str, omit_unsupported: bool) -> Vec<String> {
     let nfd = DecomposingNormalizer::new_nfd();
     let mut rules = Vec::new();
     for pattern in group(tex, "\\patterns{").split_whitespace() {
-        assert!(pattern.chars().any(|ch| ch.is_ascii_digit()));
-        assert!(
-            pattern.chars().all(|ch| {
-                ch.is_alphabetic() || ch.is_ascii_digit() || ch == '.' || is_mark(ch)
-            })
-        );
+        let supported = pattern.chars().any(|ch| ch.is_ascii_digit())
+            && pattern
+                .chars()
+                .all(|ch| ch.is_lowercase() || ch.is_ascii_digit() || ch == '.' || is_mark(ch));
+        if !supported && omit_unsupported {
+            continue;
+        }
+        assert!(supported, "Unsupported decomposed hyphenation pattern");
         let mut normalized = String::new();
         let mut segment = String::new();
         for ch in pattern.chars() {
@@ -266,14 +268,15 @@ fn main() {
         ("eu", "BASQUE"),
         ("fur", "FRIULIAN"),
         ("ka", "GEORGIAN"),
+        ("grc", "GREEK"),
         ("la-x-classic", "LATIN"),
         ("la-x-liturgic", "LITURGICAL_LATIN"),
         ("sk", "SLOVAK"),
         ("sl", "SLOVENIAN"),
     ] {
         let tex = tex_source(&format!("assets/hyphenation/hyph-{tag}.tex"));
-        let mut rules = if matches!(tag, "la-x-classic" | "la-x-liturgic") {
-            latin_rules(&tex)
+        let mut rules = if matches!(tag, "la-x-classic" | "la-x-liturgic" | "grc") {
+            decomposed_rules(&tex, tag == "grc")
         } else {
             stock_word_rules(&tex, tag == "uk")
         };

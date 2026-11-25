@@ -39,6 +39,7 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Friulian | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
 | Esperanto | 2 / 2 | Upstream 2020 pattern set matches pinned stock entries; behavior comparison pending |
 | Georgian | 1 / 2 | Upstream version 0.3 single-word patterns; stock comparison pending |
+| Greek | 1 / 1 | KOReader Ancient Greek pattern source; apostrophe rules and behavior pending |
 | Latin | 2 / 2 | Classical upstream patterns; combining-mark behavior unverified |
 | Latin (liturgical) | 2 / 2 | Liturgical upstream patterns; combining-mark behavior unverified |
 | Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
@@ -334,3 +335,15 @@ Latin variants. Exact stock rule/behavior comparison, canonical combining-mark
 cases, mixed-language behavior and real-document checks remain open; this
 change has not been built or tested on the computer or Kindle.
 [Latin terms](licenses/HYPHENATION-LA.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+
+Greek (`el` / `ell`, optionally `Grek`) uses the 2011 Ancient Greek pattern
+source selected by the pinned KOReader dictionary, with 1 / 1 minima. The
+unmodified LPPL source is included in release packages. The upstream and
+pinned KOReader contain the same 4,296 pattern strings after converting their
+word-boundary notation; Reader currently excludes 356 patterns containing
+apostrophe-like characters. The remaining rules use bounded NFD matching and
+emit only original UTF-8 grapheme boundaries. Greek final-sigma case behavior,
+apostrophe rules, compiled-rule comparison and real-document behavior remain
+open; this change has not been built or tested on the computer or Kindle.
+[Greek terms](licenses/HYPHENATION-EL.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)

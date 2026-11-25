@@ -27,17 +27,26 @@ pub(super) struct LinkPopup {
 }
 
 impl LinkPopup {
-    pub(super) fn draw(&self, canvas: &mut Canvas) {
+    pub(super) fn draw(
+        &self,
+        canvas: &mut Canvas,
+        language: super::interface_language::InterfaceLanguage,
+    ) {
         let layout = NavigationLayout::new(canvas.bounds().w, canvas.bounds().h);
         let place = |rect| layout.centered(rect);
         if let Some(code) = &self.qr {
             canvas.popup(place(QR_PANEL));
             canvas.text(
                 place(Rect::new(114, 294, 814, 75)),
-                "Scan link",
+                language.navigation_popup_text("Scan link"),
                 TextStyle::new(41).bold(),
             );
-            canvas.button(place(QR_CLOSE), "Back", false, false);
+            canvas.button(
+                place(QR_CLOSE),
+                language.navigation_popup_text("Back"),
+                false,
+                false,
+            );
             // Model 2 QR codes require four light modules on each side.
             let scale = 848 / (code.size() + 8);
             let size = scale * (code.size() + 8);
@@ -64,21 +73,46 @@ impl LinkPopup {
         canvas.popup(place(PANEL));
         canvas.text(
             place(Rect::new(114, 527, 814, 75)),
-            "Link address",
+            language.navigation_popup_text("Link address"),
             TextStyle::new(41).bold(),
         );
-        canvas.button(place(CLOSE), "Close", false, false);
+        canvas.button(
+            place(CLOSE),
+            language.navigation_popup_text("Close"),
+            false,
+            false,
+        );
         let style = TextStyle::new(34).lines(3).break_long_words();
         let pages = canvas.text_pages(place(ADDRESS), &self.address, style);
         self.pages.set(pages.len().max(1));
         if let Some(range) = pages.get(self.page) {
             canvas.text(place(ADDRESS), &self.address[range.clone()], style);
         }
-        canvas.button(place(COPY), "Copy", false, false);
-        canvas.button(place(CODE), "QR code", false, false);
+        canvas.button(
+            place(COPY),
+            language.navigation_popup_text("Copy"),
+            false,
+            false,
+        );
+        canvas.button(
+            place(CODE),
+            language.navigation_popup_text("QR code"),
+            false,
+            false,
+        );
         if self.pages.get() > 1 {
-            canvas.button(place(PREV), "Back", false, false);
-            canvas.button(place(NEXT), "Next", false, false);
+            canvas.button(
+                place(PREV),
+                language.navigation_popup_text("Back"),
+                false,
+                false,
+            );
+            canvas.button(
+                place(NEXT),
+                language.navigation_popup_text("Next"),
+                false,
+                false,
+            );
         }
         if let Some(message) = self.message {
             canvas.text(place(Rect::new(114, 750, 1038, 53)), message, CAPTION);

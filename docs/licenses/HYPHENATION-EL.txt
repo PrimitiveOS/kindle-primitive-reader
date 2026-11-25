@@ -1,0 +1,11 @@
+Ancient Greek hyphenation patterns, 2011-09-12
+Copyright (C) 2008-2011 Dimitrios Filippou
+
+Source: https://github.com/hyphenation/tex-hyphen/blob/87cd251f5fe86504aeb0c6c5610cdf3b2e260901/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-grc.tex
+SHA-256: eee9bcfd63ade8f6cb1eecf9cec15b19fc9b6f8c959c0143a8dead3de028ca05
+
+The upstream file identifies the LaTeX Project Public License without
+specifying a version. Reader uses LPPL 1.3c, included in LPPL-1.3c.txt.
+The original upstream TeX source is included unchanged in hyph-grc.tex.
+Reader compiles the supported single-word rules into its own native lookup
+tables after canonical decomposition; its generated tables are derived data.

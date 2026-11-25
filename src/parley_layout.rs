@@ -2721,7 +2721,7 @@ fn layout_with_images(
         if ruby.bytes.len() > MAX_RUBY_BASE_BYTES {
             continue;
         }
-        let Some((base, line, _)) = base_geometry(&layout, &ruby.bytes) else {
+        let Some((_, line, _)) = base_geometry(&layout, &ruby.bytes) else {
             continue;
         };
         // The rt element owns its own font declarations; its ID was retained
@@ -2738,7 +2738,10 @@ fn layout_with_images(
         let Some(annotation_line) = annotation.get(0) else {
             continue;
         };
-        if annotation.len() != 1 || annotation.width() > base.width() as f32 + 0.25 {
+        if annotation.len() != 1
+            || !annotation.width().is_finite()
+            || annotation.width() > width as f32
+        {
             continue;
         }
         if annotation_line.items().any(|item| match item {
@@ -2781,24 +2784,36 @@ fn layout_with_images(
         &automatic,
         contour,
     );
-    let mut overlays = Vec::new();
+    let mut overlays: Vec<RubyOverlay> = Vec::new();
     for candidate in candidates {
         let Some((base, index, base_top)) = base_geometry(&layout, &candidate.bytes) else {
             continue;
         };
         let ink = *candidate.layout.get(0).unwrap().metrics();
-        let width = candidate.layout.width();
+        let annotation_width = candidate.layout.width();
         let line = layout.get(index).unwrap();
         let metrics = line.metrics();
         let height = ink.content_block_max_coord - ink.content_block_min_coord;
         let bottom = base_top - 2.0;
         let top = bottom - height;
-        if top < metrics.block_min_coord || width > base.width() as f32 + 0.25 {
+        if top < metrics.block_min_coord || annotation_width > width as f32 {
+            continue;
+        }
+        let x = (base.x0 as f32 + (base.width() as f32 - annotation_width) * 0.5)
+            .clamp(0.0, width as f32 - annotation_width);
+        if candidate.painted
+            && overlays.iter().any(|other| {
+                other.painted
+                    && other.line == index
+                    && x < other.x + other.layout.width() + 1.0
+                    && other.x < x + annotation_width + 1.0
+            })
+        {
             continue;
         }
         overlays.push(RubyOverlay {
             line: index,
-            x: (base.x0 as f32 + (base.width() as f32 - width) * 0.5).max(0.0),
+            x,
             y: top - ink.content_block_min_coord,
             top,
             bottom,
@@ -2992,6 +3007,17 @@ fn marker_layout(
     layout
 }
 
+fn effective_letter_spacing(style: &Style, settings: Settings) -> f32 {
+    let publisher = style.letter_spacing.pixels(0, settings.font_size);
+    let publisher = if publisher.is_finite() {
+        publisher.clamp(-1.0, 128.0)
+    } else {
+        0.0
+    };
+    // Match the existing reader control's safe negative tracking floor.
+    (settings.letter_spacing + publisher).max(-1.0)
+}
+
 fn make_annotation(
     context: &mut LayoutContext<PaintBrush>,
     fonts: &mut FontContext,
@@ -3022,6 +3048,10 @@ fn make_annotation(
         style.font_family.layout()
     };
     builder.push_default(StyleProperty::FontFamily(family));
+    let spacing = effective_letter_spacing(style, settings);
+    if spacing != 0.0 {
+        builder.push_default(StyleProperty::LetterSpacing(spacing));
+    }
     builder.push_default(StyleProperty::Locale(language));
     builder.push_default(StyleProperty::FontStyle(style.font_style));
     builder.push_default(StyleProperty::FontWeight(FontWeight::new(
@@ -3252,16 +3282,7 @@ fn shape_paragraph(
         }
     };
     let font_size = |style: &Style| style.font_pixels(settings);
-    let letter_spacing = |style: &Style| {
-        let publisher = style.letter_spacing.pixels(0, settings.font_size);
-        let publisher = if publisher.is_finite() {
-            publisher.clamp(-1.0, 128.0)
-        } else {
-            0.0
-        };
-        // Match the existing reader control's safe negative tracking floor.
-        (settings.letter_spacing + publisher).max(-1.0)
-    };
+    let letter_spacing = |style: &Style| effective_letter_spacing(style, settings);
     let weight = |style: &Style| {
         FontWeight::new(crate::font_render::font_weight(
             if settings.bold_text && style.font_weight < FontWeight::BOLD {
