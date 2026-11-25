@@ -82,19 +82,23 @@ impl Reader {
     }
 
     pub(super) fn reading_profile_items(&self) -> Vec<Item> {
+        let language = self.controls.interface_language;
         if self.screen == Screen::ReadingProfiles {
             let mut items = Vec::new();
             if self.fixed_profiles_available() || self.active.is_some() {
                 items.push(
                     Item::new(
-                        "Save current settings",
+                        language.reading_profile_text("Save current settings"),
                         Action::Show(Screen::ProfileName(Name::Create)),
                     )
                     .detail(
                         self.fixed
                             .as_ref()
                             .and_then(|book| book.reading.profile_provider())
-                            .map_or("Reflowable books", |provider| provider.label()),
+                            .map_or_else(
+                                || language.reading_profile_text("Reflowable books"),
+                                |provider| provider.label(),
+                            ),
                     ),
                 );
             }
@@ -137,30 +141,50 @@ impl Reader {
             vec![Item::new(profile.name(), Action::Heading).detail(profile_format(profile))];
         if self.profile_supported(profile) {
             items.extend([
-                Item::new("Apply to this book", Action::ApplyProfile(index)),
                 Item::new(
-                    "Replace with current settings",
+                    language.reading_profile_text("Apply to this book"),
+                    Action::ApplyProfile(index),
+                ),
+                Item::new(
+                    language.reading_profile_text("Replace with current settings"),
                     Action::Show(Screen::ConfirmProfile(index, Confirm::Replace)),
                 ),
             ]);
         } else {
             items.push(
-                Item::new("Apply to this book", Action::Heading).detail(match profile {
-                    Profile::Text { .. } => "Open a reflowable book to use this profile",
-                    Profile::Fixed { .. } => "Open a matching document to use this profile",
+                Item::new(
+                    language.reading_profile_text("Apply to this book"),
+                    Action::Heading,
+                )
+                .detail(match profile {
+                    Profile::Text { .. } => {
+                        language.reading_profile_text("Open a reflowable book to use this profile")
+                    }
+                    Profile::Fixed { .. } => language
+                        .reading_profile_text("Open a matching document to use this profile"),
                 }),
             );
         }
         items.extend([
-            Item::new("Included settings", Action::EditReadingProfileFields(index)).detail(
+            Item::new(
+                language.reading_profile_text("Included settings"),
+                Action::EditReadingProfileFields(index),
+            )
+            .detail(if language.is_english() {
                 format!(
                     "{} of {}",
                     profile.selection().len(),
                     profile.available().len()
-                ),
-            ),
+                )
+            } else {
+                format!(
+                    "{} trên {}",
+                    profile.selection().len(),
+                    profile.available().len()
+                )
+            }),
             Item::new(
-                "Apply on book opening",
+                language.reading_profile_text("Apply on book opening"),
                 Action::Show(Screen::ReadingProfileOpening(
                     index,
                     opening_rules::Page::Overview,
@@ -168,20 +192,20 @@ impl Reader {
             )
             .detail(opening_rules::summary(profile)),
             Item::new(
-                "Apply on book closing",
+                language.reading_profile_text("Apply on book closing"),
                 Action::Show(Event::Closing.screen(index, Page::Overview)),
             )
             .detail(on_close::summary(profile)),
             Item::new(
-                "Rename",
+                language.reading_profile_text("Rename"),
                 Action::Show(Screen::ProfileName(Name::Rename(index))),
             ),
             Item::new(
-                "Duplicate",
+                language.reading_profile_text("Duplicate"),
                 Action::Show(Screen::ProfileName(Name::Duplicate(index))),
             ),
             Item::new(
-                "Delete",
+                language.reading_profile_text("Delete"),
                 Action::Show(Screen::ConfirmProfile(index, Confirm::Delete)),
             ),
         ]);

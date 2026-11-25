@@ -982,11 +982,9 @@ fn word_breaks_with_limits(
     for part in word.split_inclusive(separators) {
         let text = part.trim_end_matches(separators);
         if matches!(locale, Dictionary::American | Dictionary::British)
-            && !text
-                .chars()
-                .all(|ch| ch.is_ascii_alphabetic() || ch == '\u{ad}')
+            && !word_has_script(text, Script::Latin)
         {
-            // Preserve the existing English script restriction per run.
+            // Do not apply English patterns to mixed or non-Latin runs.
             offset += part.len();
             continue;
         }
@@ -1686,7 +1684,7 @@ mod tests {
 
     #[test]
     fn bounds_untrusted_words_and_paragraphs() {
-        for word in ["", "a", "éclair", &"hyphenation".repeat(6)] {
+        for word in ["", "a", &"hyphenation".repeat(6)] {
             word_breaks(Dictionary::American, word, |_| {
                 panic!("Unexpected opportunity")
             });
@@ -1747,6 +1745,14 @@ mod tests {
                 // The authored break at hy- stays separate. Dictionary
                 // candidates after it still map to the original UTF-8 bytes.
                 assert_eq!(actual, [8, 9]);
+            } else if i == 9 {
+                // Accented Latin letters are eligible; every break must still
+                // refer to an original UTF-8 character boundary.
+                assert!(
+                    actual
+                        .iter()
+                        .all(|&offset| block.text.is_char_boundary(offset))
+                );
             } else {
                 assert!(actual.is_empty(), "block {i}: {actual:?}");
             }

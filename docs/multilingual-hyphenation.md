@@ -10,9 +10,10 @@ regions other than Brazil use the Portugal dictionary, following the pinned
 KOReader primary-language fallback. Explicit non-Latin scripts do not select
 these dictionaries. Regional and real-book behavior remains unverified.
 For US and UK English, straight and curly apostrophes separate dictionary
-lookup runs without changing text or UTF-8 offsets. Each run retains the
-existing ASCII-letter and authored-soft-hyphen restriction. Actual breaking
-and comparison with KOReader on real books remain unverified.
+lookup runs without changing text or UTF-8 offsets. Latin-script letters,
+including supported accented graphemes, and authored soft hyphens can be
+matched; mixed or non-Latin scripts are rejected. Actual breaking and
+comparison with KOReader on real books remain unverified.
 
 | Dictionary | Before / after | Pinned rules |
 | --- | ---: | ---: |

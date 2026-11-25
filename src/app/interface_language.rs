@@ -551,6 +551,31 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed reading-profile controls; profile names and saved rules stay untouched.
+const READING_PROFILE_LABELS: &[(&str, &str)] = &[
+    ("Save current settings", "Lưu cài đặt hiện tại"),
+    ("Reflowable books", "Sách có thể dàn trang lại"),
+    ("Apply to this book", "Áp dụng cho sách này"),
+    (
+        "Replace with current settings",
+        "Thay bằng cài đặt hiện tại",
+    ),
+    (
+        "Open a reflowable book to use this profile",
+        "Mở sách có thể dàn trang lại để dùng hồ sơ này",
+    ),
+    (
+        "Open a matching document to use this profile",
+        "Mở tài liệu phù hợp để dùng hồ sơ này",
+    ),
+    ("Included settings", "Cài đặt được bao gồm"),
+    ("Apply on book opening", "Áp dụng khi mở sách"),
+    ("Apply on book closing", "Áp dụng khi đóng sách"),
+    ("Rename", "Đổi tên"),
+    ("Duplicate", "Nhân bản"),
+    ("Delete", "Xóa"),
+];
+
 // Fixed hidden-flow controls; stored positions and marker identities stay untouched.
 const HIDDEN_FLOW_LABELS: &[(&str, &str)] = &[
     ("Custom hidden flows", "Luồng ẩn tùy chỉnh"),
@@ -2893,6 +2918,18 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn reading_profile_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = READING_PROFILE_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn hidden_flow_text<'a>(self, english: &'a str) -> &'a str {

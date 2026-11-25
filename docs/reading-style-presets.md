@@ -188,12 +188,13 @@ visual result and precise KOReader parity have not yet been tested.
 
 **Ignore publisher line-break restrictions** applies KOReader's non-important
 `line-break: -cr-loose` rule. The horizontal reader implements a conservative
-subset: for paragraphs using one effective ICU line-break configuration,
-Reader analyzes a temporary copy in which eligible non-breaking spaces become
-spaces and non-breaking hyphens become ordinary hyphens. ICU's resulting
-breaks after those characters are mapped back to source grapheme boundaries,
-including supported punctuation contexts. Mixed line-break configurations and
-paragraphs over 512 KiB retain the earlier word-to-word subset. Explicit
+subset: Reader analyzes a temporary copy in which eligible non-breaking spaces
+become spaces and non-breaking hyphens become ordinary hyphens. Validated
+styled language and line-break ranges are projected into that copy; ICU's
+resulting breaks after those characters are mapped back to source grapheme
+boundaries, including supported punctuation contexts. Paragraphs over 512 KiB
+or with over 4096 styled line-break ranges retain the earlier word-to-word
+subset. Explicit
 publisher line-break declarations can override the rule, and nowrap runs and
 mandatory breaks retain their existing behavior. Generated text and vertical
 or Blitz rendering remain unsupported. If a paragraph exceeds 4096 eligible

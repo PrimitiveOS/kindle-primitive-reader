@@ -651,51 +651,98 @@ pub(crate) fn analyze_text(
     } else {
         &[]
     };
-    // CRE's private loose mode analyzes NBSP as a space and U+2011 as
-    // U+2010. A shadow copy lets ICU make contextual decisions without
-    // replacing source text or changing any saved byte positions. Until
-    // mixed segmenter configurations have a verified projection, keep the
-    // earlier conservative behavior for those paragraphs.
-    let shadow_allowed = if !relaxed.is_empty() && text.len() <= 512 * 1024 {
-        let mut dense = DenseLineBreaks::new(options.line_break, text.len());
-        let key = dense.next().map(|(_, key)| key);
-        if let Some(key) = key.filter(|key| dense.all(|(_, other)| other == *key)) {
-            let mut shadow = String::with_capacity(text.len());
-            let mut mapped = Vec::with_capacity(relaxed.len());
-            for (offset, ch) in text.char_indices() {
-                let end = offset + ch.len_utf8();
-                if relaxed.binary_search(&end).is_ok() {
-                    match ch {
-                        '\u{00a0}' => shadow.push(' '),
-                        '\u{2011}' => shadow.push('\u{2010}'),
-                        _ => {
-                            shadow.push(ch);
-                            continue;
-                        }
-                    }
-                    mapped.push((end, shadow.len()));
-                } else {
-                    shadow.push(ch);
-                }
-            }
-            let segmenter = data_sources.line_segmenter(key);
-            let mut breaks = segmenter.segment_str(&shadow).peekable();
-            let mut allowed = Vec::with_capacity(mapped.len());
-            for (source, projected) in mapped {
-                while breaks.peek().is_some_and(|&boundary| boundary < projected) {
-                    breaks.next();
-                }
-                if breaks.peek().is_some_and(|&boundary| boundary == projected) {
-                    allowed.push(source);
-                }
-            }
-            Some(allowed)
-        } else {
-            None
+    // CRE's loose mode uses alternate characters for line analysis only.
+    // Project styled segment boundaries into the bounded shadow; original
+    // source offsets, graphemes, and text are never changed.
+    let shadow_allowed = (|| {
+        if relaxed.is_empty() || text.len() > 512 * 1024 || options.line_break.len() > 4096 {
+            return None;
         }
-    } else {
-        None
-    };
+        let mut previous_end = 0;
+        for (range, _) in options.line_break {
+            if range.start < previous_end
+                || range.start > range.end
+                || range.end > text.len()
+                || !text.is_char_boundary(range.start)
+                || !text.is_char_boundary(range.end)
+            {
+                return None;
+            }
+            previous_end = range.end;
+        }
+        let mut shadow = String::with_capacity(text.len());
+        let mut mapped = Vec::with_capacity(relaxed.len());
+        let mut shortened = Vec::with_capacity(relaxed.len());
+        for (offset, ch) in text.char_indices() {
+            let end = offset + ch.len_utf8();
+            if relaxed.binary_search(&end).is_ok() {
+                match ch {
+                    '\u{00a0}' => {
+                        shadow.push(' ');
+                        shortened.push(end);
+                    }
+                    '\u{2011}' => shadow.push('\u{2010}'),
+                    _ => {
+                        shadow.push(ch);
+                        continue;
+                    }
+                }
+                mapped.push((end, shadow.len()));
+            } else {
+                shadow.push(ch);
+            }
+        }
+        let project = |offset: usize| offset - shortened.partition_point(|&end| end <= offset);
+        let projected: Vec<_> = options
+            .line_break
+            .iter()
+            .map(|(range, config)| (project(range.start)..project(range.end), *config))
+            .collect();
+        let mut segments = DenseLineBreaks::new(&projected, shadow.len());
+        let first = segments.next()?;
+        let substrings = LineBreakSegmentIter::new(&shadow, segments, first);
+        let mut shadow_breaks = Vec::new();
+        let mut global_offset = 0usize;
+        for (substring_index, (substring, key, last)) in substrings.enumerate() {
+            let segmenter = data_sources.line_segmenter(key);
+            if substring_index == 0 && last {
+                let mut breaks = segmenter.segment_str(substring);
+                let _first = breaks.next();
+                let Some(second) = breaks.next() else { continue };
+                let Some(third) = breaks.next() else { continue };
+                shadow_breaks.extend([second, third].into_iter().chain(breaks));
+                shadow_breaks.pop();
+                break;
+            }
+            let mut substring_chars = substring.chars();
+            if substring_index != 0 {
+                global_offset = global_offset.checked_sub(substring_chars.next()?.len_utf8())?;
+            }
+            let last_len = substring_chars.next_back()?.len_utf8();
+            for (index, pos) in segmenter.segment_str(substring).enumerate() {
+                if index == 0 || pos == substring.len()
+                    || (!last && pos == substring.len() - last_len)
+                {
+                    continue;
+                }
+                shadow_breaks.push(pos.checked_add(global_offset)?);
+            }
+            if !last {
+                global_offset = global_offset.checked_add(substring.len() - last_len)?;
+            }
+        }
+        if !shadow_breaks.windows(2).all(|pair| pair[0] <= pair[1]) {
+            return None;
+        }
+        Some(
+            mapped
+                .into_iter()
+                .filter_map(|(source, projected)| {
+                    shadow_breaks.binary_search(&projected).is_ok().then_some(source)
+                })
+                .collect::<Vec<_>>(),
+        )
+    })();
     let mut break_spaces_iter = options.break_spaces.iter().peekable();
     let mut break_anywhere_iter = options
         .line_break
@@ -803,7 +850,7 @@ pub(crate) fn analyze_text(
                 is_icu_line || after_break_space
             };
             // Never split a grapheme or override mandatory breaks. The ICU
-            // shadow applies full context when a common segmenter is known;
+            // shadow applies styled segmenter context when safely projected;
             // otherwise retain the prior word-to-word conservative subset.
             if is_grapheme_start
                 && relaxed.binary_search(&byte_pos).is_ok()
