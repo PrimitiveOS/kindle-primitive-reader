@@ -400,6 +400,50 @@ fn parse_numeric_variant(input: &mut Parser<'_>) -> CssResult<VariantNumeric> {
     Ok(VariantNumeric(bits))
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct VariantEastAsian(pub(crate) u8);
+
+impl VariantEastAsian {
+    fn bit(value: &str) -> Option<u8> {
+        Some(match value {
+            "jis78" => 1 << 0,
+            "jis83" => 1 << 1,
+            "jis04" => 1 << 2,
+            "simplified" => 1 << 3,
+            "traditional" => 1 << 4,
+            "full-width" => 1 << 5,
+            "proportional-width" => 1 << 6,
+            "ruby" => 1 << 7,
+            _ => return None,
+        })
+    }
+}
+
+fn parse_east_asian_variant(input: &mut Parser<'_>) -> CssResult<VariantEastAsian> {
+    let first = input.expect_ident()?.to_ascii_lowercase();
+    if first == "normal" {
+        input.expect_exhausted()?;
+        return Ok(VariantEastAsian::default());
+    }
+    let mut bits = VariantEastAsian::bit(&first).ok_or_else(ParseError::unexpected_token)?;
+    while !input.is_exhausted() {
+        let value = input.expect_ident()?.to_ascii_lowercase();
+        let bit = VariantEastAsian::bit(&value).ok_or_else(ParseError::unexpected_token)?;
+        let group = if bit <= 16 {
+            0b0001_1111
+        } else if bit <= 64 {
+            0b0110_0000
+        } else {
+            bit
+        };
+        if bits & group != 0 {
+            return Err(ParseError::unexpected_token());
+        }
+        bits |= bit;
+    }
+    Ok(VariantEastAsian(bits))
+}
+
 #[derive(Clone)]
 pub(crate) struct Style {
     pub display: Display,
@@ -428,6 +472,7 @@ pub(crate) struct Style {
     pub(crate) common_ligatures: bool,
     pub(crate) variant_caps: VariantCaps,
     pub(crate) variant_numeric: VariantNumeric,
+    pub(crate) variant_east_asian: VariantEastAsian,
     /// Whether a ruby annotation has its own computed font-size declaration.
     pub(crate) ruby_size_explicit: bool,
     pub(crate) direction: parley::BaseDirection,
@@ -500,6 +545,7 @@ impl Default for Style {
             common_ligatures: true,
             variant_caps: VariantCaps::Normal,
             variant_numeric: VariantNumeric::default(),
+            variant_east_asian: VariantEastAsian::default(),
             ruby_size_explicit: false,
             direction: parley::BaseDirection::Auto,
             line_height: None,
@@ -1201,6 +1247,7 @@ impl BookStyle {
                     Property::CommonLigatures(enabled) => style.common_ligatures = *enabled,
                     Property::VariantCaps(caps) => style.variant_caps = *caps,
                     Property::VariantNumeric(numeric) => style.variant_numeric = *numeric,
+                    Property::VariantEastAsian(value) => style.variant_east_asian = *value,
                     Property::Direction(direction) => style.direction = *direction,
                     Property::LineBreak(breaking, loose) => {
                         style.line_break = *breaking;
@@ -1961,7 +2008,7 @@ struct Declaration {
 fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
     let mut result = Vec::new();
     for decl in RuleBodyParser::new(input, &mut Properties).flatten() {
-        if let Property::VariantShorthand(ligatures, caps, numeric) = decl.property {
+        if let Property::VariantShorthand(ligatures, caps, numeric, east_asian) = decl.property {
             result.push(Declaration {
                 property: Property::CommonLigatures(ligatures),
                 important: decl.important,
@@ -1972,6 +2019,10 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
             });
             result.push(Declaration {
                 property: Property::VariantNumeric(numeric),
+                important: decl.important,
+            });
+            result.push(Declaration {
+                property: Property::VariantEastAsian(east_asian),
                 important: decl.important,
             });
         } else if let Property::ResetMany(keys, reset) = decl.property {
@@ -2017,7 +2068,8 @@ const DIRECTION: usize = 56;
 const LETTER_SPACING: usize = 57;
 const VARIANT_CAPS: usize = 58;
 const VARIANT_NUMERIC: usize = 59;
-const CASCADE_PROPERTY_COUNT: usize = 60;
+const VARIANT_EAST_ASIAN: usize = 60;
+const CASCADE_PROPERTY_COUNT: usize = 61;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2081,6 +2133,7 @@ fn choose<'a>(
             Property::CommonLigatures(_) => COMMON_LIGATURES,
             Property::VariantCaps(_) => VARIANT_CAPS,
             Property::VariantNumeric(_) => VARIANT_NUMERIC,
+            Property::VariantEastAsian(_) => VARIANT_EAST_ASIAN,
             Property::Direction(_) => DIRECTION,
             Property::LetterSpacing(_) => LETTER_SPACING,
             Property::LineBreak(_, _) => 7,
@@ -2198,7 +2251,8 @@ enum Property {
     CommonLigatures(bool),
     VariantCaps(VariantCaps),
     VariantNumeric(VariantNumeric),
-    VariantShorthand(bool, VariantCaps, VariantNumeric),
+    VariantEastAsian(VariantEastAsian),
+    VariantShorthand(bool, VariantCaps, VariantNumeric, VariantEastAsian),
     Direction(parley::BaseDirection),
     LetterSpacing(CssLength),
     LineBreak(Option<LineBreak>, bool),
@@ -2536,12 +2590,25 @@ impl<'i> DeclarationParser<'i> for Properties {
                 "font-variant" => {
                     let value = input.expect_ident()?.to_ascii_lowercase();
                     if let Some(caps) = VariantCaps::parse(value.as_str()) {
-                        Property::VariantShorthand(true, caps, VariantNumeric::default())
+                        Property::VariantShorthand(
+                            true,
+                            caps,
+                            VariantNumeric::default(),
+                            VariantEastAsian::default(),
+                        )
                     } else if let Some(numeric) = VariantNumeric::bit(value.as_str()) {
                         Property::VariantShorthand(
                             true,
                             VariantCaps::Normal,
                             VariantNumeric(numeric),
+                            VariantEastAsian::default(),
+                        )
+                    } else if let Some(east_asian) = VariantEastAsian::bit(value.as_str()) {
+                        Property::VariantShorthand(
+                            true,
+                            VariantCaps::Normal,
+                            VariantNumeric::default(),
+                            VariantEastAsian(east_asian),
                         )
                     } else {
                         match value.as_str() {
@@ -2549,11 +2616,13 @@ impl<'i> DeclarationParser<'i> for Properties {
                                 true,
                                 VariantCaps::Normal,
                                 VariantNumeric::default(),
+                                VariantEastAsian::default(),
                             ),
                             "no-common-ligatures" => Property::VariantShorthand(
                                 false,
                                 VariantCaps::Normal,
                                 VariantNumeric::default(),
+                                VariantEastAsian::default(),
                             ),
                             _ => return Err(ParseError::unexpected_token()),
                         }
@@ -2567,6 +2636,9 @@ impl<'i> DeclarationParser<'i> for Properties {
                     )
                 }
                 "font-variant-numeric" => Property::VariantNumeric(parse_numeric_variant(input)?),
+                "font-variant-east-asian" => {
+                    Property::VariantEastAsian(parse_east_asian_variant(input)?)
+                }
                 "font-variant-ligatures" | "-webkit-font-variant-ligatures" => {
                     let value = input.expect_ident()?.to_ascii_lowercase();
                     let enabled = match value.as_str() {

@@ -46,6 +46,7 @@ impl Reset {
                         | LETTER_SPACING
                         | VARIANT_CAPS
                         | VARIANT_NUMERIC
+                        | VARIANT_EAST_ASIAN
                 )
     }
 }
@@ -74,9 +75,15 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "font-style" => vec![6],
         "direction" => vec![DIRECTION],
         "letter-spacing" => vec![LETTER_SPACING],
-        "font-variant" => vec![COMMON_LIGATURES, VARIANT_CAPS, VARIANT_NUMERIC],
+        "font-variant" => vec![
+            COMMON_LIGATURES,
+            VARIANT_CAPS,
+            VARIANT_NUMERIC,
+            VARIANT_EAST_ASIAN,
+        ],
         "font-variant-caps" => vec![VARIANT_CAPS],
         "font-variant-numeric" => vec![VARIANT_NUMERIC],
+        "font-variant-east-asian" => vec![VARIANT_EAST_ASIAN],
         "font-variant-ligatures" | "-webkit-font-variant-ligatures" => vec![COMMON_LIGATURES],
         "line-break" => vec![7],
         "word-break" => vec![8],
@@ -135,6 +142,7 @@ pub(super) fn apply_reset(
         COMMON_LIGATURES => style.common_ligatures = value.common_ligatures,
         VARIANT_CAPS => style.variant_caps = value.variant_caps,
         VARIANT_NUMERIC => style.variant_numeric = value.variant_numeric,
+        VARIANT_EAST_ASIAN => style.variant_east_asian = value.variant_east_asian,
         LETTER_SPACING => style.letter_spacing = value.letter_spacing,
         DIRECTION => {
             style.direction = if reset.parent(DIRECTION) {
@@ -342,7 +350,7 @@ impl<'i> AtRuleParser<'i> for StrictSheet {
 }
 fn expand(decl: Declaration, out: &mut Vec<Declaration>) {
     match decl.property {
-        Property::VariantShorthand(ligatures, caps, numeric) => {
+        Property::VariantShorthand(ligatures, caps, numeric, east_asian) => {
             out.push(Declaration {
                 property: Property::CommonLigatures(ligatures),
                 important: decl.important,
@@ -353,6 +361,10 @@ fn expand(decl: Declaration, out: &mut Vec<Declaration>) {
             });
             out.push(Declaration {
                 property: Property::VariantNumeric(numeric),
+                important: decl.important,
+            });
+            out.push(Declaration {
+                property: Property::VariantEastAsian(east_asian),
                 important: decl.important,
             });
         }

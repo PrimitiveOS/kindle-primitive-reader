@@ -75,13 +75,16 @@ impl Reader {
         let czech = self.active.as_ref().is_some_and(|book| {
             crate::hyphenation::is_czech_language(book.reading.probe.main_language)
         });
+        let romanian = self.active.as_ref().is_some_and(|book| {
+            crate::hyphenation::is_romanian_language(book.reading.probe.main_language)
+        });
         let defaults = if settings.algorithmic_hyphenation {
             ALGORITHMIC_LIMITS
         } else if armenian {
             crate::HyphenationLimits { left: 1, right: 2 }
         } else if zulu {
             crate::HyphenationLimits { left: 2, right: 1 }
-        } else if serbian {
+        } else if serbian || romanian {
             crate::HyphenationLimits { left: 2, right: 2 }
         } else {
             dictionary.map_or(ENGLISH_LIMITS, Dictionary::limits)
@@ -167,6 +170,18 @@ impl Reader {
                             "Czech pattern file invalid"
                         }
                     }
+                } else if romanian {
+                    match &self.user_hyphenation.romanian {
+                        crate::user_hyphenation::OptionalPatterns::Loaded(_) => {
+                            "Romanian patterns loaded"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Missing => {
+                            "Romanian pattern file missing"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Invalid => {
+                            "Romanian pattern file invalid"
+                        }
+                    }
                 } else {
                     dictionary.map_or("No dictionary for the main language", Dictionary::label)
                 };
@@ -216,6 +231,12 @@ impl Reader {
             items.push(
                 Item::new("Czech pattern file", Action::Heading)
                     .detail("Copy hyph-cs.tex to reader/data/hyphenation, then reopen Reader"),
+            );
+        }
+        if romanian {
+            items.push(
+                Item::new("Romanian pattern file", Action::Heading)
+                    .detail("Copy hyph-ro.tex to reader/data/hyphenation, then reopen Reader"),
             );
         }
         let defaults = self

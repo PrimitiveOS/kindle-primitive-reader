@@ -31,6 +31,8 @@ pub(crate) struct Rules {
     pub(crate) serbian_cyrillic: OptionalPatterns,
     #[serde(skip)]
     pub(crate) czech: OptionalPatterns,
+    #[serde(skip)]
+    pub(crate) romanian: OptionalPatterns,
     words: BTreeMap<String, BTreeMap<String, Vec<u16>>>,
 }
 pub(crate) fn locale(tag: &Language) -> &str {

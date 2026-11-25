@@ -125,6 +125,17 @@ pseudo-element declarations, list markers, vertical text and Blitz remain
 unsupported. Source text and saved anchors remain unchanged; this behavior
 has not yet been built or tested. [Pinned CRE numeric variants](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L4005-L4015)
 
+CSS `font-variant-east-asian` can request the JIS 1978, 1983 or 2004 glyph
+forms, simplified or traditional forms, full or proportional widths, and ruby
+glyphs. Compatible choices can be combined in this longhand; conflicting and
+repeated choices are rejected. The single-keyword `font-variant` shorthand
+also accepts these choices. Horizontal text and ruby request the corresponding
+OpenType features alongside existing caps, numeric, kerning and ligature
+settings. Missing font features are not synthesized. JIS 1990, multi-keyword
+shorthand combinations, pseudo-element declarations, list markers, vertical
+text and Blitz remain unsupported. Source text and saved anchors remain
+unchanged; this behavior has not yet been built or tested. [Pinned CRE East Asian variants](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L4015-L4021)
+
 The horizontal reader also accepts publisher and user CSS `letter-spacing`
 on ordinary styled runs. It supports `normal`, signed CSS lengths, inheritance
 and KOReader's percentage-of-declaring-font extension. The reader's own letter

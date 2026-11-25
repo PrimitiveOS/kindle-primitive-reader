@@ -23,6 +23,7 @@ enum Alphabet {
     SerbianLatin,
     SerbianCyrillic,
     Czech,
+    Romanian,
 }
 
 #[derive(Default)]
@@ -41,6 +42,14 @@ impl OwnedPatterns {
     }
 
     pub(crate) fn parse(bytes: &[u8]) -> Option<Self> {
+        Self::parse_tex(bytes, Alphabet::Armenian)
+    }
+
+    pub(crate) fn parse_romanian(bytes: &[u8]) -> Option<Self> {
+        Self::parse_tex(bytes, Alphabet::Romanian)
+    }
+
+    fn parse_tex(bytes: &[u8], alphabet: Alphabet) -> Option<Self> {
         if bytes.len() as u64 > MAX_FILE_BYTES {
             return None;
         }
@@ -55,7 +64,7 @@ impl OwnedPatterns {
         if !prefix.trim().is_empty() || !suffix.trim().is_empty() {
             return None;
         }
-        Self::parse_rules(group.split_whitespace(), Alphabet::Armenian)
+        Self::parse_rules(group.split_whitespace(), alphabet)
     }
 
     /// Accept the upstream ASCII-compatible ISO-8859-1 dictionary syntax.
@@ -192,7 +201,7 @@ impl OwnedPatterns {
                     Alphabet::Armenian => {
                         ('\u{0561}'..='\u{0587}').contains(&ch) && ch.is_lowercase()
                     }
-                    Alphabet::SerbianLatin | Alphabet::Czech => {
+                    Alphabet::SerbianLatin | Alphabet::Czech | Alphabet::Romanian => {
                         ch.is_lowercase() && scripts.get(ch) == Script::Latin
                     }
                     Alphabet::SerbianCyrillic => {

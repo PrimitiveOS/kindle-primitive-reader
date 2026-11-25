@@ -481,3 +481,29 @@ The [upstream Czech file](https://github.com/hyphenation/tex-hyphen/blob/5684c0f
 identifies GPL 2-or-later terms. Obtaining or redistributing the optional file
 has separate licensing obligations; keeping it separate from Reader does not
 establish legal compliance. Distribution review remains open.
+
+
+### Optional Romanian patterns
+
+Reader does not include Romanian hyphenation pattern data. If you already have
+a `hyph-ro.tex` file that you have permission to use, create
+`reader/data/hyphenation/`, copy it there, and close and reopen Reader. In a
+Romanian book, Text › Hyphenation reports whether the file was loaded, missing
+or invalid. Missing or invalid patterns leave Romanian automatic hyphenation
+unavailable; the book remains readable. Reader reads the file locally as inert
+data and does not download or execute it.
+
+The loader accepts a single `\patterns{...}` group, `%` comments, lowercase
+Latin-script letters, ASCII digits and optional word-edge dots. It rejects
+files over 256 KiB, more than 4,096 rules, tries above 8,192 nodes, symlinks,
+malformed syntax and unsupported characters. Reader uses 2 / 2 minima and
+emits only original UTF-8 grapheme boundaries. The pattern strings in the
+pinned KOReader file match those in the 1996 upstream source, but actual
+behavior and real-book comparisons remain unverified. Reopen Reader after
+replacing the file.
+
+The [upstream source header](https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-ro.tex)
+identifies copyright 1995–1996 Adrian Rezus and specifies no license. This
+link records provenance, not permission to use or redistribute the file.
+Rights and distribution review remain unresolved; keeping a file separate
+from Reader does not establish legal compliance.

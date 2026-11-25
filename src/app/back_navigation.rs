@@ -155,6 +155,7 @@ pub(super) struct State {
 impl Reader {
     pub(super) fn back_preference_entries(&self) -> Vec<Item> {
         let preferences = self.controls.back_navigation;
+        let language = self.controls.interface_language;
         [
             (Options::Exit, preferences.exit.label()),
             (Options::Library, preferences.library.label()),
@@ -162,23 +163,28 @@ impl Reader {
         ]
         .into_iter()
         .map(|(option, label)| {
-            Item::new(option.title(), Action::Show(Screen::BackOptions(option))).detail(label)
+            Item::new(
+                language.navigation_settings_text(option.title()),
+                Action::Show(Screen::BackOptions(option)),
+            )
+            .detail(language.navigation_settings_text(label))
         })
         .collect()
     }
 
     pub(super) fn back_option_items(&self, options: Options) -> Vec<Item> {
         let current = self.controls.back_navigation;
+        let language = self.controls.interface_language;
         let item = |label, back_navigation| {
             let item = Item::new(
-                label,
+                language.navigation_settings_text(label),
                 Action::SetReadingControls(crate::reading_controls::ReadingControls {
                     back_navigation,
                     ..self.controls
                 }),
             );
             if back_navigation == current {
-                item.detail("Selected")
+                item.detail(language.navigation_settings_text("Selected"))
             } else {
                 item
             }

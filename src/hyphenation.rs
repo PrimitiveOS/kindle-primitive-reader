@@ -565,6 +565,20 @@ pub(crate) fn suggestion(
             false,
             |at| breaks.push(at),
         );
+    } else if word.len() <= MAX_WORD * 5
+        && is_romanian_language(crate::TypographyLocale::parse(language))
+        && word_has_script(word, Script::Latin)
+        && let crate::user_hyphenation::OptionalPatterns::Loaded(patterns) = &rules.romanian
+    {
+        pattern_breaks(
+            patterns.view(),
+            None,
+            word,
+            HyphenationLimits { left: 2, right: 2 },
+            false,
+            false,
+            |at| breaks.push(at),
+        );
     } else if let Some(locale) =
         dictionary(&Style::default(), crate::TypographyLocale::parse(language))
     {
@@ -586,6 +600,13 @@ pub(crate) fn is_zulu_language(locale: Option<crate::TypographyLocale>) -> bool 
         return false;
     };
     matches!(language.language(), "zu" | "zul") && matches!(language.script(), None | Some("Latn"))
+}
+
+pub(crate) fn is_romanian_language(locale: Option<crate::TypographyLocale>) -> bool {
+    let Some(crate::TypographyLocale::Language(language)) = locale else {
+        return false;
+    };
+    matches!(language.language(), "ro" | "ron") && matches!(language.script(), None | Some("Latn"))
 }
 
 pub(crate) fn is_czech_language(locale: Option<crate::TypographyLocale>) -> bool {
@@ -664,7 +685,7 @@ pub(crate) fn with_user_rules_text(
             LocaleCheck,
             Option<Script>,
             HyphenationLimits,
-        ); 5] = [
+        ); 6] = [
             (
                 &rules.armenian,
                 is_armenian_language,
@@ -694,6 +715,12 @@ pub(crate) fn with_user_rules_text(
                 is_czech_language,
                 Some(Script::Latin),
                 HyphenationLimits { left: 2, right: 3 },
+            ),
+            (
+                &rules.romanian,
+                is_romanian_language,
+                Some(Script::Latin),
+                HyphenationLimits { left: 2, right: 2 },
             ),
         ];
         for (state, matches_locale, script, defaults) in sources {

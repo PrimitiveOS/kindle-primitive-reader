@@ -5,30 +5,45 @@ use crate::reading_controls::SkimPosition;
 impl Reader {
     pub(super) fn navigation_preference_items(&self) -> Vec<Item> {
         let controls = self.controls;
+        let language = controls.interface_language;
         let mut opening = controls;
         opening.remember_opening_location = !opening.remember_opening_location;
         let mut items = vec![
             Item::new(
-                "Add opening page to location history",
+                language.navigation_settings_text("Add opening page to location history"),
                 Action::SetReadingControls(opening),
             )
-            .detail("Uses your saved place when reopening a book"),
+            .detail(
+                language.navigation_settings_text("Uses your saved place when reopening a book"),
+            ),
         ];
-        items.push(Item::new("Skim dialog position", Action::Heading));
+        items.push(Item::new(
+            language.navigation_settings_text("Skim dialog position"),
+            Action::Heading,
+        ));
         items.extend(SkimPosition::ALL.map(|placement| {
             let mut next = controls;
             next.skim_position = placement;
-            let item = Item::new(placement.label(), Action::SetReadingControls(next));
+            let item = Item::new(
+                language.navigation_settings_text(placement.label()),
+                Action::SetReadingControls(next),
+            );
             if placement == controls.skim_position {
-                item.detail("Selected")
+                item.detail(language.navigation_settings_text("Selected"))
             } else {
                 item
             }
         }));
         items.extend(self.back_preference_entries());
         items.push(
-            Item::new("Assign a Back gesture", Action::Show(Screen::Gestures))
-                .detail("Choose a gesture, then Back (navigation settings)"),
+            Item::new(
+                language.navigation_settings_text("Assign a Back gesture"),
+                Action::Show(Screen::Gestures),
+            )
+            .detail(
+                language
+                    .navigation_settings_text("Choose a gesture, then Back (navigation settings)"),
+            ),
         );
         items
     }

@@ -551,6 +551,60 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed scrolling submenu labels; the chosen method and delay remain unchanged.
+const SCROLLING_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Classic scrolling", "Cuộn cổ điển"),
+    ("Turbo scrolling", "Cuộn tăng tốc"),
+    ("On-release scrolling", "Cuộn khi nhấc tay"),
+    (
+        "Move the page with your finger",
+        "Di chuyển trang theo ngón tay",
+    ),
+    (
+        "Move farther as your finger moves away from its starting point",
+        "Di chuyển xa hơn khi ngón tay ra xa điểm bắt đầu",
+    ),
+    (
+        "Move the page when you lift your finger",
+        "Di chuyển trang khi bạn nhấc ngón tay",
+    ),
+    ("Selected", "Đã chọn"),
+    ("Activation delay", "Độ trễ kích hoạt"),
+];
+
+// Fixed navigation settings and Back policies; stored choices are unchanged.
+const NAVIGATION_SETTINGS_LABELS: &[(&str, &str)] = &[
+    (
+        "Add opening page to location history",
+        "Thêm trang mở vào lịch sử vị trí",
+    ),
+    (
+        "Uses your saved place when reopening a book",
+        "Dùng vị trí đã lưu khi mở lại sách",
+    ),
+    ("Skim dialog position", "Vị trí cửa sổ đọc lướt"),
+    ("Top", "Trên"),
+    ("Center", "Giữa"),
+    ("Bottom", "Dưới"),
+    ("Selected", "Đã chọn"),
+    ("Assign a Back gesture", "Gán cử chỉ Quay lại"),
+    (
+        "Choose a gesture, then Back (navigation settings)",
+        "Chọn một cử chỉ, rồi chọn Quay lại (cài đặt điều hướng)",
+    ),
+    ("Back to exit", "Quay lại để thoát"),
+    ("Back in file browser", "Quay lại trong trình duyệt tệp"),
+    ("Back in Reader", "Quay lại trong Reader"),
+    ("Ask before exiting", "Hỏi trước khi thoát"),
+    ("Exit immediately", "Thoát ngay"),
+    ("Don't exit", "Không thoát"),
+    ("Follow Back to exit", "Theo cài đặt Quay lại để thoát"),
+    ("Go to parent folder", "Đến thư mục cha"),
+    ("Go to previous location", "Đến vị trí trước"),
+    ("Go to previous read page", "Đến trang đã đọc trước"),
+    ("Go to file browser", "Đến trình duyệt tệp"),
+];
+
 // Fixed page-turn settings labels; stored choices and percentages stay unchanged.
 const PAGE_TURN_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Default", "Mặc định"),
@@ -2047,6 +2101,54 @@ impl InterfaceLanguage {
     pub(super) fn reading_guide_english<'a>(self, label: &'a str) -> &'a str {
         if self == Self::Vietnamese {
             if let Some((english, _)) = READING_GUIDE_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    pub(super) fn scrolling_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = SCROLLING_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn scrolling_settings_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = SCROLLING_SETTINGS_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    pub(super) fn navigation_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = NAVIGATION_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn navigation_settings_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = NAVIGATION_SETTINGS_LABELS
                 .iter()
                 .find(|(_, value)| *value == label)
             {

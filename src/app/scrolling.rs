@@ -100,26 +100,31 @@ impl Reader {
     }
 
     pub(super) fn scroll_settings_items(&self) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let mut items = [Method::Classic, Method::Turbo, Method::OnRelease]
             .into_iter()
             .map(|method| {
                 Item::new(
-                    method.label(),
+                    language.scrolling_settings_text(method.label()),
                     Action::SetReadingControls(crate::reading_controls::ReadingControls {
                         scroll_method: method,
                         ..self.controls
                     }),
                 )
                 .detail(if method == self.controls.scroll_method {
-                    format!("Selected · {}", method.help())
+                    format!(
+                        "{} · {}",
+                        language.scrolling_settings_text("Selected"),
+                        language.scrolling_settings_text(method.help())
+                    )
                 } else {
-                    method.help().into()
+                    language.scrolling_settings_text(method.help()).into()
                 })
             })
             .collect::<Vec<_>>();
         items.push(
             Item::new(
-                "Activation delay",
+                language.scrolling_settings_text("Activation delay"),
                 Action::Show(Screen::NumberingValue(NumberField::ScrollDelay)),
             )
             .detail(format!("{} ms", self.scroll_delay_ms())),

@@ -47,146 +47,26 @@ the backlog. Unit, functional, system, simulator and Kindle acceptance are
 deferred until the implementation pass is complete. Entries added during this
 pass remain unverified and are not counted as completed acceptance.
 
-Work in progress includes bounded WOFF 2 reconstruction, additional licensed
-hyphenation languages, cross-part note stacking, reflow search from book edges,
-DOCX bookmarks and images, TIFF compression, CHM text and media handling,
-archive and image-format extensions, multi-page annotation exchange, reading
-gestures and Contents metadata. The current source also includes a conservative
-out-of-band MOBI text-destination mapping to protect existing saved anchors.
-Build, integration, source-comparison and device acceptance for this combined
-work remain outstanding; individual feature documents describe their limits.
+### Current implementation pass
 
-Additional implementation in this pass covers bookmark notes, local dictionary
-cross-references and word forms, fixed-page CJK phrase search, bilingual OCR,
-RTL and dark-page scan handling, DjVu page links, inline SVG in fixed EPUB,
-reading-profile choices, configurable reading gestures, and open-book and
-library bookmark-note exports. Publisher stylesheet defaults and additional
-margin, padding and alignment tweaks are also implemented in this candidate.
-The Mac library and both Reader executables have passed a build-only check;
-this is not behavioral validation. The implementation pass continues before
-the planned full tests.
+The local Reader candidate has passed Mac build-only checks. That establishes
+compilation, not behavioral parity, simulator acceptance, Kindle acceptance or
+release readiness. The related Files handoff is also implemented locally and
+has had a build-only check. The work remains unpublished until the user's
+required verification and release steps are complete.
 
-The next unverified implementation batch adds Adobe-obfuscated EPUB fonts,
-TTC font discovery, FB2 cover previews, paged animated GIFs, PDF annotation
-quote recovery, reading-pace limits and Japanese dictionary normalization.
-Individual TTC face selection and the limits documented for each feature remain
-open. These changes have only had the combined Mac build-only check.
+| Area | Implemented in the current unverified candidate | Important work still open |
+| --- | --- | --- |
+| Book formats and resources | Bounded WOFF 2 reconstruction, Adobe-obfuscated EPUB fonts, TTC discovery, DOCX/DOCM, [ODT](opendocument-text.md), [larger TXT/LOG](large-text-reading.md), HTML and Markdown local resources, compressed/colored TIFF, animated GIF pages, CHM media, FB2/FB3 and MOBI/KF8 improvements, covers and EPUB image formats. | Exact format and layout fidelity; individual TTC face selection; large-book startup and memory; malformed-input and real-document behavior. DOCM ignores active content. Older or ambiguous ODT positions fail closed. |
+| Typography and scripts | Additional licensed [hyphenation dictionaries](multilingual-hyphenation.md), distinct Latin variants and grapheme-aware marks; [style presets](reading-style-presets.md), line height, letter spacing, ligatures, numeric and East Asian font features, bounded ruby placement, CSS direction and bounded inline bidi analysis. | Exact stock rule and line-break comparisons, Greek and Catalan punctuation, font-feature availability, complex ruby, inline boxes, vertical and other rendering paths. |
+| Reading and navigation | Cross-part notes, search from book edges, bookmark notes and exports, reading profiles and gestures, Contents metadata, fixed-page search, PDF annotation exchange and quote recovery, DjVu links, and conservative three-column scan navigation. | Cross-document variants, complex layouts, original saved-state compatibility, performance and feature-by-feature comparison. |
+| Lookup and interface | Dictionary word forms and local cross-references, bilingual OCR configuration, and a partial [Vietnamese interface](interface-language.md) across reading controls, navigation, lookup and settings. | Complete Vietnamese coverage, other interface languages, RTL interface layout, glyph support, text fit and interaction comparison. |
+| Optional dictionaries and licensing | Armenian, Zulu, Serbian, Czech and Romanian loaders accept separately supplied local data; their pattern files are **not bundled**. Notices and original sources for bundled third-party data are tracked under [licenses](licenses/README.md). | Missing/invalid data, packaging and distribution review for separately supplied data; Basque modified-data notice and Hungarian MPL distribution obligations require release review. |
 
-The next local implementation batch adds [initial ODT reading](opendocument-text.md),
-[standalone HTML resources](local-html-resources.md),
-[zipped text reading](text-zip-reading.md), nested custom fonts, MOBI/KF8
-cover previews, EPUB BMP/PNM illustrations, Russian hyphenation, TIFF orientation,
-and conservative three-column scan navigation. Each has documented format and
-behavior limits. These additions are unverified: the implementation pass is
-still in progress, and broad testing, simulation, device acceptance and release
-remain deferred.
-
-The current source additionally contains a restricted DOCM reading adapter,
-ODT-specific ordinary-space preservation, and an explicitly partial Vietnamese
-interface choice. The Reader's Mac library and binaries pass a build-only
-check after these changes. Other interface languages, full Vietnamese coverage,
-and the format-specific limits remain open. The related Files source handoff
-is also being updated; none of this constitutes behavioral or device acceptance.
-
-Later local implementation extends Vietnamese labels and bilingual search
-across the top-bar groups, recognizes FictionBook content in XML without
-changing its library identity, and adds RGB and palette TIFF decoding. The
-large-ODT implementation now partitions long text with transactional saved-state
-mapping; unsupported or ambiguous older positions fail closed. Further typography
-and interface coverage remain in progress. These additions also await the
-deferred behavioral, simulator and device checks.
-
-The latest local implementation adds Russian-English hyphenation choices,
-four additional typography presets, RGB-alpha TIFF decoding and Vietnamese
-selection-popup labels. Their build-only check passes; the feature comparisons,
-visual fit and behavioral tests remain open.
-
-Additional implementation covers Swedish hyphenation, common-ligature CSS
-controls and the end-of-document Vietnamese dialog. TIFF alpha support now also
-includes white-is-black grayscale. These changes have passed a build-only
-check; their behavioral and device validation remains deferred.
-
-The next candidate adds Catalan patterns, text-wide alignment and hyphenation
-presets, and Vietnamese dictionary and online-lookup controls. A Mac build-only
-check passes; Catalan punctuation behavior, visual fit, and the full feature
-and device comparisons remain open.
-
-Ruby annotation styles and Turkish hyphenation are also implemented, along
-with further Vietnamese lookup controls and within-word Catalan segmentation.
-These changes pass a Mac build-only check. Exact Catalan middle-dot line breaks,
-complex ruby, complete interface translation and behavioral validation remain
-open.
-
-Greek patterns based on KOReader's pinned Ancient Greek source, bounded ruby
-overhang and Vietnamese footnote, link and Skim controls are implemented and
-pass a Mac build-only check. Greek apostrophe/final-sigma cases, ruby collisions,
-visual fit and behavioral/device comparisons remain open.
-
-The current local candidate also includes Croatian hyphenation, independent
-heading-level page-break presets, and Vietnamese dictionary picker controls.
-It passes a Mac build-only check; behavior, layout and device comparisons are
-still deferred.
-
-Norwegian hyphenation, selectable normal-line-height overrides and Vietnamese
-Contents controls are implemented in the current candidate. The combined Mac
-build-only check passes; the Norwegian memory footprint and behavior, style
-rendering and user-interface fit still need the deferred validation pass.
-
-Occitan patterns and horizontal CSS document-direction controls are implemented
-in the current candidate. The Mac build-only check passes; full table direction,
-advanced inline bidirectional behavior, vertical rendering and device
-comparisons remain open.
-
-Lithuanian and Icelandic patterns, separate widow/orphan controls and
-Vietnamese bookmark-browser labels are now implemented and pass a Mac
-build-only check. Their behavior, layout and device comparisons remain open.
-
-The latest local batch adds bounded inline bidirectional analysis for supported
-horizontal text, Welsh, Piedmontese, Romansh, Basque and Friulian patterns,
-and additional Vietnamese dictionary and search controls. It passes a Mac
-build-only check. Inline boxes and other documented bidi fallbacks, the Basque
-distribution notice review, feature behavior and device comparisons remain open.
-
-Esperanto patterns matching the pinned upstream entries and computed direction
-for supported native tables are implemented in the latest candidate, alongside
-more Vietnamese reading controls. The Mac build-only check passes; functional,
-visual and device comparisons remain deferred.
-
-The current candidate also implements an optional local Armenian pattern
-loader, a bounded steady-line-height option and improved ruby placement. The
-Mac build-only check passes; Armenian data is not bundled, and its separate
-license review, malformed-input behavior, visual fit and device checks remain
-open.
-
-The current source also adds an optional, separately supplied Zulu dictionary
-and bounded image loading for standalone and zipped Markdown. The Mac
-build-only check passes; pattern data is not bundled, and its license review,
-resource handling, pagination and device behavior remain to be verified.
-
-Optional Serbian pattern loading and horizontal CSS caps variants are also
-implemented and pass a Mac build-only check. Serbian data is not bundled;
-font-feature availability, malformed inputs, licensing and device behavior
-remain open.
-
-Optional Czech pattern loading and horizontal CSS numeric font variants are
-implemented and pass a Mac build-only check. Czech pattern data is not bundled;
-parser behavior, font-feature availability, licensing and device checks remain
-open.
-
-Georgian patterns, a bounded loose-line-break option and Vietnamese library
-Find/Sort controls have been implemented and pass a Mac build-only check.
-Full line-break parity, script behavior and visual/device checks remain open.
-
-Larger TXT/LOG books and Malayalam and Hungarian pattern matching are now
-implemented and pass a Mac build-only check. Large-book startup and memory,
-script behavior, Hungarian's MPL distribution obligations and device acceptance
-remain open.
-
-Separate classical and liturgical Latin pattern selection, horizontal publisher
-letter spacing and further Vietnamese library/highlight controls now pass a Mac
-build-only check. Latin combining-mark pattern matching and pseudo-element
-letter spacing are also implemented and pass a Mac build-only check. Their
-behavior, other rendering paths and the device checks remain open.
+The implementation pass continues before the requested unit, functional,
+system, simulator and Kindle test phases. Each linked feature document records
+its precise bounds and remaining work. User documents and saved positions
+must remain intact, and the installed Launcher must not be reinstalled.
 
 ### Execution checklist
 
