@@ -299,18 +299,19 @@ unchanged. This addition has not yet been built or behaviorally tested.
 [Pinned CRE parser](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L3657-L3670)
 
 Publisher and user CSS `text-transform` support `none`, `uppercase`,
-`lowercase` and `capitalize` on ordinary horizontal paragraphs with ASCII,
-Latin-1, Latin Extended A/B and Cyrillic casing, including inline styles and
-inherited resets. Reader shapes a display copy only if each transformed
-character retains its UTF-8 length and stays in the supported repertoire;
-search, selection, source text
-and saved anchors retain the original bytes and character boundaries. Casing
-expansions, other transformed scripts, combining sequences, unsupported
-punctuation, Turkish, Azeri, Crimean Tatar, Lithuanian and Dutch language tags,
-complex projected text, ruby, images, generated content, first-letter/first-line
-styles, vertical layout and Blitz fall back to the original text. Hyphenation
-uses the original text. This bounded implementation has not yet been built or
-tested.
+`lowercase` and `capitalize` on ordinary horizontal paragraphs, including
+inline styles and inherited resets. A uniformly styled, single-language
+paragraph can use ICU's language-aware uppercase or lowercase mapping,
+including contextual rules. Reader accepts that display copy only if every
+UTF-8 scalar and grapheme boundary matches the original; otherwise it falls
+back to the source text. It uses the book's language where available and ICU's
+root language otherwise. Mixed-style and capitalization cases retain the
+bounded ASCII, Latin-1, Latin Extended A/B and Cyrillic implementation, with
+conservative fallbacks for combining marks and context-sensitive languages.
+Complex projected text, ruby, images, generated content, first-letter/first-line
+styles, vertical layout and Blitz also fall back to the original text. Search,
+selection and hyphenation use the original text, and saved anchors are
+unchanged. This bounded implementation has not yet been built or tested.
 [Pinned CRE parser](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L3674-L3677)
 
 **Spacing between paragraphs** contains three mutually exclusive choices.

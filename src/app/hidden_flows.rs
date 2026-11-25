@@ -62,17 +62,24 @@ impl Reader {
         let Some(data) = self.hidden_flow_data() else {
             return Vec::new();
         };
+        let language = self.controls.interface_language;
         let mut rows = vec![
-            Item::new("Custom hidden flows", Action::Flow(FlowAction::Toggle))
-                .detail(if data.enabled { "On" } else { "Off" }),
-            Item::new("Edit in Page browser", Action::Flow(FlowAction::Edit))
-                .detail(if data.editing { "On" } else { "Off" }),
-            Item::new("Page browser", Action::Overview)
-                .detail("Hold a page to mark a flow boundary"),
+            Item::new(
+                language.hidden_flow_text("Custom hidden flows"),
+                Action::Flow(FlowAction::Toggle),
+            )
+            .detail(language.hidden_flow_text(if data.enabled { "On" } else { "Off" })),
+            Item::new(
+                language.hidden_flow_text("Edit in Page browser"),
+                Action::Flow(FlowAction::Edit),
+            )
+            .detail(language.hidden_flow_text(if data.editing { "On" } else { "Off" })),
+            Item::new(language.hidden_flow_text("Page browser"), Action::Overview)
+                .detail(language.hidden_flow_text("Hold a page to mark a flow boundary")),
         ];
         if data.enabled && data.editing {
             rows.push(Item::new(
-                "Mark current page",
+                language.hidden_flow_text("Mark current page"),
                 Action::Flow(FlowAction::Here),
             ));
         }
@@ -80,15 +87,19 @@ impl Reader {
         if !inactive.is_empty() {
             rows.push(
                 Item::new(
-                    "Clear inactive markers",
+                    language.hidden_flow_text("Clear inactive markers"),
                     Action::Flow(FlowAction::ClearInactive),
                 )
-                .detail(format!("{} markers", inactive.len())),
+                .detail(if language.is_english() {
+                    format!("{} markers", inactive.len())
+                } else {
+                    format!("{} dấu", inactive.len())
+                }),
             );
         }
         if !data.points().is_empty() {
             rows.push(Item::new(
-                "Clear all markers",
+                language.hidden_flow_text("Clear all markers"),
                 Action::Flow(FlowAction::ClearAll),
             ));
         }
@@ -110,26 +121,42 @@ impl Reader {
         );
         for (index, point) in data.points().iter().enumerate() {
             let state = if unresolved.contains(&index) {
-                " · Location unavailable"
+                if language.is_english() {
+                    " · Location unavailable"
+                } else {
+                    " · Vị trí không khả dụng"
+                }
             } else {
                 ""
             };
             let position = &point.position;
             let location = if self.fixed.is_some() {
-                format!("Page {}", position.page.saturating_add(1))
+                if language.is_english() {
+                    format!("Page {}", position.page.saturating_add(1))
+                } else {
+                    format!("Trang {}", position.page.saturating_add(1))
+                }
             } else {
-                format!(
-                    "Chapter {} · Saved page {}",
-                    position.chapter.saturating_add(1),
-                    position.page.saturating_add(1)
-                )
+                if language.is_english() {
+                    format!(
+                        "Chapter {} · Saved page {}",
+                        position.chapter.saturating_add(1),
+                        position.page.saturating_add(1)
+                    )
+                } else {
+                    format!(
+                        "Chương {} · Trang đã lưu {}",
+                        position.chapter.saturating_add(1),
+                        position.page.saturating_add(1)
+                    )
+                }
             };
             rows.push(
                 Item::new(
                     if point.hidden {
-                        "Start hidden flow"
+                        language.hidden_flow_text("Start hidden flow")
                     } else {
-                        "Restart regular flow"
+                        language.hidden_flow_text("Restart regular flow")
                     },
                     Action::Flow(FlowAction::Open(index)),
                 )

@@ -396,6 +396,15 @@ fn main() {
             // internal word-edge marker, unreachable when matching one word.
             rules.retain(|rule| !matches!(rule.as_str(), "r2as" | "l2as"));
         }
+        if tag == "fur" {
+            // The pinned CREngine conversion omits this upstream rule.
+            assert_eq!(
+                rules.iter().filter(|rule| rule.as_str() == "s2s").count(),
+                1,
+                "Expected Friulian source pattern missing or duplicated"
+            );
+            rules.retain(|rule| rule != "s2s");
+        }
         if tag == "sk" {
             // The pinned CREngine Slovak table explicitly comments out this
             // unhyphenated TeX exception; retain its stock behavior.

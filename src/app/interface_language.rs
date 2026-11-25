@@ -551,6 +551,25 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed hidden-flow controls; stored positions and marker identities stay untouched.
+const HIDDEN_FLOW_LABELS: &[(&str, &str)] = &[
+    ("Custom hidden flows", "Luồng ẩn tùy chỉnh"),
+    ("Edit in Page browser", "Sửa trong Duyệt trang"),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    ("Page browser", "Duyệt trang"),
+    (
+        "Hold a page to mark a flow boundary",
+        "Nhấn giữ một trang để đánh dấu ranh giới luồng",
+    ),
+    ("Mark current page", "Đánh dấu trang hiện tại"),
+    ("Clear inactive markers", "Xóa dấu không hoạt động"),
+    ("Clear all markers", "Xóa mọi dấu"),
+    ("Start hidden flow", "Bắt đầu luồng ẩn"),
+    ("Restart regular flow", "Bắt đầu lại luồng thường"),
+    ("Location unavailable", "Vị trí không khả dụng"),
+];
+
 // Fixed book-archive controls; filenames and source/destination paths stay untouched.
 const BOOK_ARCHIVE_LABELS: &[(&str, &str)] = &[
     ("Move current book", "Di chuyển sách hiện tại"),
@@ -564,6 +583,8 @@ const BOOK_ARCHIVE_LABELS: &[(&str, &str)] = &[
     ("Cancel", "Hủy"),
     ("From", "Từ"),
     ("To", "Đến"),
+    ("Use this folder", "Dùng thư mục này"),
+    ("Up", "Lên"),
 ];
 
 // Fixed book-shortcut controls; user names, paths and identities stay untouched.
@@ -2845,6 +2866,17 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn hidden_flow_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                HIDDEN_FLOW_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn book_archive_text<'a>(self, english: &'a str) -> &'a str {

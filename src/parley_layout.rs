@@ -3353,9 +3353,68 @@ fn make_paragraph(
     )
 }
 
+// Some scripts and languages need contextual case mapping (for example Greek
+// final sigma). Only use a whole-paragraph result when every source scalar and
+// grapheme boundary remains exactly representable in the display text.
+fn contextual_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<Option<String>> {
+    let transform = styles.get(block.element)?.text_transform;
+    if !matches!(
+        transform,
+        TextTransform::Uppercase | TextTransform::Lowercase
+    ) {
+        return None;
+    }
+    let mut previous_end = 0;
+    for run in block.styled_text.iter() {
+        if run.bytes.start < previous_end
+            || run.bytes.end > block.text.len()
+            || run.bytes.start > run.bytes.end
+            || !block.text.is_char_boundary(run.bytes.start)
+            || !block.text.is_char_boundary(run.bytes.end)
+            || styles.get(run.element)?.text_transform != transform
+            || run.language.or(block.language) != block.language
+        {
+            return None;
+        }
+        previous_end = run.bytes.end;
+    }
+    let parsed_language = match block.language {
+        Some(language) => language.as_str().parse(),
+        None => "und".parse(),
+    };
+    let Ok(language) = parsed_language else {
+        return Some(None);
+    };
+    let mapper = icu_casemap::CaseMapper::new();
+    let visual = match transform {
+        TextTransform::Uppercase => mapper.uppercase_to_string(block.text, &language),
+        TextTransform::Lowercase => mapper.lowercase_to_string(block.text, &language),
+        _ => return None,
+    };
+    if visual == block.text {
+        return Some(None);
+    }
+    if visual.len() != block.text.len()
+        || !block
+            .text
+            .char_indices()
+            .map(|(offset, _)| offset)
+            .eq(visual.char_indices().map(|(offset, _)| offset))
+    {
+        return Some(None);
+    }
+    let graphemes = icu_segmenter::GraphemeClusterSegmenter::new();
+    if !graphemes
+        .segment_str(block.text)
+        .eq(graphemes.segment_str(&visual))
+    {
+        return Some(None);
+    }
+    Some(Some(visual.into_owned()))
+}
+
 // A same-length visual copy keeps every canonical byte boundary intact. Avoid
-// synthetic/projection paths and language-sensitive casing until a general
-// many-to-many source mapping is available.
+// synthetic/projection paths until a general many-to-many mapping is available.
 fn bounded_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<String> {
     if block.text.len() > MAX_TEXT_BYTES
         || !matches!(
@@ -3370,6 +3429,9 @@ fn bounded_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<Stri
         || styles.get(block.element)?.first_line.is_some()
     {
         return None;
+    }
+    if let Some(result) = contextual_transformed(block, styles) {
+        return result;
     }
     let locale_sensitive = |language: Option<Language>| {
         language.is_some_and(|language| {

@@ -88,13 +88,19 @@ impl FolderPicker {
 
     pub(super) fn items(
         &self,
+        language: super::interface_language::InterfaceLanguage,
         use_folder: Action,
         browse: impl Fn(PathBuf) -> Action,
     ) -> Vec<Item> {
-        let mut rows =
-            vec![Item::new("Use this folder", use_folder).detail(folder_title(&self.directory))];
+        let mut rows = vec![
+            Item::new(language.book_archive_text("Use this folder"), use_folder)
+                .detail(folder_title(&self.directory)),
+        ];
         if let Some(parent) = self.directory.parent() {
-            rows.push(Item::new("Up", browse(parent.to_owned())));
+            rows.push(Item::new(
+                language.book_archive_text("Up"),
+                browse(parent.to_owned()),
+            ));
         }
         rows.extend(self.subdirectories.iter().map(|path| {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -127,7 +133,7 @@ impl Reader {
         let Some(picker) = &self.archive.picker else {
             return Vec::new();
         };
-        picker.items(Action::BookArchive(Command::UseFolder), |path| {
+        picker.items(language, Action::BookArchive(Command::UseFolder), |path| {
             Action::BookArchive(Command::Browse(path))
         })
     }

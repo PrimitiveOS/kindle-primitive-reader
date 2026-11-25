@@ -208,7 +208,7 @@ impl Reader {
                 rows
             }
             Page::Folder => state.picker.as_ref().map_or_else(Vec::new, |picker| {
-                picker.items(command(Command::UseFolder), |path| {
+                picker.items(language, command(Command::UseFolder), |path| {
                     command(Command::Browse(path))
                 })
             }),

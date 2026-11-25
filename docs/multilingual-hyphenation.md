@@ -22,27 +22,27 @@ these dictionaries. Regional and real-book behavior remains unverified.
 | Dutch | 2 / 2 | 12,764 |
 | French | 2 / 1 | 1,074 upstream rules; stock comparison pending |
 | German, reformed spelling | 2 / 2 | 36,729 pinned KOReader rules; behavior comparison pending |
-| Bulgarian | 2 / 2 | 6,883 upstream word rules; stock comparison pending |
-| Galician | 2 / 2 | 2,321 upstream word rules; stock comparison pending |
+| Bulgarian | 2 / 2 | 6,883 source rules match pinned KOReader; behavior pending |
+| Galician | 2 / 2 | 2,321 source rules match pinned KOReader; behavior pending |
 | Irish | 2 / 3 | 6,033 source rules and 2 exceptions match pinned KOReader; behavior pending |
 | Ukrainian | 2 / 2 | 1,897 weighted source rules match pinned KOReader; behavior pending |
 | Polish | 2 / 2 | 4,053 upstream word rules and 20 exceptions; stock comparison pending |
 | Russian | 2 / 2 | 4,808 source rules match pinned KOReader; behavior pending |
-| Swedish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
+| Swedish | 2 / 2 | Source rules match pinned KOReader; behavior pending |
 | Catalan | 2 / 2 | 869 source rules match pinned KOReader; behavior pending |
-| Turkish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
-| Croatian | 2 / 2 | Upstream single-word patterns; stock comparison pending |
+| Turkish | 2 / 2 | Source rules match pinned KOReader; casing and behavior pending |
+| Croatian | 2 / 2 | Source rules match pinned KOReader; behavior pending |
 | Norwegian | 2 / 2 | 27,532 case-normalized pinned rules; behavior pending |
-| Lithuanian | 2 / 2 | Upstream single-word patterns; stock comparison pending |
-| Icelandic | 2 / 2 | Upstream single-word patterns; stock comparison pending |
-| Occitan | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
-| Welsh | 2 / 3 | Upstream single-word patterns; stock comparison pending |
-| Piedmontese | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
-| Romansh | 2 / 2 | Upstream version 1.1 alphabetic patterns; stock comparison pending |
-| Basque | 2 / 2 | Upstream alphabetic subset; stock comparison pending |
-| Friulian | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
+| Lithuanian | 2 / 2 | Source rules match pinned KOReader; behavior pending |
+| Icelandic | 2 / 2 | Source rules match pinned KOReader; behavior pending |
+| Occitan | 2 / 2 | Alphabetic source rules match pinned KOReader; behavior pending |
+| Welsh | 2 / 3 | Source rules match pinned KOReader; behavior pending |
+| Piedmontese | 2 / 2 | Alphabetic source rules match pinned KOReader; behavior pending |
+| Romansh | 2 / 2 | Alphabetic source rules match pinned KOReader; behavior pending |
+| Basque | 2 / 2 | Alphabetic source rules match pinned KOReader; behavior pending |
+| Friulian | 2 / 2 | 377 source rules match pinned KOReader; behavior pending |
 | Esperanto | 2 / 2 | Upstream 2020 pattern set matches pinned stock entries; behavior comparison pending |
-| Georgian | 1 / 2 | Upstream version 0.3 single-word patterns; stock comparison pending |
+| Georgian | 1 / 2 | Source rules match pinned KOReader; behavior pending |
 | Greek | 1 / 1 | KOReader Ancient Greek source; punctuation and behavior comparison pending |
 | Malayalam | 2 / 3 | Matching 88-pattern MIT source; grapheme and stock behavior comparison pending |
 | Hungarian | 2 / 2 | Matching upstream source; wide trie, distribution and behavior review pending |
@@ -51,7 +51,7 @@ these dictionaries. Regional and real-book behavior remains unverified.
 | Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
 | Russian + English (US) | 2 / 2 | Combined existing Russian and US English tries; stock comparison pending |
 | Slovak | 2 / 3 | 2,467 upstream word patterns and four active exceptions; stock comparison pending |
-| Slovenian | 2 / 2 | 1,068 upstream word patterns; stock comparison pending |
+| Slovenian | 2 / 2 | 1,068 source rules match pinned KOReader; behavior pending |
 
 Slovak and Slovenian follow the pinned CREngine language minima and use
 MIT-licensed upstream sources also identified by its pattern files. The
@@ -88,9 +88,18 @@ Straight and curly apostrophes split lookup input without changing source
 offsets. U+02BC modifier-letter segmentation, actual wrapping and real-book
 behavior still need comparison. Irish compiles the 6,033 source patterns and
 only the two exceptions retained by pinned KOReader; the other 44 source
-exceptions are omitted. Bulgarian and Galician normalized rule sets and
-Irish real-word behavior still need comparison, and simulator and device
-checks remain pending. [Pattern provenance and notices](licenses/HYPHENATION-BG-GL-GA.txt)
+exceptions are omitted. Irish real-word behavior still needs comparison, and
+simulator and device checks remain pending. [Pattern provenance and notices](licenses/HYPHENATION-BG-GL-GA.txt)
+
+A static multiset comparison of alphabetic, weighted source patterns with
+the pinned KOReader XML (case normalized and edge spaces mapped to word
+markers) also matched Bulgarian, Galician, Swedish, Turkish, Croatian,
+Lithuanian, Icelandic, Welsh, Piedmontese, Romansh, Basque, Occitan,
+Georgian, and Slovenian. Friulian matches after excluding the source-only
+`s2s` rule omitted by the pinned conversion, leaving 377 weighted patterns.
+Original source files and licenses remain unchanged. This comparison does not
+verify compiled tries, punctuation or runtime word breaks; simulator and Kindle
+validation remain open. [Pinned Friulian patterns](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/Friulian.pattern)
 Russian uses Alexander Lebedev's upstream TeX patterns, also identified as
 the origin of KOReader's pinned Russian dictionary. The 4,808 selected source
 rules match pinned KOReader; 184 TeX exceptions are omitted because the pinned
@@ -239,7 +248,7 @@ remain unverified. [Norwegian terms](licenses/HYPHENATION-NO.txt) · [KOReader l
 Lithuanian (`lt`) uses the upstream TeX patterns with KOReader's 2 / 2 minima.
 The original source and MIT terms are included in release packages. The
 existing grapheme normalization preserves original source offsets; Lithuanian-
-specific casing, exact rule equivalence and real-document behavior remain
+specific casing, compiled-rule equivalence and real-document behavior remain
 unverified. The change has not been built or tested on the computer or Kindle.
 [Lithuanian terms](licenses/HYPHENATION-LT.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
 
@@ -256,7 +265,7 @@ not apply them, and the pinned KOReader Occitan pattern file does not contain
 them either. KOReader's hyphenation word-boundary code selects alphabetic runs.
 Reader likewise splits straight and curly apostrophes for this dictionary
 without changing the original source text or UTF-8 offsets. The original source
-and MIT terms are included in release packages. Exact stock comparison,
+and MIT terms are included in release packages. Compiled-rule comparison,
 apostrophe behavior and real-document checks remain open; the change has not
 been built or tested on the computer or Kindle.
 [Pinned Occitan patterns](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/Occitan.pattern) ·
@@ -267,8 +276,8 @@ been built or tested on the computer or Kindle.
 Welsh (`cy`, including the `cym` language alias) uses Yannis Haralambous's
 upstream TeX patterns with KOReader's 2 / 3 minima. Reader compiles supported
 single-word patterns and preserves original UTF-8 source offsets. The unmodified
-source and MIT terms are included in release packages. Exact comparison with
-the pinned KOReader patterns and real-document behavior remain open; this
+source and MIT terms are included in release packages. Compiled-rule comparison
+and real-document behavior remain open; this
 change has not been built or tested on the computer or Kindle.
 [Welsh terms](licenses/HYPHENATION-CY.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
 
@@ -277,8 +286,8 @@ Piedmontese (`pms`) uses Claudio Beccari's upstream TeX patterns with
 KOReader's 2 / 2 minima. Reader compiles supported single-word alphabetic
 patterns and preserves original UTF-8 source offsets; upstream rules containing
 apostrophes are excluded. The unmodified source and MIT terms are included in
-release packages. Exact comparison with the pinned KOReader patterns and
-real-document behavior remain open; this change has not been built or tested
+release packages. Compiled-rule comparison and real-document behavior remain
+open; this change has not been built or tested
 on the computer or Kindle.
 [Piedmontese terms](licenses/HYPHENATION-PMS.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
 
@@ -287,8 +296,8 @@ Romansh (`rm`, including the `roh` language alias) uses Claudio Beccari's
 upstream TeX patterns, version 1.1, with KOReader's 2 / 2 minima. Reader
 compiles supported single-word alphabetic patterns and preserves original UTF-8
 source offsets; upstream rules containing apostrophes are excluded. The
-unmodified source and MIT terms are included in release packages. Exact
-comparison with the pinned KOReader patterns and real-document behavior remain
+unmodified source and MIT terms are included in release packages. Compiled-rule
+comparison and real-document behavior remain
 open; this change has not been built or tested on the computer or Kindle.
 [Romansh terms](licenses/HYPHENATION-RM.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
 
@@ -302,7 +311,7 @@ permission notice are included in release packages. The generated Rust and
 normalized development artifacts also carry the notice, and the runtime keeps
 the notice alongside the compiled pattern data. This is a conservative
 attribution measure, not a legal determination; distribution review remains
-open. Exact comparison with the pinned KOReader patterns and real-document
+open. Compiled-rule comparison and real-document
 behavior remain open; this change has not been built or tested on the computer
 or Kindle.
 [Basque terms](licenses/HYPHENATION-EU.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
@@ -312,8 +321,8 @@ Friulian (`fur`) uses Claudio Beccari's upstream TeX patterns, version 1.1,
 with KOReader's 2 / 2 minima. Reader compiles supported single-word alphabetic
 patterns and preserves original UTF-8 source offsets; rules containing
 apostrophes are excluded. The unmodified source and MIT terms are included in
-release packages. Exact comparison with pinned KOReader patterns and
-real-document behavior remain open; this change has not been built or tested
+release packages. Compiled-rule comparison and real-document behavior remain
+open; this change has not been built or tested
 on the computer or Kindle.
 [Friulian terms](licenses/HYPHENATION-FUR.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
 
@@ -333,7 +342,7 @@ Georgian (`ka`, optionally `ka-Geor`) uses Levan Shoshiashvili's upstream
 version 0.3 patterns and KOReader's 1 / 2 minima. Reader rejects explicitly
 incompatible scripts and compiles the supported single-word alphabetic rules,
 preserving original UTF-8 source offsets. The unmodified upstream source and
-MIT terms are included in release packages. Exact stock comparison and
+MIT terms are included in release packages. Compiled-rule comparison and
 real-document behavior remain open; this change has not been built or tested
 on the computer or Kindle.
 [Georgian terms](licenses/HYPHENATION-KA.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
