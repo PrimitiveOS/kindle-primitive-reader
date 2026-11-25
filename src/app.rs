@@ -4065,7 +4065,7 @@ impl Reader {
                 }
                 active
                     .reading
-                    .set_hide_nonlinear(!active.reading.config.hide_nonlinear);
+                    .set_hide_nonlinear(!active.reading.config.hide_nonlinear)?;
                 let id = active.id;
                 let enabled = active.reading.config.hide_nonlinear;
                 self.library

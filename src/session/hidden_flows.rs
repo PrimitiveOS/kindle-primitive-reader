@@ -8,12 +8,43 @@ pub(super) struct Resolved {
     points: Vec<(usize, ResolvedPoint)>,
     counts: BTreeMap<usize, usize>,
     pub(super) unresolved: Vec<usize>,
+    notes: BTreeMap<usize, Vec<(Range<usize>, usize)>>,
+    spine_flows: BTreeMap<usize, usize>,
 }
 
 impl Resolved {
     pub(super) fn new(config: &BookConfig, current: &Probe, chapter: usize) -> Result<Self> {
         let mut result = Self::default();
         if !config.hidden_flows.enabled {
+            if config.hide_nonlinear && config.can_separate_note_flows() {
+                let layouts = automatic_note_layouts(config, current, chapter)?;
+                let mut id = 0;
+                let mut spine_flow = None;
+                if !layouts.is_empty() {
+                    for index in 0..current.chapter_count() {
+                        if current.chapter_is_nonlinear(index) {
+                            let flow = *spine_flow.get_or_insert_with(|| {
+                                id += 1;
+                                id
+                            });
+                            result.spine_flows.insert(index, 2 * flow + 1);
+                        } else {
+                            spine_flow = None;
+                            if let Some((count, ranges)) = layouts.get(&index) {
+                                result.counts.insert(index, *count);
+                                let ranges_and_ids = ranges
+                                    .iter()
+                                    .map(|range| {
+                                        id += 1;
+                                        (range.clone(), id)
+                                    })
+                                    .collect();
+                                result.notes.insert(index, ranges_and_ids);
+                            }
+                        }
+                    }
+                }
+            }
             return Ok(result);
         }
         let mut groups = BTreeMap::<usize, Vec<_>>::new();
@@ -91,6 +122,31 @@ impl Resolved {
     }
 
     pub(super) fn map(&self, chapter: usize, count: usize) -> PageFlows {
+        if self.has_automatic_notes() {
+            let spine = self.spine_flows.get(&chapter).copied().unwrap_or(0);
+            let points = self
+                .notes
+                .get(&chapter)
+                .into_iter()
+                .flatten()
+                .filter(|(range, _)| range.end <= count)
+                .flat_map(|(range, id)| {
+                    [
+                        ResolvedPoint {
+                            page: range.start,
+                            hidden: true,
+                            index: 2 * id,
+                        },
+                        ResolvedPoint {
+                            page: range.end,
+                            hidden: false,
+                            index: 2 * id + 1,
+                        },
+                    ]
+                })
+                .collect();
+            return PageFlows::new(count, spine, points);
+        }
         PageFlows::new(
             count,
             self.inherited(chapter),
@@ -100,6 +156,10 @@ impl Resolved {
                 .map(|&(_, point)| point)
                 .collect(),
         )
+    }
+
+    pub(super) fn has_automatic_notes(&self) -> bool {
+        !self.notes.is_empty()
     }
 
     pub(super) fn marker_at(&self, chapter: usize, page: usize) -> Option<usize> {
@@ -131,7 +191,105 @@ impl Resolved {
     }
 }
 
+fn automatic_note_layouts(
+    config: &BookConfig,
+    current: &Probe,
+    chapter: usize,
+) -> Result<BTreeMap<usize, (usize, Vec<Range<usize>>)>> {
+    let result = with_storage(|| {
+        let mut book = Some(Book::open(&config.book).map_err(io::Error::other)?);
+        if book.as_ref().is_none_or(|book| !book.is_reflowable_epub()) {
+            return Ok(BTreeMap::new());
+        }
+        let styles = config.user_styles.clone().for_nonlinear_notes(true);
+        let mut fonts = None::<parley::FontContext>;
+        let mut layouts = BTreeMap::new();
+        for index in 0..current.chapter_count() {
+            if current.chapter_is_nonlinear(index) {
+                continue;
+            }
+            if index == chapter {
+                let ranges = current.canonical_note_flows();
+                if !ranges.is_empty() {
+                    layouts.insert(index, (current.page_count(), ranges));
+                }
+                continue;
+            }
+            let Ok(xhtml) = book
+                .as_mut()
+                .ok_or_else(|| io::Error::other("Reading source is unavailable"))?
+                .chapter(index)
+            else {
+                continue;
+            };
+            // Composed notes need a same-chapter fragment href. Entities can
+            // also encode the separator, so leave those inputs to the parser.
+            if !xhtml.contains(['#', '&']) || !xhtml.contains("href") {
+                continue;
+            }
+            if fonts.is_none() {
+                fonts = Some(crate::font_context(&config.fonts).map_err(io::Error::other)?);
+            }
+            let font_context = fonts
+                .as_ref()
+                .ok_or_else(|| io::Error::other("The reading font is unavailable"))?;
+            let probe = Probe::layout_opened_book(
+                &mut book,
+                config.engine,
+                config.settings,
+                index,
+                None,
+                &config.user_hyphenation,
+                &styles,
+                || Ok(font_context.clone()),
+            );
+            if let Ok(probe) = probe {
+                let ranges = probe.canonical_note_flows();
+                if !ranges.is_empty() {
+                    layouts.insert(index, (probe.page_count(), ranges));
+                }
+            }
+        }
+        Ok(layouts)
+    })?;
+    Ok(result)
+}
+
+impl BookConfig {
+    pub(super) fn can_separate_note_flows(&self) -> bool {
+        self.engine == Engine::Parley
+            && !self.scroll
+            && !self.facing_pages
+            && !self.hidden_flows.enabled
+            && (self.settings.in_page_footnotes || self.user_styles.in_page_epub_footnotes())
+            && self.user_styles.combines_nonlinear_notes()
+    }
+}
+
 impl Reading {
+    pub(super) fn uses_page_flows(&self) -> bool {
+        self.config.hidden_flows.enabled || self.custom_flows.has_automatic_notes()
+    }
+
+    pub(crate) fn has_nonlinear_fragments(&self) -> bool {
+        self.probe.has_nonlinear_chapters()
+            || self.custom_flows.has_automatic_notes()
+            || (self.config.can_separate_note_flows() && self.probe.in_page_notes.is_some())
+    }
+
+    /// Zero-based position and page count of the current chapter in the active flow.
+    pub(crate) fn visible_progress_pages(&self, page: usize) -> (usize, usize) {
+        let count = self.probe.page_count();
+        let page = page.min(count.saturating_sub(1));
+        self.probe.flow_pages.as_ref().map_or((page, count), |map| {
+            let flow = map.flow(page);
+            (
+                map.count_in(flow, 0..page),
+                map.count_in(flow, 0..count).max(1),
+            )
+        })
+    }
+
     pub(crate) fn custom_flow_map(&self) -> Option<PageFlows> {
         self.custom_flow_map_for_chapter(self.chapter, self.probe.page_count())
     }
@@ -141,9 +299,7 @@ impl Reading {
         chapter: usize,
         count: usize,
     ) -> Option<PageFlows> {
-        self.config
-            .hidden_flows
-            .enabled
+        self.uses_page_flows()
             .then(|| self.custom_flows.map(chapter, count))
     }
 
@@ -159,7 +315,7 @@ impl Reading {
 
     /// `true` means the whole source chapter is hidden; `false` is a partial range.
     pub(crate) fn hidden_chapter(&self, chapter: usize) -> Option<bool> {
-        if !self.config.hidden_flows.enabled {
+        if !self.uses_page_flows() {
             return None;
         }
         let count = if chapter == self.chapter {
@@ -181,6 +337,7 @@ impl Reading {
                 .map(self.chapter, self.probe.page_count())
                 .hidden_ids(),
         );
+        ids.extend(self.custom_flows.spine_flows.values().copied());
         ids.into_iter()
             .position(|id| id == flow)
             .map(|index| index + 1)
@@ -207,6 +364,15 @@ impl Reading {
         }
         let mut config = self.config.clone();
         config.hidden_flows = std::rc::Rc::new(flows);
+        if config.hide_nonlinear
+            && (config.can_separate_note_flows() || self.config.can_separate_note_flows())
+            && config.hidden_flows.enabled != self.config.hidden_flows.enabled
+        {
+            config.eager_layouts = Default::default();
+            config.screen_pages = Default::default();
+            *self = Self::restore(config, self.chapter, self.page, self.anchor().as_ref())?;
+            return Ok(());
+        }
         // A boundary changes which existing pages are shown, not their typography.
         // Reuse the current chapter's layout; only other marker-bearing chapters
         // need resolving. In particular, editing a long single-chapter book must

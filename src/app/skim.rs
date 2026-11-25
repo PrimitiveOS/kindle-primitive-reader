@@ -500,8 +500,9 @@ impl Reader {
         }
         let chapter_start = weights[reading.chapter];
         let chapter_span = weights[reading.chapter + 1].saturating_sub(chapter_start);
-        let pages = reading.probe.page_count().saturating_sub(1).max(1);
-        let within = reading.page.min(pages) as f64 / pages as f64;
+        let (page, count) = reading.visible_progress_pages(reading.page);
+        let pages = count.saturating_sub(1).max(1);
+        let within = page as f64 / pages as f64;
         ((chapter_start as f64 + chapter_span as f64 * within) / total as f64).clamp(0.0, 1.0)
     }
 

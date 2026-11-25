@@ -260,7 +260,8 @@ impl Reader {
         } else {
             let reading = &self.active.as_ref()?.reading;
             let chapter = reading.chapter;
-            let within = (reading.page + 1) as f64 / reading.probe.page_count() as f64;
+            let (page, count) = reading.visible_progress_pages(reading.page);
+            let within = (page + 1) as f64 / count as f64;
             let weights = reading.progress_weights();
             match (weights.get(chapter..=chapter + 1), weights.last()) {
                 (Some([start, end]), Some(&total)) if total > 0 => {

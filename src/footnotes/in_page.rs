@@ -18,6 +18,7 @@ pub(crate) struct Part {
 pub(crate) struct Page {
     pub parts: Vec<Part>,
     pub separator: Option<u32>,
+    pub canonical_note_group: Option<usize>,
 }
 
 const MAX_LINES: usize = 16_384;
@@ -50,6 +51,12 @@ pub(crate) fn paginate(
                 ..groups.partition_point(|group| group.lines.start < note.end)
         })
         .collect();
+    let mut group_flows = vec![None; groups.len()];
+    if targets.separate_nonlinear {
+        for (region, flow) in notes.iter().zip(targets.canonical_groups(source)) {
+            group_flows[region.clone()].fill(flow);
+        }
+    }
     if notes.iter().any(|note| {
         groups[note.clone()]
             .iter()
@@ -67,10 +74,13 @@ pub(crate) fn paginate(
     let mut pending = VecDeque::new();
     let mut first_index = 0;
     while let Some(first) = groups.get(first_index) {
+        let flow = group_flows[first_index];
         let mut end_index = first_index + 1;
         // Keep body groups together without pulling a preceding heading into
         // a note copy. Note slices still use their own exact source bounds.
-        while edges.get(end_index) == Some(&Edge::Avoid) {
+        while edges.get(end_index) == Some(&Edge::Avoid)
+            && group_flows.get(end_index) == Some(&flow)
+        {
             end_index += 1;
         }
         let last = &groups[end_index - 1];
@@ -79,7 +89,14 @@ pub(crate) fn paginate(
             return None;
         }
         let first_group = first_index == 0;
-        if !first_group && edges.get(first_index) == Some(&Edge::Force) {
+        if !first_group && group_flows[first_index - 1] != flow {
+            // Keep continuations of a reference on regular pages even when
+            // the next original body is entering a canonical note flow.
+            if flow.is_some() {
+                packer.flush_notes(&mut pending, &groups, &notes)?;
+            }
+            packer.finish()?;
+        } else if !first_group && edges.get(first_index) == Some(&Edge::Force) {
             packer.finish()?;
         }
         let body_start = packer.draft.body.as_ref().map_or_else(
@@ -92,6 +109,7 @@ pub(crate) fn paginate(
             }
             packer.finish()?;
         }
+        packer.draft.canonical_note_group = flow;
         let body = packer.draft.body.get_or_insert_with(|| extent.clone());
         if first_group {
             body.start = 0.0;
@@ -115,14 +133,7 @@ pub(crate) fn paginate(
         }
         first_index = end_index;
     }
-    for id in pending {
-        if !packer.add_note(id, &groups[notes[id].clone()])? {
-            packer.finish()?;
-            if !packer.add_note(id, &groups[notes[id].clone()])? {
-                return None;
-            }
-        }
-    }
+    packer.flush_notes(&mut pending, &groups, &notes)?;
     packer.finish()?;
     Some(packer.pages)
 }
@@ -191,6 +202,7 @@ pub(crate) struct Targets {
     sizes: Vec<NoteSize>,
     formatting: NoteFormatting,
     wikipedia_backlinks: BTreeSet<usize>,
+    separate_nonlinear: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -422,7 +434,23 @@ impl Targets {
             sizes,
             formatting: styles.note_formatting(),
             wikipedia_backlinks,
+            separate_nonlinear: styles.separates_nonlinear_notes(),
         })
+    }
+
+    fn canonical_groups(&self, source: &Source) -> Vec<Option<usize>> {
+        let mut groups = vec![None; self.sizes.len()];
+        for (&root, &note) in &self.roots {
+            if matches!(self.sizes[note], NoteSize::Fb2(_)) {
+                continue;
+            }
+            let previous = source.elements[root]
+                .previous_sibling
+                .filter(|&sibling| self.starts_note_part[sibling])
+                .and_then(|sibling| self.ancestry[sibling]);
+            groups[note] = previous.and_then(|note| groups[note]).or(Some(note));
+        }
+        groups
     }
 
     pub(crate) fn has_wikipedia_notes(&self) -> bool {
@@ -558,6 +586,7 @@ struct Draft {
     notes: Vec<Range<f32>>,
     note_height: u32,
     seen: BTreeSet<usize>,
+    canonical_note_group: Option<usize>,
 }
 
 impl Draft {
@@ -578,6 +607,23 @@ struct Packer {
 }
 
 impl Packer {
+    fn flush_notes(
+        &mut self,
+        pending: &mut VecDeque<usize>,
+        groups: &[LineGroup],
+        notes: &[Range<usize>],
+    ) -> Option<()> {
+        for id in pending.drain(..) {
+            if !self.add_note(id, &groups[notes[id].clone()])? {
+                self.finish()?;
+                if !self.add_note(id, &groups[notes[id].clone()])? {
+                    return None;
+                }
+            }
+        }
+        Some(())
+    }
+
     fn add_note(&mut self, id: usize, mut groups: &[LineGroup]) -> Option<bool> {
         if self.draft.seen.contains(&id) {
             return Some(true);
@@ -626,7 +672,11 @@ impl Packer {
                 Part { source, y: offset }
             }))
             .collect();
-        self.pages.push(Page { parts, separator });
+        self.pages.push(Page {
+            parts,
+            separator,
+            canonical_note_group: draft.canonical_note_group,
+        });
         Some(())
     }
 }
@@ -1222,6 +1272,49 @@ mod tests {
             fallback.fragment("unreferenced")
         );
         assert_eq!(ordinary.capture(0).unwrap(), fallback.capture(0).unwrap());
+    }
+
+    #[cfg(feature = "kindle")]
+    #[test]
+    fn combined_footnote_flows_keep_long_reference_continuations_regular() {
+        let mut choices = crate::user_styles::Data::default();
+        choices
+            .choose(1, crate::user_styles::COMBINE_NONLINEAR_NOTES, Some(true))
+            .unwrap();
+        let styles = choices.snapshot(1).unwrap().for_nonlinear_notes(true);
+        let probe = Probe::layout_opened_book(
+            &mut Some(Book::open(&test_fixture("in-page-footnotes.epub")).unwrap()),
+            Engine::Parley,
+            settings(true),
+            1,
+            None,
+            &Default::default(),
+            &styles,
+            || crate::font_context(&[test_fixture("fonts/NotoSans-Regular.ttf")]),
+        )
+        .unwrap();
+        let canonical = probe.canonical_note_flows();
+        assert_eq!(canonical.len(), 1);
+        assert!(canonical[0].len() > 1);
+        let pages = probe.in_page_notes.as_ref().unwrap();
+        assert!(
+            pages[canonical[0].clone()]
+                .iter()
+                .all(|page| page.separator.is_none())
+        );
+        let end = probe.fragment("note-end").unwrap();
+        let end_top = probe.anchor_top(&end).unwrap();
+        let copy = pages
+            .iter()
+            .position(|page| {
+                page.parts
+                    .iter()
+                    .any(|part| part.y > 0 && part.source.contains(&end_top))
+            })
+            .unwrap();
+        let reference = probe.page_for(&probe.fragment("ref").unwrap()).unwrap();
+        assert!(copy > reference && copy < canonical[0].start);
+        assert!(canonical[0].contains(&probe.page_for(&end).unwrap()));
     }
 
     #[test]

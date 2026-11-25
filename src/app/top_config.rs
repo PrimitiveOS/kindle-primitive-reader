@@ -94,7 +94,7 @@ impl Reader {
             .as_ref()
             .filter(|book| book.entry.format == crate::library::DocumentFormat::Epub)
         {
-            if book.reading.probe.has_nonlinear_chapters()
+            if book.reading.has_nonlinear_fragments()
                 && !book.reading.config.hidden_flows.enabled
                 && !book.reading.config.scroll
                 && !book.reading.config.facing_pages

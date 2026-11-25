@@ -1624,6 +1624,28 @@ impl Probe {
             .map_or(self.pages.len(), Vec::len)
     }
 
+    #[cfg(feature = "kindle")]
+    pub(crate) fn canonical_note_flows(&self) -> Vec<Range<usize>> {
+        let mut runs = Vec::<Range<usize>>::new();
+        let mut previous = None;
+        if let Some(pages) = &self.in_page_notes {
+            for (page, flow) in pages
+                .iter()
+                .map(|page| page.canonical_note_group)
+                .enumerate()
+            {
+                if let Some(flow) = flow {
+                    match runs.last_mut() {
+                        Some(run) if previous == Some(flow) => run.end = page + 1,
+                        _ => runs.push(page..page + 1),
+                    }
+                }
+                previous = flow;
+            }
+        }
+        runs
+    }
+
     pub(crate) fn page_parts(&self, page: usize) -> impl Iterator<Item = (Range<f32>, u32)> + '_ {
         let ordinary = self
             .in_page_notes

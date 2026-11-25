@@ -48,6 +48,162 @@ fn turn(app: &mut Reader, forward: bool) {
 }
 
 #[test]
+fn combined_footnote_flows_leave_reference_bands_in_the_regular_reading_path() {
+    use crate::user_styles::{COMBINE_NONLINEAR_NOTES, EPUB_FOOTNOTES};
+
+    let fixture = Fixture::new();
+    fs::copy(
+        crate::test_fixture("nonlinear-note-flows.epub"),
+        &fixture.book,
+    )
+    .unwrap();
+    let original = fs::read(&fixture.book).unwrap();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    fn read(app: &Reader) -> &ActiveBook {
+        app.active.as_ref().unwrap()
+    }
+    let open = || {
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        app
+    };
+    let mut app = open();
+    let id = app.open_book_id().unwrap();
+    assert!(!read(&app).reading.has_nonlinear_fragments());
+    let initial = app.current_history_location();
+    app.activate(Action::Style(style_tweaks::Command::Choose(
+        EPUB_FOOTNOTES.into(),
+        Some(true),
+    )))
+    .unwrap();
+    app.activate(Action::Style(style_tweaks::Command::Choose(
+        COMBINE_NONLINEAR_NOTES.into(),
+        Some(true),
+    )))
+    .unwrap();
+    assert_eq!(app.current_history_location(), initial);
+    assert!(read(&app).reading.has_nonlinear_fragments());
+    assert!(!read(&app).reading.hides_nonlinear());
+    let ordered_weights = read(&app).reading.progress_weights().to_vec();
+    let turn_toggle = |app: &mut Reader| {
+        let item = app
+            .top_config_items(TopGroup::Navigation)
+            .into_iter()
+            .find(|item| item.title == "Hide non-linear fragments")
+            .unwrap();
+        app.activate(item.action).unwrap();
+        app.show(Screen::Book);
+    };
+    turn_toggle(&mut app);
+    assert_eq!(app.current_history_location(), initial);
+    let reading = &read(&app).reading;
+    let page_for = |id| {
+        reading
+            .probe
+            .fragment(id)
+            .and_then(|anchor| reading.probe.page_for(&anchor))
+            .unwrap()
+    };
+    let map = reading.custom_flow_map().unwrap();
+    let note_pages = [page_for("note-a"), page_for("note-b"), page_for("note-c")];
+    let middle = page_for("middle");
+    let finish = page_for("finish");
+    assert_ne!(map.flow(note_pages[0]), 0);
+    assert_eq!(map.flow(note_pages[0]), map.flow(note_pages[1]));
+    assert_ne!(map.flow(note_pages[2]), map.flow(note_pages[0]));
+    assert_eq!(map.flow(middle), 0);
+    assert_eq!(map.flow(finish), 0);
+    assert_eq!(reading.probe.canonical_note_flows().len(), 2);
+    assert!(app.status_caption().unwrap().starts_with("Chapter "));
+    let weights = reading.progress_weights();
+    assert!(weights[1] < ordered_weights[1]);
+    assert!(weights[3] - weights[2] < ordered_weights[3] - ordered_weights[2]);
+    assert_eq!(
+        weights[2] - weights[1],
+        ordered_weights[2] - ordered_weights[1]
+    );
+    let first_note = reading.probe.matches("Red lantern schedule").remove(0);
+    let end = crate::Anchor {
+        offset: first_note.offset + "Red lantern schedule".len(),
+        ..first_note.clone()
+    };
+    let selection = reading.probe.select_range(&first_note, &end).unwrap();
+    assert_eq!(selection.text, "Red lantern schedule");
+    assert!(
+        !reading
+            .probe
+            .selection_rects(reading.page, &selection)
+            .is_empty()
+    );
+    capture_test_screen(&app, &fonts, "READER_NONLINEAR_NOTE_BAND", false);
+
+    let origin_page = read(&app).reading.page;
+    turn(&mut app, true);
+    assert_eq!(read(&app).reading.page, middle);
+    turn(&mut app, true);
+    assert_eq!(read(&app).reading.page, finish);
+    turn(&mut app, true);
+    assert_eq!(read(&app).reading.chapter, 1);
+    assert!(read(&app).reading.has_nonlinear_fragments());
+    turn(&mut app, false);
+    assert_eq!(read(&app).reading.page, finish);
+    app.activate(Action::Jump(crate::epub::Destination {
+        path: "survey.xhtml".into(),
+        fragment: Some("note-a".into()),
+    }))
+    .unwrap();
+    let selected = app.current_history_location();
+    assert_eq!(read(&app).reading.anchor(), Some(first_note));
+    assert_eq!(read(&app).reading.page, note_pages[0]);
+    assert!(
+        app.status_caption()
+            .unwrap()
+            .starts_with("Hidden 1 - Chapter ")
+    );
+    capture_test_screen(&app, &fonts, "READER_NONLINEAR_NOTE_ORIGINALS", false);
+    app.save().unwrap();
+    drop(app);
+
+    let mut reopened = open();
+    assert_eq!(reopened.current_history_location(), selected);
+    assert!(
+        reopened
+            .style_store
+            .data
+            .enabled(id, COMBINE_NONLINEAR_NOTES)
+    );
+    let reading = &read(&reopened).reading;
+    assert_ne!(reading.custom_flow_map().unwrap().flow(reading.page), 0);
+    turn(&mut reopened, false);
+    assert_eq!(read(&reopened).reading.page, origin_page);
+    let anchor = read(&reopened).reading.anchor();
+    reopened
+        .activate(Action::Flow(hidden_flows::FlowAction::Toggle))
+        .unwrap();
+    assert!(!read(&reopened).reading.hides_nonlinear());
+    assert!(
+        read(&reopened)
+            .reading
+            .probe
+            .canonical_note_flows()
+            .is_empty()
+    );
+    assert_eq!(read(&reopened).reading.anchor(), anchor);
+    reopened
+        .activate(Action::Flow(hidden_flows::FlowAction::Toggle))
+        .unwrap();
+    assert!(read(&reopened).reading.hides_nonlinear());
+    assert_eq!(read(&reopened).reading.anchor(), anchor);
+    turn_toggle(&mut reopened);
+    assert!(read(&reopened).reading.custom_flow_map().is_none());
+    assert_eq!(read(&reopened).reading.progress_weights(), ordered_weights);
+    assert_eq!(fs::read(&fixture.book).unwrap(), original);
+}
+
+#[test]
 fn nonlinear_fragments_are_skipped_only_in_single_page_and_keep_explicit_destinations() {
     let fixture = Fixture::new();
     authored_book(&fixture.book);

@@ -158,7 +158,7 @@ fn chapter_navigation_uses_the_regular_epub_flow_or_the_current_nonlinear_run() 
     let fixture = Fixture::new();
     crate::app::nonlinear_tests::authored_book(&fixture.book);
     let mut app = open(&fixture, &fixture.book);
-    reflow(&mut app).set_hide_nonlinear(true);
+    reflow(&mut app).set_hide_nonlinear(true).unwrap();
     reflow(&mut app).go_to_page(1, 0).unwrap();
     tap_chapter(&mut app, "Next chapter");
     assert_eq!(location(&app), (4, 0));

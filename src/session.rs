@@ -325,7 +325,10 @@ impl BookConfig {
             .get_or_init(|| book.chapter_offsets().unwrap_or_default());
         let facing = self.requested_facing_geometry();
         let single_page_layout = !self.scroll && facing.is_none() && !self.hidden_flows.enabled;
-        let user_styles = self.user_styles.for_note_layout(single_page_layout);
+        let user_styles = self
+            .user_styles
+            .for_note_layout(single_page_layout)
+            .for_nonlinear_notes(self.hide_nonlinear);
         let full = Settings {
             in_page_footnotes: self.settings.in_page_footnotes && single_page_layout,
             ..self.settings
@@ -496,7 +499,7 @@ impl Reading {
             probe.settings.typography = *typography;
         }
         let custom_flows = hidden_flows::Resolved::new(&config, &probe, chapter)?;
-        if config.hidden_flows.enabled {
+        if config.hidden_flows.enabled || custom_flows.has_automatic_notes() {
             probe.flow_pages = Some(custom_flows.map(chapter, probe.page_count()));
         }
         let display_anchor = anchor.and_then(|anchor| probe.restore_anchor(anchor));
@@ -575,7 +578,7 @@ impl Reading {
     }
 
     fn turn(&mut self, direction: isize) -> Result<Change> {
-        if self.config.hidden_flows.enabled {
+        if self.uses_page_flows() {
             return self.turn_in_custom_flow(direction);
         }
         let start = Instant::now();
@@ -638,7 +641,7 @@ impl Reading {
             && self.config.hide_nonlinear
             && !self.config.scroll
             && !self.config.facing_pages
-            && self.probe.has_nonlinear_chapters()
+            && (self.probe.has_nonlinear_chapters() || self.custom_flows.has_automatic_notes())
     }
 
     pub(crate) fn request_screen_page_navigation(&mut self) {
@@ -705,7 +708,7 @@ impl Reading {
         !self.config.scroll
             && !self.config.facing_pages
             && !self.probe.is_vertical()
-            && !self.config.hidden_flows.enabled
+            && !self.uses_page_flows()
     }
 
     pub(crate) fn whole_book_screen_pages(&self) -> Option<(usize, usize)> {
@@ -743,7 +746,7 @@ impl Reading {
     }
 
     pub(crate) fn progress_weights(&self) -> &[u64] {
-        if self.hides_nonlinear() || self.config.hidden_flows.enabled {
+        if self.hides_nonlinear() || self.uses_page_flows() {
             &self.flow_weights
         } else {
             self.config
@@ -754,7 +757,17 @@ impl Reading {
         }
     }
 
-    pub(crate) fn set_hide_nonlinear(&mut self, enabled: bool) {
+    pub(crate) fn set_hide_nonlinear(&mut self, enabled: bool) -> Result<()> {
+        if self.config.hide_nonlinear != enabled && self.config.can_separate_note_flows() {
+            let config = BookConfig {
+                hide_nonlinear: enabled,
+                screen_pages: Default::default(),
+                eager_layouts: Default::default(),
+                ..self.config.clone()
+            };
+            *self = Self::restore(config, self.chapter, self.page, self.anchor().as_ref())?;
+            return Ok(());
+        }
         if self.config.hide_nonlinear != enabled {
             self.config.screen_pages.reset();
             self.config.eager_layouts = Default::default();
@@ -762,11 +775,12 @@ impl Reading {
         self.config.hide_nonlinear = enabled;
         self.pause_turns();
         self.refresh_flow_weights();
+        Ok(())
     }
 
     fn refresh_flow_weights(&mut self) {
         self.flow_weights.clear();
-        if self.config.hidden_flows.enabled {
+        if self.uses_page_flows() {
             self.flow_weights = self.custom_weights();
             return;
         }
@@ -1521,7 +1535,7 @@ impl Reading {
     }
 
     pub(crate) fn jump_progress(&mut self, fraction: f64) -> Result<()> {
-        if self.config.hidden_flows.enabled {
+        if self.uses_page_flows() {
             return self.jump_custom_progress(fraction);
         }
         let hide = self.hides_nonlinear();
@@ -1580,7 +1594,7 @@ impl Reading {
         fallback_page: usize,
         exact_page: bool,
     ) -> Result<()> {
-        if self.config.hidden_flows.enabled
+        if self.uses_page_flows()
             && let Some(candidate) = &mut candidate
         {
             candidate.flow_pages = Some(self.custom_flows.map(chapter, candidate.page_count()));
@@ -1624,7 +1638,7 @@ impl Reading {
     }
 
     fn prefetch_page(&self) -> Option<usize> {
-        if self.config.hidden_flows.enabled {
+        if self.uses_page_flows() {
             return None;
         }
         let span = frame_span(&self.config, &self.probe);

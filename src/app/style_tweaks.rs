@@ -2,10 +2,10 @@
 use super::navigation_layout::NavigationLayout;
 use super::*;
 use crate::user_styles::{
-    self, CLASSIC_FOOTNOTES, Data, EPUB_FOOTNOTES, EXTEND_NOTES, EXTEND_NOTES_UNTIL_HEADING,
-    FB2_ENDNOTES, FB2_FOOTNOTES, FB2_REGULAR_NOTE_SIZE, FootnoteSize, NOTE_BLOCK_SPACING,
-    NOTE_COSMETIC_SPACING, NOTE_INDENTATION, NOTE_INLINE_SIZING, NOTE_JUSTIFICATION, PRESETS,
-    Snapshot, WIKIPEDIA_FOOTNOTES,
+    self, CLASSIC_FOOTNOTES, COMBINE_NONLINEAR_NOTES, Data, EPUB_FOOTNOTES, EXTEND_NOTES,
+    EXTEND_NOTES_UNTIL_HEADING, FB2_ENDNOTES, FB2_FOOTNOTES, FB2_REGULAR_NOTE_SIZE, FootnoteSize,
+    NOTE_BLOCK_SPACING, NOTE_COSMETIC_SPACING, NOTE_INDENTATION, NOTE_INLINE_SIZING,
+    NOTE_JUSTIFICATION, PRESETS, Snapshot, WIKIPEDIA_FOOTNOTES,
 };
 use primitive_ui::{TextStyle, editor::Multiline};
 #[derive(Clone)]
@@ -48,7 +48,9 @@ const COLUMNS: usize = 40;
 
 fn note_format(preset: &str) -> Option<DocumentFormat> {
     match preset {
-        EPUB_FOOTNOTES | CLASSIC_FOOTNOTES | WIKIPEDIA_FOOTNOTES => Some(DocumentFormat::Epub),
+        EPUB_FOOTNOTES | CLASSIC_FOOTNOTES | WIKIPEDIA_FOOTNOTES | COMBINE_NONLINEAR_NOTES => {
+            Some(DocumentFormat::Epub)
+        }
         FB2_FOOTNOTES | FB2_ENDNOTES | FB2_REGULAR_NOTE_SIZE => Some(DocumentFormat::Fb2),
         _ => None,
     }
@@ -66,6 +68,7 @@ fn advanced_note(preset: &str) -> bool {
             | NOTE_BLOCK_SPACING
             | NOTE_COSMETIC_SPACING
             | NOTE_INLINE_SIZING
+            | COMBINE_NONLINEAR_NOTES
     )
 }
 
@@ -539,6 +542,7 @@ impl Reader {
                     NOTE_BLOCK_SPACING => "Remove margins and padding around note blocks",
                     NOTE_COSMETIC_SPACING => "Remove margins and padding on inline note elements",
                     NOTE_INLINE_SIZING => "Use inherited note text size, line height and baseline",
+                    COMBINE_NONLINEAR_NOTES => "Group original notes for Hide non-linear fragments",
                     _ => "Book choice overrides the live all-books default",
                 };
                 let detail = if note_format(p.id).is_some() {

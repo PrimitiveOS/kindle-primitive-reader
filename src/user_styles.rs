@@ -18,6 +18,7 @@ pub(crate) const NOTE_INDENTATION: &str = "inpage_footnote_text-indent_0";
 pub(crate) const NOTE_JUSTIFICATION: &str = "inpage_footnote_text_justify";
 pub(crate) const NOTE_BLOCK_SPACING: &str = "inpage_footnote_no_block_spacing";
 pub(crate) const NOTE_COSMETIC_SPACING: &str = "inpage_footnote_no_inline_spacing";
+pub(crate) const COMBINE_NONLINEAR_NOTES: &str = "inpage_footnote_combine_non_linear";
 pub(crate) const NOTE_INLINE_SIZING: &str = "inpage_footnote_regularize_text";
 pub(crate) const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 pub(crate) const MAX_BOOK_CSS: usize = 8 * 1024;
@@ -107,6 +108,8 @@ struct InPageNotes {
     fb2_regular_size: bool,
     extension: NoteExtension,
     formatting: NoteFormatting,
+    combine_nonlinear: bool,
+    separate_nonlinear: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -183,6 +186,17 @@ impl Snapshot {
     pub(crate) fn note_formatting(&self) -> NoteFormatting {
         self.notes.formatting
     }
+    pub(crate) fn combines_nonlinear_notes(&self) -> bool {
+        self.notes.combine_nonlinear
+    }
+    pub(crate) fn separates_nonlinear_notes(&self) -> bool {
+        self.notes.separate_nonlinear
+    }
+    #[cfg(feature = "kindle")]
+    pub(crate) fn for_nonlinear_notes(mut self, hide: bool) -> Self {
+        self.notes.separate_nonlinear = hide && self.combines_nonlinear_notes();
+        self
+    }
     pub(crate) fn has_in_page_fb2_notes(&self) -> bool {
         self.notes.fb2_footnotes || self.notes.fb2_endnotes
     }
@@ -223,6 +237,7 @@ pub(crate) enum Effect {
     RemoveNoteBlockSpacing,
     RemoveNoteInlineSpacing,
     RegularizeNoteText,
+    CombineNonlinearNotes,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Preset {
@@ -324,6 +339,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         group: "in-page-note-inline-sizing",
         priority: 0,
         effect: Effect::RegularizeNoteText,
+    },
+    Preset {
+        id: COMBINE_NONLINEAR_NOTES,
+        title: "Combine footnotes in a non-linear flow",
+        group: "in-page-note-nonlinear",
+        priority: 0,
+        effect: Effect::CombineNonlinearNotes,
     },
     Preset {
         id: "paragraph-indent-none",
@@ -614,6 +636,7 @@ impl Data {
                 Effect::RemoveNoteBlockSpacing => notes.formatting.no_block_spacing = true,
                 Effect::RemoveNoteInlineSpacing => notes.formatting.no_inline_spacing = true,
                 Effect::RegularizeNoteText => notes.formatting.regularize = true,
+                Effect::CombineNonlinearNotes => notes.combine_nonlinear = true,
             }
         }
         if b.custom_enabled

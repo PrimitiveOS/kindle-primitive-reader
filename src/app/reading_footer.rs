@@ -909,6 +909,7 @@ impl Reader {
         if probe.chapter_count() > 1 {
             let ch = reading.chapter;
             let weights = reading.progress_weights();
+            let (_, page_count) = reading.visible_progress_pages(reading.last_visible_page());
             // A publication with an unreadable later item can still display the current chapter.
             // An index based on chapter count is the fallback when sizes were unavailable.
             progress.estimated = true;
@@ -919,13 +920,13 @@ impl Reader {
             };
             let later_pages = match (weights.get(ch..=ch + 1), weights.last()) {
                 (Some([start, end]), Some(&total)) if end > start => {
-                    ((total - end) as f64 * probe.page_count() as f64 / (end - start) as f64)
-                        .round() as usize
+                    ((total - end) as f64 * page_count as f64 / (end - start) as f64).round()
+                        as usize
                 }
                 _ => probe
                     .chapter_count()
                     .saturating_sub(ch + 1)
-                    .saturating_mul(probe.page_count()),
+                    .saturating_mul(page_count),
             };
             progress.book_pages_left = progress.book_pages_left.saturating_add(later_pages);
             progress.book_fraction = match (weights.get(ch..=ch + 1), weights.last()) {
@@ -986,11 +987,12 @@ impl Reader {
             .active
             .as_ref()
             .and_then(|book| {
-                book.reading.custom_flow_map().map(|map| {
-                    book.reading
-                        .hidden_flow_ordinal(map.flow(book.reading.page))
-                        .unwrap_or(0)
-                })
+                let reading = &book.reading;
+                let flow = reading.custom_flow_map()?.flow(reading.page);
+                if flow == 0 && !reading.config.hidden_flows.enabled {
+                    return None;
+                }
+                Some(reading.hidden_flow_ordinal(flow).unwrap_or(0))
             })
             .or_else(|| {
                 self.fixed.as_ref().and_then(|book| {

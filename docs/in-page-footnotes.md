@@ -163,10 +163,41 @@ can still be read with ordinary layout.
 [Reader canonical list](screenshots/reader-wikipedia-note-canonical.png) ·
 [KOReader canonical list](screenshots/stock-wikipedia-note-canonical.png)
 
-Whole-note flattening still needs a text layout that maps a single visual
-line back to multiple original blocks. Non-linear note grouping still needs
-automatic source-backed flow ranges that affect page turns and progress while
-keeping link access to the original notes.
+## Combined non-linear footnotes
+
+With in-page EPUB footnotes enabled, use **Style tweaks › More footnote
+options › Combine footnotes in a non-linear flow**. In **Navigation**,
+turn on **Hide non-linear fragments**. Consecutive original note blocks
+within the same source group form a single supplemental range. Regular
+page turns skip the original note pages while their copies remain in the
+footnote bands. Links and explicit Go to page jumps can still reach the
+original pages. Turn from an original to return to the adjacent regular
+page or use the reading history to return to the reference.
+
+The toggle preserves the source position and the selected state is saved
+for the edition. The chapter footer, reading time and progress skip the
+originals in supplemental note ranges. Whole-book progress
+uses Reader’s existing weighted chapter estimate. Custom hidden flows
+take precedence, and setup is available from chapters with supported
+note bands. The change applies to supported horizontal single-page
+EPUB layouts using same-chapter links. Continuous, facing-page and
+unsupported note layouts retain their ordinary source pagination.
+[KOReader note grouping](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L1168-L1179) ·
+[KOReader navigation](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L392-L460)
+
+The pinned native replay enables both stock tweaks and runs the stock
+flow toggle. It verifies six regular pages out of nine total, adjacent
+notes sharing a flow, separate note groups, direct canonical locations,
+and forward and backward turns over the intervening originals. Reader’s
+simulator verifies the corresponding routes, selectable note copies,
+the original position after reopening, and unchanged EPUB bytes.
+[Reader reference band](screenshots/reader-combined-note-band.png) ·
+[Reader originals](screenshots/reader-combined-note-originals.png) ·
+[KOReader reference band](screenshots/stock-combined-note-band.png) ·
+[KOReader originals](screenshots/stock-combined-note-originals.png)
+
+Whole-note flattening still needs layout support for a visual line
+spanning multiple original source blocks.
 
 ## Replay on macOS
 
@@ -195,6 +226,21 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
 
 Pass `cosmetic` or `wikipedia` as the fifth argument to select either
 advanced style replay.
+
+Run the combined note flow checks with the same stock runtime and scratch
+paths.
+
+```sh
+cd "$reader"
+READER_NONLINEAR_NOTE_BAND="$scratch/captures/reader-combined-note-band.png" \
+  READER_NONLINEAR_NOTE_ORIGINALS="$scratch/captures/reader-combined-note-originals.png" \
+  cargo test --locked --features kindle --lib combined_footnote_flows
+cd "$stock/runtime/koreader"
+KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
+  SDL_VIDEODRIVER=dummy ./luajit "$reader/scripts/koreader-nonlinear-note-flows-check.lua" \
+  "$reader/tests/fixtures/nonlinear-note-flows.epub" "$scratch/cache" \
+  "$reader/tests/fixtures/fonts/NotoSans-Regular.ttf" "$scratch/captures"
+```
 
 For local originals, set `READER_IN_PAGE_FOOTNOTE_ORIGINALS` to a private JSON
 array of book records. Each book record contains its `path` and a `chapters`
