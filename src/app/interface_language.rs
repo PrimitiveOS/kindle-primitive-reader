@@ -478,6 +478,41 @@ const CONTENTS_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Publisher contents · Off", "Mục lục nhà xuất bản · Tắt"),
 ];
 
+// Fixed page-numbering controls; publisher-provided labels are not passed here.
+const NUMBERING_LABELS: &[(&str, &str)] = &[
+    ("Page numbering", "Đánh số trang"),
+    ("Page numbering defaults", "Mặc định đánh số trang"),
+    ("Back", "Quay lại"),
+    ("Numbering chapters", "Đang đánh số chương"),
+    ("Publisher page numbers", "Số trang nhà xuất bản"),
+    ("Screen page numbers", "Số trang màn hình"),
+    (
+        "Follow the current text layout",
+        "Theo bố cục văn bản hiện tại",
+    ),
+    ("Character-count pages", "Trang theo số ký tự"),
+    ("Characters per page", "Số ký tự mỗi trang"),
+    (
+        "Choose a value from 500 to 3,000",
+        "Chọn giá trị từ 500 đến 3.000",
+    ),
+    ("Defaults for new books", "Mặc định cho sách mới"),
+    ("Disable default character count", "Tắt số ký tự mặc định"),
+    (
+        "Override publisher page numbers",
+        "Ghi đè số trang nhà xuất bản",
+    ),
+    (
+        "Ask about publisher numbers",
+        "Hỏi về số trang nhà xuất bản",
+    ),
+    ("Stable pages in footer", "Trang cố định ở chân trang"),
+    ("Stable pages in margin", "Trang cố định ở lề"),
+    ("Margin label size", "Cỡ nhãn ở lề"),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+];
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum InterfaceLanguage {
@@ -1736,6 +1771,82 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn numbering_fixed<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = NUMBERING_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    /// Localize generated progress descriptions, retaining every numeric value.
+    pub(super) fn numbering_text(self, english: &str) -> String {
+        if self == Self::Vietnamese {
+            let digits = |s: &str| !s.is_empty() && s.bytes().all(|byte| byte.is_ascii_digit());
+            if let Some(number) = english.strip_suffix(" labels supplied by this edition")
+                && digits(number)
+            {
+                return format!("{number} nhãn từ ấn bản này");
+            }
+            if let Some(number) = english.strip_suffix(" characters per stable page")
+                && digits(number)
+            {
+                return format!("{number} ký tự mỗi trang cố định");
+            }
+            if let Some((progress, stride)) = english.split_once(" · ")
+                && let Some((done, total)) = progress.split_once(" of ")
+                && let Some(stride) = stride.strip_suffix(" characters per page")
+                && digits(done)
+                && digits(total)
+                && digits(stride)
+            {
+                return format!("{done} trên {total} · {stride} ký tự mỗi trang");
+            }
+        }
+        self.numbering_fixed(english).to_owned()
+    }
+
+    pub(super) fn numbering_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = NUMBERING_LABELS.iter().find(|(_, value)| *value == label) {
+                return english;
+            }
+        }
+        label
+    }
+
+    /// Fixed labels surrounding publisher-supplied page data only.
+    pub(super) fn publisher_page_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Print edition source" => "Nguồn ấn bản in",
+            "Show numbers in footer and margin" => "Hiện số ở chân trang và lề",
+            "Continue reading" => "Đọc tiếp",
+            _ => english,
+        }
+    }
+
+    pub(super) fn publisher_page_offer_count(self, count: usize) -> String {
+        if self == Self::Vietnamese {
+            format!("Ấn bản này cung cấp {count} số trang")
+        } else {
+            format!("This edition supplies {count} page numbers")
+        }
+    }
+
+    pub(super) fn publisher_page_position(self, chapter: usize, page: Option<usize>) -> String {
+        match (self, page) {
+            (Self::Vietnamese, Some(page)) => format!("Chương {chapter} · Trang màn hình {page}"),
+            (Self::Vietnamese, None) => format!("Chương {chapter}"),
+            (_, Some(page)) => format!("Chapter {chapter} · Screen page {page}"),
+            (_, None) => format!("Chapter {chapter}"),
+        }
     }
 
     /// Return the canonical English search alias for a known Screen-panel row.

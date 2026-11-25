@@ -66,10 +66,15 @@ impl Reader {
         let armenian = self.active.as_ref().is_some_and(|book| {
             crate::hyphenation::is_armenian_language(book.reading.probe.main_language)
         });
+        let zulu = self.active.as_ref().is_some_and(|book| {
+            crate::hyphenation::is_zulu_language(book.reading.probe.main_language)
+        });
         let defaults = if settings.algorithmic_hyphenation {
             ALGORITHMIC_LIMITS
         } else if armenian {
             crate::HyphenationLimits { left: 1, right: 2 }
+        } else if zulu {
+            crate::HyphenationLimits { left: 2, right: 1 }
         } else {
             dictionary.map_or(ENGLISH_LIMITS, Dictionary::limits)
         };
@@ -118,14 +123,26 @@ impl Reader {
             if method == HyphenationMode::Automatic {
                 let name = if armenian {
                     match &self.user_hyphenation.armenian {
-                        crate::user_hyphenation::ArmenianPatterns::Loaded(_) => {
+                        crate::user_hyphenation::OptionalPatterns::Loaded(_) => {
                             "Armenian patterns loaded"
                         }
-                        crate::user_hyphenation::ArmenianPatterns::Missing => {
+                        crate::user_hyphenation::OptionalPatterns::Missing => {
                             "Armenian pattern file missing"
                         }
-                        crate::user_hyphenation::ArmenianPatterns::Invalid => {
+                        crate::user_hyphenation::OptionalPatterns::Invalid => {
                             "Armenian pattern file invalid"
+                        }
+                    }
+                } else if zulu {
+                    match &self.user_hyphenation.zulu {
+                        crate::user_hyphenation::OptionalPatterns::Loaded(_) => {
+                            "Zulu patterns loaded"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Missing => {
+                            "Zulu pattern file missing"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Invalid => {
+                            "Zulu pattern file invalid"
                         }
                     }
                 } else {
@@ -146,6 +163,12 @@ impl Reader {
             items.push(
                 Item::new("Armenian pattern file", Action::Heading)
                     .detail("Copy hyph-hy.tex to reader/data/hyphenation, then reopen Reader"),
+            );
+        }
+        if zulu {
+            items.push(
+                Item::new("Zulu pattern file", Action::Heading)
+                    .detail("Copy hyph-zu.dic to reader/data/hyphenation, then reopen Reader"),
             );
         }
         let defaults = self

@@ -402,3 +402,27 @@ unverified. Restart Reader after replacing the file. The original
 identify LGPL terms. Obtaining or redistributing that optional file has its own
 licensing obligations; separating it from Reader does not establish legal
 compliance. License and distribution review remains open.
+
+
+### Optional Zulu patterns
+
+Reader does not include Zulu hyphenation pattern data. If you have a permitted
+`hyph_zu_ZA.dic` file, create `reader/data/hyphenation/`, copy it there as
+`hyph-zu.dic`, and close and reopen Reader. In a Zulu book, Text › Hyphenation
+reports whether the file loaded, is missing, or is invalid. The book remains
+readable when no valid patterns are present. Reader reads the file locally as
+inert data and does not download it.
+
+The loader accepts the original ASCII-compatible `ISO8859-1` dictionary header,
+`%` comments, lowercase ASCII weighted patterns and optional word-edge dots.
+The input is bounded to 256 KiB, 4,096 rules and 8,192 trie nodes; symlinks,
+other encodings, malformed rules and unsupported characters are rejected. The
+source's apostrophe-only `'1` rule is omitted, matching KOReader's pinned
+129-rule pattern file. Reader applies the 2 / 1 minima to original UTF-8
+grapheme boundaries. Reopen Reader after replacing the file. Behavior and
+real-book comparisons remain unverified.
+
+The [upstream Zulu file](https://github.com/LibreOffice/dictionaries/blob/91c039a37e66094bc666878bd1f0d5477affb07f/zu_ZA/hyph_zu_ZA.dic)
+identifies LGPL 2.1 terms. Obtaining or redistributing the optional file has
+separate licensing obligations; keeping it separate from Reader does not
+establish legal compliance. Distribution review remains open.

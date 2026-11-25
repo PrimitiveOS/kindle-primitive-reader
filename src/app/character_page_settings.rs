@@ -168,6 +168,13 @@ impl Reader {
             "Defaults for new books",
             Action::Show(Screen::NumberingDefaults),
         ));
+        let language = self.controls.interface_language;
+        for item in &mut items {
+            item.title = language.numbering_text(&item.title);
+            if let Some(detail) = &mut item.detail {
+                *detail = language.numbering_text(detail);
+            }
+        }
         items
     }
 
@@ -238,6 +245,13 @@ impl Reader {
             )
             .detail(d.label_size.clamp(8, 20).to_string()),
         ]);
+        let language = self.controls.interface_language;
+        for item in &mut items {
+            item.title = language.numbering_text(&item.title);
+            if let Some(detail) = &mut item.detail {
+                *detail = language.numbering_text(detail);
+            }
+        }
         items
     }
 
@@ -484,21 +498,31 @@ impl Reader {
         let Some(active) = &self.active else {
             return Vec::new();
         };
+        let language = self.controls.interface_language;
         let count = active.reading.probe.printed_pages.len();
         let mut items = vec![Item::new(
-            format!("This edition supplies {count} page numbers"),
+            language.publisher_page_offer_count(count),
             Action::Heading,
         )];
         if let Some(source) = &active.reading.probe.printed_source {
-            items.push(Item::new("Print edition source", Action::Heading).detail(source));
+            items.push(
+                Item::new(
+                    language.publisher_page_text("Print edition source"),
+                    Action::Heading,
+                )
+                .detail(source),
+            );
         }
         if !self.publisher_footer_enabled() || !self.publisher_margins_enabled() {
             items.push(Item::new(
-                "Show numbers in footer and margin",
+                language.publisher_page_text("Show numbers in footer and margin"),
                 Action::AcceptPublisherNumbers,
             ));
         }
-        items.push(Item::new("Continue reading", Action::Show(Screen::Book)));
+        items.push(Item::new(
+            language.publisher_page_text("Continue reading"),
+            Action::Show(Screen::Book),
+        ));
         items
     }
 

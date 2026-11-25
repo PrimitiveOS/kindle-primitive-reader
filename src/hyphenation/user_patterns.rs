@@ -1,4 +1,4 @@
-//! Optional user-supplied Armenian patterns. TeX is treated as inert data.
+//! Optional user-supplied Armenian and Zulu patterns, treated as inert data.
 use super::PatternView;
 use std::collections::BTreeMap;
 
@@ -45,9 +45,30 @@ impl OwnedPatterns {
         if !prefix.trim().is_empty() || !suffix.trim().is_empty() {
             return None;
         }
+        Self::parse_rules(group.split_whitespace(), false)
+    }
+
+    /// Accept the upstream ASCII-compatible ISO-8859-1 dictionary syntax.
+    /// KOReader omits the original apostrophe-only rule, so omit it here too.
+    pub(crate) fn parse_zulu(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() as u64 > MAX_FILE_BYTES || !bytes.is_ascii() {
+            return None;
+        }
+        let input = std::str::from_utf8(bytes).ok()?;
+        let mut lines = input
+            .lines()
+            .map(|line| line.split('%').next().unwrap_or("").trim())
+            .filter(|line| !line.is_empty());
+        if lines.next()? != "ISO8859-1" {
+            return None;
+        }
+        Self::parse_rules(lines.filter(|line| *line != "'1"), true)
+    }
+
+    fn parse_rules<'a>(rules: impl Iterator<Item = &'a str>, zulu: bool) -> Option<Self> {
         let mut nodes = vec![Node::default()];
         let mut count = 0usize;
-        for pattern in group.split_whitespace() {
+        for pattern in rules {
             count += 1;
             if count > MAX_RULES || pattern.len() > MAX_PATTERN_BYTES {
                 return None;
@@ -68,7 +89,12 @@ impl OwnedPatterns {
                     continue;
                 }
                 previous_digit = false;
-                if ch != '.' && !(('\u{0561}'..='\u{0587}').contains(&ch) && ch.is_lowercase()) {
+                let letter = if zulu {
+                    ch.is_ascii_lowercase()
+                } else {
+                    ('\u{0561}'..='\u{0587}').contains(&ch) && ch.is_lowercase()
+                };
+                if ch != '.' && !letter {
                     return None;
                 }
                 letters.push(ch);

@@ -197,6 +197,9 @@ impl Document {
         if format == Format::Odt {
             return crate::odt::open(BufReader::new(file), metadata.len(), fallback_title);
         }
+        if format == Format::Markdown && has_extension(path, "zip") {
+            return read_markdown_zip(file, metadata.len(), fallback_title);
+        }
         let bytes = if has_extension(path, "gz") {
             read_bounded(MultiGzDecoder::new(file), limit)?
         } else if has_extension(path, "zip") && format == Format::Rtf {
@@ -255,7 +258,15 @@ impl Document {
                 load_local_html_resources(path, &mut document);
                 Ok(document)
             }
-            Format::Markdown => markdown_document(input, fallback_title),
+            Format::Markdown => {
+                let mut document = markdown_document(input, fallback_title)?;
+                // A ZIP member has its own archive namespace and must not
+                // acquire files from the directory containing the archive.
+                if !has_extension(path, "zip") {
+                    load_local_html_resources(path, &mut document);
+                }
+                Ok(document)
+            }
             Format::Fb2 => fb2_document(input, fallback_title),
             Format::Htmlz
             | Format::Docx
@@ -449,7 +460,11 @@ fn read_rtf_zip(file: File, length: u64) -> Result<Vec<u8>> {
     read_bounded(entry, crate::rtf::MAX_INPUT)
 }
 
-fn read_text_zip(file: File, length: u64, extension: &str, limit: usize) -> Result<Vec<u8>> {
+fn open_text_zip(
+    file: File,
+    length: u64,
+    extension: &str,
+) -> Result<(ZipArchive<BufReader<File>>, usize, String)> {
     let mut input = BufReader::new(file);
     let count = check_zip_directory(&mut input, length)
         .map_err(|_| "The text ZIP directory is invalid or exceeds Reader's limits")?;
@@ -475,16 +490,97 @@ fn read_text_zip(file: File, length: u64, extension: &str, limit: usize) -> Resu
         {
             return Err("The text ZIP contains an encrypted, linked or unsupported entry".into());
         }
-        if entry.is_file() && has_extension(&path, extension) && document.replace(index).is_some() {
-            return Err("The text ZIP contains more than one matching document".into());
+        if entry.is_file() && has_extension(&path, extension) {
+            if document.replace((index, entry.name().to_owned())).is_some() {
+                return Err("The text ZIP contains more than one matching document".into());
+            }
         }
     }
-    let entry =
-        archive.by_index(document.ok_or("The text ZIP contains no matching readable document")?)?;
+    let (index, name) = document.ok_or("The text ZIP contains no matching readable document")?;
+    Ok((archive, index, name))
+}
+
+fn read_text_zip(file: File, length: u64, extension: &str, limit: usize) -> Result<Vec<u8>> {
+    let (mut archive, index, _) = open_text_zip(file, length, extension)?;
+    let entry = archive.by_index(index)?;
     if entry.size() > limit as u64 {
         return Err("The text ZIP's document exceeds Reader's input limit".into());
     }
     read_bounded(entry, limit)
+}
+
+fn read_markdown_zip(file: File, length: u64, title: &str) -> Result<Document> {
+    let (mut archive, index, name) = open_text_zip(file, length, "md")?;
+    let bytes = {
+        let entry = archive.by_index(index)?;
+        if entry.size() > MAX_INPUT as u64 {
+            return Err("The text ZIP's document exceeds Reader's input limit".into());
+        }
+        read_bounded(entry, MAX_INPUT)?
+    };
+    let input = decode_document(&bytes, Format::Markdown)?;
+    let mut document = markdown_document(input.trim_start_matches('\u{feff}'), title)?;
+    if !is_archive_path(&name) || name.len() > MAX_HTMLZ_PATH {
+        return Ok(document);
+    }
+    let parent = name.rsplit_once('/').map_or("", |(parent, _)| parent);
+    let xml = Xml::parse_with_options(
+        &document.xhtml,
+        ParsingOptions {
+            nodes_limit: 80_000,
+            ..ParsingOptions::default()
+        },
+    )?;
+    let mut wanted = BTreeMap::new();
+    for node in xml.descendants().filter(|node| node.has_tag_name("img")) {
+        let Some(reference) = node.attribute("src") else {
+            continue;
+        };
+        let Ok(relative) = Book::resolve(CHAPTER_PATH, reference) else {
+            continue;
+        };
+        if relative.len() > MAX_HTMLZ_PATH
+            || local_html_resource_limit(&relative) != Some(MAX_HTMLZ_IMAGE)
+        {
+            continue;
+        }
+        let member = if parent.is_empty() {
+            relative.clone()
+        } else {
+            format!("{parent}/{relative}")
+        };
+        if member.len() <= MAX_HTMLZ_PATH && is_archive_path(&member) {
+            wanted.insert(member, relative);
+        }
+        if wanted.len() == 64 {
+            break;
+        }
+    }
+    drop(xml);
+    let mut members = BTreeMap::<String, Option<usize>>::new();
+    for index in 0..archive.len() {
+        let entry = archive.by_index_raw(index)?;
+        let name = entry.name();
+        if entry.is_file() && wanted.contains_key(name) {
+            members
+                .entry(name.to_owned())
+                .and_modify(|value| *value = None)
+                .or_insert(Some(index));
+        }
+    }
+    let mut remaining = MAX_HTMLZ_RESOURCES;
+    for (name, relative) in wanted {
+        let Some(Some(index)) = members.get(&name).copied() else {
+            continue;
+        };
+        let limit = MAX_HTMLZ_IMAGE.min(remaining);
+        let Ok(bytes) = read_htmlz_member(&mut archive, index, limit) else {
+            continue;
+        };
+        remaining -= bytes.len();
+        document.resources.insert(relative, bytes);
+    }
+    Ok(document)
 }
 
 fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {

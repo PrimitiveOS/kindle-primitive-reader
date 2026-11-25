@@ -499,13 +499,26 @@ pub(crate) fn suggestion(
         );
     } else if is_armenian_language(crate::TypographyLocale::parse(language))
         && word.len() <= MAX_WORD * 5
-        && let crate::user_hyphenation::ArmenianPatterns::Loaded(patterns) = &rules.armenian
+        && let crate::user_hyphenation::OptionalPatterns::Loaded(patterns) = &rules.armenian
     {
         pattern_breaks(
             patterns.view(),
             None,
             word,
             HyphenationLimits { left: 1, right: 2 },
+            false,
+            false,
+            |at| breaks.push(at),
+        );
+    } else if is_zulu_language(crate::TypographyLocale::parse(language))
+        && word.len() <= MAX_WORD * 5
+        && let crate::user_hyphenation::OptionalPatterns::Loaded(patterns) = &rules.zulu
+    {
+        pattern_breaks(
+            patterns.view(),
+            None,
+            word,
+            HyphenationLimits { left: 2, right: 1 },
             false,
             false,
             |at| breaks.push(at),
@@ -524,6 +537,13 @@ pub(crate) fn is_armenian_language(locale: Option<crate::TypographyLocale>) -> b
     };
     matches!(language.language(), "hy" | "hye" | "arm" | "hyw")
         && matches!(language.script(), None | Some("Armn"))
+}
+
+pub(crate) fn is_zulu_language(locale: Option<crate::TypographyLocale>) -> bool {
+    let Some(crate::TypographyLocale::Language(language)) = locale else {
+        return false;
+    };
+    matches!(language.language(), "zu" | "zul") && matches!(language.script(), None | Some("Latn"))
 }
 
 pub(crate) fn allows_user_rules(style: &Style) -> bool {
@@ -557,49 +577,68 @@ pub(crate) fn with_user_rules_text(
     if settings.automatic_hyphenation
         && !settings.algorithmic_hyphenation
         && !settings.disable_soft_hyphens
-        && let crate::user_hyphenation::ArmenianPatterns::Loaded(patterns) = &rules.armenian
     {
-        for range in crate::selection::word_ranges(text) {
-            if range.len() > MAX_WORD * 5 {
+        type LocaleCheck = fn(Option<crate::TypographyLocale>) -> bool;
+        let sources: [(
+            &crate::user_hyphenation::OptionalPatterns,
+            LocaleCheck,
+            HyphenationLimits,
+        ); 2] = [
+            (
+                &rules.armenian,
+                is_armenian_language,
+                HyphenationLimits { left: 1, right: 2 },
+            ),
+            (
+                &rules.zulu,
+                is_zulu_language,
+                HyphenationLimits { left: 2, right: 1 },
+            ),
+        ];
+        for (state, matches_locale, defaults) in sources {
+            let crate::user_hyphenation::OptionalPatterns::Loaded(patterns) = state else {
                 continue;
-            }
-            let first = styled.partition_point(|span| span.bytes.end <= range.start);
-            let mut covered = range.start;
-            let mut valid = true;
-            for span in styled[first..]
-                .iter()
-                .take_while(|span| span.bytes.start < range.end)
-            {
-                if span.bytes.start > covered
-                    || !allows_user_rules(&styles[span.element])
-                    || !is_armenian_language(span.hyphenation_language)
+            };
+            for range in crate::selection::word_ranges(text) {
+                if range.len() > MAX_WORD * 5 {
+                    continue;
+                }
+                let first = styled.partition_point(|span| span.bytes.end <= range.start);
+                let mut covered = range.start;
+                let mut valid = true;
+                for span in styled[first..]
+                    .iter()
+                    .take_while(|span| span.bytes.start < range.end)
                 {
-                    valid = false;
+                    if span.bytes.start > covered
+                        || !allows_user_rules(&styles[span.element])
+                        || !matches_locale(span.hyphenation_language)
+                    {
+                        valid = false;
+                        break;
+                    }
+                    covered = covered.max(span.bytes.end.min(range.end));
+                }
+                if !valid || covered != range.end {
+                    continue;
+                }
+                let mut offset = 0;
+                let limits = settings.hyphenation_limits.unwrap_or(defaults);
+                if !limits.valid() {
+                    continue;
+                }
+                for part in text[range.clone()].split_inclusive(['\'', '\u{2019}']) {
+                    let word = part.trim_end_matches(['\'', '\u{2019}']);
+                    pattern_breaks(patterns.view(), None, word, limits, false, false, |at| {
+                        if result.breaks.len() < MAX_BREAKS {
+                            result.breaks.push(range.start + offset + at);
+                        }
+                    });
+                    offset += part.len();
+                }
+                if result.breaks.len() == MAX_BREAKS {
                     break;
                 }
-                covered = covered.max(span.bytes.end.min(range.end));
-            }
-            if !valid || covered != range.end {
-                continue;
-            }
-            let mut offset = 0;
-            let limits = settings
-                .hyphenation_limits
-                .unwrap_or(HyphenationLimits { left: 1, right: 2 });
-            if !limits.valid() {
-                continue;
-            }
-            for part in text[range.clone()].split_inclusive(['\'', '\u{2019}']) {
-                let word = part.trim_end_matches(['\'', '\u{2019}']);
-                pattern_breaks(patterns.view(), None, word, limits, false, false, |at| {
-                    if result.breaks.len() < MAX_BREAKS {
-                        result.breaks.push(range.start + offset + at);
-                    }
-                });
-                offset += part.len();
-            }
-            if result.breaks.len() == MAX_BREAKS {
-                break;
             }
         }
         result.breaks.sort_unstable();

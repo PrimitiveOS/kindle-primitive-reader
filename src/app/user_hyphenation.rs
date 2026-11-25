@@ -45,11 +45,24 @@ pub(super) struct Draft {
     original: String,
 }
 
-pub(super) fn load_armenian(data: &Path) -> crate::user_hyphenation::ArmenianPatterns {
-    use crate::user_hyphenation::ArmenianPatterns;
+pub(super) fn load_armenian(data: &Path) -> crate::user_hyphenation::OptionalPatterns {
+    load_optional(data, false)
+}
+
+pub(super) fn load_zulu(data: &Path) -> crate::user_hyphenation::OptionalPatterns {
+    load_optional(data, true)
+}
+
+fn load_optional(data: &Path, zulu: bool) -> crate::user_hyphenation::OptionalPatterns {
+    use crate::user_hyphenation::OptionalPatterns;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::fs::OpenOptionsExt;
     let directory = data.join("hyphenation");
+    let filename: &[u8] = if zulu {
+        b"hyph-zu.dic\0"
+    } else {
+        b"hyph-hy.tex\0"
+    };
     let bytes = with_storage(|| {
         // Anchor both lookups in opened descriptors: replacing the directory
         // name after this point cannot redirect the final lookup.
@@ -69,7 +82,7 @@ pub(super) fn load_armenian(data: &Path) -> crate::user_hyphenation::ArmenianPat
         let fd = unsafe {
             libc::openat(
                 directory.as_raw_fd(),
-                b"hyph-hy.tex\0".as_ptr().cast(),
+                filename.as_ptr().cast(),
                 libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
             )
         };
@@ -97,11 +110,18 @@ pub(super) fn load_armenian(data: &Path) -> crate::user_hyphenation::ArmenianPat
         Ok(bytes)
     });
     match bytes {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => ArmenianPatterns::Missing,
-        Err(_) => ArmenianPatterns::Invalid,
-        Ok(bytes) => crate::hyphenation::user_patterns::OwnedPatterns::parse(&bytes)
-            .map(|patterns| ArmenianPatterns::Loaded(std::sync::Arc::new(patterns)))
-            .unwrap_or(ArmenianPatterns::Invalid),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => OptionalPatterns::Missing,
+        Err(_) => OptionalPatterns::Invalid,
+        Ok(bytes) => {
+            let patterns = if zulu {
+                crate::hyphenation::user_patterns::OwnedPatterns::parse_zulu(&bytes)
+            } else {
+                crate::hyphenation::user_patterns::OwnedPatterns::parse(&bytes)
+            };
+            patterns
+                .map(|patterns| OptionalPatterns::Loaded(std::sync::Arc::new(patterns)))
+                .unwrap_or(OptionalPatterns::Invalid)
+        }
     }
 }
 
@@ -182,6 +202,7 @@ impl Reader {
 
     fn apply_rules(&mut self, mut rules: Rules) -> Result<()> {
         rules.armenian = self.user_hyphenation.armenian.clone();
+        rules.zulu = self.user_hyphenation.zulu.clone();
         let encoded = serde_json::to_vec(&rules)?;
         if encoded.len() as u64 > MAX_FILE_BYTES {
             return Err("Custom hyphenation rules are full".into());
@@ -214,6 +235,7 @@ impl Reader {
     pub(super) fn set_user_hyphenation(&mut self, enabled: bool) -> Result<()> {
         let mut rules = load(&self.user_hyphenation_path)?;
         rules.armenian = self.user_hyphenation.armenian.clone();
+        rules.zulu = self.user_hyphenation.zulu.clone();
         if rules.enabled == enabled && rules == *self.user_hyphenation {
             return Ok(());
         }
@@ -228,6 +250,7 @@ impl Reader {
             .ok_or("Select a word first")?;
         let mut rules = load(&self.user_hyphenation_path)?;
         rules.armenian = self.user_hyphenation.armenian.clone();
+        rules.zulu = self.user_hyphenation.zulu.clone();
         if remove {
             rules.remove(&draft.language, &draft.word);
         } else {

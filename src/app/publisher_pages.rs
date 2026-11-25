@@ -196,6 +196,7 @@ impl Reader {
         let Some(book) = &self.active else {
             return (0, Vec::new());
         };
+        let language = self.controls.interface_language;
         let probe = &book.reading.probe;
         let geometry = probe.publisher_positions(book.numbering.as_ref());
         let count = book.page_labels()
@@ -214,15 +215,18 @@ impl Reader {
                     )
                 } else {
                     return Some(
-                        Item::new("Print edition source", Action::Heading)
-                            .detail(probe.printed_source.as_ref()?),
+                        Item::new(
+                            language.publisher_page_text("Print edition source"),
+                            Action::Heading,
+                        )
+                        .detail(probe.printed_source.as_ref()?),
                     );
                 };
                 Some(match geometry.chapters[row] {
-                    Some(chapter) => item.detail(match geometry.screen_pages.get(&row) {
-                        Some(page) => format!("Chapter {chapter} · Screen page {page}"),
-                        None => format!("Chapter {chapter}"),
-                    }),
+                    Some(chapter) => item.detail(language.publisher_page_position(
+                        chapter,
+                        geometry.screen_pages.get(&row).copied(),
+                    )),
                     None => item,
                 })
             })

@@ -1,4 +1,4 @@
-# Local resources in HTML documents
+# Local resources in HTML and Markdown documents
 
 When opening a standalone XML-compatible HTML or XHTML document, Reader
 snapshots directly referenced local images and linked CSS from the document's
@@ -6,6 +6,16 @@ own directory. Supported image paths are PNG, JPEG, GIF, SVG, BMP and portable
 anymap; an inline SVG can reference the same local images. These resources use
 the existing reading and image-rendering paths. The document's XHTML, source
 revision and saved reading positions are unchanged.
+
+Standalone `.md` and `.markdown` documents use the same bounded resource
+snapshot for images produced by Markdown image syntax. Their generated XHTML,
+publication revision and saved anchors stay unchanged. Loading an image can
+change pagination, so a saved page number may change while its source anchor
+remains the same. `.md.zip` can also snapshot directly referenced images from
+inside the archive beneath the Markdown member's directory. Reader does not
+read files beside the archive or extract its contents to disk. Parent-directory
+references, nested dependencies of SVGs and other archive resources remain
+unsupported.
 
 On Mac and Kindle, each resource path is opened relative to an already-open
 document directory. Every component is opened without following symbolic
@@ -27,3 +37,4 @@ the document directory; Reader applies the narrower boundaries above.
 This implementation has not been built or tested. Containment and symlink
 races, image and stylesheet appearance, missing-file fallback and saved
 position preservation need simulator and device verification before release.
+The Markdown extension has likewise not yet been built or tested.

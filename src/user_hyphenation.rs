@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, ops::Range};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) enum ArmenianPatterns {
+pub(crate) enum OptionalPatterns {
     #[default]
     Missing,
     Invalid,
@@ -22,7 +22,9 @@ const MAX_ENTRIES: usize = 4096;
 pub(crate) struct Rules {
     pub(crate) enabled: bool,
     #[serde(skip)]
-    pub(crate) armenian: ArmenianPatterns,
+    pub(crate) armenian: OptionalPatterns,
+    #[serde(skip)]
+    pub(crate) zulu: OptionalPatterns,
     words: BTreeMap<String, BTreeMap<String, Vec<u16>>>,
 }
 pub(crate) fn locale(tag: &Language) -> &str {

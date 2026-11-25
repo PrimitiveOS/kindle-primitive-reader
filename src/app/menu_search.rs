@@ -205,6 +205,12 @@ impl Catalog<'_> {
             // Localized top actions and configuration rows retain English
             // aliases without duplicate hits or altered destination ordinals.
             let english_alias: std::borrow::Cow<'_, str> = match menu {
+                Menu::List(Screen::PageNumbering | Screen::NumberingDefaults) => self
+                    .reader
+                    .controls
+                    .interface_language
+                    .numbering_english(&item.title)
+                    .into(),
                 Menu::List(Screen::ContentsSettings) => self
                     .reader
                     .controls

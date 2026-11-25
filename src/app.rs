@@ -1253,6 +1253,7 @@ impl Reader {
         let mut user_hyphenation =
             user_hyphenation::load(&user_hyphenation_path).unwrap_or_default();
         user_hyphenation.armenian = user_hyphenation::load_armenian(data);
+        user_hyphenation.zulu = user_hyphenation::load_zulu(data);
         let user_hyphenation = user_hyphenation.into();
         Ok(Self {
             user_hyphenation,
@@ -8704,6 +8705,14 @@ impl Reader {
                 .controls
                 .interface_language
                 .chapter_navigation_fixed("Chapter navigation"),
+            (Screen::PageNumbering, _) => self
+                .controls
+                .interface_language
+                .numbering_fixed("Page numbering"),
+            (Screen::NumberingDefaults, _) => self
+                .controls
+                .interface_language
+                .numbering_fixed("Page numbering defaults"),
             (Screen::BookMap, _) => self.controls.interface_language.book_map_text("Book map"),
             (Screen::PageOverview, _) => self.controls.interface_language.overview_text("Pages"),
             (Screen::BookmarkBrowser(page), _) => {
@@ -8802,6 +8811,11 @@ impl Reader {
             self.controls
                 .interface_language
                 .chapter_navigation_fixed("Back")
+        } else if matches!(
+            self.screen,
+            Screen::PageNumbering | Screen::NumberingDefaults
+        ) {
+            self.controls.interface_language.numbering_fixed("Back")
         } else if self.screen == Screen::BookMap {
             self.controls.interface_language.book_map_text("Back")
         } else if self.screen == Screen::PageOverview {
