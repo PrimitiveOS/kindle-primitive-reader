@@ -24,6 +24,8 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Ukrainian | 2 / 2 | 1,989 upstream word and apostrophe rules; stock comparison pending |
 | Polish | 2 / 2 | 4,053 upstream word rules and 20 exceptions; stock comparison pending |
 | Russian | 2 / 2 | Upstream single-word rules and exceptions; stock comparison pending |
+| Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
+| Russian + English (US) | 2 / 2 | Combined existing Russian and US English tries; stock comparison pending |
 | Slovak | 2 / 3 | 2,467 upstream word patterns and four active exceptions; stock comparison pending |
 | Slovenian | 2 / 2 | 1,068 upstream word patterns; stock comparison pending |
 
@@ -63,9 +65,11 @@ device checks remain pending. [Pattern provenance and notices](licenses/HYPHENAT
 Russian uses Alexander Lebedev's upstream TeX patterns and exceptions, also
 identified as the origin of KOReader's pinned Russian dictionary. Reader
 filters patterns that require punctuation outside its single-word matcher,
-including hyphen/dash rules, and uses 2 / 2 minima. KOReader also offers
-Russian/English combined dictionaries; Reader currently applies Russian-only
-rules for those language tags. This is not a claim of
+including hyphen/dash rules, and uses 2 / 2 minima. Russian + English (UK)
+and Russian + English (US) merge the Russian and the corresponding bundled
+English pattern weights before selecting breaks, including for mixed-script
+words. Both use 2 / 2 minima, as in the pinned KOReader language defaults;
+custom limits still override them. This is not a claim of
 exact KOReader parity: the compiled candidate, whole-document behavior and
 computer/Kindle comparison remain unverified. The original source, LPPL 1.3c
 and provenance are included in release packages. [Russian terms](licenses/HYPHENATION-RU.txt)
@@ -145,3 +149,8 @@ Set `READER_MULTILINGUAL_HYPHENATION_CAPTURE` for the pages and
 
 [Reader settings for Danish](screenshots/da-hyphenation-settings.png) ·
 [Reader settings for Dutch](screenshots/nl-hyphenation-settings.png)
+
+The combined Russian/English candidate reuses the existing licensed tables;
+it has not been built or compared against KOReader's combined dictionaries,
+and neither the simulator nor Kindle has verified its behavior. The existing
+Russian and English rule-source and punctuation limitations continue to apply.

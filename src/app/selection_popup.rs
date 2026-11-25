@@ -311,7 +311,12 @@ impl SelectionPopup {
             .find_map(|(action, rect)| rect.contains(x, y).then_some(action))
     }
 
-    fn draw(&self, canvas: &mut Canvas, notice: Option<&str>) {
+    fn draw(
+        &self,
+        canvas: &mut Canvas,
+        notice: Option<&str>,
+        language: super::interface_language::InterfaceLanguage,
+    ) {
         let floating = self.rect.y < self.viewport.page_height() as i32;
         let bottom = self.viewport.page_height() as i32;
         let done = self.viewport.done();
@@ -323,10 +328,10 @@ impl SelectionPopup {
             canvas.popup(self.rect);
             canvas.text(
                 Rect::new(self.rect.x + 20, self.rect.y + 6, self.rect.w - 40, 40),
-                match stage {
+                language.selection_text(match stage {
                     HighlightPromptStage::Style => "Highlight · choose style",
                     HighlightPromptStage::Color => "Highlight · choose color",
-                },
+                }),
                 CAPTION.bold(),
             );
             for (action, rect) in self.buttons() {
@@ -339,7 +344,7 @@ impl SelectionPopup {
                         canvas.panel(swatch, 4, 2, color.gray().unwrap_or(204));
                         canvas.text(
                             Rect::new(swatch.right() + 12, rect.y + 12, rect.w - 88, rect.h - 24),
-                            color.label(),
+                            language.selection_text(color.label()),
                             TextStyle::new(26)
                                 .bold()
                                 .center()
@@ -348,38 +353,40 @@ impl SelectionPopup {
                     }
                     SelectionAction::PromptStyle(style) => canvas.button(
                         rect,
-                        action.label(),
+                        language.selection_text(action.label()),
                         self.pending_style == Some(style),
                         false,
                     ),
-                    _ => canvas.button(rect, action.label(), false, false),
+                    _ => canvas.button(rect, language.selection_text(action.label()), false, false),
                 }
             }
-            canvas.button(done, "Done", false, false);
+            canvas.button(done, language.selection_text("Done"), false, false);
             return;
         }
         if self.select_mode {
             canvas.popup(self.rect);
             canvas.text(
                 Rect::new(self.rect.x + 16, self.rect.y + 6, self.rect.w - 32, 32),
-                notice.unwrap_or("Tap a word to extend · Highlight to save · Copy text"),
+                notice.unwrap_or_else(|| {
+                    language.selection_text("Tap a word to extend · Highlight to save · Copy text")
+                }),
                 CAPTION,
             );
             for (action, rect) in self.buttons() {
                 canvas.button(
                     rect,
-                    action.label(),
+                    language.selection_text(action.label()),
                     action == SelectionAction::Highlight,
                     false,
                 );
             }
-            canvas.button(done, "Done", false, false);
+            canvas.button(done, language.selection_text("Done"), false, false);
             return;
         }
         if floating {
             canvas.text(
                 Rect::new(38, bottom + 12, done.x - 62, 48),
-                notice.unwrap_or("Tap another word to extend"),
+                notice.unwrap_or_else(|| language.selection_text("Tap another word to extend")),
                 CAPTION,
             );
         }
@@ -434,15 +441,15 @@ impl SelectionPopup {
             };
             canvas.text(
                 Rect::new(rect.x, text_y, rect.w, size + 9),
-                if floating || action != SelectionAction::Html {
+                language.selection_text(if floating || action != SelectionAction::Html {
                     action.label()
                 } else {
                     "HTML"
-                },
+                }),
                 TextStyle::new(size).bold().center().ink(ink),
             );
         }
-        canvas.button(done, "Done", false, false);
+        canvas.button(done, language.selection_text("Done"), false, false);
     }
 }
 
@@ -760,7 +767,11 @@ impl Reader {
 
     pub(super) fn draw_selection_popup(&self, canvas: &mut Canvas) {
         if let Some(popup) = self.selection_popup() {
-            popup.draw(canvas, self.notice.as_deref());
+            popup.draw(
+                canvas,
+                self.notice.as_deref(),
+                self.controls.interface_language,
+            );
         }
     }
 

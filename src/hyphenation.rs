@@ -57,6 +57,8 @@ pub(crate) enum Dictionary {
     Ukrainian,
     Polish,
     Russian,
+    RussianEnglishBritish,
+    RussianEnglishAmerican,
     Slovak,
     Slovenian,
 }
@@ -71,7 +73,11 @@ impl Dictionary {
             return match lang.language() {
                 "bg" => Some(Self::Bulgarian),
                 "uk" => Some(Self::Ukrainian),
-                "ru" => Some(Self::Russian),
+                "ru" => Some(match lang.region() {
+                    Some("GB") => Self::RussianEnglishBritish,
+                    Some("US") => Self::RussianEnglishAmerican,
+                    _ => Self::Russian,
+                }),
                 _ => unreachable!(),
             };
         }
@@ -121,6 +127,8 @@ impl Dictionary {
             Self::Ukrainian => "Ukrainian",
             Self::Polish => "Polish",
             Self::Russian => "Russian",
+            Self::RussianEnglishBritish => "Russian + English (UK)",
+            Self::RussianEnglishAmerican => "Russian + English (US)",
             Self::Slovak => "Slovak",
             Self::Slovenian => "Slovenian",
         }
@@ -139,6 +147,8 @@ impl Dictionary {
             | Self::Ukrainian
             | Self::Polish
             | Self::Russian
+            | Self::RussianEnglishBritish
+            | Self::RussianEnglishAmerican
             | Self::Slovenian => HyphenationLimits { left: 2, right: 2 },
             Self::French => HyphenationLimits { left: 2, right: 1 },
             Self::American
@@ -170,7 +180,7 @@ impl Dictionary {
             Self::Irish => &IRISH,
             Self::Ukrainian => &UKRAINIAN,
             Self::Polish => &POLISH,
-            Self::Russian => &RUSSIAN,
+            Self::Russian | Self::RussianEnglishBritish | Self::RussianEnglishAmerican => &RUSSIAN,
             Self::Slovak => &SLOVAK,
             Self::Slovenian => &SLOVENIAN,
         }
@@ -370,19 +380,24 @@ fn word_breaks_with_limits(
         return;
     }
     let patterns = locale.patterns();
+    let additional = match locale {
+        Dictionary::RussianEnglishBritish => Some(&BRITISH),
+        Dictionary::RussianEnglishAmerican => Some(&AMERICAN),
+        _ => None,
+    };
     if matches!(locale, Dictionary::American | Dictionary::British) {
         if word
             .chars()
             .all(|ch| ch.is_ascii_alphabetic() || ch == '\u{ad}')
         {
-            pattern_breaks(patterns, word, limits, false, emit);
+            pattern_breaks(patterns, additional, word, limits, false, emit);
         }
         return;
     }
     // Ukrainian patterns include the apostrophe as an internal letter-like
     // character; normalize the typographic spelling without changing offsets.
     if locale == Dictionary::Ukrainian {
-        pattern_breaks(patterns, word, limits, true, emit);
+        pattern_breaks(patterns, additional, word, limits, true, emit);
         return;
     }
     // CRE treats apostrophes as word boundaries for the remaining pattern files.
@@ -390,13 +405,16 @@ fn word_breaks_with_limits(
     let mut offset = 0;
     for part in word.split_inclusive(['\'', '\u{2019}']) {
         let text = part.trim_end_matches(['\'', '\u{2019}']);
-        pattern_breaks(patterns, text, limits, false, |at| emit(offset + at));
+        pattern_breaks(patterns, additional, text, limits, false, |at| {
+            emit(offset + at)
+        });
         offset += part.len();
     }
 }
 
 fn pattern_breaks(
     patterns: &Patterns,
+    additional: Option<&Patterns>,
     word: &str,
     limits: HyphenationLimits,
     apostrophes: bool,
@@ -455,21 +473,25 @@ fn pattern_breaks(
         return;
     }
     let mut scores = [0u8; MAX_WORD + 3];
-    for start in 0..n + 2 {
-        let mut node = 0;
-        for &ch in &letters[start..n + 2] {
-            let (first, count, _, _) = patterns.nodes[node];
-            let branches = &patterns.edges[usize::from(first)..][..usize::from(count)];
-            let Ok(next) = branches.binary_search_by_key(&ch, |&(label, _)| label) else {
-                break;
-            };
-            node = usize::from(branches[next].1);
-            let (_, _, index, len) = patterns.nodes[node];
-            for (score, &weight) in scores[start..]
-                .iter_mut()
-                .zip(&patterns.weights[usize::from(index)..][..usize::from(len)])
-            {
-                *score = (*score).max(weight);
+    // Composite Russian/English dictionaries combine the maximum pattern
+    // weights before deciding odd/even breaks, rather than unioning results.
+    for patterns in [Some(patterns), additional].into_iter().flatten() {
+        for start in 0..n + 2 {
+            let mut node = 0;
+            for &ch in &letters[start..n + 2] {
+                let (first, count, _, _) = patterns.nodes[node];
+                let branches = &patterns.edges[usize::from(first)..][..usize::from(count)];
+                let Ok(next) = branches.binary_search_by_key(&ch, |&(label, _)| label) else {
+                    break;
+                };
+                node = usize::from(branches[next].1);
+                let (_, _, index, len) = patterns.nodes[node];
+                for (score, &weight) in scores[start..]
+                    .iter_mut()
+                    .zip(&patterns.weights[usize::from(index)..][..usize::from(len)])
+                {
+                    *score = (*score).max(weight);
+                }
             }
         }
     }

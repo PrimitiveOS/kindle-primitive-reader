@@ -831,6 +831,36 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("* {font-size:inherit !important;}"),
     },
     Preset {
+        id: "font_size_most_reset",
+        title: "Reset main text font size",
+        group: "font-size",
+        priority: 0,
+        effect: Effect::Css("body,p,li,div,blockquote {font-size:1rem !important;}"),
+    },
+    Preset {
+        id: "lineheight_all_inherit",
+        title: "Ignore publisher line heights",
+        group: "publisher-line-height",
+        priority: 0,
+        effect: Effect::Css("* {line-height:inherit !important;}"),
+    },
+    Preset {
+        id: "ruby_most_line_height_larger",
+        title: "Larger spacing between ruby lines",
+        group: "ruby-line-height",
+        priority: 0,
+        effect: Effect::Css("p,li {line-height:2 !important;}"),
+    },
+    Preset {
+        id: "sub_sup_smaller",
+        title: "Smaller sub- and superscript",
+        group: "sub-sup-size",
+        priority: 5,
+        effect: Effect::Css(
+            "sup {font-size:50% !important;vertical-align:super !important;} sub {font-size:50% !important;vertical-align:sub !important;}",
+        ),
+    },
+    Preset {
         id: "ul_li_type_disc",
         title: "Force bullets with unordered lists",
         group: "list-marker-disc",

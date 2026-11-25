@@ -1,7 +1,7 @@
 //! Reader interface language, independent of book language and document text.
 //!
-//! Vietnamese covers reading bars, top action titles and built-in bottom
-//! configuration labels,
+//! Vietnamese covers reading bars, top action titles, built-in bottom
+//! configuration labels and the selection popup,
 //! and the language picker.
 //! All other UI remains English until each surface is explicitly localized.
 
@@ -709,6 +709,48 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    /// Fixed selected-text popup labels only; never pass selected or user text.
+    pub(super) fn selection_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Select" => "Chọn",
+            "Highlight" => "Tô sáng",
+            "Copy" => "Sao chép",
+            "Note" => "Ghi chú",
+            "Dictionary" => "Từ điển",
+            "Wikipedia" => "Wikipedia",
+            "Translate" => "Dịch",
+            "Find" => "Tìm",
+            "Chapter" => "Chương",
+            "View HTML" => "Xem HTML",
+            "Hyphenate" => "Ngắt từ",
+            "Cancel" => "Hủy",
+            "Done" => "Xong",
+            "Highlight · choose style" => "Tô sáng · chọn kiểu",
+            "Highlight · choose color" => "Tô sáng · chọn màu",
+            "Lighten" => "Làm sáng",
+            "Underline" => "Gạch dưới",
+            "Strikethrough" => "Gạch ngang",
+            "Invert" => "Đảo màu",
+            "Red" => "Đỏ",
+            "Orange" => "Cam",
+            "Yellow" => "Vàng",
+            "Green" => "Xanh lá",
+            "Olive" => "Ô liu",
+            "Cyan" => "Xanh lơ",
+            "Blue" => "Xanh dương",
+            "Purple" => "Tím",
+            "Gray" => "Xám",
+            "Tap a word to extend · Highlight to save · Copy text" => {
+                "Chạm từ để mở rộng · Tô sáng để lưu · Sao chép"
+            }
+            "Tap another word to extend" => "Chạm từ khác để mở rộng",
+            _ => english,
+        }
     }
 
     /// Return the canonical English search alias for a known Screen-panel row.

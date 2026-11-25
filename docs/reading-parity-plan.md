@@ -96,6 +96,11 @@ mapping; unsupported or ambiguous older positions fail closed. Further typograph
 and interface coverage remain in progress. These additions also await the
 deferred behavioral, simulator and device checks.
 
+The latest local implementation adds Russian-English hyphenation choices,
+four additional typography presets, RGB-alpha TIFF decoding and Vietnamese
+selection-popup labels. Their build-only check passes; the feature comparisons,
+visual fit and behavioral tests remain open.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or

@@ -21,6 +21,27 @@ immediately following another paragraph in the same container. The first
 paragraph and a paragraph after a heading keep their existing indentation.
 [Pinned indentation controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L537-L565)
 
+## Text size and line height
+
+Four additional per-book and default choices use the supported native CSS
+cascade:
+
+- **Ignore publisher line heights** inherits line height across elements so
+  the reading line-spacing setting has more influence.
+- **Larger spacing between ruby lines** applies a line height of 2 to
+  paragraphs and list items, including paragraphs without ruby so their
+  spacing remains more consistent.
+- **Reset main text font size** applies the root reading size to the body,
+  paragraphs, list items, divisions and block quotations. It is mutually
+  exclusive with **Ignore publisher font sizes**.
+- **Smaller sub- and superscript** applies 50% font size and the matching
+  subscript or superscript alignment.
+
+The choices change presentation without rewriting the source document or its
+saved anchors. They use Reader's existing CSS and layout subset; exact
+KOReader typography, simulator behavior and Kindle appearance have not yet
+been verified. [Pinned KOReader definitions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L402-L483)
+
 ## Paragraph spacing and browser defaults
 
 **Spacing between paragraphs** contains three mutually exclusive choices.
