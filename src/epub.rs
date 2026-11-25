@@ -80,6 +80,8 @@ pub struct BookCover {
 
 pub struct Book {
     pub(crate) language: Option<parley::Language>,
+    // Kept apart from shaping language and publication revision.
+    liturgical_language: bool,
     pub title: String,
     pub author: Option<String>,
     pub chapters: Vec<Chapter>,
@@ -93,6 +95,15 @@ pub struct Book {
     cover: Option<BookCover>,
     pub(crate) quote_prefixes: Option<Box<crate::book_style::pseudo::quotes::Checkpoints>>,
     content: Content,
+}
+
+// Parley's shaping tag drops private-use subtags. Preserve this one reading
+// locale only when the preexisting shaping tag remains exactly `la`.
+fn liturgical_language(tag: Option<&str>, language: Option<parley::Language>) -> bool {
+    tag.is_some_and(|tag| {
+        tag.len() <= crate::source::MAX_LANGUAGE_BYTES
+            && tag.trim().eq_ignore_ascii_case("la-x-liturgic")
+    }) && language.is_some_and(|language| language.as_str() == "la")
 }
 
 enum Content {
@@ -280,13 +291,14 @@ impl Book {
             return Err("The EPUB package version is unsupported".into());
         }
         let metadata = child(root, "metadata")?;
-        let language = metadata
+        let language_tag = metadata
             .children()
             .filter(|n| n.has_tag_name(("http://purl.org/dc/elements/1.1/", "language")))
             .filter_map(|n| n.text().map(str::trim))
             .find(|tag| !tag.is_empty())
-            .filter(|tag| tag.len() <= crate::source::MAX_LANGUAGE_BYTES)
-            .and_then(|tag| parley::Language::parse(tag).ok());
+            .filter(|tag| tag.len() <= crate::source::MAX_LANGUAGE_BYTES);
+        let language = language_tag.and_then(|tag| parley::Language::parse(tag).ok());
+        let liturgical_language = liturgical_language(language_tag, language);
         let default_layout = package_layout(metadata)?;
         let default_spread = package_spread(metadata);
         let series = package_series(metadata);
@@ -498,6 +510,7 @@ impl Book {
             printed_source,
             revision,
             language,
+            liturgical_language,
             spine_rtl: spine.attribute("page-progression-direction") == Some("rtl"),
             fixed_placements: fixed_layout.unwrap_or(false).then_some(placements),
             series,
@@ -658,17 +671,19 @@ impl Book {
         // Loose document importers retain publisher language independently of
         // their generated XHTML. Use the same bounded validation as EPUB so
         // automatic typography can select language-aware shaping and patterns.
-        let language = document
+        let language_tag = document
             .metadata
             .language
             .as_deref()
             .map(str::trim)
-            .filter(|tag| !tag.is_empty() && tag.len() <= crate::source::MAX_LANGUAGE_BYTES)
-            .and_then(|tag| parley::Language::parse(tag).ok());
+            .filter(|tag| !tag.is_empty() && tag.len() <= crate::source::MAX_LANGUAGE_BYTES);
+        let language = language_tag.and_then(|tag| parley::Language::parse(tag).ok());
+        let liturgical_language = liturgical_language(language_tag, language);
         let chapter_path = document.chapter_path;
         Self {
             revision: crate::revision(&document.xhtml),
             language,
+            liturgical_language,
             spine_rtl: false,
             fixed_placements: None,
             series: Vec::new(),
@@ -1023,6 +1038,10 @@ impl Book {
         } else if !publication.contents.rows.is_empty() {
             toc = publication.contents.finish(&xhtml);
         }
+        let liturgical_language = liturgical_language(
+            publication.metadata.language.as_deref(),
+            publication.language,
+        );
         let title = publication.title.unwrap_or_else(|| fallback_title.into());
         Ok(Self {
             title,
@@ -1033,6 +1052,7 @@ impl Book {
             printed_source: None,
             revision,
             language: publication.language,
+            liturgical_language,
             spine_rtl: false,
             fixed_placements: None,
             series: Vec::new(),
@@ -1080,6 +1100,7 @@ impl Book {
             printed_source: None,
             revision,
             language: None,
+            liturgical_language: false,
             spine_rtl: false,
             fixed_placements: None,
             series: Vec::new(),
@@ -1087,6 +1108,18 @@ impl Book {
             quote_prefixes: None,
             content: Content::Chm(Box::new(chm)),
         })
+    }
+
+    pub(crate) fn publication_typography(&self) -> Option<crate::TypographyLocale> {
+        if self.liturgical_language
+            && self
+                .language
+                .is_some_and(|language| language.as_str() == "la")
+        {
+            Some(crate::TypographyLocale::LiturgicalLatin)
+        } else {
+            self.language.map(crate::TypographyLocale::publication)
+        }
     }
 
     pub fn is_fixed_layout(&self) -> bool {

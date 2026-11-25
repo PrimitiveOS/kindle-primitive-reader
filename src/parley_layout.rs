@@ -3341,9 +3341,11 @@ fn bounded_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<Stri
     }
     let locale_sensitive = |language: Option<Language>| {
         language.is_some_and(|language| {
-            ["tr", "tur", "az", "aze", "crh", "lt", "lit"]
-                .iter()
-                .any(|tag| language.language().eq_ignore_ascii_case(tag))
+            [
+                "tr", "tur", "az", "aze", "crh", "lt", "lit", "nl", "nld", "dut",
+            ]
+            .iter()
+            .any(|tag| language.language().eq_ignore_ascii_case(tag))
         })
     };
     if locale_sensitive(block.language)
@@ -3363,6 +3365,20 @@ fn bounded_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<Stri
         })
     {
         return None;
+    }
+    if !block.text.is_ascii() {
+        use icu_properties::{CodePointMapData, props::GeneralCategory};
+        let category = CodePointMapData::<GeneralCategory>::new();
+        if block.text.chars().any(|ch| {
+            matches!(
+                category.get(ch),
+                GeneralCategory::NonspacingMark
+                    | GeneralCategory::SpacingMark
+                    | GeneralCategory::EnclosingMark
+            )
+        }) {
+            return None;
+        }
     }
     let needs_words = default == TextTransform::Capitalize
         || block.styled_text.iter().any(|run| {
@@ -3409,10 +3425,22 @@ fn bounded_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<Stri
         if transform == TextTransform::None {
             continue;
         }
-        // Accept Latin-1, whitespace and common punctuation. Other scripts,
-        // combining sequences and locale-sensitive forms need richer mapping.
+        // Keep each changed scalar in its supported script repertoire. Other
+        // scripts, combining sequences and locale-sensitive forms need richer
+        // mapping than this one-to-one visual copy can provide.
+        let repertoire = |value: char| {
+            if value.is_ascii() {
+                Some(0)
+            } else if ('\u{00a0}'..='\u{024f}').contains(&value) {
+                Some(1)
+            } else if ('\u{0400}'..='\u{052f}').contains(&value) {
+                Some(2)
+            } else {
+                None
+            }
+        };
         if !ch.is_ascii()
-            && !('\u{00a0}'..='\u{00ff}').contains(&ch)
+            && repertoire(ch).is_none()
             && !ch.is_whitespace()
             && !matches!(
                 ch,
@@ -3450,7 +3478,7 @@ fn bounded_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<Stri
             first
         };
         if first.len_utf8() != ch.len_utf8()
-            || (first != ch && !first.is_ascii() && !('\u{00a0}'..='\u{00ff}').contains(&first))
+            || (first != ch && (repertoire(ch).is_none() || repertoire(ch) != repertoire(first)))
         {
             return None;
         }

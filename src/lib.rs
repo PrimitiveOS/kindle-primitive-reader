@@ -1339,9 +1339,14 @@ impl Probe {
         let printed_pages = book.printed_pages().to_vec();
         #[cfg(feature = "kindle")]
         let printed_source = book.printed_page_source().map(str::to_owned);
-        let publication_language = book.language.map(TypographyLocale::publication);
+        // Preserve the previous shaping and generated-quote language while
+        // retaining a book's liturgical private-use tag for hyphenation.
+        let shaping_main = settings
+            .typography
+            .resolve(book.language.map(TypographyLocale::publication));
+        let publication_language = book.publication_typography();
         let main_language = settings.typography.resolve(publication_language);
-        let shaping_language = main_language.map(TypographyLocale::shaping_language);
+        let shaping_language = shaping_main.map(TypographyLocale::shaping_language);
         let complete = excerpt.is_none();
         let xhtml = match excerpt {
             Some(value) => value,
@@ -1432,7 +1437,7 @@ impl Probe {
                     settings,
                     user_styles,
                     shaping_language,
-                    main_language.as_ref().map_or("en", |tag| tag.as_str()),
+                    shaping_main.as_ref().map_or("en", |tag| tag.as_str()),
                     &source.elements,
                     &mut styles,
                     quote_plan,

@@ -44,18 +44,19 @@ impl Checkpoint {
 impl Reader {
     pub(super) fn metadata_save_items(&self) -> Vec<Item> {
         let controls = self.controls;
+        let language = controls.interface_language;
         MetadataSave::ALL
             .into_iter()
             .map(|metadata_save| {
                 let row = Item::new(
-                    metadata_save.label(),
+                    language.metadata_settings_text(metadata_save.label()),
                     Action::SetReadingControls(ReadingControls {
                         metadata_save,
                         ..controls
                     }),
                 );
                 if metadata_save == controls.metadata_save {
-                    row.detail("Selected")
+                    row.detail(language.metadata_settings_text("Selected"))
                 } else {
                     row
                 }

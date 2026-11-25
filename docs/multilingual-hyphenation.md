@@ -338,12 +338,15 @@ on the computer or Kindle.
 Classical Latin (`la`, `lat`) and liturgical Latin (`la-lit`, `lat-lit`,
 `la-x-liturgic`) use separate upstream patterns and KOReader's 2 / 2 minima.
 The selected locale is carried separately from the `la` shaping language,
-and respected embedded language tags can change or clear it. Book-level
-`la-x-liturgic` metadata currently loses its private-use suffix when parsed,
-so automatic selection cannot distinguish it from classical Latin; select
-liturgical Latin manually. Original UTF-8 source offsets and reading anchors
-are unchanged. The source files and MIT
-terms are included in release packages. Reader includes combining-mark rules
+and respected embedded language tags can change or clear it. Automatic
+selection retains an exact, bounded book-level `la-x-liturgic` tag when the
+EPUB or loose, FB3, MOBI, or KF8 importer provides it and the existing shaping
+language is `la`. Explicit typography overrides retain precedence. Formats
+without such metadata, including CHM, cannot infer the liturgical variant;
+other private-use variants are not guessed. Format-specific behavior and
+comparison with KOReader remain unverified. Original UTF-8 source offsets and
+reading anchors are unchanged. The source files and MIT terms are included in
+release packages. Reader includes combining-mark rules
 and uses canonical decomposition for Latin pattern matching while emitting
 only original UTF-8 grapheme boundaries. Latin words exceeding 64 graphemes,
 256 decomposed scalars, or the overall word-byte limit are skipped.

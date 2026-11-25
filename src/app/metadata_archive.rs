@@ -154,35 +154,55 @@ impl Reader {
     }
 
     pub(super) fn metadata_archive_items(&self, page: Page) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let state = &self.metadata_archive;
         let command = Action::MetadataArchive;
         match page {
             Page::Settings => {
-                let mut rows = vec![
-                    Item::new("About the archive", command(Command::About))
-                        .detail("Save a separate copy of a book’s reading data"),
-                    Item::new("Archive folder", command(Command::ChooseFolder)).detail(
-                        state.preference.as_ref().map_or_else(
-                            || "Choose a folder in Documents".into(),
+                let mut rows =
+                    vec![
+                        Item::new(
+                            language.metadata_settings_text("About the archive"),
+                            command(Command::About),
+                        )
+                        .detail(language.metadata_settings_text(
+                            "Save a separate copy of a book’s reading data",
+                        )),
+                        Item::new(
+                            language.metadata_settings_text("Archive folder"),
+                            command(Command::ChooseFolder),
+                        )
+                        .detail(state.preference.as_ref().map_or_else(
+                            || {
+                                language
+                                    .metadata_settings_text("Choose a folder in Documents")
+                                    .into()
+                            },
                             |preference| folder_title(&preference.folder),
-                        ),
-                    ),
-                ];
+                        )),
+                    ];
                 if let Some(preference) = &state.preference {
-                    let status = |enabled| if enabled { "On" } else { "Off" };
+                    let status = |enabled| {
+                        language.metadata_settings_text(if enabled { "On" } else { "Off" })
+                    };
                     rows.extend([
                         Item::new(
-                            "Save metadata on book close",
+                            language.metadata_settings_text("Save metadata on book close"),
                             command(Command::Toggle(SavedOn::Close)),
                         )
                         .detail(status(preference.on_close)),
                         Item::new(
-                            "Save metadata before deleting",
+                            language.metadata_settings_text("Save metadata before deleting"),
                             command(Command::Toggle(SavedOn::Delete)),
                         )
                         .detail(status(preference.on_delete)),
-                        Item::new("Archived books", command(Command::Books))
-                            .detail("View saved positions, bookmarks and highlights"),
+                        Item::new(
+                            language.metadata_settings_text("Archived books"),
+                            command(Command::Books),
+                        )
+                        .detail(language.metadata_settings_text(
+                            "View saved positions, bookmarks and highlights",
+                        )),
                     ]);
                 }
                 rows
@@ -198,8 +218,8 @@ impl Reader {
                 .map(|snapshot| {
                     let book = &snapshot.book;
                     let reason = match snapshot.saved_on {
-                        SavedOn::Close => "Saved on close",
-                        SavedOn::Delete => "Saved before deletion",
+                        SavedOn::Close => language.metadata_settings_text("Saved on close"),
+                        SavedOn::Delete => language.metadata_settings_text("Saved before deletion"),
                     };
                     let date = snapshot.saved_at.and_then(crate::mark_time::local_date);
                     let detail =
@@ -213,20 +233,27 @@ impl Reader {
                 };
                 let book = &snapshot.book;
                 let mut rows = vec![
-                    Item::new("Remove saved copy", command(Command::Remove(id)))
-                        .detail("Keep the book and its live reading data"),
+                    Item::new(
+                        language.metadata_settings_text("Remove saved copy"),
+                        command(Command::Remove(id)),
+                    )
+                    .detail(
+                        language.metadata_settings_text("Keep the book and its live reading data"),
+                    ),
                 ];
                 if let Some(percent) = book.reading_percent {
-                    rows[0].detail = Some(format!(
-                        "Archived at {percent}% · Keep current reading data"
-                    ));
+                    rows[0].detail = Some(if language.is_english() {
+                        format!("Archived at {percent}% · Keep current reading data")
+                    } else {
+                        format!("Đã lưu tại {percent}% · Giữ dữ liệu đọc hiện tại")
+                    });
                 }
                 rows.extend(book.bookmarks.iter().map(|mark| {
                     Item::new(
                         &mark.label,
                         command(Command::ReadMark("Bookmark".into(), mark.label.clone())),
                     )
-                    .detail("Bookmark")
+                    .detail(language.metadata_settings_text("Bookmark"))
                 }));
                 rows.extend(
                     book.highlights

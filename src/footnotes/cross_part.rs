@@ -50,6 +50,7 @@ pub(crate) struct Note {
     pub(crate) source: Source,
     pub(crate) blocks: Vec<usize>,
     shaping_language: Option<parley::Language>,
+    hyphenation_language: Option<crate::TypographyLocale>,
     respect_embedded: bool,
 }
 
@@ -315,6 +316,7 @@ impl Note {
             || settings.hanging_punctuation
             || book.revision() != self.book
             || shaping_language(book, settings) != self.shaping_language
+            || settings.typography.resolve(book.publication_typography()) != self.hyphenation_language
             || settings.typography.respect_embedded != self.respect_embedded
         {
             return None;
@@ -442,6 +444,7 @@ pub(crate) fn prepare_for_settings(
     settings: Settings,
 ) -> Option<Plan> {
     let language = shaping_language(book, settings);
+    let hyphenation_language = settings.typography.resolve(book.publication_typography());
     let respect_embedded = settings.typography.respect_embedded;
     let mut targets = Vec::new();
     let mut inspected = 0;
@@ -493,6 +496,7 @@ pub(crate) fn prepare_for_settings(
                     &id,
                     &mut total_bytes,
                     language,
+                    hyphenation_language,
                     respect_embedded,
                 )
             } else {
@@ -530,6 +534,7 @@ fn prepare_one(
     id: &str,
     total: &mut usize,
     language: Option<parley::Language>,
+    hyphenation_language: Option<crate::TypographyLocale>,
     respect_embedded: bool,
 ) -> Option<Note> {
     let index = book.chapter_index(chapter)?;
@@ -543,9 +548,10 @@ fn prepare_one(
         return None;
     }
     *total += size;
-    let source = book
+    let mut source = book
         .chapter_source_with_language(chapter, &xhtml, language, respect_embedded)
         .ok()?;
+    source.resolve_hyphenation_languages(hyphenation_language, respect_embedded);
     let root = source.fragment_owner(id)?;
     let blocks = simple_note(&source, root, id)?;
     Some(Note {
@@ -556,6 +562,7 @@ fn prepare_one(
         source,
         blocks,
         shaping_language: language,
+        hyphenation_language,
         respect_embedded,
     })
 }

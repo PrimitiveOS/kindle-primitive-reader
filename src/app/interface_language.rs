@@ -551,6 +551,50 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed metadata-save/archive settings; archive paths and saved content stay untouched.
+const METADATA_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("On close or sleep", "Khi đóng sách hoặc ngủ"),
+    ("Every 5 minutes", "Mỗi 5 phút"),
+    ("Every 15 minutes", "Mỗi 15 phút"),
+    ("Every 30 minutes", "Mỗi 30 phút"),
+    ("Every 60 minutes", "Mỗi 60 phút"),
+    ("After each change", "Sau mỗi thay đổi"),
+    ("Selected", "Đã chọn"),
+    ("About the archive", "Giới thiệu kho lưu trữ"),
+    (
+        "Save a separate copy of a book’s reading data",
+        "Lưu một bản riêng dữ liệu đọc của sách",
+    ),
+    ("Archive folder", "Thư mục lưu trữ"),
+    (
+        "Choose a folder in Documents",
+        "Chọn một thư mục trong Documents",
+    ),
+    (
+        "Save metadata on book close",
+        "Lưu siêu dữ liệu khi đóng sách",
+    ),
+    (
+        "Save metadata before deleting",
+        "Lưu siêu dữ liệu trước khi xóa",
+    ),
+    ("Archived books", "Sách đã lưu trữ"),
+    (
+        "View saved positions, bookmarks and highlights",
+        "Xem vị trí, dấu trang và phần tô sáng đã lưu",
+    ),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    ("Saved on close", "Đã lưu khi đóng sách"),
+    ("Saved before deletion", "Đã lưu trước khi xóa"),
+    ("Remove saved copy", "Xóa bản đã lưu"),
+    (
+        "Keep the book and its live reading data",
+        "Giữ sách và dữ liệu đọc hiện tại",
+    ),
+    ("Bookmark", "Dấu trang"),
+];
+
 // Fixed vocabulary-review controls; user words, book names and schedules stay untouched.
 const VOCABULARY_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Review options", "Tùy chọn ôn tập"),
@@ -2719,6 +2763,30 @@ impl InterfaceLanguage {
     pub(super) fn reading_guide_english<'a>(self, label: &'a str) -> &'a str {
         if self == Self::Vietnamese {
             if let Some((english, _)) = READING_GUIDE_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    pub(super) fn metadata_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = METADATA_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn metadata_settings_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = METADATA_SETTINGS_LABELS
                 .iter()
                 .find(|(_, value)| *value == label)
             {
