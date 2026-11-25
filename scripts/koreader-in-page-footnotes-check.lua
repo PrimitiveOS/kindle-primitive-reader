@@ -13,6 +13,7 @@ local BB = require("ffi/blitbuffer")
 local source, cache, font, captures = assert(arg[1]), assert(arg[2]), assert(arg[3]), assert(arg[4])
 local narrow_ruby = arg[5] == "inline-ruby-narrow"
 local body_table = arg[5] == "body-table"
+local rtl_note = arg[5] == "rtl-note"
 local width, height, margin = narrow_ruby and 310 or 720, body_table and 520 or 480, 32
 local fb2 = arg[5] == "fb2"
 local classic = arg[5] == "classic"
@@ -78,6 +79,7 @@ print("Pinned Style tweaks menu: tap, master switch, hold/default, saved book ov
 
 Cre.initCache(cache, 0, true, 1)
 Cre.registerFont(font)
+if rtl_note then Cre.registerFont(assert(arg[6])) end
 
 local function open(tweak)
     local view = Cre.newDocView(width, height, 1)
@@ -98,6 +100,9 @@ local function open(tweak)
     view:setDefaultInterlineSpace(120)
     view:setIntProperty("crengine.render.dpi", 96)
     view:setFontFace("Noto Sans")
+    if rtl_note then
+        view:setStringProperty("crengine.font.fallback.faces", "Noto Sans Arabic")
+    end
     assert(view:loadDocument(source, false))
     view:renderDocument()
     return view
@@ -115,18 +120,17 @@ local function position(view, phrase)
     return page, box.y0
 end
 
-local function capture(view, page, name)
-    view:gotoPage(page)
-    local frame = BB.new(width, height, BB.TYPE_BB8)
-    view:drawCurrentPage(frame, false, false, false, false)
+local function separator_row(frame, right)
     local separator
+    local line_width = math.floor(width / 7)
+    local left = right and width - margin - line_width or margin
     for y = margin, height - margin do
-        local gray = frame:getPixel(margin, y):getColor8().a
-        if gray < 200 and frame:getPixel(margin + math.floor(width / 7), y):getColor8().a > 235
-            and frame:getPixel(margin, y - 1):getColor8().a > 235
-            and frame:getPixel(margin, y + 1):getColor8().a > 235 then
+        local gray = frame:getPixel(left, y):getColor8().a
+        if gray < 200 and frame:getPixel(left + line_width, y):getColor8().a > 235
+            and frame:getPixel(left, y - 1):getColor8().a > 235
+            and frame:getPixel(left, y + 1):getColor8().a > 235 then
             local continuous = true
-            for x = margin + 1, margin + math.floor(width / 7) - 1 do
+            for x = left + 1, left + line_width - 1 do
                 if frame:getPixel(x, y):getColor8().a ~= gray then
                     continuous = false
                     break
@@ -138,6 +142,19 @@ local function capture(view, page, name)
             end
         end
     end
+    return separator
+end
+
+local function draw_page(view, page)
+    view:gotoPage(page)
+    local frame = BB.new(width, height, BB.TYPE_BB8)
+    view:drawCurrentPage(frame, false, false, false, false)
+    return frame
+end
+
+local function capture(view, page, name, right)
+    local frame = draw_page(view, page)
+    local separator = separator_row(frame, right)
     print(string.format("capture=%s page=%d separator=%s", name, page, tostring(separator)))
     frame:writePNG(captures .. "/" .. name .. ".png", false)
     frame:free()
@@ -152,6 +169,89 @@ local function width_in_canonical_note(view_, text)
     local boxes = assert(view_:getWordBoxesFromPositions(hit.start, hit["end"], true))
     assert(#boxes >= 1, text)
     return boxes[#boxes].x1 - boxes[1].x0, boxes[1].x0
+end
+
+if rtl_note then
+    controller:onReadSettings(Settings:wrap({}))
+    local function geometry(view, phrase)
+        local page, y = position(view, phrase)
+        local hit = view:findAllText(phrase, false, false, 8, true, 0, 255)[1]
+        local box = assert(view:getWordBoxesFromPositions(hit.start, hit["end"], true)[1])
+        assert(box.y0 == y)
+        return page, box, hit.start
+    end
+    local function raster(frame, y, rows)
+        local pixels = {}
+        for row = y, y + rows - 1 do
+            for x = margin, width - margin - 1 do
+                pixels[#pixels + 1] = string.char(frame:getPixel(x, row):getColor8().a)
+            end
+        end
+        return table.concat(pixels)
+    end
+    local function measure(phase, enabled)
+        local view = open(assert(controller:getCssText()))
+        local page, body, dominant = geometry(view, "يسجل التقرير")
+        local original, first, head = geometry(view, "أظهر")
+        local middle_page, middle, latin = geometry(view, "S4")
+        local end_page, last, finish = geometry(view, "الغروب")
+        local return_page, backlink, return_pointer = geometry(view, "العودة إلى التقرير")
+        assert(original > page and original == middle_page and middle_page == end_page and original == return_page)
+        assert(first.x0 > middle.x0 and middle.x0 > last.x0 and first.y0 == last.y0)
+        local x, y = math.floor((backlink.x0 + backlink.x1) / 2), math.floor((backlink.y0 + backlink.y1) / 2)
+        assert(view:getLinkFromPosition(x, y):match(" rtl%-local%-ref$"))
+        local body_frame = draw_page(view, page)
+        assert(not separator_row(body_frame, false))
+        assert((separator_row(body_frame, true) ~= nil) == enabled)
+        local marker
+        for _, link in ipairs(view:getPageLinks(true)) do
+            if link.section:match(" rtl%-local%-note$") then
+                local b = link.segments[1]
+                marker = view:getLinkFromPosition(math.floor((b.x0 + b.x1)/2), math.floor((b.y0 + b.y1)/2))
+            end
+        end
+        assert(marker and marker:match(" rtl%-local%-note$"))
+        local separator = capture(view, page, "stock-rtl-note-" .. phase, true)
+        if enabled then
+            assert(not capture(view, original, "stock-rtl-note-original", true))
+            local note = draw_page(view, original)
+            local rows = backlink.y1 - first.y0
+            local sample = raster(note, first.y0, rows)
+            local offset
+            for at = separator + 1, height - margin - rows do
+                if raster(body_frame, at, rows) == sample then offset = at - first.y0; break end
+            end
+            assert(offset, "copied RTL note must preserve both original lines")
+            note:free()
+            view:gotoPage(page)
+            assert(view:getLinkFromPosition(x, y + offset) == "")
+        end
+        body_frame:free()
+        view:close()
+        return table.concat({body.x0, body.y0, dominant, head, latin, finish, return_pointer}, "|")
+    end
+    row.callback()
+    assert(not row.checked_func())
+    local ordinary = measure("off", false)
+    row.callback()
+    assert(row.checked_func())
+    assert(measure("band", true) == ordinary)
+    local tie = open(assert(controller:getCssText()))
+    local first_page = geometry(tie, "A second bilingual note")
+    local note_page, arabic = geometry(tie, "الحاشية تفاصيل")
+    local english_page, english = geometry(tie, "The paired line")
+    assert(note_page > first_page and note_page == english_page)
+    assert(arabic.y0 < english.y0 and arabic.x0 > english.x0)
+    local tie_frame = draw_page(tie, first_page)
+    assert(not separator_row(tie_frame, true))
+    tie_frame:free()
+    assert(capture(tie, first_page, "stock-rtl-note-tie", false))
+    tie:close()
+    row.callback()
+    assert(not row.checked_func())
+    assert(measure("restored", false) == ordinary)
+    print("Pinned RTL note copies preserve Arabic order and put the separator on the right by majority")
+    return
 end
 
 if arg[5] == "inline-root-epub" or arg[5] == "inline-root-wiki" then

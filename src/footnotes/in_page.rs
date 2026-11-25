@@ -1,5 +1,5 @@
 //! Source-space pagination for supported EPUB and FictionBook notes.
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::ops::Range;
 
 use crate::epub::{Book, Destination};
@@ -11,6 +11,9 @@ use crate::{
     table_layout::TableKey,
 };
 
+#[cfg(test)]
+mod rtl_tests;
+
 pub(crate) struct Part {
     pub source: Range<f32>,
     pub y: u32,
@@ -19,6 +22,7 @@ pub(crate) struct Part {
 pub(crate) struct Page {
     pub parts: Vec<Part>,
     pub separator: Option<u32>,
+    pub separator_on_right: bool,
     pub canonical_note_group: Option<usize>,
 }
 
@@ -38,6 +42,7 @@ pub(crate) fn paginate(
     source: &Source,
     lines: &[Line],
     artwork_bottoms: &BTreeMap<usize, f32>,
+    rtl_blocks: &HashSet<usize>,
     table_extents: &HashMap<TableKey, TableCopy>,
     breaks: &[BoxRules],
     settings: Settings,
@@ -48,7 +53,7 @@ pub(crate) fn paginate(
         return None;
     }
     let (notes, references, tables) = discover(chapter, targets, source, lines, table_extents)?;
-    let groups = line_groups(lines, &notes, artwork_bottoms, tables, height)?;
+    let groups = line_groups(lines, &notes, artwork_bottoms, rtl_blocks, tables, height)?;
     let extents: Vec<_> = groups.iter().map(|group| group.extent.clone()).collect();
     let edges = publisher_breaks::in_page_note_boundaries(&extents, breaks)?;
     let notes: Vec<_> = notes
@@ -148,12 +153,14 @@ pub(crate) fn paginate(
 struct LineGroup {
     lines: Range<usize>,
     extent: Range<f32>,
+    rtl_lines: usize,
 }
 
 fn line_groups(
     lines: &[Line],
     notes: &[Range<usize>],
     artwork_bottoms: &BTreeMap<usize, f32>,
+    rtl_blocks: &HashSet<usize>,
     tables: Vec<LineGroup>,
     max_extent: u32,
 ) -> Option<Vec<LineGroup>> {
@@ -165,6 +172,7 @@ fn line_groups(
     let mut tables = tables.into_iter().peekable();
     let mut pending_table: Option<LineGroup> = None;
     for (index, line) in lines.iter().enumerate() {
+        let rtl = usize::from(rtl_blocks.contains(&line.block));
         let extent = line.top..line.bottom;
         if !line.top.is_finite()
             || !line.bottom.is_finite()
@@ -188,6 +196,7 @@ fn line_groups(
         let group = if let Some(table) = &mut pending_table {
             table.extent.start = table.extent.start.min(extent.start);
             table.extent.end = table.extent.end.max(extent.end);
+            table.rtl_lines += rtl;
             if table.lines.end > index + 1 {
                 continue;
             }
@@ -196,6 +205,7 @@ fn line_groups(
             LineGroup {
                 lines: index..index + 1,
                 extent,
+                rtl_lines: rtl,
             }
         };
         // Glyph extents can overlap after line spacing by a pixel or more.
@@ -209,6 +219,7 @@ fn line_groups(
             previous.lines.end = group.lines.end;
             previous.extent.start = previous.extent.start.min(group.extent.start);
             previous.extent.end = previous.extent.end.max(group.extent.end);
+            previous.rtl_lines += group.rtl_lines;
         } else {
             groups.push(group);
         }
@@ -298,6 +309,25 @@ impl Targets {
             }
             element = source.elements[element].parent?;
         }
+    }
+
+    pub(crate) fn epub_for_settings(
+        chapter: &str,
+        xhtml: &str,
+        source: &Source,
+        settings: crate::Settings,
+        styles: &Snapshot,
+    ) -> Option<Self> {
+        if !settings.in_page_footnotes && !styles.in_page_epub_footnotes() {
+            return None;
+        }
+        Self::epub(
+            chapter,
+            xhtml,
+            source,
+            settings.in_page_footnotes || styles.explicit_epub_notes(),
+            styles,
+        )
     }
 
     pub(crate) fn epub(
@@ -576,7 +606,6 @@ fn discover(
         .map(|block| (block.key, block))
         .collect();
     let mut regions = vec![None::<Range<usize>>; targets.roots.len()];
-    let mut checked_directions = BTreeSet::new();
     let mut block_lines = BTreeMap::<_, Vec<_>>::new();
     let mut tables = HashMap::<TableKey, (Option<usize>, LineGroup)>::new();
     for (index, line) in lines.iter().enumerate() {
@@ -591,6 +620,7 @@ fn discover(
                             LineGroup {
                                 lines: index..index,
                                 extent: extent.clone(),
+                                rtl_lines: 0,
                             },
                         )
                     });
@@ -603,11 +633,6 @@ fn discover(
                     owner?;
                 }
             }
-        }
-        if checked_directions.insert(line.block)
-            && crate::publisher_padding::paragraph_is_rtl(block.direction, &block.text)
-        {
-            return None;
         }
         if let Some(id) = owner {
             let region = regions[id].get_or_insert(index..index);
@@ -672,6 +697,8 @@ struct Draft {
     body: Option<Range<f32>>,
     notes: Vec<Range<f32>>,
     note_height: u32,
+    note_lines: usize,
+    rtl_note_lines: usize,
     seen: BTreeSet<usize>,
     canonical_note_group: Option<usize>,
 }
@@ -730,6 +757,10 @@ impl Packer {
             }
             let range = start..groups[count - 1].extent.end;
             self.draft.note_height += height_of(&range);
+            for group in &groups[..count] {
+                self.draft.note_lines += group.lines.len();
+                self.draft.rtl_note_lines += group.rtl_lines;
+            }
             self.draft.notes.push(range);
             self.draft.seen.insert(id);
             groups = &groups[count..];
@@ -762,6 +793,7 @@ impl Packer {
         self.pages.push(Page {
             parts,
             separator,
+            separator_on_right: draft.rtl_note_lines > draft.note_lines / 2,
             canonical_note_group: draft.canonical_note_group,
         });
         Some(())

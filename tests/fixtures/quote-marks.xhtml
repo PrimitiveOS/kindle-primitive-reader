@@ -1,0 +1,32 @@
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head><title>Quotation marks</title><style>
+body, p { padding:0; margin:0; text-indent:0; text-align:left; }
+.open::before { content: open-quote; }
+.close::after { content: close-quote; }
+.noopen::before { content: no-open-quote; }
+.noclose::after { content: no-close-quote; }
+.bundle::before { content: "[" open-quote no-open-quote open-quote close-quote no-close-quote close-quote "]"; }
+.dnone, .node::before { display:none; }
+.hidden { visibility:hidden; }
+#custompairs { quotes: "[" "]" "{" "}"; }
+#nopaired { quotes:none; }
+</style></head>
+<body>
+<p id="eng">Case English <q>Outer <q>Inner <q><a href="#carry_end">Deepest</a></q></q></q>.</p>
+<p id="fra" lang="fr">Case French <q>Arbre <q>Branche</q></q>.</p>
+<p id="deu" lang="de">Case German <q>Baum <q>Ast</q></q>.</p>
+<p id="swi" lang="fr-CH">Case Swiss <q>Sapin <q>Aiguille</q></q>.</p>
+<p id="mix">Case Mixed <q>Outer <q lang="fr">Milieu <q lang="en">Inside</q></q></q>.</p>
+<p id="sub">Case Subtag <q>Outer <q lang="en-GB">Brit</q> <q lang="EN">Case</q> <q lang="en">Shared</q></q>.</p>
+<p id="tokens">Case Tokens <span class="open">Lead <span class="noopen">Silent <q>Deep mark</q><span class="noclose">Still</span></span><span class="close">Tail</span></span>.</p>
+<p id="bundle">Case Bundle <span class="bundle">Bundle Seed</span>.</p>
+<p id="display">Case Display <span class="open dnone">Gone one</span><span class="open node">Gone pseudo</span><span hidden=""><span class="open">Gone markup</span></span> <q>Visible D</q>.</p>
+<p id="visibility">Case Visibility <span class="open hidden">Hidden paint</span><q>Visible V</q> <span class="noclose">Reset V</span>.</p>
+<p id="extra_close">Case ExtraClose <span class="close">Close seed</span> <q>After close</q> <span class="noopen">Reset close</span>.</p>
+<p id="extra_silent">Case ExtraSilent <span class="noclose">Silent close seed</span> <q>After silent close</q> <span class="noopen">Reset silent</span>.</p>
+<p id="custompairs">Case Custom <q>Custom outer <q>Custom inner</q></q>.</p>
+<p id="nopaired">Case None <q>None outer <q>None inner</q></q>.</p>
+<p id="carry_open">Case CarryOpen <span class="open">Carry seed</span>.</p>
+<p id="carry_mid">Case CarryMid <q>Still nested</q>.</p>
+<p id="carry_end">Case CarryEnd <span class="close">Carry closing</span> <q>After carry</q>.</p>
+</body></html>

@@ -2,7 +2,8 @@
 
 Reader applies publisher `::before` and `::after` to horizontal text in
 existing reading paragraphs and their inline elements. The stylesheet can use
-quoted text, CSS escapes, `attr(...)`, and the historical single-colon aliases.
+quoted text, CSS escapes, `attr(...)`, quote tokens, and the historical
+single-colon aliases. [Generated quotation marks](quote-marks.md)
 Generated runs inherit the host’s typography and can set font family, size,
 weight, slant, line height, decoration, and visibility. `content: none` or
 `display: none` suppresses that run. Open **Settings › Style tweaks ›
@@ -28,8 +29,8 @@ paints normally and offers no selectable text or caret.
 [Layout projection](../src/parley_layout/inline_blocks/generated.rs)
 
 The supported scope is inline text in ordinary horizontal rendering.
-Remaining coverage includes CRE’s quote tokens, dedicated generated block
-and float boxes, empty standalone block hosts, and composition with image,
+Remaining coverage includes dedicated generated block and float boxes, empty
+standalone block hosts, and composition with image,
 ruby, boxed inline, or joined-note layouts. CRE itself treats generated URLs
 and other unsupported tokens as placeholders. Reader bounds captured host
 attributes and inline boundaries per chapter, and caps generated text at

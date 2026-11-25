@@ -56,6 +56,7 @@ pub(crate) enum Format {
     Rtf,
     Tcr,
     Fb2,
+    Fb3,
 }
 
 impl Format {
@@ -72,6 +73,7 @@ impl Format {
             "rtf" => Some(Self::Rtf),
             "tcr" => Some(Self::Tcr),
             "fb2" | "fbz" => Some(Self::Fb2),
+            "fb3" => Some(Self::Fb3),
             "gz" | "zip"
                 if path
                     .file_stem()
@@ -164,6 +166,7 @@ impl Document {
             Format::Fb2 => fb2_document(input, fallback_title),
             Format::Htmlz
             | Format::Docx
+            | Format::Fb3
             | Format::Chm
             | Format::Mobi
             | Format::Rtf
@@ -643,7 +646,7 @@ pub(crate) fn text_as_xhtml(input: &str) -> Result<String> {
     Ok(output)
 }
 
-fn xml_text(output: &mut String, text: &str) -> Result<()> {
+pub(crate) fn xml_text(output: &mut String, text: &str) -> Result<()> {
     for ch in text.chars() {
         match ch {
             '&' => output.push_str("&amp;"),
@@ -665,7 +668,7 @@ fn xml_text(output: &mut String, text: &str) -> Result<()> {
     Ok(())
 }
 
-fn check_output(output: &str) -> Result<()> {
+pub(crate) fn check_output(output: &str) -> Result<()> {
     if output.len() > MAX_OUTPUT {
         return Err("The converted document exceeds the one MiB layout input limit".into());
     }

@@ -43,6 +43,8 @@ h6 { font-size: 100%; }
 p { text-indent: 1.2em; }
 blockquote { padding: 0.5em 1em 0.5em 2em; }
 ol, ul { padding-left: 1em; }
+q::before { content: open-quote; }
+q::after { content: close-quote; }
 "#;
 
 // Supported HTML Standard defaults most visible in a long-form text reader.
@@ -59,6 +61,8 @@ p { padding-bottom: 1em; }
 blockquote, figure { padding: 1em 40px; }
 address { font-style: italic; }
 pre, listing, plaintext, xmp { font-family: monospace; padding-top: 1em; padding-bottom: 1em; }
+q::before { content: open-quote; }
+q::after { content: close-quote; }
 "#;
 
 // FictionBook content is normalized to XHTML at import. The preserved class

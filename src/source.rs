@@ -162,6 +162,7 @@ pub(crate) struct Element {
     pub id: Option<String>,
     pub inline_style: Option<String>,
     pub(crate) pseudo_attributes: Box<[(String, String)]>,
+    pub(crate) quote_language: Option<Box<str>>,
     pub(crate) table_hints: Option<crate::book_style::table_hints::TableHints>,
     pub parent: Option<usize>,
     pub previous_sibling: Option<usize>,
@@ -579,6 +580,9 @@ impl Source {
                 } else {
                     crate::book_style::pseudo::read_attributes(node, &mut pseudo_attribute_bytes)
                 },
+                quote_language: language_attribute(node)
+                    .filter(|tag| !tag.is_empty() && tag.len() <= MAX_LANGUAGE_BYTES)
+                    .map(Box::from),
                 table_hints: if selector_only {
                     None
                 } else {
@@ -1228,14 +1232,16 @@ pub(crate) fn is_block_tag(tag: &str) -> bool {
 }
 
 fn content_language(node: Node<'_, '_>, inherited: Option<Language>) -> Option<Language> {
-    match node
-        .attribute((XML_NAMESPACE, "lang"))
-        .or_else(|| node.attribute("lang"))
-    {
+    match language_attribute(node) {
         Some(tag) if tag.len() <= MAX_LANGUAGE_BYTES => Language::parse(tag).ok(),
         Some(_) => None,
         None => inherited,
     }
+}
+
+fn language_attribute<'a>(node: Node<'a, '_>) -> Option<&'a str> {
+    node.attribute((XML_NAMESPACE, "lang"))
+        .or_else(|| node.attribute("lang"))
 }
 
 fn base_direction(node: Node<'_, '_>) -> BaseDirection {

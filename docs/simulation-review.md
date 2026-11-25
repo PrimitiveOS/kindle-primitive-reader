@@ -2,6 +2,40 @@
 
 ## Current Mac simulator checkpoint
 
+**FB3 documents** open through the file picker with their contents, local
+illustrations, and linked notes. Three upstream examples retain their source
+bytes through page turns and resume. Large bodies can span bounded sections.
+[FB3 comparison and screenshots](fb3-reading.md)
+
+**Generated quotation marks** follow the publisher's nested before/after
+rules and supported language pairs, including bounded EPUB spine carry.
+Search and saved positions retain the original text.
+[Quotation comparison and screenshots](quote-marks.md)
+
+**Bidirectional in-page notes** keep Arabic and Latin text, selectable words
+and backlinks. The separator follows the direction of the majority of copied
+note lines, with a tie aligned left.
+[Note comparison and screenshots](in-page-footnotes.md#bidirectional-text-in-note-bands)
+
+The full Mac suite passed 1,684 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. It skipped 74 opt-in cases.
+The focused run passed 34 checks. Reader and pinned KOReader reproduced
+16 published screenshots.
+
+Three original FB3 samples opened through the picker, turned pages and
+resumed with identical source bytes. The original EPUB, PDF, AZW3 and MOBI
+checks also passed. The separate original EPUB note check covered 14
+chapters and preserved 63 anchors across 68 composed note bands.
+
+The staged ARMHF executable is stripped and statically linked. It contains
+39,936,860 bytes with SHA-256
+`607d7193594f0f400ed402bb08f5f64d2623476b1faa324c857122b2a25c3a8f`.
+The 33 staged files total 49,545,486 bytes. Project and dictionary licenses,
+SQLite notices, the Launcher icon and the OCR model passed inspection.
+Foreground Kindle testing and Store publication remain pending.
+
+## Styled first lines and body tables checkpoint
+
 **First-line typography** measures the styled first break and preserves its
 source endpoint after later text returns to ordinary typography. The pinned
 replays cover font size, weight, explicit inline overrides, generated prefixes,

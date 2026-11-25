@@ -2149,6 +2149,14 @@ impl ParleyChapter {
         &self.limitations
     }
 
+    pub(crate) fn pagination_rtl_blocks(&self) -> HashSet<usize> {
+        self.paragraphs
+            .iter()
+            .filter(|paragraph| paragraph.layout.is_rtl())
+            .map(|paragraph| paragraph.key)
+            .collect()
+    }
+
     /// The bottom edge of artwork assigned to each ordinary source line. In-page
     /// pagination can cut only where the whole illustration belongs to one band.
     pub(crate) fn pagination_artwork_bottoms(

@@ -74,6 +74,7 @@ pub enum DocumentFormat {
     Chm,
     Markdown,
     Fb2,
+    Fb3,
     Mobi,
     Rtf,
     Tcr,
@@ -104,6 +105,7 @@ impl DocumentFormat {
                 Format::Chm => Self::Chm,
                 Format::Markdown => Self::Markdown,
                 Format::Fb2 => Self::Fb2,
+                Format::Fb3 => Self::Fb3,
                 Format::Mobi => Self::Mobi,
                 Format::Rtf => Self::Rtf,
                 Format::Tcr => Self::Tcr,
@@ -166,6 +168,7 @@ impl DocumentFormat {
             Self::Docx => crate::docx::MAX_INPUT as u64,
             Self::Chm => crate::chm::MAX_CHM_BYTES,
             Self::Fb2 => MAX_FB2_INPUT as u64,
+            Self::Fb3 => crate::fb3::MAX_INPUT as u64,
             Self::Mobi => MAX_MOBI_BYTES as u64,
             Self::Rtf => crate::rtf::MAX_INPUT as u64,
             Self::Tcr => crate::tcr::MAX_INPUT as u64,
@@ -192,6 +195,7 @@ impl DocumentFormat {
             Self::Chm => b"reader-chm\0",
             Self::Markdown => b"reader-markdown\0",
             Self::Fb2 => b"reader-fb2\0",
+            Self::Fb3 => b"reader-fb3\0",
             Self::Mobi => b"reader-mobi\0",
             Self::Rtf => b"reader-rtf\0",
             Self::Tcr => b"reader-tcr\0",
@@ -1976,6 +1980,7 @@ impl Library {
                 | DocumentFormat::Chm
                 | DocumentFormat::Markdown
                 | DocumentFormat::Fb2
+                | DocumentFormat::Fb3
                 | DocumentFormat::Mobi
                 | DocumentFormat::Rtf
                 | DocumentFormat::Tcr
@@ -3808,6 +3813,24 @@ mod tests {
         assert_eq!(metadata.title, "Shore Notes");
         assert_eq!(metadata.author.as_deref(), Some("Linh Tran"));
         assert!(library.identify(entry).is_ok());
+    }
+
+    #[test]
+    fn fb3_is_selectable_and_uses_publisher_metadata_in_the_file_picker() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("docs");
+        fs::create_dir(&root).unwrap();
+        let path = root.join("Field copy.FB3");
+        fs::copy(crate::test_fixture("harbor-survey.fb3"), &path).unwrap();
+        let mut library = Library::open(&root, &scratch.0.join("reader.json")).unwrap();
+        library.scan().unwrap();
+        let entry = library.resolve(Path::new("Field copy.FB3")).unwrap();
+        assert_eq!(entry.format, DocumentFormat::Fb3);
+        assert_eq!(entry.format.max_bytes(), crate::fb3::MAX_INPUT as u64);
+        let metadata = library.metadata(&entry).unwrap();
+        assert_eq!(metadata.title, "Harbor Survey");
+        assert_eq!(metadata.author.as_deref(), Some("Mara Vale"));
+        assert!(library.identify(&entry).is_ok());
     }
 
     #[test]

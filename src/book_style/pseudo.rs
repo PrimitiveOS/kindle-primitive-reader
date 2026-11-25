@@ -1,4 +1,6 @@
 //! CSS pseudo-element typography and generated text backed by the normal cascade.
+pub(crate) mod quotes;
+
 use super::{
     BookStyle, BoxMargin, CascadeOrigin, CssResult, Display, Element, Family, Priority, Property,
     Rule, Size, Style, TextDecoration, Weight, flow,
@@ -108,6 +110,7 @@ impl Edges {
 pub(crate) enum ContentPart {
     Text(String),
     Attribute(String),
+    Quote(quotes::Token),
 }
 
 pub(super) fn parse_content(input: &mut Parser<'_>) -> CssResult<Vec<ContentPart>> {
@@ -130,6 +133,9 @@ pub(super) fn parse_content(input: &mut Parser<'_>) -> CssResult<Vec<ContentPart
                 input.expect_exhausted()?;
                 return Ok(Vec::new());
             }
+            Token::Ident(word) => ContentPart::Quote(
+                quotes::Token::parse(&word).ok_or_else(super::ParseError::unexpected_token)?,
+            ),
             _ => return Err(super::ParseError::unexpected_token()),
         };
         parts.push(part);
@@ -160,6 +166,7 @@ pub(crate) fn read_attributes(
         .collect()
 }
 
+#[derive(Clone)]
 pub(crate) struct Generated {
     pub(crate) text: String,
     pub(crate) style: Style,
@@ -494,6 +501,7 @@ pub(super) struct Rules<'a> {
     hosts: usize,
     letter_hosts: usize,
     first_line_styles: usize,
+    quotes: quotes::Plan<'a>,
 }
 
 impl<'a> Rules<'a> {
@@ -532,6 +540,7 @@ impl<'a> Rules<'a> {
             hosts: MAX_GENERATED_HOSTS,
             letter_hosts: MAX_GENERATED_HOSTS,
             first_line_styles: MAX_FIRST_LINE_STYLES,
+            quotes: quotes::Plan::default(),
         }
     }
 
@@ -562,7 +571,7 @@ impl<'a> Rules<'a> {
             return (None, None, None);
         }
         let block = host.display == Display::Block || host.display.is_list_item();
-        let mut winners: [Winners<'_>; 2] = [[None; SLOTS]; 2];
+        let mut winners: [Winners<'a>; 2] = [[None; SLOTS]; 2];
         let mut letter_winners = [None; SLOTS];
         let mut line_winners = [None; SLOTS];
         for (origin, rule) in &self.rules {
@@ -602,24 +611,30 @@ impl<'a> Rules<'a> {
                 }
             }
         }
-        let pair = winners.map(|slots| {
-            let Some((_, Property::GeneratedContent(content))) = slots[0] else {
-                return None;
-            };
-            // The generated content is an inline decoration. Block/float
-            // pseudo boxes need their own flow policy.
-            if matches!(slots[1], Some((_, Property::Display(display))) if *display != Display::Inline) {
-                return None;
-            }
-            let style = self.typography(slots, root_scale).apply(host);
-            let text = expand(content, &elements[index])?;
-            self.remaining = self.remaining.checked_sub(text.len() + 1)?;
-            Some(Generated { text, style })
-        });
-        let generated = pair.iter().any(Option::is_some).then(|| {
+        let pending = self.quotes.0.len();
+        let [before, after] = winners;
+        let pair = [
+            self.generated(
+                index,
+                Side::Before,
+                &elements[index],
+                host,
+                root_scale,
+                before,
+            ),
+            self.generated(
+                index,
+                Side::After,
+                &elements[index],
+                host,
+                root_scale,
+                after,
+            ),
+        ];
+        if self.quotes.0.len() != pending || pair.iter().any(Option::is_some) {
             self.hosts -= 1;
-            Arc::new(pair)
-        });
+        }
+        let generated = pair.iter().any(Option::is_some).then(|| Arc::new(pair));
         let letter = (!matches!(
             letter_winners[1],
             Some((_, Property::Display(Display::None)))
@@ -671,6 +686,63 @@ impl<'a> Rules<'a> {
         (generated, letter, first_line)
     }
 
+    pub(super) fn into_quotes(self) -> quotes::Plan<'a> {
+        self.quotes
+    }
+
+    fn generated(
+        &mut self,
+        index: usize,
+        side: Side,
+        element: &Element,
+        host: &Style,
+        root_scale: f32,
+        slots: Winners<'a>,
+    ) -> Option<Generated> {
+        let Some((_, Property::GeneratedContent(content))) = slots[0] else {
+            return None;
+        };
+        let display = match slots[1] {
+            Some((_, Property::Display(display))) => *display,
+            _ => Display::Inline,
+        };
+        if display == Display::None {
+            return None;
+        }
+        if matches!(content.first(), Some(ContentPart::Quote(_))) {
+            // Even a generated block can change quote depth before its siblings.
+            // Only inline output has a paint representation in this provider.
+            let bytes = content
+                .iter()
+                .map(|part| match part {
+                    ContentPart::Quote(token) => token.output_bytes(),
+                    part => literal(part, element).len(),
+                })
+                .sum::<usize>();
+            if bytes <= MAX_CONTENT_BYTES {
+                self.remaining = self.remaining.checked_sub(bytes + 1)?;
+                let style = (display == Display::Inline)
+                    .then(|| self.typography(slots, root_scale).apply(host));
+                self.quotes.0.push(quotes::Pending {
+                    host: index,
+                    side,
+                    parts: content,
+                    style,
+                });
+            }
+            return None;
+        }
+        if display != Display::Inline {
+            return None;
+        }
+        let text = expand(content, element, |_, _| {})?;
+        self.remaining = self.remaining.checked_sub(text.len() + 1)?;
+        Some(Generated {
+            text,
+            style: self.typography(slots, root_scale).apply(host),
+        })
+    }
+
     fn typography(&self, slots: Winners<'_>, root_scale: f32) -> Typography {
         let mut style = Typography {
             root_scale,
@@ -707,25 +779,43 @@ impl<'a> Rules<'a> {
     }
 }
 
-fn expand(parts: &[ContentPart], element: &Element) -> Option<String> {
+fn expand(
+    parts: &[ContentPart],
+    element: &Element,
+    mut quote: impl FnMut(quotes::Token, &mut String),
+) -> Option<String> {
     let mut text = String::new();
+    let mut leading_tokens = true;
     for part in parts {
-        let value = match part {
-            ContentPart::Text(text) => text.as_str(),
-            ContentPart::Attribute(name) if name.eq_ignore_ascii_case("id") => {
-                element.id.as_deref().unwrap_or_default()
+        if let ContentPart::Quote(token) = part {
+            // In the pinned engine's short declarations, quote expansion
+            // stops interpreting quote tokens at the first string or attr.
+            if leading_tokens {
+                quote(*token, &mut text);
             }
-            ContentPart::Attribute(name) if name.eq_ignore_ascii_case("class") => &element.classes,
-            ContentPart::Attribute(name) => element
-                .pseudo_attributes
-                .iter()
-                .find_map(|(key, value)| key.eq_ignore_ascii_case(name).then_some(value.as_str()))
-                .unwrap_or_default(),
-        };
-        if text.len() + value.len() > MAX_CONTENT_BYTES {
+        } else {
+            leading_tokens = false;
+            text.push_str(literal(part, element));
+        }
+        if text.len() > MAX_CONTENT_BYTES {
             return None;
         }
-        text.push_str(value);
     }
     (!text.is_empty()).then_some(text)
+}
+
+fn literal<'a>(part: &'a ContentPart, element: &'a Element) -> &'a str {
+    match part {
+        ContentPart::Text(text) => text,
+        ContentPart::Attribute(name) if name.eq_ignore_ascii_case("id") => {
+            element.id.as_deref().unwrap_or_default()
+        }
+        ContentPart::Attribute(name) if name.eq_ignore_ascii_case("class") => &element.classes,
+        ContentPart::Attribute(name) => element
+            .pseudo_attributes
+            .iter()
+            .find_map(|(key, value)| key.eq_ignore_ascii_case(name).then_some(value.as_str()))
+            .unwrap_or_default(),
+        ContentPart::Quote(_) => "",
+    }
 }

@@ -157,6 +157,7 @@ impl Book {
             return match format {
                 loose::Format::Mobi => Self::open_mobi(path),
                 loose::Format::Chm => Self::open_chm(path),
+                loose::Format::Fb3 => Self::open_fb3(path),
                 _ => loose::Document::open(path, format)
                     .map(|document| Self::from_loose(document, format)),
             };
@@ -615,6 +616,52 @@ impl Book {
                 fonts: None,
             },
         }
+    }
+
+    fn open_fb3(path: &Path) -> Result<Self> {
+        let file = File::open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err("The FB3 document is not a regular file".into());
+        }
+        let input = std::io::BufReader::new(file);
+        let imported = crate::fb3::open(input, metadata.len(), loose::fallback_title(path))?;
+        let language = imported
+            .first
+            .metadata
+            .language
+            .as_deref()
+            .and_then(|tag| parley::Language::parse(tag).ok());
+        let mut book = Self::from_loose(imported.first, loose::Format::Fb3);
+        book.revision = imported.revision;
+        book.language = language;
+        book.cover = imported.cover;
+        let Content::Loose { xhtml, .. } = &mut book.content else {
+            unreachable!()
+        };
+        for (href, body) in imported.rest {
+            let label = book
+                .toc
+                .iter()
+                .find(|entry| {
+                    entry
+                        .destination
+                        .as_ref()
+                        .is_some_and(|target| target.path == href)
+                })
+                .map_or_else(
+                    || format!("Section {}", book.chapters.len() + 1),
+                    |entry| entry.label.clone(),
+                );
+            xhtml.insert(href.clone(), body);
+            book.chapters.push(Chapter {
+                href,
+                label,
+                is_svg: false,
+                nonlinear: false,
+            });
+        }
+        Ok(book)
     }
 
     fn open_mobi(path: &Path) -> Result<Self> {

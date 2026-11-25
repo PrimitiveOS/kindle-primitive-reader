@@ -691,10 +691,26 @@ impl BookStyle {
         settings: crate::Settings,
         footnotes: Option<&FootnoteTargets>,
     ) -> Vec<Style> {
-        self.scale_dpi(
-            self.compute_with_font(elements, Some(settings), footnotes),
-            settings.render_dpi,
-        )
+        let (mut styles, quotes) = self.compute_deferred_quotes(elements, settings, footnotes);
+        let main = settings.typography.resolve(None);
+        quotes.resolve(
+            elements,
+            &mut styles,
+            main.as_ref().map_or("en", |tag| tag.as_str()),
+            settings.typography.respect_embedded,
+            &mut Default::default(),
+        );
+        styles
+    }
+
+    pub(crate) fn compute_deferred_quotes(
+        &self,
+        elements: &[Element],
+        settings: crate::Settings,
+        footnotes: Option<&FootnoteTargets>,
+    ) -> (Vec<Style>, pseudo::quotes::Plan<'_>) {
+        let (styles, quotes) = self.compute_with_font(elements, Some(settings), footnotes);
+        (self.scale_dpi(styles, settings.render_dpi), quotes)
     }
 
     fn scale_dpi(&self, mut styles: Vec<Style>, dpi: u16) -> Vec<Style> {
@@ -735,7 +751,9 @@ impl BookStyle {
     }
 
     pub fn compute(&self, elements: &[Element]) -> Vec<Style> {
-        self.compute_with_font(elements, None, None)
+        let (mut styles, quotes) = self.compute_with_font(elements, None, None);
+        quotes.resolve(elements, &mut styles, "en", true, &mut Default::default());
+        styles
     }
 
     fn compute_with_font(
@@ -743,7 +761,7 @@ impl BookStyle {
         elements: &[Element],
         settings: Option<crate::Settings>,
         footnotes: Option<&FootnoteTargets>,
-    ) -> Vec<Style> {
+    ) -> (Vec<Style>, pseudo::quotes::Plan<'_>) {
         let structural_borders = settings.is_some_and(|config| {
             config.empty_break_mode.expands()
                 || config.empty_break_geometry
@@ -1251,7 +1269,7 @@ impl BookStyle {
                 pseudo_rules.for_element(elements, index, &style, root_scale, parent, &winners);
             result.push(style);
         }
-        result
+        (result, pseudo_rules.into_quotes())
     }
 
     fn read_sheet(

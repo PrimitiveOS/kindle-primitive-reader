@@ -388,6 +388,36 @@ area follows ordinary chapter pagination and keeps its anchors.
 [KOReader footnote band](screenshots/stock-body-table-notes-band.png) ·
 [KOReader following table page](screenshots/stock-body-table-notes-grid.png)
 
+## Bidirectional text in note bands
+
+Horizontal EPUB chapters with left-to-right page progression can contain
+right-to-left references and notes. Each paragraph keeps its shaped direction.
+Reader puts the separator on the right when more than half of the copied
+note lines are right-to-left. An even split puts it on the left. Body lines
+do not affect the separator. Whole-note flattening keeps right-to-left note
+paragraphs in their existing layout.
+[Pinned line count](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvpagesplitter.cpp#L857-L906) ·
+[Pinned separator paint](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L2206-L2227)
+
+The `rtl-note` replay uses Arabic reference and backlink text, an embedded
+Latin label, and two original note paragraphs. Pinned KOReader copies both
+note lines with their raster intact. The 720 × 480 px test places the right
+separator at y=360. A second note has one Arabic and one English line, and
+its separator stays on the left at y=360. The Mac Reader tests check text
+order, word selection, backlinks in both copies, and a saved original
+location. Reader places both separators at y=378 and paints the same
+40,016 pixels in the original Arabic note and the band. For the native
+replay, append the path to
+`tests/fixtures/fonts/NotoSansArabic-Regular.ttf` as the sixth argument.
+[Reader notes off](screenshots/reader-rtl-note-off.png) ·
+[Reader Arabic band](screenshots/reader-rtl-note-band.png) ·
+[Reader original Arabic note](screenshots/reader-rtl-note-original.png) ·
+[Reader direction tie](screenshots/reader-rtl-note-tie.png) ·
+[KOReader notes off](screenshots/stock-rtl-note-off.png) ·
+[KOReader Arabic band](screenshots/stock-rtl-note-band.png) ·
+[KOReader original Arabic note](screenshots/stock-rtl-note-original.png) ·
+[KOReader direction tie](screenshots/stock-rtl-note-tie.png)
+
 ## Replay on macOS
 
 Run the Reader tests on the [deterministic authored EPUB](../tests/fixtures/in-page-footnotes.epub).
@@ -418,8 +448,8 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
 
 Pass `cosmetic`, `wikipedia`, `inline-all`, `inline-list`, `inline-nested`,
 `inline-root-epub`, `inline-root-wiki`, `inline-ruby`, `inline-ruby-narrow`,
-`inline-image`, `inline-block-image`, `inline-table`, or `body-table` as the
-fifth argument to select an advanced style replay.
+`inline-image`, `inline-block-image`, `inline-table`, `body-table`, or
+`rtl-note` as the fifth argument to select an advanced style replay.
 
 Run the combined note flow checks with the same stock runtime and scratch
 paths.

@@ -27,6 +27,7 @@ mod epub_font;
 mod epub_members;
 mod epub_xml;
 mod epub_zip;
+mod fb3;
 pub mod fixed;
 pub mod fixed_epub;
 #[cfg(feature = "kindle")]
@@ -1301,10 +1302,6 @@ impl Probe {
         let main_language = settings.typography.resolve(publication_language);
         let shaping_language = main_language.map(TypographyLocale::shaping_language);
         let complete = excerpt.is_none();
-        let compose_footnotes = (settings.in_page_footnotes
-            || user_styles.in_page_epub_footnotes())
-            && complete
-            && book.is_reflowable_epub();
         let xhtml = match excerpt {
             Some(value) => value,
             None => book.chapter(chapter).map_err(|e| e.to_string())?,
@@ -1330,12 +1327,12 @@ impl Probe {
             }
         }
         let footnote_targets = if complete && engine == Engine::Parley && !spine_rtl {
-            if compose_footnotes {
-                footnotes::in_page::Targets::epub(
+            if book.is_reflowable_epub() {
+                footnotes::in_page::Targets::epub_for_settings(
                     &href,
                     &xhtml,
                     &source,
-                    settings.in_page_footnotes || user_styles.explicit_epub_notes(),
+                    settings,
                     user_styles,
                 )
             } else if user_styles.has_in_page_fb2_notes()
@@ -1378,11 +1375,33 @@ impl Probe {
                 {
                     registered_faces.clone_from(author.registered_faces());
                 }
-                let styles = author.compute_with_footnotes(
+                let (mut styles, quote_plan) = author.compute_deferred_quotes(
                     &source.elements,
                     settings,
                     footnote_targets.as_ref(),
                 );
+                if !quote_plan.is_empty() {
+                    let quote_language = main_language.as_ref().map_or("en", |tag| tag.as_str());
+                    let mut quote_depths = if complete {
+                        book_style::pseudo::quotes::prefix(
+                            book,
+                            chapter,
+                            settings,
+                            user_styles,
+                            shaping_language,
+                            quote_language,
+                        )
+                    } else {
+                        Default::default()
+                    };
+                    quote_plan.resolve(
+                        &source.elements,
+                        &mut styles,
+                        quote_language,
+                        settings.typography.respect_embedded,
+                        &mut quote_depths,
+                    );
+                }
                 reading_flow = flow_view::ChapterFlow::from_styles(&source, &styles)?;
                 #[cfg(feature = "kindle")]
                 {
@@ -1574,6 +1593,7 @@ impl Probe {
                             &source,
                             &lines,
                             &artwork,
+                            &layout.pagination_rtl_blocks(),
                             &layout.in_page_table_extents,
                             &publisher_edges,
                             settings,
@@ -2450,9 +2470,14 @@ impl Probe {
                     frame[to..to + count].copy_from_slice(&pixels[from..from + count]);
                 }
                 if let Some(y) = page.separator {
-                    let start = (top + y) as usize * stride + self.settings.left_margin() as usize;
-                    let width = self.settings.width / 7;
-                    frame[start..start + width as usize].fill(85);
+                    let width = stride / 7;
+                    let left = if page.separator_on_right {
+                        stride - self.settings.right_margin() as usize - width
+                    } else {
+                        self.settings.left_margin() as usize
+                    };
+                    let start = (top + y) as usize * stride + left;
+                    frame[start..start + width].fill(85);
                 }
                 return Ok(frame);
             }

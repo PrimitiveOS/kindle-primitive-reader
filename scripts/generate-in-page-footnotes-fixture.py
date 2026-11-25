@@ -222,6 +222,21 @@ chapters = {
  <p id="body-grid-gauge">The gauge was calibrated at dusk.</p>
  <p><a href="#body-grid-ref" role="doc-backlink">Return to the census</a>.</p>
 </aside>""",
+    "rtl-local-note": """<p id="rtl-local-start">The coastal archive contains a bilingual report.</p>
+<p dir="rtl" xml:lang="ar" style="text-align:right" id="rtl-local-body">يسجل التقرير قياس الميناء<a id="rtl-local-ref" epub:type="noteref" href="#rtl-local-note"><sup>11</sup></a>.</p>
+<p>Check the lantern inventory before departure.</p>
+<p style="page-break-before:always">The original Arabic footnote follows.</p>
+<aside id="rtl-local-note" epub:type="footnote" dir="rtl" xml:lang="ar">
+ <p id="rtl-local-quote" style="text-align:right">أظهر قياس المد قيمة S4 قبل الغروب.</p>
+ <p style="text-align:right"><a href="#rtl-local-ref" role="doc-backlink">العودة إلى التقرير</a>.</p>
+</aside>""",
+    "rtl-note-tie": """<p id="rtl-tie-start">A second bilingual note accompanies the report.</p>
+<p dir="rtl" xml:lang="ar" style="text-align:right">توجد حاشية مختصرة هنا<a id="rtl-tie-ref" epub:type="noteref" href="#rtl-tie-note"><sup>12</sup></a>.</p>
+<p style="page-break-before:always">The paired notes appear here.</p>
+<aside id="rtl-tie-note" epub:type="footnote">
+ <p dir="rtl" xml:lang="ar" style="text-align:right">توضح الحاشية تفاصيل القياس.</p>
+ <p dir="ltr">The paired line is written in English.</p>
+</aside>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)

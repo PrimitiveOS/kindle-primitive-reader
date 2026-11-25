@@ -55,12 +55,14 @@ controls are typography and style tweaks. The audited SDL fullscreen row
 belongs to the host window and is unavailable in KOReader’s Kindle menu.
 [Control matrix](koreader-sdl-reference-controls.json)
 
-The current Mac comparison covers first-line typography and wrap points, plus
-native body tables in chapters with in-page notes. The replays verify original
-links, selections, and saved positions when a line or table moves. Generated
-block boxes and quote tokens, richer joined tables, additional initial layouts,
-and more dictionaries remain open. Foreground Kindle verification is pending.
-[First-line comparison](first-line.md) · [Body table and footnote comparison](in-page-footnotes.md#body-tables-with-in-page-footnotes)
+The current Mac comparison covers FB3 opening and navigation, generated
+quotation marks, and bidirectional in-page notes. The replays verify original
+links, selections, and saved positions. Quote depth has a bounded cross-spine
+prefix pass, and large FB3 sections have a per-section limit. Generated block
+boxes, richer joined tables, additional initial layouts, and more dictionaries
+remain open. Foreground Kindle verification is pending.
+[FB3 reading](fb3-reading.md) · [Quote marks](quote-marks.md) ·
+[Bidirectional notes](in-page-footnotes.md#bidirectional-text-in-note-bands)
 
 The [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The
@@ -449,7 +451,7 @@ Use this table as the initial format inventory. A decoder that opens a file qual
 | JPEG/PNG and standalone image sequences | P2 native using the fixed-page surface. | EXIF orientation, alpha, grayscale, zoom, dimension limits, invalid input, and resume in image sequences. |
 | GIF, BMP, WebP, TIFF, SVG, JPEG 2000, JPEG XR, and portable bitmap images | Native BMP, GIF first frame, PAM/PBM/PGM/PNM/PPM, bounded static SVG and single-image lossy VP8 WebP. TIFF accepts one top-left page of uncompressed 1-bit or 8-bit grayscale strips. JP2 containers and raw J2K codestreams open in Library and inside supported comics. JPEG XR, HDP, WDP and broader variants remain to evaluate. | Animation/static policy, multi-image behavior, compression variants, orientation, alpha, external SVG resource rules, and bounded decode. |
 | CBZ, CBT, CBR | Native CBZ and uncompressed USTAR CBT. CBR supports bounded single-volume, unencrypted, non-solid RAR4 and RAR5 with independent page extraction and checksum checks. Opening an installed KOReader remains available in Files for wider RAR variants. | Entry order, paths, archive variants and signatures, grayscale displays, reading direction, spreads and large archive limits. |
-| TXT, FB2/FB2.ZIP, FB3 | P2 native TXT/FB2. P3 verifies ZIP packaging and FB3 packaging. | BOM and encoding variants, FB2 metadata/sections/notes/images, embedded identifiers, and bounded archive resources. |
+| TXT, FB2/FB2.ZIP, FB3 | P2 native TXT/FB2. P3 adds bounded FB3 package reading and navigation. [FB3 comparison](fb3-reading.md) | BOM and encoding variants, FB2 metadata/sections/notes/images, embedded identifiers, larger FB3 sections, and bounded archive resources. |
 | HTML, XHTML, HTM, HTMLZ, Markdown, XML, and plain text aliases | Native offline HTML/XHTML and single-document Calibre-style HTMLZ with one root HTML file, local PNG/JPEG and CSS, and optional OPF metadata. Evaluate other markup and archive variants in P3. | Links, images and anchors within permitted book resources, conversion fidelity, text selection, and explicit handling of unsupported script or remote content. |
 | MOBI, PRC, DRM-free AZW and KF8 variants | Native legacy MOBI and PalmDOC. Reflowable KF8 accepts plain, PalmDOC and HUFF/CDIC text. Reader reconstructs chapter order, KindleGen markup and auxiliary flows, local links, stylesheets, JPEG, PNG, first-frame GIF and supported SVG artwork. Long or image-heavy chapters retain their original destinations across layout sections. Legacy MOBI preserves images, source-byte links, publisher paragraph alignment and inline font sizes. Reader’s Contents panel opens publisher navigation at verified subject headings and preserves nested entries. Exact destinations match all 194 publisher entries in the two original legacy MOBIs. Fourteen original AZW3s expose 664 publisher headings with verified KF8 fragment addresses, including eight later-fragment headings that use a zero offset. Readable hybrid legacy editions keep their original chapter paths and positions. A validated unencrypted KF8 section can take over if the primary compression or encoding is unsupported. The HUFF/CDIC decoder verifies all 58 text records of three independent public books against libmobi. Fixed-layout KF8 and links into arbitrary legacy text offsets remain open. | Metadata, text encoding, links, images and mixed layouts, location recovery, and clear messages for encrypted inputs. |
 | RTF, legacy DOC, CHM, PalmDOC/PDB, and TCR | Native RTF, PalmDOC and bounded TCR text. CHM opens static local help topics and nested contents through a bounded ITSF/LZX adapter. Merged help files, active content and legacy binary DOC remain open. | Structural fidelity, character sets, images, links, nested archive handling, and reading state tied to the original revision. |
