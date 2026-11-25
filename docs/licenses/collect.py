@@ -122,6 +122,8 @@ def collect():
             source = "https://github.com/LaurenzV/hayro/tree/3f3825c3e50bb41ed6ec6c3f4b6007978bd13def/hayro-syntax"
         if not source and name == "parley":
             source = "https://github.com/linebender/parley/tree/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley"
+        if not source and name == "parley_engine":
+            source = "https://github.com/linebender/parley/tree/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley_engine"
         if source.startswith("registry+"):
             source = f"https://static.crates.io/crates/{name}/{name}-{version}.crate"
         elif source.startswith("git+"):

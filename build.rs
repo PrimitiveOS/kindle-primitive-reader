@@ -171,6 +171,11 @@ fn main() {
         ("lt", "LITHUANIAN"),
         ("is", "ICELANDIC"),
         ("oc", "OCCITAN"),
+        ("cy", "WELSH"),
+        ("pms", "PIEDMONTESE"),
+        ("rm", "ROMANSH"),
+        ("eu", "BASQUE"),
+        ("fur", "FRIULIAN"),
         ("sk", "SLOVAK"),
         ("sl", "SLOVENIAN"),
     ] {
@@ -198,7 +203,17 @@ fn main() {
 fn compile(mut rules: Vec<String>, name: &str, normalized: &Path) -> String {
     rules.sort_unstable();
     // A normalized, independently comparable build artifact, excluded from the package.
-    let fingerprint_input = rules.join("\n") + "\n";
+    // The modified Basque data carries its upstream notice even in local build
+    // artifacts; parsers comparing that artifact should skip comment lines.
+    let notice = if name == "BASQUE" {
+        include_str!("docs/licenses/HYPHENATION-EU.txt")
+            .lines()
+            .map(|line| format!("# {line}\n"))
+            .collect::<String>()
+    } else {
+        String::new()
+    };
+    let fingerprint_input = notice + &rules.join("\n") + "\n";
     fs::write(normalized, fingerprint_input).unwrap();
 
     let mut nodes = vec![Node::default()];
@@ -255,7 +270,15 @@ fn compile(mut rules: Vec<String>, name: &str, normalized: &Path) -> String {
                 .map(|(&key, &index)| (key, u16::try_from(index).unwrap())),
         );
     }
+    let generated_notice = if name == "BASQUE" {
+        include_str!("docs/licenses/HYPHENATION-EU.txt")
+            .lines()
+            .map(|line| format!("// {line}\n"))
+            .collect::<String>()
+    } else {
+        String::new()
+    };
     format!(
-        "const {name}: Patterns = Patterns {{ nodes:&{records:?}, edges:&{edges:?}, weights:&{weights:?} }};\n"
+        "{generated_notice}const {name}: Patterns = Patterns {{ nodes:&{records:?}, edges:&{edges:?}, weights:&{weights:?} }};\n"
     )
 }

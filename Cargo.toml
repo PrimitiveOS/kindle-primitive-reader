@@ -89,6 +89,7 @@ hayro-syntax = { path = "vendor/hayro-syntax" }
 hayro-interpret = { path = "vendor/hayro-interpret" }
 djvu-bzz = { path = "vendor/djvu-bzz" }
 parley = { path = "vendor/parley" }
+parley_engine = { path = "vendor/parley_engine" }
 
 [profile.release]
 codegen-units = 4

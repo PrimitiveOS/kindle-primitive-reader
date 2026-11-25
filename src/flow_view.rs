@@ -200,6 +200,7 @@ impl ChapterFlow {
             element: block.element,
             text,
             styled_text,
+            bidi_controls: Vec::new(),
             generated: &[],
             first_letter: None,
             first_line: false,
@@ -225,6 +226,8 @@ pub(crate) struct LayoutBlock<'a> {
     pub element: usize,
     pub text: &'a str,
     pub styled_text: StyledRuns<'a>,
+    /// Virtual bidi metadata; the text and source offsets remain unchanged.
+    pub(crate) bidi_controls: Vec<(usize, char)>,
     pub(crate) generated: &'a [crate::book_style::pseudo::Run<'a>],
     pub(crate) first_letter: Option<crate::book_style::pseudo::LetterRun<'a>>,
     pub(crate) first_line: bool,
@@ -246,6 +249,7 @@ impl<'a> LayoutBlock<'a> {
             element: source.element,
             text: &source.text,
             styled_text: StyledRuns::Original(&source.styled_text),
+            bidi_controls: Vec::new(),
             generated: &[],
             first_letter: None,
             first_line: false,
@@ -276,6 +280,8 @@ impl<'a> LayoutBlock<'a> {
             element,
             text,
             styled_text: StyledRuns::Projected(runs),
+            // Synthetic joined/boxed text needs its own verified ownership map.
+            bidi_controls: Vec::new(),
             generated: &[],
             first_letter: None,
             first_line: false,

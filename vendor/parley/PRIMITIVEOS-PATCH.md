@@ -82,3 +82,8 @@ measures the first and last visual glyphs, adjusts alignment and
 justification at the applicable edges, and reports the applied bleed for
 clipping and hit testing. Shaped runs, line boundaries and canonical source
 positions are preserved.
+# Inline bidi controls
+
+Reader exposes a bounded virtual-control slice on the ranged builder. Its
+patched `parley_engine` resolves those controls without adding bytes to the
+layout text. See `../parley_engine/PRIMITIVEOS-PATCH.md`.

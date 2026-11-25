@@ -909,6 +909,10 @@ impl ParleyChapter {
                 }
             }
         }
+        let has_inline_bidi = source.elements.iter().any(|element| {
+            matches!(element.tag.as_str(), "bdi" | "bdo")
+                || element.direction_hint.is_some() && !crate::source::is_block_tag(&element.tag)
+        });
         let mut joined_until = 0;
         let mut floating_table = None;
         for slot in 0..source.blocks.len() {
@@ -938,6 +942,16 @@ impl ParleyChapter {
                 && source.elements[input.element].anonymous
             {
                 input.element = caption.element;
+            }
+            if has_inline_bidi && input.images.is_empty() {
+                input.bidi_controls = crate::bidi_controls::for_text(
+                    input.text,
+                    &input.styled_text,
+                    input.element,
+                    &source.elements,
+                    styles,
+                )
+                .unwrap_or_default();
             }
             input.first_letter = crate::book_style::pseudo::LetterRun::resolve(
                 source_block,
@@ -3122,6 +3136,7 @@ fn shape_paragraph(
         Vec::new()
     };
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
+    builder.set_bidi_controls(&block.bidi_controls);
     let font_weights = style.font_weights.clone();
     let weight_spacing = move |font: &parley::FontData, requested: f32, size: f32| {
         crate::font_synthesis::strength(font, requested, size, &font_weights)

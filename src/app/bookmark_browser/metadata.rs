@@ -333,10 +333,14 @@ impl Reader {
 
     pub(super) fn bookmark_property_rows(&self, property: Property) -> Vec<Item> {
         let browser = &self.bookmark_browser;
+        let language = self.controls.interface_language;
         if browser.catalog.loading() {
             return vec![
-                Item::new("Reading book metadata", super::Action::Heading)
-                    .detail(format!("{} books remaining", browser.catalog.pending.len())),
+                Item::new(
+                    language.bookmark_text("Reading book metadata"),
+                    super::Action::Heading,
+                )
+                .detail(language.bookmark_books_remaining(browser.catalog.pending.len())),
             ];
         }
         let mut by_value: BTreeMap<Option<String>, usize> = BTreeMap::new();
@@ -365,13 +369,12 @@ impl Reader {
             .into_iter()
             .map(|(value, count)| {
                 item(
-                    value.as_deref().unwrap_or(property.unknown()),
+                    value
+                        .as_deref()
+                        .unwrap_or_else(|| language.bookmark_text(property.unknown())),
                     Command::SelectProperty(property, value.clone()),
                 )
-                .detail(format!(
-                    "{count} {}",
-                    if count == 1 { "book" } else { "books" }
-                ))
+                .detail(language.bookmark_books_count(count))
             })
             .collect()
     }

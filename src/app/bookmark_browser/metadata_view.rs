@@ -7,67 +7,94 @@ use super::{
 impl Reader {
     pub(super) fn bookmark_metadata_rows(&self) -> Vec<Item> {
         let browser = &self.bookmark_browser;
+        let language = self.controls.interface_language;
         let Some(book) = browser.book.and_then(|id| self.library.state(id)) else {
             return Vec::new();
         };
         let available = self.bookmark_book_available(book.id);
         let snapshot = browser.catalog.get(book.id);
-        let mut rows = vec![
-            Item::new(author_title(book), Action::Heading).detail(if available {
-                "Book"
-            } else {
-                "Archived · Source file unavailable"
-            }),
-        ];
+        let mut rows =
+            vec![
+                Item::new(author_title(book), Action::Heading).detail(language.bookmark_text(
+                    if available {
+                        "Book"
+                    } else {
+                        "Archived · Source file unavailable"
+                    },
+                )),
+            ];
         if available {
-            rows.push(item("Open book", Command::ViewBook(book.id)));
+            rows.push(item(
+                language.bookmark_text("Open book"),
+                Command::ViewBook(book.id),
+            ));
         }
         if snapshot.is_some_and(|snapshot| snapshot.has_cover) && available {
-            rows.push(item("View cover", Command::ViewCover));
+            rows.push(item(
+                language.bookmark_text("View cover"),
+                Command::ViewCover,
+            ));
         }
         if snapshot.is_some_and(|snapshot| snapshot.description.is_some()) {
-            rows.push(item("Read description", Command::Go(Page::Description)));
-        }
-        rows.push(item("Books with matches", Command::Go(Page::Books)));
-        rows.push(Item::new("Source file", Action::Heading).detail(
-            crate::library::display_filename(&book.path.to_string_lossy()),
-        ));
-        let Some(snapshot) = snapshot else {
-            rows.push(Item::new("Book metadata", Action::Heading).detail(
-                if browser.catalog.loading() {
-                    "Reading metadata"
-                } else {
-                    "Not available"
-                },
+            rows.push(item(
+                language.bookmark_text("Read description"),
+                Command::Go(Page::Description),
             ));
+        }
+        rows.push(item(
+            language.bookmark_text("Books with matches"),
+            Command::Go(Page::Books),
+        ));
+        rows.push(
+            Item::new(language.bookmark_text("Source file"), Action::Heading).detail(
+                crate::library::display_filename(&book.path.to_string_lossy()),
+            ),
+        );
+        let Some(snapshot) = snapshot else {
+            rows.push(
+                Item::new(language.bookmark_text("Book metadata"), Action::Heading).detail(
+                    language.bookmark_text(if browser.catalog.loading() {
+                        "Reading metadata"
+                    } else {
+                        "Not available"
+                    }),
+                ),
+            );
             return rows;
         };
         rows.push(
-            Item::new("Language", Action::Heading)
-                .detail(snapshot.language.as_deref().unwrap_or("Unknown language")),
+            Item::new(language.bookmark_text("Language"), Action::Heading).detail(
+                snapshot
+                    .language
+                    .as_deref()
+                    .unwrap_or_else(|| language.bookmark_text("Unknown language")),
+            ),
         );
         if snapshot.series.is_empty() {
-            rows.push(Item::new("Series", Action::Heading).detail("Unknown series"));
-        } else {
-            rows.extend(
-                snapshot
-                    .series
-                    .iter()
-                    .map(|series| Item::new(series, Action::Heading).detail("Series")),
+            rows.push(
+                Item::new(language.bookmark_text("Series"), Action::Heading)
+                    .detail(language.bookmark_text("Unknown series")),
             );
+        } else {
+            rows.extend(snapshot.series.iter().map(|series| {
+                Item::new(series, Action::Heading).detail(language.bookmark_text("Series"))
+            }));
         }
         if snapshot.keywords.is_empty() {
-            rows.push(Item::new("Keywords", Action::Heading).detail("Not supplied"));
-        } else {
-            rows.extend(
-                snapshot
-                    .keywords
-                    .iter()
-                    .map(|keyword| Item::new(keyword, Action::Heading).detail("Keyword")),
+            rows.push(
+                Item::new(language.bookmark_text("Keywords"), Action::Heading)
+                    .detail(language.bookmark_text("Not supplied")),
             );
+        } else {
+            rows.extend(snapshot.keywords.iter().map(|keyword| {
+                Item::new(keyword, Action::Heading).detail(language.bookmark_text("Keyword"))
+            }));
         }
         if snapshot.description.is_none() {
-            rows.push(Item::new("Description", Action::Heading).detail("Not supplied"));
+            rows.push(
+                Item::new(language.bookmark_text("Description"), Action::Heading)
+                    .detail(language.bookmark_text("Not supplied")),
+            );
         }
         rows
     }
@@ -104,6 +131,7 @@ impl Reader {
 
     pub(super) fn draw_bookmark_description(&self, canvas: &mut Canvas) {
         let layout = BrowserLayout(self.navigation_layout());
+        let language = self.controls.interface_language;
         let prev = layout.control(0, 214, 72);
         let next = layout.control(2, 214, 72);
         let browser = &self.bookmark_browser;
@@ -125,16 +153,21 @@ impl Reader {
         if text_page > 0 {
             let pressed =
                 canvas.control_pressed(Rect::new(prev.x, prev.y - 14, prev.w, 100), false);
-            canvas.button(prev, "Previous text", false, pressed);
+            canvas.button(
+                prev,
+                language.bookmark_text("Previous text"),
+                false,
+                pressed,
+            );
         }
         if text_page + 1 < count {
             let pressed =
                 canvas.control_pressed(Rect::new(next.x, next.y - 14, next.w, 100), false);
-            canvas.button(next, "Next text", false, pressed);
+            canvas.button(next, language.bookmark_text("Next text"), false, pressed);
         }
         canvas.text(
             layout.centered_caption(198),
-            &format!("{} of {count}", text_page + 1),
+            &language.bookmark_page(text_page + 1, count),
             CAPTION.center(),
         );
     }

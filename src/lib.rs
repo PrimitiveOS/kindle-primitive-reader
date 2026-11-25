@@ -4,6 +4,7 @@ pub use word_spacing::WordSpacePercent;
 mod annotation_export;
 #[cfg(feature = "kindle")]
 pub mod app;
+mod bidi_controls;
 mod blitz;
 mod block_margins;
 mod book_menus;

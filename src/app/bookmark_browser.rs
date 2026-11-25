@@ -1313,6 +1313,7 @@ impl Reader {
                     self.bookmark_browser.color.is_none(),
                     |color| self.bookmark_browser.color == Some(color),
                     false,
+                    language,
                 );
                 if let Some(notice) = &self.notice {
                     canvas.text(layout.body(944, 180), notice, CAPTION.lines(4));

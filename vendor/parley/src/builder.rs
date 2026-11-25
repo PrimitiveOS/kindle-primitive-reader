@@ -40,6 +40,7 @@ pub(crate) struct BuilderOptions<'a> {
     scale: f32,
     quantize: bool,
     base_direction: BaseDirection,
+    bidi_controls: &'a [(usize, char)],
     line_break_override: Option<&'a LineBreakOverrideFn>,
     automatic_hyphens: &'a [usize],
     trusted_soft_hyphen_words: &'a [Range<usize>],
@@ -55,6 +56,7 @@ impl BuilderOptions<'_> {
             scale,
             quantize,
             base_direction: BaseDirection::Auto,
+            bidi_controls: &[],
             line_break_override: None,
             soft_hyphen_policy: None,
             automatic_hyphens: &[],
@@ -110,6 +112,11 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
     /// The default is [`BaseDirection::Auto`], which infers the direction from the text.
     pub fn set_base_direction(&mut self, base_direction: BaseDirection) {
         self.options.base_direction = base_direction;
+    }
+
+    /// Add virtual bidi controls without inserting bytes into the layout text.
+    pub fn set_bidi_controls(&mut self, controls: &'b [(usize, char)]) {
+        self.options.bidi_controls = controls;
     }
 
     /// Set the callback which will be called as a first provider of line breaking decisions.
@@ -432,6 +439,7 @@ fn build_into_layout<B: Brush>(
         text,
         options.base_direction,
         options.line_break_override,
+        options.bidi_controls,
     );
 
     layout.data.clear();
@@ -506,7 +514,10 @@ fn build_into_layout<B: Brush>(
                 if extra != 0 {
                     let cluster = atom.shaped_clusters_range().start as usize;
                     if cluster >= layout.data.cluster_spacing.len() {
-                        layout.data.cluster_spacing.resize(cluster + 1, crate::layout::Gaps::ZERO);
+                        layout
+                            .data
+                            .cluster_spacing
+                            .resize(cluster + 1, crate::layout::Gaps::ZERO);
                     }
                     layout.data.cluster_spacing[cluster] = crate::layout::Gaps {
                         before: f32::from(extra / 2),
@@ -528,10 +539,15 @@ fn build_into_layout<B: Brush>(
             }
             let slice = shaped.run_slice(index as u32);
             for atom in slice.atoms_start() {
-                if atom.advance() <= 0.0 { continue; }
+                if atom.advance() <= 0.0 {
+                    continue;
+                }
                 let cluster = atom.shaped_clusters_range().start as usize;
                 if cluster >= layout.data.cluster_spacing.len() {
-                    layout.data.cluster_spacing.resize(cluster + 1, crate::layout::Gaps::ZERO);
+                    layout
+                        .data
+                        .cluster_spacing
+                        .resize(cluster + 1, crate::layout::Gaps::ZERO);
                 }
                 layout.data.cluster_spacing[cluster].after += extra.max(-atom.advance());
             }
@@ -543,7 +559,11 @@ fn build_into_layout<B: Brush>(
     }
 
     if !options.automatic_hyphens.is_empty() {
-        super::shape::collect_automatic_hyphens(layout, options.automatic_hyphens, options.trusted_soft_hyphen_words);
+        super::shape::collect_automatic_hyphens(
+            layout,
+            options.automatic_hyphens,
+            options.trusted_soft_hyphen_words,
+        );
     }
 
     // After shaping, so that the metrics of fonts used for shaping can be reused.

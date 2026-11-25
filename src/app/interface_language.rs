@@ -376,6 +376,29 @@ const END_DOCUMENT_LABELS: &[(&str, &str)] = &[
     ),
 ];
 
+// Search settings rows are Reader-owned text; numeric values stay verbatim.
+const SEARCH_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Search settings", "Cài đặt tìm kiếm"),
+    (
+        "Show all results on text selection",
+        "Hiện mọi kết quả khi chọn văn bản",
+    ),
+    ("Fit fixed pages during search", "Vừa trang cố định khi tìm"),
+    ("Words in context", "Số từ ngữ cảnh"),
+    ("Results per page", "Kết quả mỗi trang"),
+    ("Max lines per result", "Số dòng tối đa mỗi kết quả"),
+    (
+        "Open the results list when you tap Find on selected text",
+        "Mở danh sách kết quả khi tìm văn bản đã chọn",
+    ),
+    (
+        "Temporarily show the whole page when finding the next or previous match",
+        "Tạm hiện cả trang khi tìm kết quả tiếp hoặc trước",
+    ),
+    ("Flexible", "Linh hoạt"),
+    ("Disabled", "Đã tắt"),
+];
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum InterfaceLanguage {
@@ -816,6 +839,7 @@ impl InterfaceLanguage {
             return english;
         }
         match english {
+            "Dictionary" => "Từ điển",
             "Save word" => "Lưu từ",
             "Remove word" => "Xóa từ",
             "Find" => "Tìm",
@@ -968,6 +992,23 @@ impl InterfaceLanguage {
             "Hold a source to make it the default" => "Nhấn giữ nguồn để đặt mặc định",
             "Default source" => "Nguồn mặc định",
             "Clear default source" => "Xóa nguồn mặc định",
+            "Book" => "Sách",
+            "Archived · Source file unavailable" => "Đã lưu trữ · Không có tệp nguồn",
+            "Open book" => "Mở sách",
+            "View cover" => "Xem bìa",
+            "Read description" => "Đọc mô tả",
+            "Source file" => "Tệp nguồn",
+            "Book metadata" => "Siêu dữ liệu sách",
+            "Reading metadata" => "Đang đọc siêu dữ liệu",
+            "Not available" => "Không có sẵn",
+            "Language" => "Ngôn ngữ",
+            "Unknown language" => "Ngôn ngữ không rõ",
+            "Series" => "Bộ sách",
+            "Unknown series" => "Bộ sách không rõ",
+            "Keywords" => "Từ khóa",
+            "Keyword" => "Từ khóa",
+            "Not supplied" => "Chưa cung cấp",
+            "Description" => "Mô tả",
             "Apply book selection" => "Áp dụng sách đã chọn",
             "Select or clear all" => "Chọn hoặc bỏ chọn tất cả",
             "Select by author" => "Chọn theo tác giả",
@@ -982,6 +1023,14 @@ impl InterfaceLanguage {
             "Clear filters" => "Xóa bộ lọc",
             "Highlight color" => "Màu tô sáng",
             "All colors" => "Mọi màu",
+            "Choose one or more colors to export. Color and style filters are combined." => {
+                "Chọn một hoặc nhiều màu để xuất. Bộ lọc màu và kiểu được kết hợp."
+            }
+            "Show saved highlights and notes with this color. Page bookmarks have no highlight color." => {
+                "Hiện đoạn tô sáng và ghi chú có màu này. Dấu trang không có màu tô sáng."
+            }
+            "Reading book metadata" => "Đang đọc siêu dữ liệu sách",
+            "No keywords" => "Không có từ khóa",
             "Books with matches" => "Sách có kết quả",
             "Filter by book" => "Lọc theo sách",
             "Sort direction" => "Thứ tự sắp xếp",
@@ -1006,6 +1055,14 @@ impl InterfaceLanguage {
             "Purple" => "Tím",
             "Gray" => "Xám",
             "Find" => "Tìm",
+            "Find bookmarks" => "Tìm dấu trang",
+            "Bookmark search results" => "Kết quả tìm dấu trang",
+            "Bookmark, highlighted text, or note" => "Dấu trang, đoạn tô sáng hoặc ghi chú",
+            "Case sensitive" => "Phân biệt hoa thường",
+            "Bookmarks" => "Dấu trang",
+            "Highlights" => "Đoạn tô sáng",
+            "Notes" => "Ghi chú",
+            "Back" => "Quay lại",
             "Bookmark, highlighted text or note" => "Dấu trang, đoạn tô sáng hoặc ghi chú",
             "Match case" => "Phân biệt hoa thường",
             "Page bookmark" => "Dấu trang",
@@ -1033,6 +1090,22 @@ impl InterfaceLanguage {
         }
     }
 
+    pub(super) fn bookmark_books_count(self, count: usize) -> String {
+        if self == Self::Vietnamese {
+            format!("{count} sách")
+        } else {
+            format!("{count} {}", if count == 1 { "book" } else { "books" })
+        }
+    }
+
+    pub(super) fn bookmark_books_remaining(self, count: usize) -> String {
+        if self == Self::Vietnamese {
+            format!("Còn {count} sách")
+        } else {
+            format!("{count} books remaining")
+        }
+    }
+
     pub(super) fn bookmark_selected_count(self, count: usize) -> String {
         if self == Self::Vietnamese {
             format!("Đã chọn {count}")
@@ -1055,6 +1128,87 @@ impl InterfaceLanguage {
         } else {
             format!("{page} of {total}")
         }
+    }
+
+    /// Fixed document-search chrome; never pass a query or result excerpt here.
+    pub(super) fn document_search_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Find in book" => "Tìm trong sách",
+            "Search results" => "Kết quả tìm kiếm",
+            "Chapter results" => "Kết quả trong chương",
+            "Search text" => "Văn bản cần tìm",
+            "Regular expression" => "Biểu thức chính quy",
+            "Find all" => "Tìm tất cả",
+            "Match case on" => "Phân biệt hoa thường: bật",
+            "Match case off" => "Phân biệt hoa thường: tắt",
+            "Ignore accents" => "Bỏ qua dấu",
+            "Back" => "Quay lại",
+            "Cancel" => "Hủy",
+            "Cancel search" => "Hủy tìm kiếm",
+            "Previous" => "Trước",
+            "Next" => "Tiếp",
+            "From start" => "Từ đầu",
+            "From end" => "Từ cuối",
+            "Results" => "Kết quả",
+            "Search result options" => "Tùy chọn kết quả tìm kiếm",
+            "All results" => "Tất cả kết quả",
+            "Results in current chapter" => "Kết quả trong chương hiện tại",
+            "Focus results near current page" => "Đến kết quả gần trang hiện tại",
+            "Return to original page" => "Về trang ban đầu",
+            "Done" => "Xong",
+            "Search match" => "Kết quả tìm kiếm",
+            _ => english,
+        }
+    }
+
+    pub(super) fn matching_page(self, page: usize, total: usize) -> String {
+        if self == Self::Vietnamese {
+            format!("Trang khớp {page} trên {total}")
+        } else {
+            format!("Matching page {page} of {total}")
+        }
+    }
+
+    pub(super) fn search_match_count(self, ordinal: usize, total: usize, found: bool) -> String {
+        if self == Self::Vietnamese {
+            format!(
+                "Kết quả {ordinal} trên {total}{}",
+                if found { " đã tìm" } else { "" }
+            )
+        } else {
+            format!(
+                "Match {ordinal} of {total}{}",
+                if found { " found" } else { "" }
+            )
+        }
+    }
+
+    /// Translate only fixed Search settings labels and statuses.
+    pub(super) fn search_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = SEARCH_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn search_settings_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = SEARCH_SETTINGS_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
     }
 
     /// Return the canonical English search alias for a known Screen-panel row.

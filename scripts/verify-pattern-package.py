@@ -38,6 +38,11 @@ with ZipFile(args.package) as package:
         'licenses/HYPHENATION-LT.txt': root / 'docs/licenses/HYPHENATION-LT.txt',
         'licenses/HYPHENATION-IS.txt': root / 'docs/licenses/HYPHENATION-IS.txt',
         'licenses/HYPHENATION-OC.txt': root / 'docs/licenses/HYPHENATION-OC.txt',
+        'licenses/HYPHENATION-CY.txt': root / 'docs/licenses/HYPHENATION-CY.txt',
+        'licenses/HYPHENATION-PMS.txt': root / 'docs/licenses/HYPHENATION-PMS.txt',
+        'licenses/HYPHENATION-RM.txt': root / 'docs/licenses/HYPHENATION-RM.txt',
+        'licenses/HYPHENATION-EU.txt': root / 'docs/licenses/HYPHENATION-EU.txt',
+        'licenses/HYPHENATION-FUR.txt': root / 'docs/licenses/HYPHENATION-FUR.txt',
         'licenses/LPPL-1.3c.txt': root / 'docs/licenses/LPPL-1.3c.txt',
         'licenses/hyph-ru.tex': root / 'assets/hyphenation/hyph-ru.tex',
         'licenses/hyph-sv.tex': root / 'assets/hyphenation/hyph-sv.tex',
@@ -48,6 +53,11 @@ with ZipFile(args.package) as package:
         'licenses/hyph-lt.tex': root / 'assets/hyphenation/hyph-lt.tex',
         'licenses/hyph-is.tex': root / 'assets/hyphenation/hyph-is.tex',
         'licenses/hyph-oc.tex': root / 'assets/hyphenation/hyph-oc.tex',
+        'licenses/hyph-cy.tex': root / 'assets/hyphenation/hyph-cy.tex',
+        'licenses/hyph-pms.tex': root / 'assets/hyphenation/hyph-pms.tex',
+        'licenses/hyph-rm.tex': root / 'assets/hyphenation/hyph-rm.tex',
+        'licenses/hyph-eu.tex': root / 'assets/hyphenation/hyph-eu.tex',
+        'licenses/hyph-fur.tex': root / 'assets/hyphenation/hyph-fur.tex',
     }
     for file, source in assets.items():
         data = package.read(roots[0] + 'reader/' + file)

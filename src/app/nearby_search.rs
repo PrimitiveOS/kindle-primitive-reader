@@ -423,7 +423,9 @@ impl Reader {
             );
             canvas.button(
                 layout.reading_footer(LIST_RESULT_LIST),
-                "Results",
+                self.controls
+                    .interface_language
+                    .document_search_text("Results"),
                 false,
                 false,
             );
@@ -617,14 +619,21 @@ impl Reader {
         if self.nearby.searching_direction() {
             canvas.button(
                 layout.find_direction(PREVIOUS),
-                "Cancel search",
+                self.controls
+                    .interface_language
+                    .document_search_text("Cancel search"),
                 false,
                 false,
             );
         } else {
             for step in FixedNavigation::ITEMS {
                 let (rect, label) = step.entry();
-                canvas.button(layout.find_direction(rect), label, false, false);
+                canvas.button(
+                    layout.find_direction(rect),
+                    self.controls.interface_language.document_search_text(label),
+                    false,
+                    false,
+                );
             }
         }
     }

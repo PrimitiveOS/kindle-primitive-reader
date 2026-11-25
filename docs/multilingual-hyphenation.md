@@ -32,6 +32,11 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Lithuanian | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Icelandic | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Occitan | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
+| Welsh | 2 / 3 | Upstream single-word patterns; stock comparison pending |
+| Piedmontese | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
+| Romansh | 2 / 2 | Upstream version 1.1 alphabetic patterns; stock comparison pending |
+| Basque | 2 / 2 | Upstream alphabetic subset; stock comparison pending |
+| Friulian | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
 | Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
 | Russian + English (US) | 2 / 2 | Combined existing Russian and US English tries; stock comparison pending |
 | Slovak | 2 / 3 | 2,467 upstream word patterns and four active exceptions; stock comparison pending |
@@ -234,3 +239,57 @@ been built or tested on the computer or Kindle.
 [Pinned Occitan patterns](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/Occitan.pattern) ·
 [Pinned word boundaries](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstring.cpp) [Occitan terms](licenses/HYPHENATION-OC.txt) ·
 [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+
+Welsh (`cy`, including the `cym` language alias) uses Yannis Haralambous's
+upstream TeX patterns with KOReader's 2 / 3 minima. Reader compiles supported
+single-word patterns and preserves original UTF-8 source offsets. The unmodified
+source and MIT terms are included in release packages. Exact comparison with
+the pinned KOReader patterns and real-document behavior remain open; this
+change has not been built or tested on the computer or Kindle.
+[Welsh terms](licenses/HYPHENATION-CY.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+
+Piedmontese (`pms`) uses Claudio Beccari's upstream TeX patterns with
+KOReader's 2 / 2 minima. Reader compiles supported single-word alphabetic
+patterns and preserves original UTF-8 source offsets; upstream rules containing
+apostrophes are excluded. The unmodified source and MIT terms are included in
+release packages. Exact comparison with the pinned KOReader patterns and
+real-document behavior remain open; this change has not been built or tested
+on the computer or Kindle.
+[Piedmontese terms](licenses/HYPHENATION-PMS.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+
+Romansh (`rm`, including the `roh` language alias) uses Claudio Beccari's
+upstream TeX patterns, version 1.1, with KOReader's 2 / 2 minima. Reader
+compiles supported single-word alphabetic patterns and preserves original UTF-8
+source offsets; upstream rules containing apostrophes are excluded. The
+unmodified source and MIT terms are included in release packages. Exact
+comparison with the pinned KOReader patterns and real-document behavior remain
+open; this change has not been built or tested on the computer or Kindle.
+[Romansh terms](licenses/HYPHENATION-RM.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+
+Basque (`eu`) uses Juan M. Aguirregabiria's upstream TeX patterns with
+KOReader's 2 / 2 minima. The generated pattern data is modified from the source:
+Reader selects the supported single-word alphabetic rules and compiles them to
+a native lookup table; the source file itself is unmodified. Original UTF-8
+source offsets are preserved. The upstream source and full copyright and
+permission notice are included in release packages. The generated Rust and
+normalized development artifacts also carry the notice, and the runtime keeps
+the notice alongside the compiled pattern data. This is a conservative
+attribution measure, not a legal determination; distribution review remains
+open. Exact comparison with the pinned KOReader patterns and real-document
+behavior remain open; this change has not been built or tested on the computer
+or Kindle.
+[Basque terms](licenses/HYPHENATION-EU.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+
+Friulian (`fur`) uses Claudio Beccari's upstream TeX patterns, version 1.1,
+with KOReader's 2 / 2 minima. Reader compiles supported single-word alphabetic
+patterns and preserves original UTF-8 source offsets; rules containing
+apostrophes are excluded. The unmodified source and MIT terms are included in
+release packages. Exact comparison with pinned KOReader patterns and
+real-document behavior remain open; this change has not been built or tested
+on the computer or Kindle.
+[Friulian terms](licenses/HYPHENATION-FUR.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)

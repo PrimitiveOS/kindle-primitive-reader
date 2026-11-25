@@ -203,23 +203,29 @@ impl Reader {
             return;
         };
         let layout = self.search_layout();
+        let language = self.controls.interface_language;
         canvas.popup(layout.centered(SHEET));
         canvas.text(
             layout.centered(TITLE),
-            "Search result options",
+            language.document_search_text("Search result options"),
             TextStyle::new(50).bold(),
         );
         let scoped = self.search_chapter_active();
-        canvas.button(layout.centered(ALL), "All results", !scoped, false);
+        canvas.button(
+            layout.centered(ALL),
+            language.document_search_text("All results"),
+            !scoped,
+            false,
+        );
         canvas.button(
             layout.centered(CHAPTER),
-            "Results in current chapter",
+            language.document_search_text("Results in current chapter"),
             scoped,
             false,
         );
         canvas.button(
             layout.centered(CURRENT),
-            "Focus results near current page",
+            language.document_search_text("Focus results near current page"),
             false,
             false,
         );
@@ -230,7 +236,7 @@ impl Reader {
         );
         canvas.button(
             layout.centered(ORIGINAL),
-            "Return to original page",
+            language.document_search_text("Return to original page"),
             false,
             false,
         );
@@ -239,7 +245,12 @@ impl Reader {
             &origin.label,
             CAPTION.center(),
         );
-        canvas.button(layout.centered(CLOSE), "Done", true, false);
+        canvas.button(
+            layout.centered(CLOSE),
+            language.document_search_text("Done"),
+            true,
+            false,
+        );
     }
 
     fn search_result_page_label(&self) -> String {

@@ -59,9 +59,14 @@ impl AnnotationSearch {
         ]
     }
 
-    pub(super) fn draw_filters(&self, canvas: &mut Canvas, width: i32) {
+    pub(super) fn draw_filters(
+        &self,
+        canvas: &mut Canvas,
+        width: i32,
+        language: super::interface_language::InterfaceLanguage,
+    ) {
         for (_, label, selected, rect) in self.controls(width) {
-            canvas.button(rect, label, selected, false);
+            canvas.button(rect, language.bookmark_text(label), selected, false);
         }
     }
 

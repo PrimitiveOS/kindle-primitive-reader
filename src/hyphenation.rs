@@ -67,6 +67,11 @@ pub(crate) enum Dictionary {
     Lithuanian,
     Icelandic,
     Occitan,
+    Welsh,
+    Piedmontese,
+    Romansh,
+    Basque,
+    Friulian,
     Slovak,
     Slovenian,
 }
@@ -116,6 +121,11 @@ impl Dictionary {
             ("lt", _) => Some(Self::Lithuanian),
             ("is", _) => Some(Self::Icelandic),
             ("oc", _) => Some(Self::Occitan),
+            ("cy", _) => Some(Self::Welsh),
+            ("pms", _) => Some(Self::Piedmontese),
+            ("rm", _) => Some(Self::Romansh),
+            ("eu", _) => Some(Self::Basque),
+            ("fur", _) => Some(Self::Friulian),
             ("sk", _) => Some(Self::Slovak),
             ("sl", _) => Some(Self::Slovenian),
             _ => None,
@@ -153,6 +163,11 @@ impl Dictionary {
             Self::Lithuanian => "Lithuanian",
             Self::Icelandic => "Icelandic",
             Self::Occitan => "Occitan",
+            Self::Welsh => "Welsh",
+            Self::Piedmontese => "Piedmontese",
+            Self::Romansh => "Romansh",
+            Self::Basque => "Basque",
+            Self::Friulian => "Friulian",
             Self::Slovak => "Slovak",
             Self::Slovenian => "Slovenian",
         }
@@ -181,6 +196,10 @@ impl Dictionary {
             | Self::Lithuanian
             | Self::Icelandic
             | Self::Occitan
+            | Self::Piedmontese
+            | Self::Romansh
+            | Self::Basque
+            | Self::Friulian
             | Self::Slovenian => HyphenationLimits { left: 2, right: 2 },
             Self::French => HyphenationLimits { left: 2, right: 1 },
             Self::American
@@ -189,7 +208,8 @@ impl Dictionary {
             | Self::PortugueseBrazil
             | Self::Estonian
             | Self::Irish
-            | Self::Slovak => ENGLISH_LIMITS,
+            | Self::Slovak
+            | Self::Welsh => ENGLISH_LIMITS,
         }
     }
 
@@ -221,6 +241,16 @@ impl Dictionary {
             Self::Lithuanian => &LITHUANIAN,
             Self::Icelandic => &ICELANDIC,
             Self::Occitan => &OCCITAN,
+            Self::Welsh => &WELSH,
+            Self::Piedmontese => &PIEDMONTESE,
+            Self::Romansh => &ROMANSH,
+            Self::Friulian => &FRIULIAN,
+            Self::Basque => {
+                // Retain the full upstream notice and modification statement
+                // alongside the compiled-in, modified Basque pattern data.
+                std::hint::black_box(include_str!("../docs/licenses/HYPHENATION-EU.txt"));
+                &BASQUE
+            }
             Self::Slovak => &SLOVAK,
             Self::Slovenian => &SLOVENIAN,
         }

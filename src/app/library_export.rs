@@ -233,6 +233,7 @@ impl Reader {
                     .is_some_and(|colors| colors.contains(&color))
             },
             true,
+            self.controls.interface_language,
         );
         if let Some(notice) = &self.notice {
             canvas.text(

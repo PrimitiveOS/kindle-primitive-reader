@@ -2806,6 +2806,13 @@ impl Reader {
                 .detail("Temporarily show the whole page when finding the next or previous match"),
             ];
             items.extend(self.search_presentation_items());
+            let language = self.controls.interface_language;
+            for item in &mut items {
+                item.title = language.search_settings_text(&item.title).to_owned();
+                if let Some(detail) = &mut item.detail {
+                    *detail = language.search_settings_text(detail).to_owned();
+                }
+            }
             return items;
         }
         if matches!(
@@ -6189,10 +6196,17 @@ impl Reader {
         }
         let layout = navigation.keyboard();
         let action = match self.screen {
-            Screen::DictionaryEntry => "Look up",
+            Screen::DictionaryEntry => self
+                .controls
+                .interface_language
+                .dictionary_popup_text("Look up"),
             Screen::MenuSearch => "Search",
+            Screen::BookmarkFind => self.controls.interface_language.bookmark_text("Find"),
             _ if note => "Save",
-            Screen::Find => "Find all",
+            Screen::Find => self
+                .controls
+                .interface_language
+                .document_search_text("Find all"),
             _ => "Find",
         };
         let Some(key) = keyboard_key(&layout, &self.editor, action, x, y) else {
@@ -6919,17 +6933,38 @@ impl Reader {
             return;
         }
         if self.nearby.searching_direction() {
-            canvas.button(layout.reading_footer(MATCH_PREV), "Cancel", false, false);
+            canvas.button(
+                layout.reading_footer(MATCH_PREV),
+                self.controls
+                    .interface_language
+                    .document_search_text("Cancel"),
+                false,
+                false,
+            );
             return;
         }
         if self.draw_fixed_result_navigation(canvas) {
             return;
         }
         if self.search_step(-1).is_some() {
-            canvas.button(layout.reading_footer(MATCH_PREV), "Previous", false, false);
+            canvas.button(
+                layout.reading_footer(MATCH_PREV),
+                self.controls
+                    .interface_language
+                    .document_search_text("Previous"),
+                false,
+                false,
+            );
         }
         if self.search_step(1).is_some() {
-            canvas.button(layout.reading_footer(MATCH_NEXT), "Next", false, false);
+            canvas.button(
+                layout.reading_footer(MATCH_NEXT),
+                self.controls
+                    .interface_language
+                    .document_search_text("Next"),
+                false,
+                false,
+            );
         }
     }
 
@@ -6937,23 +6972,28 @@ impl Reader {
         let index = self.search_result?;
         if self.nearby.result() {
             if let Some(fixed) = &self.fixed {
-                return Some(format!(
-                    "Matching page {} of {}",
-                    fixed.reading.page() + 1,
-                    fixed.reading.count()
-                ));
+                return Some(
+                    self.controls
+                        .interface_language
+                        .matching_page(fixed.reading.page() + 1, fixed.reading.count()),
+                );
             }
-            return Some("Search match".into());
+            return Some(
+                self.controls
+                    .interface_language
+                    .document_search_text("Search match")
+                    .into(),
+            );
         }
         let order = self.search_result_order();
         let ordinal = order.ordinal(index)?;
         let count = order.len();
-        let found = if self.search_at.is_some() || self.nearby.searching_all() {
-            " found"
-        } else {
-            ""
-        };
-        Some(format!("Match {} of {count}{found}", ordinal + 1))
+        let found = self.search_at.is_some() || self.nearby.searching_all();
+        Some(
+            self.controls
+                .interface_language
+                .search_match_count(ordinal + 1, count, found),
+        )
     }
 
     fn read_fixed_text(&mut self, scan: bool) -> Result<()> {
@@ -8622,6 +8662,31 @@ impl Reader {
                 .controls
                 .interface_language
                 .contents_text("Search contents"),
+            (Screen::BookmarkFind, _) => self
+                .controls
+                .interface_language
+                .bookmark_text("Find bookmarks"),
+            (Screen::BookmarkMatches, _) => self
+                .controls
+                .interface_language
+                .bookmark_text("Bookmark search results"),
+            (Screen::DictionaryEntry, _) => self
+                .controls
+                .interface_language
+                .dictionary_popup_text("Dictionary"),
+            (Screen::Find, _) => self
+                .controls
+                .interface_language
+                .document_search_text("Find in book"),
+            (Screen::Matches, _) => self
+                .controls
+                .interface_language
+                .document_search_text("Search results"),
+            (Screen::SearchSettings, _) => self
+                .controls
+                .interface_language
+                .search_settings_text("Search settings"),
+
             (Screen::BookList, Some(BookList::Favorites)) => "Favorites",
             (Screen::BookList, Some(BookList::Recent)) => "Recently read",
             (Screen::BookList, Some(BookList::Authors)) => "Authors",
@@ -8640,7 +8705,13 @@ impl Reader {
             scoped_title = format!("Menu search · {}", self.menu_search.query());
             &scoped_title
         } else if self.screen == Screen::Matches && self.search_chapter_active() {
-            scoped_title = format!("Chapter results ({})", self.search_result_order().len());
+            scoped_title = format!(
+                "{} ({})",
+                self.controls
+                    .interface_language
+                    .document_search_text("Chapter results"),
+                self.search_result_order().len()
+            );
             &scoped_title
         } else {
             title
@@ -8652,6 +8723,19 @@ impl Reader {
         }
         let back = if self.screen.is_contents() || self.screen == Screen::ContentsSearch {
             self.controls.interface_language.contents_text("Back")
+        } else if matches!(self.screen, Screen::BookmarkFind | Screen::BookmarkMatches) {
+            self.controls.interface_language.bookmark_text("Back")
+        } else if self.screen == Screen::DictionaryEntry {
+            self.controls
+                .interface_language
+                .dictionary_popup_text("Back")
+        } else if matches!(
+            self.screen,
+            Screen::Find | Screen::Matches | Screen::SearchSettings
+        ) {
+            self.controls
+                .interface_language
+                .document_search_text("Back")
         } else {
             "Back"
         };
@@ -8744,8 +8828,20 @@ impl Reader {
                 ),
                 Screen::MenuSearch => ("Menu name", "Search"),
                 Screen::VocabularySearch => ("Saved word", "Find"),
-                Screen::DictionaryEntry => ("Word or phrase", "Look up"),
-                Screen::BookmarkFind => ("Bookmark, highlighted text, or note", "Find"),
+                Screen::DictionaryEntry => (
+                    self.controls
+                        .interface_language
+                        .dictionary_popup_text("Word or phrase"),
+                    self.controls
+                        .interface_language
+                        .dictionary_popup_text("Look up"),
+                ),
+                Screen::BookmarkFind => (
+                    self.controls
+                        .interface_language
+                        .bookmark_text("Bookmark, highlighted text, or note"),
+                    self.controls.interface_language.bookmark_text("Find"),
+                ),
                 Screen::CollectionName => ("Collection name", "Save"),
                 Screen::BookIdentityEdit(field) => (field.label(), "Save"),
                 Screen::ProfileName(
@@ -8836,10 +8932,22 @@ impl Reader {
                     ("Page, +/- pages, chapter:page, %, or label", "Go")
                 }
                 Screen::GoToPage => ("Page, +/- pages, %, or printed label", "Go"),
-                Screen::Find if self.active.is_some() && self.find_regex => {
-                    ("Regular expression", "Find all")
-                }
-                Screen::Find => ("Search text", "Find all"),
+                Screen::Find if self.active.is_some() && self.find_regex => (
+                    self.controls
+                        .interface_language
+                        .document_search_text("Regular expression"),
+                    self.controls
+                        .interface_language
+                        .document_search_text("Find all"),
+                ),
+                Screen::Find => (
+                    self.controls
+                        .interface_language
+                        .document_search_text("Search text"),
+                    self.controls
+                        .interface_language
+                        .document_search_text("Find all"),
+                ),
                 _ => ("Search text", "Find"),
             };
             let search = self.search_layout();
@@ -8891,8 +8999,11 @@ impl Reader {
                 canvas.button(self.editor_paste_rect(), "Paste", false, false);
             }
             if self.screen == Screen::BookmarkFind {
-                self.annotation_search
-                    .draw_filters(canvas, navigation.width);
+                self.annotation_search.draw_filters(
+                    canvas,
+                    navigation.width,
+                    self.controls.interface_language,
+                );
             }
             if self.screen == Screen::Find {
                 let label = if self.find_match_case {
@@ -8902,20 +9013,24 @@ impl Reader {
                 };
                 canvas.button(
                     search.find_option(FIND_CASE),
-                    label,
+                    self.controls.interface_language.document_search_text(label),
                     self.find_match_case,
                     false,
                 );
                 canvas.button(
                     search.find_option(FIND_ACCENTS),
-                    "Ignore accents",
+                    self.controls
+                        .interface_language
+                        .document_search_text("Ignore accents"),
                     self.find_ignore_accents,
                     false,
                 );
                 if self.active.is_some() {
                     canvas.button(
                         search.find_option(FIND_PATTERN),
-                        "Regular expression",
+                        self.controls
+                            .interface_language
+                            .document_search_text("Regular expression"),
                         self.find_regex,
                         false,
                     );

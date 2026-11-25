@@ -136,6 +136,12 @@ Lithuanian and Icelandic patterns, separate widow/orphan controls and
 Vietnamese bookmark-browser labels are now implemented and pass a Mac
 build-only check. Their behavior, layout and device comparisons remain open.
 
+The latest local batch adds bounded inline bidirectional analysis for supported
+horizontal text, Welsh, Piedmontese, Romansh, Basque and Friulian patterns,
+and additional Vietnamese dictionary and search controls. It passes a Mac
+build-only check. Inline boxes and other documented bidi fallbacks, the Basque
+distribution notice review, feature behavior and device comparisons remain open.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or

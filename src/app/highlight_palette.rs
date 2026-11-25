@@ -35,11 +35,12 @@ pub(super) fn draw(
     all: bool,
     selected: impl Fn(HighlightColor) -> bool,
     multiple: bool,
+    language: super::interface_language::InterfaceLanguage,
 ) {
     let width = canvas.bounds().w;
     canvas.button(
         Rect::new(ALL.x, ALL.y, width - 80, ALL.h),
-        "All colors",
+        language.bookmark_text("All colors"),
         all,
         false,
     );
@@ -51,13 +52,13 @@ pub(super) fn draw(
         draw_swatch(canvas, sample, color);
         canvas.text(
             Rect::new(sample.right() + 20, rect.y + 40, rect.w - 104, 64),
-            color.label(),
+            language.bookmark_text(color.label()),
             BODY.bold().ink(if chosen { 255 } else { 0 }),
         );
     }
-    canvas.text(Rect::new(40,776,width-80,130),if multiple {
+    canvas.text(Rect::new(40,776,width-80,130), language.bookmark_text(if multiple {
         "Choose one or more colors to export. Color and style filters are combined."
-    } else {"Show saved highlights and notes with this color. Page bookmarks have no highlight color."},CAPTION.lines(3));
+    } else {"Show saved highlights and notes with this color. Page bookmarks have no highlight color."}),CAPTION.lines(3));
 }
 
 pub(super) fn draw_swatch(canvas: &mut Canvas, sample: Rect, color: HighlightColor) {
