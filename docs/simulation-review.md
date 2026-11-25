@@ -2,6 +2,56 @@
 
 ## Current Mac simulator checkpoint
 
+**Book shortcuts** save a book or Documents folder. A folder can open its
+file list or the most recent available book, with optional subfolders.
+Reader verifies persistence, removal, unavailable targets, and reopening
+through a tap or assigned multiswipe. The native stock replay verifies
+the chooser, routing options, and hold-to-remove.
+[Shortcut comparison and captures](book-shortcuts.md)
+
+**Live metadata** can be saved beside a book, by path in the Reader
+profile, or by edition fingerprint. Tests migrate between the three
+locations, restore a renamed EPUB, retry failed writes, keep newer
+alternate records, and prefer the current library index over a sidecar.
+Reader selects its profile by default and writes versioned JSON.
+[Metadata location comparison](book-metadata-location.md)
+
+**Non-linear footnotes** group consecutive originals into supplemental
+page ranges. In supported single-page EPUBs, the normal reading path
+skips these originals while readers can still use the note bands or
+follow the source links. Whole-note flattening remains open.
+[Footnote comparison and captures](in-page-footnotes.md#combined-non-linear-footnotes)
+
+**Footer widths** independently cap author, book title, and chapter text
+using the active footer font. Reader verifies combined, cycling, and
+landscape layouts and the original default caption, progress track, and
+far-right Exit. Existing Mac checks also verify separate dictionary fuzzy
+preferences and justification of supported HTML articles. [Footer widths](footer-composition.md#item-maximum-width) ·
+[Fuzzy search](dictionary-word-forms.md#reference-behavior) ·
+[Definition display](dictionary-popup-display.md)
+
+The full suite passed 1,581 Mac library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. The standard run skipped
+73 opt-in tests. The 17 focused workflows passed twice from the same
+integrated binary. Four native KOReader replays and the integrated
+simulator reproduced all 18 new comparison screenshots byte for byte.
+
+Four original EPUB, PDF, AZW3 and MOBI files opened through the normal
+picker, turned a page, and resumed at the saved location with matching
+source bytes. An original EPUB opened through a saved shortcut and
+resumed after a page turn and restart. Both the verification copy and
+the original retained their SHA-256. The separate original EPUB note
+check retained 63 canonical anchors and 65 bands across eight chapters.
+
+The local ARMHF package staged a stripped, statically linked
+39,036,596-byte executable with SHA-256
+`e059fe5656f4fa4aec4cd18fc4ff00397aab068e469aca1efd9a7c126e16e3bd`.
+The 30 staged files total 48,636,096 bytes. Both project licenses,
+SQLite notices, Launcher icon, and OCR model passed inspection.
+Foreground Kindle verification and Store publication remain pending.
+
+## Status readouts, multiswipes, metadata archive, and notes checkpoint
+
 **Reading status** adds optional brightness and warmth items, a 12-hour
 clock in Reader, and hide rules for inactive items. The simulator tests
 combined status, cycling, presets, reopening, older saved item order, and a

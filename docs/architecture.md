@@ -86,6 +86,11 @@ chapters before picking the implementation.
   archive writes a versioned record to a chosen Documents folder on book
   close or deletion. Restore verifies the edition and saves its live record
   before consuming the matching snapshot. [Book metadata archive](book-metadata-archive.md)
+- Keep the current library index authoritative while reading. At a checkpoint
+  write the current book's live sidecar beside the book, in path-based profile
+  storage, or under its edition fingerprint. Retire an older copy only after
+  the replacement is durable. Restore from a valid matching sidecar before
+  offering the separate archive. [Book metadata location](book-metadata-location.md)
 - Treat KOReader migration as an explicit, read-only import. Resolve exported
   highlights by uniquely matched quotation. Check fixed-page sidecar progress
   using the sampled fingerprint and page count. Reflowable import verifies

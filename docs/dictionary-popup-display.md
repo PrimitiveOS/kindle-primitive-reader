@@ -7,8 +7,9 @@ these preferences for future lookups.
   visible at once. It starts off. **Expand** and **Collapse** change the current
   lookup without changing the saved preference.
 - **Justify text** widens spaces between words on wrapped lines. It starts on.
-  The last line of each paragraph keeps its natural spacing. Find highlights and
-  long-press word lookup follow the visible text positions.
+  It applies to plain definitions and supported HTML articles. The last line
+  of each paragraph keeps its natural spacing. Find highlights and long-press
+  word lookup follow the visible text positions.
 
 The compact popup keeps its placement relative to the selected passage. A lookup
 opened from a word in a definition inherits the window size. Back restores the
