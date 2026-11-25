@@ -573,11 +573,7 @@ impl Reader {
             return;
         };
         let layout = popup.layout(self.reading_viewport());
-        let language = if matches!(popup.view, View::Choices | View::Note(_) | View::Actions(_)) {
-            self.controls.interface_language
-        } else {
-            super::interface_language::InterfaceLanguage::English
-        };
+        let language = self.controls.interface_language;
         let rect = layout.0;
         canvas.popup(rect);
         let (title, icon) = match popup.view {
@@ -772,16 +768,19 @@ impl Reader {
                     }
                     canvas.text(
                         Rect::new(sample.right() + 18, cell.y + 26, cell.w - 124, 64),
-                        style.label(),
+                        language.saved_highlight_text(style.label()),
                         BODY.bold().ink(if chosen { 255 } else { 0 }),
                     );
                 }
                 let color_label = format!(
-                    "Color · {}",
-                    index
-                        .and_then(|i| self.mark_color(i))
-                        .unwrap_or_else(|| self.effective_highlight_color())
-                        .label()
+                    "{} · {}",
+                    language.saved_highlight_text("Color"),
+                    language.saved_highlight_text(
+                        index
+                            .and_then(|i| self.mark_color(i))
+                            .unwrap_or_else(|| self.effective_highlight_color())
+                            .label()
+                    )
                 );
                 if selected == HighlightStyle::Invert {
                     let r = layout.color_entry(index, false);
@@ -797,7 +796,11 @@ impl Reader {
                 if index.is_none() {
                     canvas.button(
                         layout.color_entry(index, true),
-                        &format!("Note · {}", self.controls.note_marker.label()),
+                        &format!(
+                            "{} · {}",
+                            language.saved_highlight_text("Note"),
+                            language.saved_highlight_text(self.controls.note_marker.label())
+                        ),
                         false,
                         false,
                     );
@@ -817,7 +820,7 @@ impl Reader {
                         };
                         canvas.text(
                             Rect::new(r.x + 10, r.y + 9, r.w - 20, 50),
-                            amount.title(),
+                            language.saved_highlight_text(amount.title()),
                             CAPTION.center().ink(ink),
                         );
                         canvas.text(
@@ -833,6 +836,7 @@ impl Reader {
                     } else {
                         "Selection color · Off"
                     };
+                    let label = language.saved_highlight_text(label);
                     let r = layout.workflow_entry(false);
                     if selection_active {
                         canvas.button(r, label, false, false);
@@ -846,7 +850,7 @@ impl Reader {
                     }
                     canvas.button(
                         layout.workflow_entry(true),
-                        "Apply to all highlights",
+                        language.saved_highlight_text("Apply to all highlights"),
                         false,
                         false,
                     );
@@ -865,7 +869,7 @@ impl Reader {
                     canvas.panel(sample, 4, 2, color.gray().unwrap_or(204));
                     canvas.text(
                         Rect::new(sample.right() + 14, r.y + 28, r.w - 90, 60),
-                        color.label(),
+                        language.saved_highlight_text(color.label()),
                         BODY.bold().ink(if chosen { 255 } else { 0 }),
                     );
                 }
@@ -894,7 +898,7 @@ impl Reader {
                     }
                     canvas.text(
                         Rect::new(sample.right() + 22, r.y + 29, r.w - 112, 60),
-                        marker.label(),
+                        language.saved_highlight_text(marker.label()),
                         BODY.bold().ink(ink),
                     );
                 }
@@ -905,7 +909,11 @@ impl Reader {
                     .state(book)
                     .map_or(0, |s| s.highlights.len() + s.pdf_highlights.len());
                 let body = layout.body();
-                canvas.text(Rect::new(body.x,body.y,body.w,135),&format!("Apply {} and {} to all {count} highlights? Notes, positions and creation dates are kept.",style.label(),color.label()),BODY.lines(3));
+                canvas.text(
+                    Rect::new(body.x, body.y, body.w, 135),
+                    &language.saved_highlight_apply_all(style.label(), color.label(), count),
+                    BODY.lines(3),
+                );
                 if let Some(notice) = &self.notice {
                     canvas.text(
                         Rect::new(body.x, body.y + 141, body.w, 76),
@@ -913,8 +921,18 @@ impl Reader {
                         CAPTION.lines(2),
                     );
                 }
-                canvas.button(layout.button(0, 2), "Cancel", false, false);
-                canvas.button(layout.button(1, 2), "Apply", true, false);
+                canvas.button(
+                    layout.button(0, 2),
+                    language.saved_highlight_text("Cancel"),
+                    false,
+                    false,
+                );
+                canvas.button(
+                    layout.button(1, 2),
+                    language.saved_highlight_text("Apply"),
+                    true,
+                    false,
+                );
             }
             View::Adjust(amount) => {
                 let percent = amount.percent(self.controls.highlight_appearance);
@@ -948,7 +966,8 @@ impl Reader {
             View::RemoveNote(_) => {
                 canvas.text(
                     layout.body(),
-                    "The highlighted passage will stay in your book.",
+                    language
+                        .saved_highlight_text("The highlighted passage will stay in your book."),
                     BODY.lines(2),
                 );
                 buttons(canvas, &["Cancel", "Remove note"]);
@@ -956,7 +975,9 @@ impl Reader {
             View::RemoveMark(_) => {
                 canvas.text(
                     layout.body(),
-                    "The passage highlight and its note will be removed.",
+                    language.saved_highlight_text(
+                        "The passage highlight and its note will be removed.",
+                    ),
                     BODY.lines(2),
                 );
                 buttons(canvas, &["Cancel", "Remove highlight"]);

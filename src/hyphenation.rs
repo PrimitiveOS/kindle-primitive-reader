@@ -4,7 +4,8 @@ use crate::{
     book_style::{Hyphens, Style},
     source::{Block, StyledText},
 };
-use icu_normalizer::ComposingNormalizer;
+use icu_normalizer::{ComposingNormalizer, DecomposingNormalizer};
+use icu_properties::{CodePointMapData, props::GeneralCategory};
 use icu_segmenter::GraphemeClusterSegmenter;
 use parley::{Language, LineBreak, WordBreak};
 use serde::{Deserialize, Serialize};
@@ -510,16 +511,112 @@ fn word_breaks_with_limits(
     let mut offset = 0;
     for part in word.split_inclusive(separators) {
         let text = part.trim_end_matches(separators);
-        pattern_breaks(
-            patterns,
-            additional,
-            text,
-            limits,
-            false,
-            locale == Dictionary::Turkish,
-            |at| emit(offset + at),
-        );
+        if matches!(locale, Dictionary::Latin | Dictionary::LiturgicalLatin) {
+            latin_pattern_breaks(patterns, text, limits, |at| emit(offset + at));
+        } else {
+            pattern_breaks(
+                patterns,
+                additional,
+                text,
+                limits,
+                false,
+                locale == Dictionary::Turkish,
+                |at| emit(offset + at),
+            );
+        }
         offset += part.len();
+    }
+}
+
+// Latin pattern rules may describe several Unicode scalars in a single
+// grapheme. Match NFD scalars, but emit only original grapheme boundaries.
+fn latin_pattern_breaks(
+    patterns: &Patterns,
+    word: &str,
+    limits: HyphenationLimits,
+    mut emit: impl FnMut(usize),
+) {
+    const MAX_SCALARS: usize = MAX_WORD * 4;
+    let mut letters = ['.'; MAX_SCALARS + 2];
+    let mut boundaries = [None; MAX_SCALARS + 1];
+    let mut ordinal = [0u8; MAX_SCALARS + 1];
+    let mut scalars = 0usize;
+    let mut graphemes = 0usize;
+    let mut start = 0usize;
+    let nfd = DecomposingNormalizer::new_nfd();
+    let categories = CodePointMapData::<GeneralCategory>::new();
+    for end in GraphemeClusterSegmenter::new().segment_str(word).skip(1) {
+        let cluster = &word[start..end];
+        start = end;
+        if cluster == "\u{ad}" {
+            continue;
+        }
+        if graphemes == MAX_WORD {
+            return;
+        }
+        let lower = cluster.to_lowercase();
+        let normalized = nfd.normalize(&lower);
+        let mut chars = normalized.chars();
+        let Some(first) = chars.next().filter(|ch| ch.is_alphabetic()) else {
+            return;
+        };
+        for ch in std::iter::once(first).chain(chars) {
+            if !ch.is_alphabetic()
+                && !matches!(
+                    categories.get(ch),
+                    GeneralCategory::NonspacingMark
+                        | GeneralCategory::SpacingMark
+                        | GeneralCategory::EnclosingMark
+                )
+            {
+                return;
+            }
+            if scalars == MAX_SCALARS {
+                return;
+            }
+            scalars += 1;
+            letters[scalars] = ch;
+        }
+        graphemes += 1;
+        boundaries[scalars] = Some(end);
+        ordinal[scalars] = graphemes as u8;
+    }
+    let left = usize::from(limits.left);
+    let right = usize::from(limits.right);
+    if graphemes < left + right {
+        return;
+    }
+    let mut scores = [0u8; MAX_SCALARS + 3];
+    for start in 0..scalars + 2 {
+        let mut node = 0;
+        for &ch in &letters[start..scalars + 2] {
+            let (first, count, _, _) = patterns.nodes[node];
+            let branches = &patterns.edges[usize::from(first)..][..usize::from(count)];
+            let Ok(next) = branches.binary_search_by_key(&ch, |&(label, _)| label) else {
+                break;
+            };
+            node = usize::from(branches[next].1);
+            let (_, _, index, len) = patterns.nodes[node];
+            for (score, &weight) in scores[start..]
+                .iter_mut()
+                .zip(&patterns.weights[usize::from(index)..][..usize::from(len)])
+            {
+                *score = (*score).max(weight);
+            }
+        }
+    }
+    for scalar in 1..=scalars {
+        let Some(offset) = boundaries[scalar] else {
+            continue;
+        };
+        let position = usize::from(ordinal[scalar]);
+        if position >= left
+            && graphemes - position >= right
+            && scores[scalar + 1] % 2 == 1
+            && !word[offset..].starts_with('\u{ad}')
+        {
+            emit(offset);
+        }
     }
 }
 

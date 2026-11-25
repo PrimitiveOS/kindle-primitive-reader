@@ -94,10 +94,14 @@ and KOReader's percentage-of-declaring-font extension. The reader's own letter
 spacing control adds its tracking to the computed CSS value. To keep malformed
 or extreme styles bounded, the publisher contribution is limited to
 −1–128 pixels and combined negative tracking to −1 pixel; non-finite values
-fall back to zero. Text and source anchors
-remain unchanged. Pseudo-element-specific declarations, ruby annotations,
-vertical text and Blitz rendering do not yet have equivalent support. The
-visual result and precise KOReader parity have not yet been tested.
+fall back to zero. `::first-letter` and `::first-line` may specify their own
+spacing, including inherited first-line descendants; absolute units follow the
+reading DPI. Relative pseudo-element lengths use Reader's existing pseudo font
+scale, which may differ from KOReader's logical-font metrics. Text and source
+anchors remain unchanged. Pseudo-element reset keywords, generated-content
+declarations, ruby annotations, vertical text and Blitz rendering do not yet
+have equivalent support. The visual result and precise KOReader parity have
+not yet been tested.
 [CRE inherited value](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L11524-L11526) · [CRE text layout](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L4568-L4574)
 
 **Ignore publisher line-break restrictions** applies KOReader's non-important

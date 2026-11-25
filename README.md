@@ -234,19 +234,26 @@ turns and resume, and returned to Launcher using both exit controls. The
 bundled English OCR worker also recognised a grayscale test passage on the
 device. [Reading parity and device results](docs/reading-parity-plan.md)
 
+The table describes the current source candidate. Recent additions, including
+ODT/DOCM, expanded TIFF support and the partial Vietnamese interface, have had
+build-only checks and are not yet verified or released. The
+[reading parity plan](docs/reading-parity-plan.md) tracks their limitations and
+the deferred simulator and Kindle acceptance work.
+
 | Format | Current implementation |
 | --- | --- |
 | EPUB 2 and EPUB 3 reflow | [Publisher page numbers](docs/publisher-page-numbers.md), [character-count pages and per-book defaults](docs/character-count-pages.md), publisher navigation, local links, saved text positions, per-book typography, bookmarks, search and notes. Embedded GIF diagrams retain their intrinsic dimensions and open at full size. Linked static SVG and short horizontal ruby annotations render within documented limits. [GIF illustrations and limits](docs/epub-gif-illustrations.md) |
 | Fixed-layout EPUB 3 | Static XHTML and supported SVG spine pages, contents, zoom and rotation. Publisher page progression and facing-page hints control spreads. |
 | PDF | Page turns or continuous scrolling, printed page labels, local outlines and links, bookmarks, passwords, page, width and height fit, crop, zoom, pan and rotation. Embedded text supports search, selection, highlights and notes. |
 | DjVu | Fixed pages, crop, embedded text with search and annotations, and [publisher contents](docs/djvu-contents.md) with named page destinations |
-| CBZ, CBT, CBR, JPEG, PNG, BMP, GIF and portable anymaps | Natural comic page order, single pages or two-page spreads, and selectable reading direction. CBT accepts standard uncompressed USTAR entries. CBR accepts supported single-volume, non-solid RAR4 and RAR5. Animated GIF shows its first frame. Portable anymaps include PBM, PGM, PPM and PAM. |
+| CBZ, CBT, CBR, JPEG, PNG, BMP, GIF and portable anymaps | Natural comic page order, single pages or two-page spreads, and selectable reading direction. CBT accepts standard uncompressed USTAR entries. CBR accepts supported single-volume, non-solid RAR4 and RAR5. Standalone animated GIFs offer bounded frame navigation; GIFs in comics use their first frame. Portable anymaps include PBM, PGM, PPM and PAM. [Animated GIF limits](docs/animated-gif-pages.md) |
 | SVG | Static geometry and local gradients in standalone files, linked EPUB illustrations, and fixed-layout EPUB pages. |
 | JPEG 2000 (.jp2 and .j2k) | Open a grayscale or color still image directly from Library or read it as a comic page. Supports lossless and lossy Part 1 images with up to 16 bits per component. [Simulated Kindle page](docs/screenshots/jpeg2000-beacon.png) |
-| WebP and TIFF | Lossy, single-image VP8 WebP. Single-page uncompressed strip-based TIFF with top-left orientation and 1-bit or 8-bit grayscale. |
+| WebP and TIFF | Lossy, single-image VP8 WebP. Bounded single-page TIFF strips support grayscale, bilevel, indexed and RGB data, selected alpha formats, orientations 1–8 and several compression methods. [TIFF limits](docs/tiff-packbits.md) |
 | TXT, HTML/XHTML, HTMLZ, Markdown, FB2 and FB3 | Shared text search and reading positions. Single-document HTMLZ archives use local illustrations and stylesheets. FB2 preserves section navigation and supported embedded images, including ZIP and gzip packages. FB3 reads local package images, nested sections and linked notes. Markdown builds a contents list from headings. [FB3 reading](docs/fb3-reading.md) |
 | MOBI, PalmDOC and AZW3 | DRM-free legacy MOBI with publisher contents, paragraph alignment, HTML font sizes, embedded illustrations and local links, and PalmDOC text. Hybrids open their readable legacy edition and can fall back to supported KF8. Legacy MOBI and reflowable KF8/AZW3 open uncompressed, PalmDOC and HUFF/CDIC text. KF8 supports nested publisher contents with in-chapter destinations, local links, KindleGen stylesheets, JPEG, PNG, first-frame GIF and supported SVG artwork. Large chapters open in bounded sections that retain link destinations. |
-| DOCX | Macro-free Strict and Transitional Word documents. Text, headings, basic emphasis, table reading order, and title and author metadata. |
+| DOCX and DOCM | Supported Strict and Transitional Word documents, with text, headings, basic emphasis, table reading order, bookmarks and supported local images. DOCM active content is not executed; some embedded objects and controls are unsupported. [Word reading limits](docs/docx-reading.md) |
+| ODT | A bounded OpenDocument Text subset with metadata, headings, lists, tables, local images and supported formatting. Long books use section splitting with conservative saved-state mapping. [ODT support and limits](docs/opendocument-text.md) |
 | CHM | Static help topics in single archives, with nested contents, headings, links and local JPEG or PNG illustrations. |
 | RTF and TCR | RTF preserves paragraphs and basic character styling. TCR opens bounded 8-bit dictionary-compressed text in the reflow reader. |
 | StarDict | Reader discovers existing dictionaries in `koreader/data/dict/` and `koreader/data/dict_ext/` alongside `reader/data/dictionaries/`. Select a word to see its offline definitions. In reading settings, choose the default sources and their order, or prefer dictionaries for one book. Gzip indexes, indexed dictzip data and synonym entries are supported. [Offline dictionaries](docs/shared-dictionaries.md) |
@@ -271,11 +278,12 @@ to the passage where you began exploring the results. Use Reading controls to
 disable page turn taps while keeping swipes and physical page buttons available.
 
 Use Contrast on the fixed-page reading bar for dim scans.
-Columns enlarges each side of a clear two-column PDF or DjVu scan. Use the page
-buttons to move between the columns and Done to return to the saved view.
+Columns enlarges each column of a clear two- or three-column PDF or DjVu scan.
+Use the page buttons to move between columns and Done to return to the saved view.
 PDF and DjVu can open in a reflowed text view that advances across pages with
-embedded or previously recognized text. The OCR build bundles English and can
-use additional locally installed Tesseract models to recognize scans.
+embedded or previously recognized text. The current OCR package scripts bundle
+English and Vietnamese and can use additional locally installed Tesseract
+models to recognize scans.
 Reflow scan uses the original word images from a page after OCR and supports
 horizontal left-to-right text. [Offline OCR build](docs/ocr-build.md)
 

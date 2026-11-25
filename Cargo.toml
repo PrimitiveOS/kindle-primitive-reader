@@ -14,6 +14,8 @@ kindle = ["dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi", "dep:ureq
 
 [build-dependencies]
 cc = "=1.11.2"
+icu_normalizer = { version = "=2.4.0", default-features = false, features = ["compiled_data"] }
+icu_properties = "=2.4.0"
 
 [dependencies]
 kurbo = "=0.13.1"

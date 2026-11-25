@@ -39,8 +39,8 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Friulian | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
 | Esperanto | 2 / 2 | Upstream 2020 pattern set matches pinned stock entries; behavior comparison pending |
 | Georgian | 1 / 2 | Upstream version 0.3 single-word patterns; stock comparison pending |
-| Latin | 2 / 2 | Classical upstream alphabetic subset; combining marks unsupported |
-| Latin (liturgical) | 2 / 2 | Liturgical upstream alphabetic subset; combining marks unsupported |
+| Latin | 2 / 2 | Classical upstream patterns; combining-mark behavior unverified |
+| Latin (liturgical) | 2 / 2 | Liturgical upstream patterns; combining-mark behavior unverified |
 | Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
 | Russian + English (US) | 2 / 2 | Combined existing Russian and US English tries; stock comparison pending |
 | Slovak | 2 / 3 | 2,467 upstream word patterns and four active exceptions; stock comparison pending |
@@ -325,11 +325,12 @@ Classical Latin (`la`, `lat`) and liturgical Latin (`la-lit`, `lat-lit`,
 The selected locale is carried separately from the `la` shaping language,
 and respected embedded language tags can change or clear it. Original UTF-8
 source offsets and reading anchors are unchanged. The source files and MIT
-terms are included in release packages. Reader currently excludes 4,342 of
-26,076 classical rules and 2 of 1,955 liturgical rules containing combining
-marks; words whose NFC graphemes still contain multiple code points are not
-automatically hyphenated. User-defined hyphenation rules still use the `la`
-shaping language for both Latin variants. Exact stock comparison, mixed-language
-behavior and real-document checks remain open; this change has not been built
-or tested on the computer or Kindle.
+terms are included in release packages. Reader includes combining-mark rules
+and uses canonical decomposition for Latin pattern matching while emitting
+only original UTF-8 grapheme boundaries. Latin words exceeding 64 graphemes,
+256 decomposed scalars, or the overall word-byte limit are skipped.
+User-defined hyphenation rules still use the `la` shaping language for both
+Latin variants. Exact stock rule/behavior comparison, canonical combining-mark
+cases, mixed-language behavior and real-document checks remain open; this
+change has not been built or tested on the computer or Kindle.
 [Latin terms](licenses/HYPHENATION-LA.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)

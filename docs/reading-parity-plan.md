@@ -153,8 +153,9 @@ Full line-break parity, script behavior and visual/device checks remain open.
 
 Separate classical and liturgical Latin pattern selection, horizontal publisher
 letter spacing and further Vietnamese library/highlight controls now pass a Mac
-build-only check. Combining-mark Latin patterns, other rendering paths and the
-behavioral and device checks remain open.
+build-only check. Latin combining-mark pattern matching and pseudo-element
+letter spacing are also implemented and pass a Mac build-only check. Their
+behavior, other rendering paths and the device checks remain open.
 
 ### Execution checklist
 

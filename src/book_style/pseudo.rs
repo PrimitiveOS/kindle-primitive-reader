@@ -2,8 +2,8 @@
 pub(crate) mod quotes;
 
 use super::{
-    BookStyle, BoxMargin, CascadeOrigin, CssResult, Display, Element, Family, Priority, Property,
-    Rule, Size, Style, TextDecoration, Weight, flow,
+    BookStyle, BoxMargin, CascadeOrigin, CssLength, CssResult, Display, Element, Family, Priority,
+    Property, Rule, Size, Style, TextDecoration, Weight, flow,
 };
 use cssparser::{Parser, Token};
 use parley::{FontStyle, FontWeight, GenericFamily};
@@ -176,6 +176,7 @@ pub(crate) type Pair = [Option<Generated>; 2];
 
 /// Overrides inherit from the styled text node, which may be inside emphasis
 /// or a link, independently of the selector's actual block host.
+#[derive(Clone)]
 pub(crate) struct FirstLetter {
     typography: Typography,
     pub(crate) placement: Option<Placement>,
@@ -225,7 +226,7 @@ pub(super) fn parse_initial_letter(input: &mut Parser<'_>) -> CssResult<Option<I
     }))
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Typography {
     visibility: Option<flow::Visibility>,
     size: Option<Size>,
@@ -235,6 +236,16 @@ struct Typography {
     slant: Option<FontStyle>,
     decoration: Option<TextDecoration>,
     line_height: Option<Option<f32>>,
+    letter_spacing: Option<CssLength>,
+    dpi: u16,
+}
+
+fn computed_spacing(length: CssLength, font: f32, root: f32) -> CssLength {
+    let length = match length {
+        CssLength::Fraction(value) => CssLength::Em(value),
+        value => value,
+    };
+    length.computed(font, root)
 }
 
 impl Typography {
@@ -270,6 +281,10 @@ impl Typography {
         if let Some(height) = self.line_height {
             style.line_height = height;
         }
+        if let Some(length) = self.letter_spacing {
+            style.letter_spacing =
+                computed_spacing(length, style.size_scale, self.root_scale).for_dpi(self.dpi);
+        }
         style.flow = flow::resolve(base.flow, style.display, style.visibility);
         style
     }
@@ -278,6 +293,10 @@ impl Typography {
 impl FirstLetter {
     pub(crate) fn apply(&self, base: &Style) -> Style {
         self.typography.apply(base)
+    }
+
+    pub(super) fn set_dpi(&mut self, dpi: u16) {
+        self.typography.dpi = dpi;
     }
 
     pub(crate) fn gap(&self, width: u32, font: f32) -> f32 {
@@ -295,11 +314,13 @@ pub(crate) struct FirstLine {
     weight: FontWeight,
     slant: FontStyle,
     line_height: Option<f32>,
+    letter_spacing: CssLength,
+    root_scale: f32,
     decoration: TextDecoration,
 }
 
 impl FirstLine {
-    fn new(host: usize, style: &Style) -> Self {
+    fn new(host: usize, style: &Style, root_scale: f32) -> Self {
         Self {
             host,
             family: style.font_family.clone(),
@@ -307,6 +328,8 @@ impl FirstLine {
             weight: style.font_weight,
             slant: style.font_style,
             line_height: style.line_height,
+            letter_spacing: style.letter_spacing,
+            root_scale,
             decoration: style.decoration,
         }
     }
@@ -318,8 +341,13 @@ impl FirstLine {
         style.font_weight = self.weight;
         style.font_style = self.slant;
         style.line_height = self.line_height;
+        style.letter_spacing = self.letter_spacing;
         style.decoration = style.decoration.including(self.decoration);
         style
+    }
+
+    pub(super) fn scale_dpi(&mut self, dpi: u16) {
+        self.letter_spacing = self.letter_spacing.for_dpi(dpi);
     }
 
     fn descendant(&self, style: &Style, tag: &str, winners: &super::Winners<'_>) -> Self {
@@ -343,6 +371,7 @@ impl FirstLine {
             _ if inherits(5) => self.weight,
             _ => style.font_weight,
         };
+        let size = size.clamp(0.125, 8.0);
         Self {
             host: self.host,
             family: if inherits(0) {
@@ -351,7 +380,7 @@ impl FirstLine {
                 &style.font_family
             }
             .clone(),
-            size: size.clamp(0.125, 8.0),
+            size,
             weight,
             slant: match declaration(6) {
                 None if matches!(tag, "em" | "i") => FontStyle::Italic,
@@ -363,6 +392,14 @@ impl FirstLine {
             } else {
                 style.line_height
             },
+            letter_spacing: match declaration(super::LETTER_SPACING) {
+                Some(Property::LetterSpacing(length)) => {
+                    computed_spacing(*length, size, self.root_scale)
+                }
+                _ if inherits(super::LETTER_SPACING) => self.letter_spacing,
+                _ => style.letter_spacing,
+            },
+            root_scale: self.root_scale,
             decoration: self.decoration.including(style.decoration),
         }
     }
@@ -456,6 +493,7 @@ fn property_slot(property: &Property) -> Option<usize> {
         Property::Float(_) => 9,
         Property::InitialLetter(_) => 10,
         Property::HorizontalMargin(1, _) => 11,
+        Property::LetterSpacing(_) => 12,
         _ => return None,
     })
 }
@@ -488,10 +526,11 @@ fn is_first_line_typography(property: &Property) -> bool {
             | Property::Slant(_)
             | Property::Decoration(_)
             | Property::LineHeight(_)
+            | Property::LetterSpacing(_)
     )
 }
 
-const SLOTS: usize = 12;
+const SLOTS: usize = 13;
 type Winners<'a> = [Option<(Priority, &'a Property)>; SLOTS];
 
 pub(super) struct Rules<'a> {
@@ -589,6 +628,13 @@ impl<'a> Rules<'a> {
                     _ => continue,
                 };
                 for decl in &rule.declarations {
+                    // Deferred generated quotes have a separate DPI lifecycle;
+                    // leave their letter-spacing on the existing inherited path.
+                    if matches!(target, Target::Generated(_))
+                        && matches!(decl.property, Property::LetterSpacing(_))
+                    {
+                        continue;
+                    }
                     if matches!(target, Target::FirstLine)
                         && !matches!(decl.property, Property::Display(_))
                         && !is_first_line_typography(&decl.property)
@@ -666,11 +712,11 @@ impl<'a> Rules<'a> {
             None
         } else if block {
             (!matches!(line_winners[1], Some((_, Property::Display(Display::None))))
-                && line_winners[3..=8].iter().any(Option::is_some))
+                && (line_winners[3..=8].iter().any(Option::is_some) || line_winners[12].is_some()))
             .then(|| {
                 self.first_line_styles -= 1;
                 let style = self.typography(line_winners, root_scale).apply(host);
-                Arc::new(FirstLine::new(index, &style))
+                Arc::new(FirstLine::new(index, &style, root_scale))
             })
         } else {
             parent.first_line.as_ref().map(|current| {
@@ -746,6 +792,7 @@ impl<'a> Rules<'a> {
     fn typography(&self, slots: Winners<'_>, root_scale: f32) -> Typography {
         let mut style = Typography {
             root_scale,
+            dpi: 96,
             ..Typography::default()
         };
         for (_, property) in slots.into_iter().flatten() {
@@ -772,6 +819,7 @@ impl<'a> Rules<'a> {
                 Property::Slant(value) => style.slant = Some(*value),
                 Property::Decoration(value) => style.decoration = *value,
                 Property::LineHeight(value) => style.line_height = Some(*value),
+                Property::LetterSpacing(value) => style.letter_spacing = Some(*value),
                 _ => (),
             }
         }

@@ -1354,7 +1354,65 @@ impl InterfaceLanguage {
             "Invert" => "Đảo màu",
             "Remove note" => "Xóa ghi chú",
             "Remove highlight" => "Xóa tô sáng",
+            "Highlight style" => "Kiểu tô sáng",
+            "New highlights in this book" => "Đoạn tô sáng mới trong sách",
+            "Highlight color" => "Màu tô sáng",
+            "Note marker" => "Dấu ghi chú",
+            "Update all highlights?" => "Cập nhật mọi đoạn tô sáng?",
+            "Remove note?" => "Xóa ghi chú?",
+            "Remove highlight?" => "Xóa tô sáng?",
+            "Gray highlight opacity" => "Độ đậm vùng tô xám",
+            "Gray selection opacity" => "Độ đậm vùng chọn xám",
+            "Highlight line height" => "Chiều cao vùng tô",
+            "Color" => "Màu",
+            "None" => "Không",
+            "Side line" => "Đường bên",
+            "Side mark" => "Dấu bên",
+            "Red" => "Đỏ",
+            "Orange" => "Cam",
+            "Yellow" => "Vàng",
+            "Green" => "Xanh lá",
+            "Olive" => "Ô liu",
+            "Cyan" => "Xanh lơ",
+            "Blue" => "Xanh dương",
+            "Purple" => "Tím",
+            "Gray" => "Xám",
+            "Selection color · On" => "Màu vùng chọn · Bật",
+            "Selection color · Off" => "Màu vùng chọn · Tắt",
+            "Apply to all highlights" => "Áp dụng cho mọi đoạn tô sáng",
+            "Use reader default" => "Dùng mặc định Reader",
+            "Set reader default" => "Đặt mặc định Reader",
+            "Default" => "Mặc định",
+            "Back" => "Quay lại",
+            "Cancel" => "Hủy",
+            "Apply" => "Áp dụng",
+            "The highlighted passage will stay in your book." => {
+                "Đoạn được tô sáng vẫn còn trong sách của bạn."
+            }
+            "The passage highlight and its note will be removed." => {
+                "Phần tô sáng của đoạn văn và ghi chú của nó sẽ bị xóa."
+            }
             _ => english,
+        }
+    }
+
+    /// Keep the selected values/count and confirmation consequences explicit.
+    pub(super) fn saved_highlight_apply_all(
+        self,
+        style: &str,
+        color: &str,
+        count: usize,
+    ) -> String {
+        if self == Self::Vietnamese {
+            format!(
+                "Áp dụng {} và {} cho tất cả {count} đoạn tô sáng? Ghi chú, vị trí và ngày tạo vẫn được giữ.",
+                self.saved_highlight_text(style),
+                self.saved_highlight_text(color)
+            )
+        } else {
+            format!(
+                "Apply {style} and {color} to all {count} highlights? Notes, positions and creation dates are kept."
+            )
         }
     }
 

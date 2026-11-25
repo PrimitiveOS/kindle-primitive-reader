@@ -1,5 +1,7 @@
 // Compile the fixed Liang patterns and explicit exceptions into immutable tables.
 // The Kindle does not parse TeX or allocate a dictionary when it opens a book.
+use icu_normalizer::DecomposingNormalizer;
+use icu_properties::{CodePointMapData, props::GeneralCategory};
 use std::{
     collections::BTreeMap,
     env, fs,
@@ -81,6 +83,45 @@ fn stock_word_rules(tex: &str, apostrophes: bool) -> Vec<String> {
         .collect();
     if tex.contains("\\hyphenation{") {
         add_exceptions(&mut rules, tex, false, "5");
+    }
+    rules
+}
+
+fn is_mark(ch: char) -> bool {
+    matches!(
+        CodePointMapData::<GeneralCategory>::new().get(ch),
+        GeneralCategory::NonspacingMark
+            | GeneralCategory::SpacingMark
+            | GeneralCategory::EnclosingMark
+    )
+}
+
+// Normalize only runs between pattern weights: boundaries with explicit
+// weights must retain their position while canonically equivalent unweighted
+// combining sequences receive the same trie representation as input words.
+fn latin_rules(tex: &str) -> Vec<String> {
+    let nfd = DecomposingNormalizer::new_nfd();
+    let mut rules = Vec::new();
+    for pattern in group(tex, "\\patterns{").split_whitespace() {
+        assert!(pattern.chars().any(|ch| ch.is_ascii_digit()));
+        assert!(
+            pattern.chars().all(|ch| {
+                ch.is_alphabetic() || ch.is_ascii_digit() || ch == '.' || is_mark(ch)
+            })
+        );
+        let mut normalized = String::new();
+        let mut segment = String::new();
+        for ch in pattern.chars() {
+            if ch.is_ascii_digit() {
+                normalized.push_str(&nfd.normalize(&segment));
+                segment.clear();
+                normalized.push(ch);
+            } else {
+                segment.push(ch);
+            }
+        }
+        normalized.push_str(&nfd.normalize(&segment));
+        rules.push(normalized);
     }
     rules
 }
@@ -231,7 +272,11 @@ fn main() {
         ("sl", "SLOVENIAN"),
     ] {
         let tex = tex_source(&format!("assets/hyphenation/hyph-{tag}.tex"));
-        let mut rules = stock_word_rules(&tex, tag == "uk");
+        let mut rules = if matches!(tag, "la-x-classic" | "la-x-liturgic") {
+            latin_rules(&tex)
+        } else {
+            stock_word_rules(&tex, tag == "uk")
+        };
         if tag == "fi" {
             // CRE converted this two-entry TeX line into one pattern with an
             // internal word-edge marker, unreachable when matching one word.
@@ -280,7 +325,7 @@ fn compile(mut rules: Vec<String>, name: &str, normalized: &Path) -> String {
             if ch.is_ascii_digit() {
                 *weights.last_mut().unwrap() = ch as u8 - b'0';
             } else {
-                assert!(ch.is_lowercase() || ch == '.' || ch == '\'');
+                assert!(ch.is_lowercase() || ch == '.' || ch == '\'' || is_mark(ch));
                 let next = nodes.len();
                 let index = *nodes[at].edges.entry(ch).or_insert(next);
                 if index == next {

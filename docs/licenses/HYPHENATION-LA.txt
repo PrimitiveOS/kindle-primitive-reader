@@ -9,8 +9,8 @@ Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe6
 SHA-256: 60fea9390492d86bf701f77da8ac818a027da7ea9badb2965e9889ddeb95a5d0
 
 Both upstream sources are MIT licensed and are included unchanged in their
-original TeX files. Reader compiles their supported single-word alphabetic
-patterns into native lookup tables.
+original TeX files. Reader canonically decomposes their single-word patterns,
+including combining marks, into native lookup tables.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

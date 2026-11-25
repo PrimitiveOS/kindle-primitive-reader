@@ -736,6 +736,12 @@ impl BookStyle {
         for style in &mut styles {
             style.text_indent.length = style.text_indent.length.for_dpi(dpi);
             style.letter_spacing = style.letter_spacing.for_dpi(dpi);
+            if let Some(letter) = &mut style.first_letter {
+                Arc::make_mut(letter).set_dpi(dpi);
+            }
+            if let Some(line) = &mut style.first_line {
+                Arc::make_mut(line).scale_dpi(dpi);
+            }
             for edge in style
                 .padding
                 .iter_mut()
