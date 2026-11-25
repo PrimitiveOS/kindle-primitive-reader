@@ -131,6 +131,29 @@ impl Reader {
                 notice,
                 CAPTION.lines(2),
             );
+        } else {
+            let y = 1062;
+            canvas.fill(place(Rect::new(204, y, 6, 6)), 0);
+            canvas.fill(place(Rect::new(201, y + 6, 12, 6)), 0);
+            canvas.fill(place(Rect::new(198, y + 12, 18, 6)), 0);
+            canvas.text(
+                place(Rect::new(228, y - 12, 214, 56)),
+                language.overview_text("Reading"),
+                CAPTION,
+            );
+            canvas.fill(place(Rect::new(458, y, 14, 14)), 0);
+            canvas.text(
+                place(Rect::new(482, y - 12, 224, 56)),
+                language.overview_text("Previous"),
+                CAPTION,
+            );
+            canvas.fill(place(Rect::new(738, y, 14, 14)), 0);
+            canvas.fill(place(Rect::new(741, y + 3, 8, 8)), 255);
+            canvas.text(
+                place(Rect::new(762, y - 12, 264, 56)),
+                language.overview_text("Next"),
+                CAPTION,
+            );
         }
     }
 

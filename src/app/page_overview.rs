@@ -1,7 +1,7 @@
 //! Page overview thumbnails and the source position of the browsed page.
 use primitive_app::Change;
 use primitive_ui::{CAPTION, Canvas, GrayImage, Input, Rect};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::fixed_book_map::MapWindow;
 use super::navigation_layout::NavigationLayout;
@@ -680,6 +680,56 @@ impl Reader {
         };
         let x = track.x + (portion * (track.w - 20) as f64).round() as i32;
         canvas.fill(Rect::new(x, center - 15, 20, 30), 0);
+
+        // The scrub handle is the browsed location; these separate marks keep
+        // the reading location and recent fixed-page history visible while
+        // browsing without changing either one.
+        let marker_offset = |position: usize| {
+            let fraction = position as f64 / count.saturating_sub(1).max(1) as f64;
+            let fraction = if layout.navigation.mirrored {
+                1.0 - fraction
+            } else {
+                fraction
+            };
+            (fraction * (track.w - 20).max(0) as f64).round() as i32
+        };
+        if self.fixed.is_some() && overview.chapter.is_none() {
+            let mut history = BTreeMap::<i32, u8>::new();
+            for (locations, flag) in [(&self.back, 1), (&self.forward, 2)] {
+                for location in locations.iter().rev().take(3) {
+                    let position = &location.position;
+                    if position.chapter == 0 && position.page < count {
+                        let bucket = marker_offset(position.page) / 18 * 18;
+                        *history.entry(bucket).or_default() |= flag;
+                    }
+                }
+            }
+            for (offset, flags) in history {
+                let marker_x = track.x + 4 + offset;
+                let y = center + 18;
+                if flags & 1 != 0 {
+                    canvas.fill(Rect::new(marker_x, y, 14, 14), 0);
+                }
+                if flags & 2 != 0 {
+                    let x = marker_x + if flags & 1 != 0 { 7 } else { 0 };
+                    canvas.fill(Rect::new(x, y, 14, 14), 0);
+                    canvas.fill(Rect::new(x + 3, y + 3, 8, 8), 255);
+                }
+            }
+        }
+        let reading = if overview.chapter.is_none() {
+            self.fixed.as_ref().map(|book| book.reading.page())
+        } else {
+            self.active.as_ref().map(|book| book.reading.chapter)
+        };
+        if let Some(reading) = reading.filter(|&reading| reading < count) {
+            let x = track.x + 10 + marker_offset(reading);
+            let y = center + 16;
+            // An upward caret points at the actual reading position.
+            canvas.fill(Rect::new(x - 3, y, 6, 6), 0);
+            canvas.fill(Rect::new(x - 6, y + 6, 12, 6), 0);
+            canvas.fill(Rect::new(x - 9, y + 12, 18, 6), 0);
+        }
     }
 
     pub(super) fn overview_swipe(&mut self, input: Input, start_x: f32) -> Option<Change> {

@@ -234,6 +234,12 @@ impl Search {
                 return Ok(Vec::new());
             }
         };
+        if crate::parley_layout::RAW_LAYOUT_ENABLED && text.raw_layout.is_none() {
+            return Err("Search requires the current verified chapter layout".into());
+        }
+        if let Some(layout) = &text.raw_layout {
+            layout.verify(text.book, &text.href, &source, &text.flow_config)?;
+        }
 
         let mut hits = Vec::new();
         for block in &source.blocks {
@@ -244,7 +250,24 @@ impl Search {
                 .flow
                 .view(&source, block)
                 .map_err(|error| error.to_string())?;
-            let rendered = view.text();
+            let raw = if text
+                .raw_layout
+                .as_ref()
+                .is_some_and(|layout| layout.contains(block.key))
+            {
+                Some(
+                    block
+                        .raw_whitespace
+                        .as_ref()
+                        .and_then(|s| s.bind(&block.text))
+                        .ok_or("The raw search source has changed")?,
+                )
+            } else {
+                None
+            };
+            let rendered = raw
+                .as_ref()
+                .map_or_else(|| view.text(), |bound| bound.raw());
             let ranges = match &self.query {
                 ReflowQuery::Literal(query) => {
                     query.matches_until(rendered, self.limit - self.hits, || {
@@ -259,15 +282,40 @@ impl Search {
                     cancel,
                 )?,
             };
+            let mut raw_hits = if raw.is_some() {
+                Some(
+                    raw_layout::matches_anchors(text.book, &text.href, &source, block, &ranges)?
+                        .into_iter(),
+                )
+            } else {
+                None
+            };
             for range in ranges {
-                let source_spans = view
-                    .source_spans(range.clone())
-                    .ok_or("The result has invalid rendered text boundaries")?;
-                let Some(first) = source_spans.first() else {
-                    continue;
+                let (anchor, end, source_spans) = if let Some(raw_hits) = &mut raw_hits {
+                    raw_hits.next().ok_or("The raw search results changed")?
+                } else {
+                    let source_spans = view
+                        .source_spans(range.clone())
+                        .ok_or("The result has invalid rendered text boundaries")?;
+                    let Some(first) = source_spans.first() else {
+                        continue;
+                    };
+                    let anchor = Anchor {
+                        raw_caret: None,
+                        illustration: None,
+                        book: publication.0,
+                        chapter: text.href.clone(),
+                        revision: source.revision,
+                        block: block.key,
+                        offset: first.start,
+                    };
+                    let end = Anchor {
+                        raw_caret: None,
+                        offset: source_spans.last().unwrap().end,
+                        ..anchor.clone()
+                    };
+                    (anchor, end, source_spans)
                 };
-                let offset = first.start;
-                let end = source_spans.last().unwrap().end;
                 let (snippet, matched) = snippet(rendered, range, self.context_words);
                 let allocation = std::mem::size_of::<SearchHit>()
                     + text.label.len()
@@ -282,24 +330,8 @@ impl Search {
                 hits.push(SearchHit {
                     chapter,
                     chapter_title: text.label.clone(),
-                    anchor: Anchor {
-                        raw_caret: None,
-                        illustration: None,
-                        book: publication.0,
-                        chapter: text.href.clone(),
-                        revision: source.revision,
-                        block: block.key,
-                        offset,
-                    },
-                    end: Anchor {
-                        raw_caret: None,
-                        illustration: None,
-                        book: publication.0,
-                        chapter: text.href.clone(),
-                        revision: source.revision,
-                        block: block.key,
-                        offset: end,
-                    },
+                    anchor,
+                    end,
                     source_spans,
                     snippet,
                     matched,

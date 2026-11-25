@@ -1175,6 +1175,7 @@ chapter_probe! {
     requests_vertical: bool,
     source: Source,
     reading_flow: flow_view::ChapterFlow,
+    search_flow_config: search::FlowConfig,
     #[cfg(feature = "kindle")]
     custom_hyphenation_allowed: Vec<bool>,
     lines: Vec<Line>,
@@ -1756,6 +1757,11 @@ impl Probe {
             custom_hyphenation_allowed,
             source,
             reading_flow,
+            search_flow_config: search::FlowConfig {
+                publisher_styles: settings.publisher_styles,
+                base_stylesheet: settings.base_stylesheet,
+                user_styles: user_styles.clone(),
+            },
             lines,
             pages,
             in_page_notes,

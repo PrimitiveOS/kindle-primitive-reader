@@ -6,9 +6,13 @@
 //! source before using any raw bytes.
 #![allow(dead_code)]
 
-use crate::{Probe, Renderer, Result, source::Source};
+use crate::{
+    Anchor, Probe, Renderer, Result,
+    source::{Block, Source},
+};
 use ring::digest::{SHA256, digest};
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 const MAX_RAW_BLOCKS: usize = 4096;
 
@@ -17,7 +21,92 @@ pub(super) struct VerifiedRawLayout {
     book: u64,
     chapter: String,
     revision: u64,
+    flow: super::FlowConfig,
     blocks: BTreeMap<usize, ([u8; 32], usize)>,
+}
+
+/// Construct raw anchors and canonical coverage with at most one grapheme
+/// scan per bounded batch. A hit splitting a grapheme is rejected.
+pub(super) fn matches_anchors(
+    book: u64,
+    chapter: &str,
+    source: &Source,
+    block: &Block,
+    ranges: &[Range<usize>],
+) -> Result<Vec<(Anchor, Anchor, Vec<Range<usize>>)>> {
+    use crate::source::raw_whitespace::CaretAffinity;
+    let bound = block
+        .raw_whitespace
+        .as_ref()
+        .and_then(|s| s.bind(&block.text))
+        .ok_or("The raw search source has changed")?;
+    let anchor = |caret: crate::RawCaret| Anchor {
+        offset: caret.canonical_offset,
+        raw_caret: Some(caret),
+        book,
+        chapter: chapter.to_owned(),
+        revision: source.revision,
+        block: block.key,
+        illustration: None,
+    };
+    let mut results = Vec::with_capacity(ranges.len());
+    for chunk in ranges.chunks(4096) {
+        let mut requests = Vec::with_capacity(chunk.len() * 2);
+        for range in chunk {
+            if range.start >= range.end || bound.raw().get(range.clone()).is_none() {
+                return Err("The raw search result has invalid boundaries".into());
+            }
+            requests.push((range.start, CaretAffinity::After));
+            requests.push((range.end, CaretAffinity::Before));
+        }
+        let carets = bound
+            .carets_at(&requests)
+            .ok_or("The raw search result splits a grapheme")?;
+        for (range, pair) in chunk.iter().zip(carets.chunks_exact(2)) {
+            let mut spans = Vec::new();
+            let text = bound.text_spans();
+            let start = text.partition_point(|span| span.raw.end <= range.start);
+            for span in text[start..]
+                .iter()
+                .take_while(|span| span.raw.start < range.end)
+            {
+                let from = range.start.max(span.raw.start);
+                let to = range.end.min(span.raw.end);
+                if from < to {
+                    spans.push(
+                        (span.canonical.start + from - span.raw.start)
+                            ..(span.canonical.start + to - span.raw.start),
+                    );
+                }
+            }
+            let gaps = bound.gaps();
+            let start = gaps.partition_point(|gap| gap.raw.end <= range.start);
+            for gap in gaps[start..]
+                .iter()
+                .take_while(|gap| gap.raw.start < range.end)
+            {
+                if !gap.canonical.is_empty()
+                    && range.start < gap.raw.end
+                    && range.end > gap.raw.start
+                {
+                    spans.push(gap.canonical.clone());
+                }
+            }
+            spans.sort_unstable_by_key(|span| (span.start, span.end));
+            let mut merged: Vec<Range<usize>> = Vec::new();
+            for span in spans {
+                if let Some(last) = merged.last_mut()
+                    && span.start <= last.end
+                {
+                    last.end = last.end.max(span.end);
+                } else {
+                    merged.push(span);
+                }
+            }
+            results.push((anchor(pair[0].clone()), anchor(pair[1].clone()), merged));
+        }
+    }
+    Ok(results)
 }
 
 impl VerifiedRawLayout {
@@ -101,12 +190,23 @@ impl VerifiedRawLayout {
             book: probe.book,
             chapter: probe.chapter.clone(),
             revision: probe.source.revision,
+            flow: probe.search_flow_config.clone(),
             blocks,
         })
     }
 
-    pub(super) fn verify(&self, book: u64, chapter: &str, source: &Source) -> Result<()> {
-        if self.book != book || self.chapter != chapter || self.revision != source.revision {
+    pub(super) fn verify(
+        &self,
+        book: u64,
+        chapter: &str,
+        source: &Source,
+        flow: &super::FlowConfig,
+    ) -> Result<()> {
+        if self.book != book
+            || self.chapter != chapter
+            || self.revision != source.revision
+            || &self.flow != flow
+        {
             return Err("The raw search publication or chapter changed".into());
         }
         for (key, (hash, length)) in &self.blocks {

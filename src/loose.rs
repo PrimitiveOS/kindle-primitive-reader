@@ -230,7 +230,7 @@ impl Document {
         *large_text = format == Format::Text
             && (metadata.len() > MAX_INPUT as u64 || bytes.len() > MAX_INPUT);
         if format == Format::Rtf {
-            return html_document(&crate::rtf::decode(&bytes)?, fallback_title);
+            return rtf_document(&bytes, fallback_title);
         }
         let (bytes, format) = if format == Format::Tcr {
             (crate::tcr::decode(&bytes)?, Format::Text)
@@ -305,6 +305,28 @@ impl Document {
                 unreachable!()
             }
         }
+    }
+}
+
+fn rtf_document(bytes: &[u8], title: &str) -> Result<Document> {
+    match crate::rtf::decode(bytes) {
+        Ok(xhtml) => html_document(&xhtml, title),
+        Err(error) if error.is::<crate::rtf::NoReadableText>() => {
+            let pictures = crate::rtf::image_only(bytes)?;
+            let mut xhtml =
+                String::from("<html xmlns=\"http://www.w3.org/1999/xhtml\"><head></head><body>");
+            let mut resources = BTreeMap::new();
+            for (index, picture) in pictures.into_iter().enumerate() {
+                let path = format!("rtf-image-{index}.{}", picture.extension);
+                xhtml.push_str(&format!("<p><img src=\"{path}\" /></p>"));
+                resources.insert(path, picture.bytes);
+            }
+            xhtml.push_str("</body></html>");
+            let mut document = html_document(&xhtml, title)?;
+            document.resources = resources;
+            Ok(document)
+        }
+        Err(error) => Err(error),
     }
 }
 

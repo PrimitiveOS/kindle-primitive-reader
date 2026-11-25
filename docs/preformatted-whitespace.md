@@ -107,10 +107,13 @@ verified source bindings and raw line boundaries into the page model. Page
 lookup can map those lines to and from raw anchors with explicit affinity,
 including blank lines. The branch remains disabled while resume, search and
 state promotion are incomplete; active rendering still uses the legacy layout.
-The detached shaped-block search can use Reader's existing literal-query
-case/accent folding and return exact raw quotes with grapheme-checked endpoints.
-If any result has an unsupported boundary it fails closed; it is not yet used
-by the whole-book search UI or regular-expression search.
+Literal, regular-expression and nearby search can consume a verified map of
+the raw blocks actually accepted by a shaped chapter. The map checks book,
+chapter, source revision, effective stylesheet configuration, line metadata
+and raw fingerprints against the worker's source. Raw results carry exact
+grapheme-checked endpoints; a raw nearby-search boundary without a verified
+layout fails closed. The active UI workers do not yet supply these maps, and
+search fails rather than guessing if raw layout is enabled without one.
 Reader's selection value can carry a verified raw quote and raw endpoints,
 including through the reading-session quote API. Within one section it can
 also assemble cross-block quotes and geometry when both endpoint layouts are

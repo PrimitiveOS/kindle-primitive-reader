@@ -125,10 +125,7 @@ pub(super) fn open(file: File, length: u64, title: &str) -> Result<(Document, Fo
                         Format::Text,
                     ))
                 }
-                Kind::Rtf => Ok((
-                    super::html_document(&crate::rtf::decode(&bytes)?, title)?,
-                    Format::Rtf,
-                )),
+                Kind::Rtf => Ok((super::rtf_document(&bytes, title)?, Format::Rtf)),
                 Kind::Fb2 => {
                     let text = super::decode_document(&bytes, Format::Fb2)?;
                     Ok((

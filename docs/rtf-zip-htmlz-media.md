@@ -11,7 +11,18 @@ KOReader registers `rtf.zip` with CREngine. CREngine can select from several
 eligible document formats in an archive, preferring a default HTML document;
 Reader's adapter deliberately accepts exactly one RTF document. Reader's import
 retains its current RTF subset; images, field instructions and other hidden
-destinations are still not rendered. [KOReader format registration](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L1617-L1618) · [CREngine archive selection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L4712-L4793)
+destinations are still not rendered in text documents. [KOReader format registration](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L1617-L1618) · [CREngine archive selection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L4712-L4793)
+
+As a separate recovery candidate, a structurally valid RTF with no supported
+reading text can expose visible direct `\\pict` PNG or JPEG groups, including
+hex or a single binary payload. It accepts at most 16 images, 1 MiB each and
+4 MiB total, and checks image type and bounded dimensions before constructing
+an in-memory document. Image contents are decoded later by the existing image
+reader. Hidden or object destinations, shape-wrapped pictures, nested picture
+groups, mixed or malformed payloads and other image formats are not supported.
+Normal successful text RTF conversion and saved anchors do not change. This
+subset has not been behaviorally compared with KOReader or validated in the
+simulator or on Kindle. [KOReader picture reader](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/rtfimp.cpp#L305-L360)
 
 Plain and ZIP RTF now decode DOS CP437 (`\pc`, `\ansicpg437`) and CP850
 (`\pca`, `\ansicpg850`) text as well as their existing encodings. The mapping

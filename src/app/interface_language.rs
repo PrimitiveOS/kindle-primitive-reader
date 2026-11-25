@@ -3613,6 +3613,7 @@ impl InterfaceLanguage {
             "Set as default" => "Đặt mặc định",
             "Use default" => "Dùng mặc định",
             "Default saved" => "Đã lưu mặc định",
+            "Reading" => "Đang đọc",
             "Page browser on tap" => "Chạm để duyệt trang",
             "Page" => "Trang",
             "Hidden" => "Đã ẩn",

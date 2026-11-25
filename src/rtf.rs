@@ -7,6 +7,21 @@ use encoding_rs as enc;
 
 use crate::Result;
 
+mod pictures;
+
+#[derive(Debug)]
+pub(crate) struct NoReadableText;
+
+impl std::fmt::Display for NoReadableText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The RTF document contains no supported reading text")
+    }
+}
+
+impl std::error::Error for NoReadableText {}
+
+pub(crate) use pictures::image_only;
+
 pub(crate) const MAX_INPUT: usize = 4 * 1024 * 1024;
 const MAX_OUTPUT: usize = 1024 * 1024;
 const MAX_DEPTH: usize = 64;
@@ -54,7 +69,7 @@ enum Token<'a> {
     Symbol(u8),
     Byte(u8),
     Text(&'a [u8]),
-    Binary,
+    Binary(&'a [u8]),
 }
 
 struct Lexer<'a> {
@@ -142,11 +157,12 @@ impl<'a> Lexer<'a> {
             let length = number
                 .and_then(|value| usize::try_from(value).ok())
                 .ok_or("The RTF binary segment has an invalid length")?;
-            self.remaining = self
+            let (data, tail) = self
                 .remaining
-                .get(length..)
+                .split_at_checked(length)
                 .ok_or("The RTF binary segment is truncated")?;
-            Ok(Token::Binary)
+            self.remaining = tail;
+            Ok(Token::Binary(data))
         } else {
             Ok(Token::Word(word, number))
         }
@@ -255,7 +271,7 @@ impl Parser {
             Token::Word(word, number) => self.word(word, number)?,
             Token::Byte(byte) => self.text_bytes(&[byte])?,
             Token::Symbol(symbol) => self.symbol(symbol)?,
-            Token::Binary => (),
+            Token::Binary(_) => (),
         }
         Ok(())
     }
@@ -634,7 +650,7 @@ impl Output {
 
     fn finish(mut self) -> Result<String> {
         if !self.has_text {
-            return Err("The RTF document contains no supported reading text".into());
+            return Err(Box::new(NoReadableText));
         }
         if self.open_paragraph {
             self.paragraph()?;

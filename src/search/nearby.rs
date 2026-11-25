@@ -157,15 +157,26 @@ impl NearbySearch {
                 };
             }
             if let Some(source) = text.source {
+                if crate::parley_layout::RAW_LAYOUT_ENABLED && text.raw_layout.is_none() {
+                    return Err("Search requires the current verified chapter layout".into());
+                }
+                if let Some(layout) = &text.raw_layout {
+                    layout.verify(text.book, &text.href, &source, &text.flow_config)?;
+                }
                 let boundary = if let Some(anchor) = anchor.filter(|_| ci == origin) {
                     let i = source
                         .blocks
                         .binary_search_by_key(&anchor.block, |block| block.key)
                         .map_err(|_| "The starting text is unavailable")?;
-                    let offset = source
-                        .project_offset(&source.blocks[i], anchor.revision, anchor.offset)
-                        .ok_or("The starting position is unavailable")?;
-                    Some((i, offset))
+                    if anchor.raw_caret.is_some()
+                        && !text
+                            .raw_layout
+                            .as_ref()
+                            .is_some_and(|layout| layout.contains(anchor.block))
+                    {
+                        return Err("The starting raw position has no verified layout".into());
+                    }
+                    Some((i, anchor))
                 } else {
                     None
                 };
@@ -175,10 +186,15 @@ impl NearbySearch {
                         .blocks
                         .binary_search_by_key(&anchor.block, |block| block.key)
                         .map_err(|_| "The current page text is unavailable")?;
-                    let offset = source
-                        .project_offset(&source.blocks[i], anchor.revision, anchor.offset)
-                        .ok_or("The current page position is unavailable")?;
-                    Some((i, offset))
+                    if anchor.raw_caret.is_some()
+                        && !text
+                            .raw_layout
+                            .as_ref()
+                            .is_some_and(|layout| layout.contains(anchor.block))
+                    {
+                        return Err("The current raw position has no verified layout".into());
+                    }
+                    Some((i, anchor))
                 } else {
                     None
                 };
@@ -201,10 +217,27 @@ impl NearbySearch {
                         .flow
                         .view(&source, block)
                         .map_err(|error| error.to_string())?;
-                    let rendered = view.text();
+                    let raw = if text
+                        .raw_layout
+                        .as_ref()
+                        .is_some_and(|layout| layout.contains(block.key))
+                    {
+                        Some(
+                            block
+                                .raw_whitespace
+                                .as_ref()
+                                .and_then(|s| s.bind(&block.text))
+                                .ok_or("The raw search source has changed")?,
+                        )
+                    } else {
+                        None
+                    };
+                    let rendered = raw
+                        .as_ref()
+                        .map_or_else(|| view.text(), |bound| bound.raw());
                     let mut left = 0;
                     let mut right = rendered.len();
-                    if let Some((at, offset)) = boundary {
+                    if let Some((at, anchor)) = boundary {
                         if previous && index > at || !previous && index < at {
                             continue;
                         }
@@ -214,9 +247,14 @@ impl NearbySearch {
                             } else {
                                 crate::flow_projection::Affinity::After
                             };
-                            let offset = view
-                                .project_nearest(offset, affinity)
-                                .ok_or("The starting rendered position is unavailable")?;
+                            let offset = boundary_offset(
+                                anchor,
+                                &source,
+                                block,
+                                &view,
+                                raw.as_ref(),
+                                affinity,
+                            )?;
                             if previous {
                                 right = offset
                             } else {
@@ -236,38 +274,56 @@ impl NearbySearch {
                             .pop(),
                     };
                     if let Some(span) = hit {
-                        if let Some((_, offset)) = stop_boundary.filter(|(at, _)| *at == index) {
+                        if let Some((_, anchor)) = stop_boundary.filter(|(at, _)| *at == index) {
                             let affinity = if previous {
                                 crate::flow_projection::Affinity::Before
                             } else {
                                 crate::flow_projection::Affinity::After
                             };
-                            let offset = view
-                                .project_nearest(offset, affinity)
-                                .ok_or("The current rendered page position is unavailable")?;
+                            let offset = boundary_offset(
+                                anchor,
+                                &source,
+                                block,
+                                &view,
+                                raw.as_ref(),
+                                affinity,
+                            )?;
                             if previous && span.end <= offset || !previous && span.start >= offset {
                                 break;
                             }
                         }
-                        let source_spans = view
-                            .source_spans(span.clone())
-                            .ok_or("The result has invalid rendered text boundaries")?;
-                        let Some(first) = source_spans.first() else {
-                            continue;
-                        };
-                        let start = Anchor {
-                            raw_caret: None,
-                            book: text.book,
-                            chapter: text.href.clone(),
-                            revision: source.revision,
-                            block: block.key,
-                            offset: first.start,
-                            illustration: None,
-                        };
-                        let end = Anchor {
-                            raw_caret: None,
-                            offset: source_spans.last().unwrap().end,
-                            ..start.clone()
+                        let (start, end, source_spans) = if raw.is_some() {
+                            super::raw_layout::matches_anchors(
+                                text.book,
+                                &text.href,
+                                &source,
+                                block,
+                                std::slice::from_ref(&span),
+                            )?
+                            .pop()
+                            .ok_or("The raw search result changed")?
+                        } else {
+                            let source_spans = view
+                                .source_spans(span.clone())
+                                .ok_or("The result has invalid rendered text boundaries")?;
+                            let Some(first) = source_spans.first() else {
+                                continue;
+                            };
+                            let start = Anchor {
+                                raw_caret: None,
+                                book: text.book,
+                                chapter: text.href.clone(),
+                                revision: source.revision,
+                                block: block.key,
+                                offset: first.start,
+                                illustration: None,
+                            };
+                            let end = Anchor {
+                                raw_caret: None,
+                                offset: source_spans.last().unwrap().end,
+                                ..start.clone()
+                            };
+                            (start, end, source_spans)
                         };
                         let (snippet, matched) = snippet(rendered, span, None);
                         return Ok(Some(SearchHit {
@@ -303,6 +359,40 @@ impl NearbySearch {
     }
 }
 
+fn boundary_offset(
+    anchor: &Anchor,
+    source: &Source,
+    block: &crate::source::Block,
+    view: &crate::flow_projection::Projection<'_>,
+    raw: Option<&crate::source::raw_whitespace::Bound<'_>>,
+    affinity: crate::flow_projection::Affinity,
+) -> Result<usize> {
+    if anchor.illustration.is_some() {
+        return Err("The search boundary is not text".into());
+    }
+    if let Some(caret) = &anchor.raw_caret {
+        let bound = raw.ok_or("The raw search boundary has no verified layout")?;
+        if anchor.revision != source.revision || anchor.offset != caret.canonical_offset {
+            return Err("The raw search boundary has changed".into());
+        }
+        bound
+            .validate_caret(caret)
+            .ok_or("The raw search boundary is invalid")?;
+        return Ok(caret.raw_offset);
+    }
+    let offset = source
+        .project_offset(block, anchor.revision, anchor.offset)
+        .ok_or("The search boundary is unavailable")?;
+    if let Some(bound) = raw {
+        bound
+            .canonical_to_raw(offset, affinity)
+            .ok_or_else(|| "The search boundary cannot be mapped to raw text".into())
+    } else {
+        view.project_nearest(offset, affinity)
+            .ok_or_else(|| "The search boundary cannot be mapped to rendered text".into())
+    }
+}
+
 pub(crate) struct ChapterText {
     pub(super) book: u64,
     pub(super) label: String,
@@ -323,7 +413,7 @@ impl ChapterText {
             .source
             .as_ref()
             .ok_or("The search chapter is unavailable")?;
-        layout.verify(self.book, &self.href, source)?;
+        layout.verify(self.book, &self.href, source, &self.flow_config)?;
         self.raw_layout = Some(layout);
         Ok(self)
     }

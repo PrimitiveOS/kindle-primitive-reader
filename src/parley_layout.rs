@@ -49,7 +49,7 @@ const MAX_IMAGE_PIXELS: usize = 8 * 1024 * 1024;
 const MAX_RUBY_BASE_BYTES: usize = 192;
 // Raw layouts remain disabled until source-aware search, restoration,
 // selection and versioned state promotion are integrated end to end.
-const RAW_LAYOUT_ENABLED: bool = false;
+pub(crate) const RAW_LAYOUT_ENABLED: bool = false;
 
 fn declared_box_height(style: &Style, width: u32, font: f32) -> Option<f32> {
     let length = match style.image_height? {
