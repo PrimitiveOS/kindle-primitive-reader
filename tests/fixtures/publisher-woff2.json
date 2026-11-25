@@ -1,0 +1,18 @@
+{
+  "generator": "scripts/generate-woff2-fixture.py",
+  "generator_only": {
+    "fonttools": "4.39.3",
+    "brotli": "1.1.0"
+  },
+  "source": "fonts/Silkscreen-Regular.ttf",
+  "source_sha256": "c845473330b94c2079ce9af01c51ac8ba2d99c24f4d14c039843bbb8e642ebd8",
+  "source_license": "OFL-1.1",
+  "license_notice": "META-INF/OFL-Silkscreen.txt",
+  "transformed_tables": [
+    "glyf",
+    "hmtx",
+    "loca"
+  ],
+  "woff2_sha256": "bf1295816d8030ccce910ca2f2ce34670ed21b018b258737d9fd6eeab3933f86",
+  "epub_sha256": "df499afc4c549a98c8b7bca9883e19420128cf5e4547fb22c489baa06a170826"
+}

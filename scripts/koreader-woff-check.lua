@@ -1,9 +1,11 @@
--- Compare the same licensed font stored as sfnt and WOFF 1 in pinned CREngine.
+-- Compare the same licensed font stored as sfnt and WOFF 1 or 2 in pinned CREngine.
 -- Run in the isolated KOReader Mac profile described in embedded-font-families.md.
 require("setupkoenv")
 local Cre = require("libs/libkoreader-cre")
 local BB = require("ffi/blitbuffer")
 local cache, noto, output, raw, packed = assert(arg[1]), assert(arg[2]), assert(arg[3]), assert(arg[4]), assert(arg[5])
+local format = arg[6] or "woff"
+assert(format == "woff" or format == "woff2")
 Cre.initCache(cache, 0, true, 1)
 Cre.registerFont(noto)
 local measures = {}
@@ -28,7 +30,7 @@ for _, specimen in ipairs({{"ttf", raw}, {"woff", packed}}) do
         if specimen[1] == "woff" then
             local frame = BB.new(650, 900, BB.TYPE_BB8)
             view:drawCurrentPage(frame, false, false, false, false)
-            frame:writePNG(output .. "/woff-stock-" .. (enabled == 1 and "on" or "off") .. ".png", false)
+            frame:writePNG(output .. "/" .. format .. "-stock-" .. (enabled == 1 and "on" or "off") .. ".png", false)
             frame:free()
         end
         view:close()
@@ -37,4 +39,4 @@ end
 assert(measures.ttf[0] ~= measures.ttf[1])
 assert(measures.ttf[0] == measures.woff[0])
 assert(measures.ttf[1] == measures.woff[1])
-print(("WOFF 1 and TTF match: disabled %d, enabled %d pixels"):format(measures.woff[0], measures.woff[1]))
+print(((format == "woff2" and "WOFF 2" or "WOFF 1") .. " and TTF match: disabled %d, enabled %d pixels"):format(measures.woff[0], measures.woff[1]))
