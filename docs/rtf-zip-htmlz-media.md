@@ -31,5 +31,11 @@ Actual font and image rendering use the existing bounded reader subsets.
 This change has not been behaviorally tested on real archives, in simulation or
 on Kindle, and full KOReader format parity remains open.
 
+For a selected HTML ZIP entry that fails the XML-compatible path, the same
+bounded text-only recovery as standalone HTML can retain basic readable text;
+images, publisher CSS, external links and head metadata are dropped in this
+fallback. Unsupported declarations remain rejected. Previously readable HTML
+entries keep their existing conversion and anchors. Recovery remains unverified.
+
 These changes have not yet been tested in the simulator, compared with
 KOReader on matching files, or verified on Kindle.

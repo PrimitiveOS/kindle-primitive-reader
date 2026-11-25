@@ -256,7 +256,11 @@ impl Document {
                         return text_document(input, fallback_title);
                     }
                 }
-                let mut document = html_document(input, fallback_title)?;
+                let mut document = if has_extension(path, "xml") {
+                    html_document(input, fallback_title)?
+                } else {
+                    html_document_with_text_fallback(input, fallback_title)?
+                };
                 load_local_html_resources(path, &mut document);
                 Ok(document)
             }
@@ -766,7 +770,7 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
         .replace("&ndash;", "–")
         .replace("&nbsp;", "\u{a0}");
     check_output(&input)?;
-    let mut document = html_document(&input, fallback)?;
+    let mut document = html_document_with_text_fallback(&input, fallback)?;
     document.chapter_path = chapter_path;
     add_htmlz_contents(&mut document)?;
     if let Some(index) = metadata
@@ -1170,6 +1174,48 @@ fn check_output_limited(output: &str, limit: usize) -> Result<()> {
         .into());
     }
     Ok(())
+}
+
+/// Recover readable text only when the existing XML-compatible path fails.
+/// The bounded tokenizer intentionally drops scripts, styles, images and
+/// non-fragment links; source identities of previously readable books stay put.
+fn html_document_with_text_fallback(input: &str, fallback_title: &str) -> Result<Document> {
+    let original_error = match html_document(input, fallback_title) {
+        Ok(document) => return Ok(document),
+        Err(error) => error,
+    };
+    let mut start = input.trim_start_matches('\u{feff}').trim_start();
+    let plain_doctype = start
+        .get(..15)
+        .is_some_and(|value| value.eq_ignore_ascii_case("<!doctype html>"));
+    if plain_doctype {
+        start = start[15..].trim_start();
+    }
+    let html_root = start
+        .get(..5)
+        .is_some_and(|value| value.eq_ignore_ascii_case("<html"))
+        && start
+            .as_bytes()
+            .get(5)
+            .is_some_and(|byte| *byte == b'>' || byte.is_ascii_whitespace());
+    if !html_root && !plain_doctype {
+        return Err(original_error);
+    }
+    // Do not silently recover XML entity declarations or external doctypes.
+    if start
+        .as_bytes()
+        .windows(9)
+        .any(|window| window.eq_ignore_ascii_case(b"<!doctype"))
+        || start
+            .as_bytes()
+            .windows(8)
+            .any(|window| window.eq_ignore_ascii_case(b"<!entity"))
+    {
+        return Err(original_error);
+    }
+    let xhtml = crate::mobi::html_xhtml(input)?;
+    check_output(&xhtml)?;
+    html_document(&xhtml, fallback_title)
 }
 
 fn html_document(input: &str, fallback_title: &str) -> Result<Document> {

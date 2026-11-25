@@ -46,12 +46,13 @@ impl Reader {
 
     pub(super) fn header_battery_items(&self) -> Vec<Item> {
         let header = self.controls.top_header;
+        let language = self.controls.interface_language;
         [HeaderBattery::Icon, HeaderBattery::Percentage]
             .into_iter()
             .map(|choice| {
                 let selected = header.battery == choice;
                 Item::new(
-                    choice.label(),
+                    language.status_bar_settings_text(choice.label()),
                     Action::SetReadingControls(ReadingControls {
                         top_header: TopHeader {
                             battery: if selected { HeaderBattery::Off } else { choice },
@@ -60,7 +61,11 @@ impl Reader {
                         ..self.controls
                     }),
                 )
-                .detail(if selected { "On" } else { "Off" })
+                .detail(language.status_bar_settings_text(if selected {
+                    "On"
+                } else {
+                    "Off"
+                }))
             })
             .collect()
     }

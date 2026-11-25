@@ -2879,12 +2879,15 @@ impl Reader {
             Screen::FooterItemWidths => return self.footer_item_widths(),
             Screen::HeaderBatterySettings => return self.header_battery_items(),
             Screen::FooterPresets => {
+                let language = self.controls.interface_language;
                 let mut items = vec![
                     Item::new(
-                        "Save current status bar",
+                        language.status_bar_settings_text("Save current status bar"),
                         Action::Show(Screen::FooterPresetName(FooterPresetName::Create)),
                     )
-                    .detail("Save the current layout and progress bar options"),
+                    .detail(language.status_bar_settings_text(
+                        "Save the current layout and progress bar options",
+                    )),
                 ];
                 items.extend(
                     self.footer_presets
@@ -2892,12 +2895,13 @@ impl Reader {
                         .enumerate()
                         .map(|(index, preset)| {
                             Item::new(&preset.name, Action::Show(Screen::FooterPreset(index)))
-                                .detail("Open preset actions")
+                                .detail(language.status_bar_settings_text("Open preset actions"))
                         }),
                 );
                 return items;
             }
             Screen::FooterCustomTextGuide => {
+                let language = self.controls.interface_language;
                 return [
                     ("%T", "Book title"),
                     ("%A", "Author"),
@@ -2922,22 +2926,36 @@ impl Reader {
                     ("%%", "Two percent signs stay literal"),
                 ]
                 .into_iter()
-                .map(|(token, description)| Item::new(token, Action::Heading).detail(description))
+                .map(|(token, description)| {
+                    Item::new(token, Action::Heading)
+                        .detail(language.status_bar_settings_text(description))
+                })
                 .collect();
             }
             Screen::FooterPreset(index) => {
+                let language = self.controls.interface_language;
                 let Some(preset) = self.footer_presets.get(index) else {
                     return Vec::new();
                 };
                 return vec![
-                    Item::new("Apply to this Reader", Action::ApplyFooterPreset(index)),
                     Item::new(
-                        "Update from current status bar",
+                        language.status_bar_settings_text("Apply to this Reader"),
+                        Action::ApplyFooterPreset(index),
+                    ),
+                    Item::new(
+                        language.status_bar_settings_text("Update from current status bar"),
                         Action::UpdateFooterPreset(index),
                     ),
-                    Item::new("Rename", Action::RenameFooterPreset(index)),
-                    Item::new("Delete", Action::Show(Screen::FooterPresetDelete(index))),
-                    Item::new(&preset.name, Action::Heading).detail("Saved status bar preset"),
+                    Item::new(
+                        language.status_bar_settings_text("Rename"),
+                        Action::RenameFooterPreset(index),
+                    ),
+                    Item::new(
+                        language.status_bar_settings_text("Delete"),
+                        Action::Show(Screen::FooterPresetDelete(index)),
+                    ),
+                    Item::new(&preset.name, Action::Heading)
+                        .detail(language.status_bar_settings_text("Saved status bar preset")),
                 ];
             }
             Screen::FooterPresetDelete(index) => {

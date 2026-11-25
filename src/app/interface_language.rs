@@ -345,6 +345,78 @@ const PAGE_ACTION_LABELS: &[(&str, &str)] = &[
     ("Matches", "Kết quả tìm kiếm"),
 ];
 
+// Fixed status-bar controls and token explanations; user names and literal tokens stay untouched.
+const STATUS_BAR_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Save current status bar", "Lưu thanh trạng thái hiện tại"),
+    (
+        "Save the current layout and progress bar options",
+        "Lưu bố cục và tùy chọn thanh tiến độ hiện tại",
+    ),
+    ("Open preset actions", "Mở tùy chọn mẫu"),
+    ("Apply to this Reader", "Áp dụng cho Reader này"),
+    (
+        "Update from current status bar",
+        "Cập nhật từ thanh trạng thái hiện tại",
+    ),
+    ("Rename", "Đổi tên"),
+    ("Delete", "Xóa"),
+    ("Saved status bar preset", "Mẫu thanh trạng thái đã lưu"),
+    ("Battery icon", "Biểu tượng pin"),
+    ("Battery percentage", "Phần trăm pin"),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    ("Book title", "Tên sách"),
+    ("Author", "Tác giả"),
+    ("Series name and position", "Tên và vị trí trong bộ sách"),
+    ("Total pages", "Tổng số trang"),
+    ("Current page", "Trang hiện tại"),
+    (
+        "Pages left in the current chapter",
+        "Số trang còn lại trong chương hiện tại",
+    ),
+    (
+        "Book progress as a whole percentage",
+        "Tiến độ sách theo phần trăm nguyên",
+    ),
+    (
+        "Estimated time left in the book",
+        "Thời gian đọc ước tính còn lại trong sách",
+    ),
+    ("Current chapter title", "Tên chương hiện tại"),
+    (
+        "Chapter progress as a whole percentage",
+        "Tiến độ chương theo phần trăm nguyên",
+    ),
+    (
+        "Estimated time left in the chapter",
+        "Thời gian đọc ước tính còn lại trong chương",
+    ),
+    ("Full file path", "Đường dẫn tệp đầy đủ"),
+    ("File name", "Tên tệp"),
+    (
+        "KOReader battery or charging symbol",
+        "Biểu tượng pin hoặc sạc của KOReader",
+    ),
+    (
+        "Selected status-item separator",
+        "Dấu phân cách mục trạng thái đã chọn",
+    ),
+    (
+        "Date in year-month-day format",
+        "Ngày theo định dạng năm-tháng-ngày",
+    ),
+    ("Date in month-day format", "Ngày theo định dạng tháng-ngày"),
+    (
+        "Current time in hour:minute format",
+        "Giờ hiện tại theo định dạng giờ:phút",
+    ),
+    ("Current time with seconds", "Giờ hiện tại có giây"),
+    (
+        "Two percent signs stay literal",
+        "Hai dấu phần trăm được giữ nguyên",
+    ),
+];
+
 // Fixed selection settings labels; selected text and settings values stay untouched.
 const SELECTION_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Top", "Trên"),
@@ -2306,6 +2378,30 @@ impl InterfaceLanguage {
     }
 
     /// Translate only fixed end-of-document UI labels and status text.
+    pub(super) fn status_bar_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = STATUS_BAR_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn status_bar_settings_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = STATUS_BAR_SETTINGS_LABELS
+                .iter()
+                .find(|(_, translated)| *translated == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
     pub(super) fn selection_settings_text(self, value: &str) -> String {
         if self == Self::Vietnamese {
             if let Some(number) = value.strip_suffix(" seconds") {

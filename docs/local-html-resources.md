@@ -39,8 +39,15 @@ and total byte limits. Media-qualified, layered or conditional imports,
 arbitrary CSS image rendering, inline SVG data URLs, and links to separate
 HTML chapters remain unsupported. Imported CSS uses the existing selector and
 property subset; loading an asset does not imply every CSS property renders.
-As in the previous adapter, standalone HTML must be well-formed XML-compatible
-markup. The loose-document decoder additionally accepts strictly valid
+Well-formed XML-compatible HTML retains its existing conversion and local
+resources. If that path fails, a document starting with an `<html>` element or
+a plain HTML doctype can use a bounded text-only recovery path. This fallback
+retains supported text and fragment links, but drops images, publisher CSS,
+external links and head metadata, and does not cover arbitrary malformed HTML.
+External doctypes and entity declarations are rejected. Previously readable
+documents retain their existing conversion and anchors.
+
+The loose-document decoder additionally accepts strictly valid
 BOM-marked UTF-32LE and UTF-32BE; BOM-less UTF-32 is not detected. KOReader's
 pinned CREngine resolves non-container HTML resources against
 the document directory; Reader applies the narrower boundaries above.
@@ -54,7 +61,7 @@ truncated or conflicting declarations and broader HTML encoding detection may
 still fail. This compatibility path remains unverified on real books, in the
 simulator and on Kindle. [KOReader charset detection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L5877-L5914)
 
-The CSS dependency and import changes have not been built or tested. Containment and symlink
-races, image and stylesheet appearance, missing-file fallback and saved
-position preservation need simulator and device verification before release.
-The Markdown extension has likewise not yet been built or tested.
+The CSS dependency and import changes passed a Mac build-only check. Containment
+and symlink races, image and stylesheet appearance, text-only recovery,
+missing-file fallback and saved position preservation still need behavioral,
+simulator and device verification before release.

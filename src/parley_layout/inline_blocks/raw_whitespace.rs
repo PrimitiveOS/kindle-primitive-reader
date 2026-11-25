@@ -12,7 +12,7 @@ use crate::{
     flow_projection::{Projection, SourceBinding},
     flow_view::{LayoutBlock, StyledRuns},
     selection::RawTextSelection,
-    source::raw_whitespace::{AnchorContext, CaretAffinity, RawCaret},
+    source::raw_whitespace::{AnchorContext, CaretAffinity, RawAnchor, RawCaret},
     source::{Block, StyledText},
     user_hyphenation::Rules,
 };
@@ -22,32 +22,32 @@ use std::ops::Range;
 const MAX_RAW_LINES: usize = 4096;
 const MAX_SELECTION_RECTS: usize = 4096;
 
-pub(super) struct Plan {
-    pub(super) text: InlineText,
-    pub(super) runs: Vec<StyledText>,
+pub(in crate::parley_layout) struct Plan {
+    pub(in crate::parley_layout) text: InlineText,
+    pub(in crate::parley_layout) runs: Vec<StyledText>,
     binding: SourceBinding,
     block: usize,
     owner: usize,
     white_space: WhiteSpace,
 }
 
-pub(super) struct RawLine {
-    pub(super) bytes: Range<usize>,
-    pub(super) start: RawCaret,
-    pub(super) end: RawCaret,
-    pub(super) top: f32,
-    pub(super) bottom: f32,
+pub(in crate::parley_layout) struct RawLine {
+    pub(in crate::parley_layout) bytes: Range<usize>,
+    pub(in crate::parley_layout) start: RawCaret,
+    pub(in crate::parley_layout) end: RawCaret,
+    pub(in crate::parley_layout) top: f32,
+    pub(in crate::parley_layout) bottom: f32,
 }
 
-pub(super) struct Prepared {
-    pub(super) text: InlineText,
-    pub(super) layout: Layout<PaintBrush>,
-    pub(super) lines: Vec<RawLine>,
+pub(in crate::parley_layout) struct Prepared {
+    pub(in crate::parley_layout) text: InlineText,
+    pub(in crate::parley_layout) layout: Layout<PaintBrush>,
+    pub(in crate::parley_layout) lines: Vec<RawLine>,
     binding: SourceBinding,
 }
 
 impl Plan {
-    pub(super) fn new(
+    pub(in crate::parley_layout) fn new(
         block: &LayoutBlock<'_>,
         view: &Projection<'_>,
         styles: &[Style],
@@ -143,7 +143,7 @@ impl Plan {
 
     /// Shape a detached candidate and verify every line before any future
     /// caller may choose to install it in a chapter.
-    pub(super) fn shape(
+    pub(in crate::parley_layout) fn shape(
         mut self,
         context: &mut LayoutContext<PaintBrush>,
         fonts: &mut FontContext,
@@ -195,6 +195,7 @@ impl Plan {
         let mut requests = Vec::with_capacity(layout.len() * 2);
         let mut previous_end = 0;
         let mut previous_start = None;
+        let mut previous_top = None;
         for line in layout.lines() {
             let range = line.text_range();
             let metrics = line.metrics();
@@ -204,12 +205,14 @@ impl Plan {
                 || previous_start == Some(range.start)
                 || !metrics.block_min_coord.is_finite()
                 || !metrics.block_max_coord.is_finite()
+                || previous_top.is_some_and(|top| metrics.block_min_coord < top)
                 || metrics.block_max_coord < metrics.block_min_coord
                 || metrics.block_max_coord - metrics.block_min_coord > settings.text_height() as f32
             {
                 return None;
             }
             previous_start = Some(range.start);
+            previous_top = Some(metrics.block_min_coord);
             previous_end = range.end;
             requests.push((range.start, CaretAffinity::After));
             requests.push((range.end, CaretAffinity::Before));
@@ -239,9 +242,97 @@ impl Plan {
 }
 
 impl Prepared {
+    /// Resolve the first intersecting line, including whitespace-only lines.
+    /// `page` is in paragraph-local block coordinates. The caller supplies
+    /// the identity of the verified, currently open publication.
+    pub(in crate::parley_layout) fn anchor_in_page(
+        &self,
+        block: &Block,
+        context: &AnchorContext<'_>,
+        page: Range<f32>,
+    ) -> Option<RawAnchor> {
+        if !self.binding.matches(block)
+            || block.key != context.block
+            || !page.start.is_finite()
+            || !page.end.is_finite()
+            || page.start >= page.end
+        {
+            return None;
+        }
+        let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+        if self.text.text.as_str() != bound.raw() || self.layout.text_len() != bound.raw().len() {
+            return None;
+        }
+        let line = self
+            .lines
+            .iter()
+            .find(|line| line.bottom > page.start && line.top < page.end)?;
+        let anchor = RawAnchor {
+            canonical: crate::Anchor {
+                book: context.book,
+                chapter: context.chapter.to_owned(),
+                revision: context.revision,
+                block: context.block,
+                offset: line.start.canonical_offset,
+                illustration: None,
+            },
+            caret: line.start.clone(),
+        };
+        bound.validate_raw_anchor(&anchor, context)?;
+        Some(anchor)
+    }
+
+    /// Map a verified raw anchor back to a line. Affinity selects the prior
+    /// or next line at a shared boundary without changing the source offset.
+    pub(in crate::parley_layout) fn line_for_anchor(
+        &self,
+        block: &Block,
+        context: &AnchorContext<'_>,
+        anchor: &RawAnchor,
+    ) -> Option<usize> {
+        if !self.binding.matches(block) || block.key != context.block {
+            return None;
+        }
+        let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+        if self.text.text.as_str() != bound.raw() || self.layout.text_len() != bound.raw().len() {
+            return None;
+        }
+        bound.validate_raw_anchor(anchor, context)?;
+        let offset = anchor.caret.raw_offset;
+        for (index, line) in self.lines.iter().enumerate() {
+            if offset > line.bytes.start && offset < line.bytes.end {
+                return Some(index);
+            }
+            if offset == line.bytes.start {
+                return Some(
+                    if anchor.caret.affinity == CaretAffinity::Before && index > 0 {
+                        index - 1
+                    } else {
+                        index
+                    },
+                );
+            }
+            if offset == line.bytes.end {
+                return Some(
+                    if anchor.caret.affinity == CaretAffinity::After
+                        && self
+                            .lines
+                            .get(index + 1)
+                            .is_some_and(|next| next.bytes.start == offset)
+                    {
+                        index + 1
+                    } else {
+                        index
+                    },
+                );
+            }
+        }
+        None
+    }
+
     /// Compute raw selection geometry only after revalidating both anchors and
     /// the exact text/quote against the bound source snapshot.
-    pub(super) fn selection_geometry(
+    pub(in crate::parley_layout) fn selection_geometry(
         &self,
         block: &Block,
         context: &AnchorContext<'_>,

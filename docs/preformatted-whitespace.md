@@ -23,7 +23,7 @@ carets on exact text or whitespace edges map back exactly. An interior raw
 whitespace caret is returned as an explicit gap with its raw offset rather
 than being silently snapped to a normalized position. Invalid UTF-8
 boundaries, mismatched canonical text or conflicting mappings fail closed.
-The mapper is not yet connected to layout, selection or saved anchors.
+The mapper is not yet connected to the active reading layout, selection or saved anchors.
 
 An internal, serializable raw-caret value now records a raw offset, its
 canonical edge, explicit affinity and the raw text's SHA-256. The bound mapper
@@ -61,8 +61,11 @@ grapheme-validated raw carets for contiguous line ranges, including lines
 whose content is whitespace. It is tied to the source block's lifetime and
 rechecks the raw snapshot and computed mode before shaping. A detached
 selection-geometry consumer validates both raw anchors and the exact raw
-quote before accepting bounded rectangles. These are not installed into
-Reader's page model or UI; durable state and the full integration remain open.
+quote before accepting bounded rectangles. Detached pagination can return a
+verified raw anchor for the first line intersecting a paragraph-local page
+range, including whitespace-only lines, and map an anchor back to a line using
+its explicit boundary affinity. These are not installed into Reader's page model
+or UI; durable state and the full integration remain open.
 
 This stage does **not** change rendering, copying, selection, source revisions,
 existing anchors or saved state. It does not yet implement preformatted EPUB
