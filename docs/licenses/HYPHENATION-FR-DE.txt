@@ -1,20 +1,33 @@
 French and German hyphenation patterns
 
-Reader compiles the following TeX patterns into the native reflow engine.
+Reader compiles the following French and pinned German patterns into the native reflow engine.
 
 French, version 2.13 (2016-05-12).
 Copyright (C) 1994-2002 Daniel Flipo, Bernard Gaulle, 2016 Arthur Reutenauer.
 Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-fr.tex
 Source SHA-256: 526cad6fe8f52fcd3caa3fcaf667cb1740cfc14bca198680e00dc343a84594de
 
-German, reformed spelling, version 2024-02-28.
+German, reformed spelling, version 2024-02-28 (retained historical source, not compiled).
 Copyright (c) 2013-2024 Stephan Hennig, Werner Lemberg, Günter Milde,
 Sander van Geloven, Georg Pfeiffer, Gisbert W. Selke, Tobias Wendorf,
 Keno Wehr.
 Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-de-1996.tex
 Source SHA-256: 374ad1ce3263f8a2791ec070ef9b516c532dae64456f3fb656e617e8ae53a9d3
 
-MIT License for both sets of patterns
+German, reformed spelling, KOReader-pinned version 2023-12-03 (compiled).
+Copyright (c) 2013-2023 Stephan Hennig, Werner Lemberg, Günter Milde,
+Sander van Geloven, Georg Pfeiffer, Gisbert W. Selke, Tobias Wendorf,
+Keno Wehr.
+Source: https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/German.pattern
+Source SHA-256: d5c9bef88d59776fe5e5d5476f95c92c824bed9060456ddd995ee796036b0f5e
+
+The unmodified source is included as koreader-german-2023.pattern. Its header
+contains a complete MIT notice for the 2023 pattern source and historical
+LPPL attribution. The full LPPL 1.3c is included in LPPL-1.3c.txt. Reader
+compiles active patterns only and converts word-edge spaces to markers. Review
+of the mixed historical notices and distribution obligations remains open.
+
+MIT License for the identified patterns
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -71,6 +71,7 @@ with ZipFile(args.package) as package:
         'licenses/hyph-grc.tex': root / 'assets/hyphenation/hyph-grc.tex',
         'licenses/hyph-ml.tex': root / 'assets/hyphenation/hyph-ml.tex',
         'licenses/hyph-hu.tex': root / 'assets/hyphenation/hyph-hu.tex',
+        'licenses/koreader-german-2023.pattern': root / 'assets/hyphenation/koreader-german-2023.pattern',
         'licenses/eo.pattern': root / 'assets/hyphenation/eo.pattern',
         'licenses/eohyph.m4': root / 'assets/hyphenation/eohyph.m4',
     }

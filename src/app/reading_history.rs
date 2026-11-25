@@ -531,12 +531,19 @@ impl Reader {
                 return self.history_reset_items(page);
             }
             Page::Options => {
+                let language = self.controls.interface_language;
                 let opt = |title: &str, value: String, next: Options| {
-                    Item::new(title, Action::ReadingHistory(Command::Configure(next))).detail(value)
+                    Item::new(
+                        language.history_settings_text(title),
+                        Action::ReadingHistory(Command::Configure(next)),
+                    )
+                    .detail(value)
                 };
                 rows.push(opt(
                     "Reading statistics",
-                    if options.enabled { "On" } else { "Off" }.into(),
+                    language
+                        .history_settings_text(if options.enabled { "On" } else { "Off" })
+                        .into(),
                     Options {
                         enabled: !options.enabled,
                         ..options
@@ -544,7 +551,7 @@ impl Reader {
                 ));
                 rows.push(
                     Item::new(
-                        "Read page duration limits",
+                        language.history_settings_text("Read page duration limits"),
                         Action::ReadingHistory(Command::EditDurationLimits),
                     )
                     .detail(format!(
@@ -554,7 +561,9 @@ impl Reader {
                 );
                 rows.push(opt(
                     "Freeze finished books",
-                    if options.freeze_finished { "On" } else { "Off" }.into(),
+                    language
+                        .history_settings_text(if options.freeze_finished { "On" } else { "Off" })
+                        .into(),
                     Options {
                         freeze_finished: !options.freeze_finished,
                         ..options
@@ -563,7 +572,9 @@ impl Reader {
                 rows.extend(self.calendar_setting_items());
                 rows.push(opt(
                     "Hourly histogram",
-                    if options.histogram { "On" } else { "Off" }.into(),
+                    language
+                        .history_settings_text(if options.histogram { "On" } else { "Off" })
+                        .into(),
                     Options {
                         histogram: !options.histogram,
                         ..options
@@ -571,16 +582,26 @@ impl Reader {
                 ));
                 rows.push(opt(
                     "Browse future months",
-                    if options.future_months { "On" } else { "Off" }.into(),
+                    language
+                        .history_settings_text(if options.future_months { "On" } else { "Off" })
+                        .into(),
                     Options {
                         future_months: !options.future_months,
                         ..options
                     },
                 ));
-                rows.push(show("Reset statistics", Page::Resets));
+                rows.push(show(
+                    language.history_settings_text("Reset statistics"),
+                    Page::Resets,
+                ));
                 rows.push(
-                    Item::new("Visit filters apply to new reading", Action::Heading)
-                        .detail("Quick skims are ignored. Rereads retain their own sessions."),
+                    Item::new(
+                        language.history_settings_text("Visit filters apply to new reading"),
+                        Action::Heading,
+                    )
+                    .detail(language.history_settings_text(
+                        "Quick skims are ignored. Rereads retain their own sessions.",
+                    )),
                 );
             }
             Page::CalendarChoice(choice) => return self.calendar_choice_items(choice),

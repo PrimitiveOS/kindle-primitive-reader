@@ -42,6 +42,7 @@ impl Reset {
                         | 53
                         | CAPTION_SIDE
                         | COMMON_LIGATURES
+                        | LIGATURE_EXTRAS
                         | DIRECTION
                         | LETTER_SPACING
                         | VARIANT_CAPS
@@ -79,6 +80,7 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "letter-spacing" => vec![LETTER_SPACING],
         "font-variant" => vec![
             COMMON_LIGATURES,
+            LIGATURE_EXTRAS,
             VARIANT_CAPS,
             VARIANT_NUMERIC,
             VARIANT_EAST_ASIAN,
@@ -90,7 +92,9 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "font-variant-east-asian" => vec![VARIANT_EAST_ASIAN],
         "font-variant-position" => vec![VARIANT_POSITION],
         "font-variant-alternates" => vec![VARIANT_HISTORICAL],
-        "font-variant-ligatures" | "-webkit-font-variant-ligatures" => vec![COMMON_LIGATURES],
+        "font-variant-ligatures" | "-webkit-font-variant-ligatures" => {
+            vec![COMMON_LIGATURES, LIGATURE_EXTRAS]
+        }
         "line-break" => vec![7],
         "word-break" => vec![8],
         "white-space" => vec![53],
@@ -146,6 +150,7 @@ pub(super) fn apply_reset(
         5 => style.font_weight = value.font_weight,
         6 => style.font_style = value.font_style,
         COMMON_LIGATURES => style.common_ligatures = value.common_ligatures,
+        LIGATURE_EXTRAS => style.ligature_extras = value.ligature_extras,
         VARIANT_CAPS => style.variant_caps = value.variant_caps,
         VARIANT_NUMERIC => style.variant_numeric = value.variant_numeric,
         VARIANT_EAST_ASIAN => style.variant_east_asian = value.variant_east_asian,
@@ -358,9 +363,21 @@ impl<'i> AtRuleParser<'i> for StrictSheet {
 }
 fn expand(decl: Declaration, out: &mut Vec<Declaration>) {
     match decl.property {
-        Property::VariantShorthand(ligatures, caps, numeric, east_asian, position, historical) => {
+        Property::VariantShorthand(
+            ligatures,
+            extra,
+            caps,
+            numeric,
+            east_asian,
+            position,
+            historical,
+        ) => {
             out.push(Declaration {
                 property: Property::CommonLigatures(ligatures),
+                important: decl.important,
+            });
+            out.push(Declaration {
+                property: Property::LigatureExtras(extra),
                 important: decl.important,
             });
             out.push(Declaration {
@@ -381,6 +398,16 @@ fn expand(decl: Declaration, out: &mut Vec<Declaration>) {
             });
             out.push(Declaration {
                 property: Property::VariantHistorical(historical),
+                important: decl.important,
+            });
+        }
+        Property::LigatureShorthand(common, extra) => {
+            out.push(Declaration {
+                property: Property::CommonLigatures(common),
+                important: decl.important,
+            });
+            out.push(Declaration {
+                property: Property::LigatureExtras(extra),
                 important: decl.important,
             });
         }

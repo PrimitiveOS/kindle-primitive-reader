@@ -157,11 +157,21 @@ impl Reader {
         else {
             return;
         };
+        let language = self.controls.interface_language;
         if let Some(entry) = &draft.entry {
             canvas.popup(ENTRY);
             canvas.text(
                 ENTRY_TITLE,
-                &format!("{} page duration", entry.limit.title()),
+                &if language.is_english() {
+                    format!("{} page duration", entry.limit.title())
+                } else {
+                    format!(
+                        "Thời gian đọc trang {}",
+                        language
+                            .history_settings_text(entry.limit.title())
+                            .to_lowercase()
+                    )
+                },
                 TextStyle::new(48).bold(),
             );
             canvas.single_line_field(
@@ -172,41 +182,69 @@ impl Reader {
             );
             let range = entry.limit.range();
             let hint = if entry.invalid {
-                format!(
-                    "Enter a whole-second result from {} to {}",
-                    range.start(),
-                    range.end()
-                )
+                if language.is_english() {
+                    format!(
+                        "Enter a whole-second result from {} to {}",
+                        range.start(),
+                        range.end()
+                    )
+                } else {
+                    format!(
+                        "Nhập kết quả nguyên giây từ {} đến {}",
+                        range.start(),
+                        range.end()
+                    )
+                }
             } else {
-                format!(
-                    "{} to {} seconds; arithmetic allowed",
-                    range.start(),
-                    range.end()
-                )
+                if language.is_english() {
+                    format!(
+                        "{} to {} seconds; arithmetic allowed",
+                        range.start(),
+                        range.end()
+                    )
+                } else {
+                    format!(
+                        "Từ {} đến {} giây; có thể dùng phép tính",
+                        range.start(),
+                        range.end()
+                    )
+                }
             };
             canvas.text(ENTRY_HINT, &hint, CAPTION);
             for (rect, label, _) in digit_buttons() {
-                canvas.button(rect, label, false, false);
+                canvas.button(rect, language.history_settings_text(label), false, false);
             }
-            canvas.button(ENTRY_CANCEL, "Cancel", false, false);
-            canvas.button(ENTRY_USE, "Use value", true, false);
+            canvas.button(
+                ENTRY_CANCEL,
+                language.history_settings_text("Cancel"),
+                false,
+                false,
+            );
+            canvas.button(
+                ENTRY_USE,
+                language.history_settings_text("Use value"),
+                true,
+                false,
+            );
             return;
         }
         canvas.popup(SHEET);
         canvas.text(
             TITLE,
-            "Read page duration limits",
+            language.history_settings_text("Read page duration limits"),
             TextStyle::new(48).bold(),
         );
         canvas.text(
             DESCRIPTION,
-            "Cap visits above the maximum. Otherwise, skip visits below the minimum.",
+            language.history_settings_text(
+                "Cap visits above the maximum. Otherwise, skip visits below the minimum.",
+            ),
             CAPTION.lines(2),
         );
         for limit in LIMITS {
             canvas.text(
                 Rect::new(limit.left(), 726, 472, 45),
-                limit.title(),
+                language.history_settings_text(limit.title()),
                 CAPTION.center(),
             );
             limit.steps().draw(canvas);
@@ -221,8 +259,10 @@ impl Reader {
         canvas.button(
             DEFAULT,
             &format!(
-                "Defaults    {} s - {} s",
-                defaults.min_seconds, defaults.max_seconds
+                "{}    {} s - {} s",
+                language.history_settings_text("Defaults"),
+                defaults.min_seconds,
+                defaults.max_seconds
             ),
             false,
             false,
@@ -230,10 +270,15 @@ impl Reader {
         if let Some(notice) = &self.notice {
             canvas.text(NOTICE, notice, CAPTION);
         }
-        canvas.button(CANCEL, "Cancel", false, false);
+        canvas.button(
+            CANCEL,
+            language.history_settings_text("Cancel"),
+            false,
+            false,
+        );
         canvas.button(
             APPLY,
-            "Apply",
+            language.history_settings_text("Apply"),
             draft.options != self.reading_history.options(),
             false,
         );

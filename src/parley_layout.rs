@@ -19,8 +19,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::book_style::{
-    CssLength, ImageLength, Style, TextDecoration, VariantCaps, VariantEastAsian, VariantNumeric,
-    VariantPosition,
+    CssLength, ImageLength, LigatureExtras, Style, TextDecoration, VariantCaps, VariantEastAsian,
+    VariantNumeric, VariantPosition,
 };
 use crate::comic::ImagePage;
 use crate::epub::Book;
@@ -178,6 +178,7 @@ fn shaping_features(
 fn shaping_with_variants(
     mode: crate::FontKerningMode,
     common_ligatures: bool,
+    ligature_extras: LigatureExtras,
     caps: VariantCaps,
     numeric: VariantNumeric,
     east_asian: VariantEastAsian,
@@ -185,6 +186,22 @@ fn shaping_with_variants(
     historical: bool,
 ) -> Vec<FontFeature> {
     let mut features = shaping_features(mode, common_ligatures).to_vec();
+    if let Some(enabled) = ligature_extras.contextual {
+        if !matches!(
+            mode,
+            crate::FontKerningMode::Fast | crate::FontKerningMode::Good
+        ) {
+            features.push(FontFeature::new(Tag::new(b"calt"), u16::from(enabled)));
+        }
+    }
+    for (enabled, tag) in [
+        (ligature_extras.discretionary, b"dlig"),
+        (ligature_extras.historical, b"hlig"),
+    ] {
+        if let Some(enabled) = enabled {
+            features.push(FontFeature::new(Tag::new(tag), u16::from(enabled)));
+        }
+    }
     let tags: &[&[u8; 4]] = match caps {
         VariantCaps::Normal => &[],
         VariantCaps::Small => &[b"smcp"],
@@ -3172,6 +3189,7 @@ fn make_annotation(
     }
     apply_kerning(&mut builder, settings.effective_font_kerning_mode());
     if !style.common_ligatures
+        || style.ligature_extras != LigatureExtras::default()
         || style.variant_caps != VariantCaps::Normal
         || style.variant_numeric != VariantNumeric::default()
         || style.variant_east_asian != VariantEastAsian::default()
@@ -3181,6 +3199,7 @@ fn make_annotation(
         let features = shaping_with_variants(
             settings.effective_font_kerning_mode(),
             style.common_ligatures,
+            style.ligature_extras,
             style.variant_caps,
             style.variant_numeric,
             style.variant_east_asian,
@@ -3356,6 +3375,7 @@ fn shape_paragraph(
     }
     apply_kerning(&mut builder, settings.effective_font_kerning_mode());
     if !style.common_ligatures
+        || style.ligature_extras != LigatureExtras::default()
         || style.variant_caps != VariantCaps::Normal
         || style.variant_numeric != VariantNumeric::default()
         || style.variant_east_asian != VariantEastAsian::default()
@@ -3365,6 +3385,7 @@ fn shape_paragraph(
         let features = shaping_with_variants(
             settings.effective_font_kerning_mode(),
             style.common_ligatures,
+            style.ligature_extras,
             style.variant_caps,
             style.variant_numeric,
             style.variant_east_asian,
@@ -3607,6 +3628,7 @@ fn shape_paragraph(
             builder.push(StyleProperty::FontStyle(run.font_style), bytes.clone());
         }
         if run.common_ligatures != base.common_ligatures
+            || run.ligature_extras != base.ligature_extras
             || run.variant_caps != base.variant_caps
             || run.variant_numeric != base.variant_numeric
             || run.variant_east_asian != base.variant_east_asian
@@ -3616,6 +3638,7 @@ fn shape_paragraph(
             let features = shaping_with_variants(
                 settings.effective_font_kerning_mode(),
                 run.common_ligatures,
+                run.ligature_extras,
                 run.variant_caps,
                 run.variant_numeric,
                 run.variant_east_asian,

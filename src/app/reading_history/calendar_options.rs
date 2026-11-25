@@ -81,42 +81,45 @@ const STEPS: [(Part, i32, Rect); 4] = [
 
 impl Reader {
     pub(super) fn calendar_setting_items(&self) -> [Item; 4] {
+        let language = self.controls.interface_language;
         let options = self.reading_history.options();
         let choice = |choice: Choice| {
             Item::new(
-                choice.title(),
+                language.history_calendar_text(choice.title()),
                 Action::ReadingHistory(Command::Show(Page::CalendarChoice(choice))),
             )
         };
         [
-            choice(Choice::WeekStart).detail(WEEKDAYS[usize::from(options.week_start)]),
+            choice(Choice::WeekStart)
+                .detail(language.history_calendar_text(WEEKDAYS[usize::from(options.week_start)])),
             Item::new(
-                "Daily timeline starts at",
+                language.history_calendar_text("Daily timeline starts at"),
                 Action::ReadingHistory(Command::EditTimelineStart),
             )
             .detail(timeline_clock(options.day_start)),
             Item::new(
-                "Also use in calendar view",
+                language.history_calendar_text("Also use in calendar view"),
                 Action::ReadingHistory(Command::Configure(Options {
                     shift_calendar: Some(!options.calendar_uses_shift()),
                     ..options
                 })),
             )
             .detail(if options.calendar_uses_shift() {
-                "On"
+                language.history_calendar_text("On")
             } else {
-                "Off"
+                language.history_calendar_text("Off")
             }),
             choice(Choice::BooksPerDay).detail(options.calendar_book_spans.to_string()),
         ]
     }
 
     pub(super) fn calendar_choice_items(&self, choice: Choice) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let options = self.reading_history.options();
         let item = |title: String, next: Options| {
             let item = Item::new(title, Action::ReadingHistory(Command::Configure(next)));
             if next == options {
-                item.detail("Selected")
+                item.detail(language.history_calendar_text("Selected"))
             } else {
                 item
             }
@@ -126,7 +129,9 @@ impl Reader {
                 .iter()
                 .map(|&day| {
                     item(
-                        WEEKDAYS[usize::from(day)].into(),
+                        language
+                            .history_calendar_text(WEEKDAYS[usize::from(day)])
+                            .into(),
                         Options {
                             week_start: day,
                             ..options
@@ -156,23 +161,26 @@ impl Reader {
         else {
             return;
         };
+        let language = self.controls.interface_language;
         let layout = self.navigation_layout();
         let place = |rect| layout.centered(rect);
         canvas.popup(place(POPUP));
         canvas.text(
             place(Rect::new(130, 580, 1004, 78)),
-            "Daily timeline starts at",
+            language.history_calendar_text("Daily timeline starts at"),
             TextStyle::new(48).bold(),
         );
         canvas.text(
             place(Rect::new(130, 667, 1004, 67)),
-            "Start after midnight to keep late-night reading with the previous evening.",
+            language.history_calendar_text(
+                "Start after midnight to keep late-night reading with the previous evening.",
+            ),
             CAPTION.lines(2),
         );
         for (part, title, left) in [(Part::Hour, "Hour", 130), (Part::Minute, "Minute", 662)] {
             canvas.text(
                 place(Rect::new(left, 748, 472, 45)),
-                title,
+                language.history_calendar_text(title),
                 CAPTION.center(),
             );
             canvas.text(
@@ -196,8 +204,18 @@ impl Reader {
                 CAPTION.lines(2),
             );
         }
-        canvas.button(place(CANCEL), "Cancel", false, false);
-        canvas.button(place(SAVE), "Set time", true, false);
+        canvas.button(
+            place(CANCEL),
+            language.history_calendar_text("Cancel"),
+            false,
+            false,
+        );
+        canvas.button(
+            place(SAVE),
+            language.history_calendar_text("Set time"),
+            true,
+            false,
+        );
     }
 
     pub(super) fn timeline_start_input(&mut self, input: Input) -> Option<Change> {

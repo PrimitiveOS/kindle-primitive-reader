@@ -135,6 +135,74 @@ fn decomposed_rules(tex: &str, tag: &str) -> Vec<String> {
     rules
 }
 
+// Preserve KOReader's exact German 2023 data; XML comments contain disabled
+// patterns and must not be included. The source is fixed and bounded.
+fn pinned_german_rules() -> Vec<String> {
+    let path = "assets/hyphenation/koreader-german-2023.pattern";
+    println!("cargo:rerun-if-changed={path}");
+    assert!(
+        fs::metadata(path).expect("German source metadata").len() <= 1_200_000,
+        "German pattern source limit exceeded"
+    );
+    let xml = fs::read_to_string(path).expect("Read pinned German patterns");
+    assert!(
+        xml.len() <= 1_200_000,
+        "German pattern source limit exceeded"
+    );
+    let mut active = String::with_capacity(xml.len());
+    let mut remaining = xml.as_str();
+    while let Some((before, comment)) = remaining.split_once("<!--") {
+        active.push_str(before);
+        remaining = comment
+            .split_once("-->")
+            .expect("Unclosed German XML comment")
+            .1;
+    }
+    assert!(
+        !remaining.contains("-->"),
+        "Unexpected German XML comment terminator"
+    );
+    active.push_str(remaining);
+    let mut rest = active.as_str();
+    let mut rules = Vec::new();
+    while let Some((_, after_open)) = rest.split_once("<pattern>") {
+        let (entry, after_close) = after_open
+            .split_once("</pattern>")
+            .expect("Unclosed German pattern");
+        assert!(
+            rules.len() < 40_000 && entry.len() <= 128,
+            "German pattern limit exceeded"
+        );
+        let core = entry.trim_matches(' ');
+        assert!(
+            !core.is_empty()
+                && core.chars().any(|ch| ch.is_ascii_digit())
+                && core
+                    .chars()
+                    .all(|ch| ch.is_lowercase() || ch.is_ascii_digit())
+                && !entry.starts_with("  ")
+                && !entry.ends_with("  "),
+            "Unsupported German pattern"
+        );
+        let mut pattern = String::new();
+        if entry.starts_with(' ') {
+            pattern.push('.');
+        }
+        pattern.push_str(core);
+        if entry.ends_with(' ') {
+            pattern.push('.');
+        }
+        rules.push(pattern);
+        rest = after_close;
+    }
+    assert_eq!(
+        rules.len(),
+        36_729,
+        "Unexpected pinned German pattern count"
+    );
+    rules
+}
+
 // The upstream Esperanto XML represents TeX word boundaries as edge spaces.
 // Retain the original file and reject unfamiliar markup rather than silently
 // compiling an incomplete or malformed dictionary.
@@ -254,7 +322,6 @@ fn main() {
         ("da", "DANISH"),
         ("nl", "DUTCH"),
         ("fr", "FRENCH"),
-        ("de-1996", "GERMAN"),
         ("bg", "BULGARIAN"),
         ("gl", "GALICIAN"),
         ("ga", "IRISH"),
@@ -304,6 +371,11 @@ fn main() {
             &out_dir.join(format!("{tag}_rules.txt")),
         ));
     }
+    output.push_str(&compile(
+        pinned_german_rules(),
+        "GERMAN",
+        &out_dir.join("de-1996_rules.txt"),
+    ));
     output.push_str(&compile(
         esperanto_rules(),
         "ESPERANTO",

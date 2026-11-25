@@ -463,6 +463,62 @@ impl VariantPosition {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LigatureExtras {
+    pub(crate) contextual: Option<bool>,
+    pub(crate) discretionary: Option<bool>,
+    pub(crate) historical: Option<bool>,
+}
+
+fn ligature_keyword(value: &str, common: &mut Option<bool>, extra: &mut LigatureExtras) -> bool {
+    let (slot, enabled) = match value {
+        "common-ligatures" => (common, true),
+        "no-common-ligatures" => (common, false),
+        "contextual" => (&mut extra.contextual, true),
+        "no-contextual" => (&mut extra.contextual, false),
+        "discretionary-ligatures" => (&mut extra.discretionary, true),
+        "no-discretionary-ligatures" => (&mut extra.discretionary, false),
+        "historical-ligatures" => (&mut extra.historical, true),
+        "no-historical-ligatures" => (&mut extra.historical, false),
+        _ => return false,
+    };
+    if slot.is_some() {
+        return false;
+    }
+    *slot = Some(enabled);
+    true
+}
+
+fn parse_ligatures(input: &mut Parser<'_>) -> CssResult<(bool, LigatureExtras)> {
+    let first = input.expect_ident()?.to_ascii_lowercase();
+    let mut common = None;
+    let mut extra = LigatureExtras::default();
+    match first.as_str() {
+        "normal" => input.expect_exhausted()?,
+        "none" => {
+            input.expect_exhausted()?;
+            common = Some(false);
+            extra = LigatureExtras {
+                contextual: Some(false),
+                discretionary: Some(false),
+                historical: Some(false),
+            };
+        }
+        _ => {
+            if !ligature_keyword(&first, &mut common, &mut extra) {
+                return Err(ParseError::unexpected_token());
+            }
+            while !input.is_exhausted() {
+                let keyword = input.expect_ident()?.to_ascii_lowercase();
+                if !ligature_keyword(&keyword, &mut common, &mut extra) {
+                    return Err(ParseError::unexpected_token());
+                }
+            }
+        }
+    }
+    Ok((common.unwrap_or(true), extra))
+}
+
 #[derive(Clone)]
 pub(crate) struct Style {
     pub display: Display,
@@ -489,6 +545,7 @@ pub(crate) struct Style {
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
     pub(crate) common_ligatures: bool,
+    pub(crate) ligature_extras: LigatureExtras,
     pub(crate) variant_caps: VariantCaps,
     pub(crate) variant_numeric: VariantNumeric,
     pub(crate) variant_east_asian: VariantEastAsian,
@@ -564,6 +621,7 @@ impl Default for Style {
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             common_ligatures: true,
+            ligature_extras: LigatureExtras::default(),
             variant_caps: VariantCaps::Normal,
             variant_numeric: VariantNumeric::default(),
             variant_east_asian: VariantEastAsian::default(),
@@ -1157,7 +1215,7 @@ impl BookStyle {
                     Property::ResetMany(..) => {
                         unreachable!("reset shorthand is expanded before cascading")
                     }
-                    Property::VariantShorthand(..) => {
+                    Property::VariantShorthand(..) | Property::LigatureShorthand(..) => {
                         unreachable!("font variant shorthand is expanded before cascading")
                     }
                     Property::Display(display) => style.display = *display,
@@ -1268,6 +1326,7 @@ impl BookStyle {
                     }
                     Property::Slant(slant) => style.font_style = *slant,
                     Property::CommonLigatures(enabled) => style.common_ligatures = *enabled,
+                    Property::LigatureExtras(extra) => style.ligature_extras = *extra,
                     Property::VariantCaps(caps) => style.variant_caps = *caps,
                     Property::VariantNumeric(numeric) => style.variant_numeric = *numeric,
                     Property::VariantEastAsian(value) => style.variant_east_asian = *value,
@@ -2035,6 +2094,7 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
     for decl in RuleBodyParser::new(input, &mut Properties).flatten() {
         if let Property::VariantShorthand(
             ligatures,
+            extra,
             caps,
             numeric,
             east_asian,
@@ -2044,6 +2104,10 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
         {
             result.push(Declaration {
                 property: Property::CommonLigatures(ligatures),
+                important: decl.important,
+            });
+            result.push(Declaration {
+                property: Property::LigatureExtras(extra),
                 important: decl.important,
             });
             result.push(Declaration {
@@ -2064,6 +2128,15 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
             });
             result.push(Declaration {
                 property: Property::VariantHistorical(historical),
+                important: decl.important,
+            });
+        } else if let Property::LigatureShorthand(common, extra) = decl.property {
+            result.push(Declaration {
+                property: Property::CommonLigatures(common),
+                important: decl.important,
+            });
+            result.push(Declaration {
+                property: Property::LigatureExtras(extra),
                 important: decl.important,
             });
         } else if let Property::ResetMany(keys, reset) = decl.property {
@@ -2112,7 +2185,8 @@ const VARIANT_NUMERIC: usize = 59;
 const VARIANT_EAST_ASIAN: usize = 60;
 const VARIANT_POSITION: usize = 61;
 const VARIANT_HISTORICAL: usize = 62;
-const CASCADE_PROPERTY_COUNT: usize = 63;
+const LIGATURE_EXTRAS: usize = 63;
+const CASCADE_PROPERTY_COUNT: usize = 64;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2152,6 +2226,7 @@ fn choose<'a>(
             Property::Reset(key, _) => key,
             Property::ResetMany(..) => continue,
             Property::VariantShorthand(..) => continue,
+            Property::LigatureShorthand(..) => continue,
             Property::Display(_) => 40,
             Property::Visibility(_) => 41,
             Property::MaxWidth(_) => 42,
@@ -2174,6 +2249,7 @@ fn choose<'a>(
             Property::Weight(_) => 5,
             Property::Slant(_) => 6,
             Property::CommonLigatures(_) => COMMON_LIGATURES,
+            Property::LigatureExtras(_) => LIGATURE_EXTRAS,
             Property::VariantCaps(_) => VARIANT_CAPS,
             Property::VariantNumeric(_) => VARIANT_NUMERIC,
             Property::VariantEastAsian(_) => VARIANT_EAST_ASIAN,
@@ -2294,6 +2370,8 @@ enum Property {
     Weight(Weight),
     Slant(FontStyle),
     CommonLigatures(bool),
+    LigatureExtras(LigatureExtras),
+    LigatureShorthand(bool, LigatureExtras),
     VariantCaps(VariantCaps),
     VariantNumeric(VariantNumeric),
     VariantEastAsian(VariantEastAsian),
@@ -2301,6 +2379,7 @@ enum Property {
     VariantHistorical(bool),
     VariantShorthand(
         bool,
+        LigatureExtras,
         VariantCaps,
         VariantNumeric,
         VariantEastAsian,
@@ -2643,71 +2722,42 @@ impl<'i> DeclarationParser<'i> for Properties {
                 }
                 "font-variant" => {
                     let value = input.expect_ident()?.to_ascii_lowercase();
-                    if let Some(caps) = VariantCaps::parse(value.as_str()) {
-                        Property::VariantShorthand(
-                            true,
-                            caps,
-                            VariantNumeric::default(),
-                            VariantEastAsian::default(),
-                            VariantPosition::Normal,
-                            false,
-                        )
-                    } else if let Some(numeric) = VariantNumeric::bit(value.as_str()) {
-                        Property::VariantShorthand(
-                            true,
-                            VariantCaps::Normal,
-                            VariantNumeric(numeric),
-                            VariantEastAsian::default(),
-                            VariantPosition::Normal,
-                            false,
-                        )
-                    } else if let Some(east_asian) = VariantEastAsian::bit(value.as_str()) {
-                        Property::VariantShorthand(
-                            true,
-                            VariantCaps::Normal,
-                            VariantNumeric::default(),
-                            VariantEastAsian(east_asian),
-                            VariantPosition::Normal,
-                            false,
-                        )
-                    } else if let Some(position) = VariantPosition::parse(value.as_str()) {
-                        Property::VariantShorthand(
-                            true,
-                            VariantCaps::Normal,
-                            VariantNumeric::default(),
-                            VariantEastAsian::default(),
-                            position,
-                            false,
-                        )
-                    } else {
-                        match value.as_str() {
-                            "common-ligatures" => Property::VariantShorthand(
-                                true,
-                                VariantCaps::Normal,
-                                VariantNumeric::default(),
-                                VariantEastAsian::default(),
-                                VariantPosition::Normal,
-                                false,
-                            ),
-                            "no-common-ligatures" => Property::VariantShorthand(
-                                false,
-                                VariantCaps::Normal,
-                                VariantNumeric::default(),
-                                VariantEastAsian::default(),
-                                VariantPosition::Normal,
-                                false,
-                            ),
-                            "historical-forms" => Property::VariantShorthand(
-                                true,
-                                VariantCaps::Normal,
-                                VariantNumeric::default(),
-                                VariantEastAsian::default(),
-                                VariantPosition::Normal,
-                                true,
-                            ),
-                            _ => return Err(ParseError::unexpected_token()),
-                        }
+                    let mut common = None;
+                    let mut extra = LigatureExtras::default();
+                    let mut caps = VariantCaps::Normal;
+                    let mut numeric = VariantNumeric::default();
+                    let mut east_asian = VariantEastAsian::default();
+                    let mut position = VariantPosition::Normal;
+                    let mut historical = false;
+                    if let Some(value) = VariantCaps::parse(value.as_str()) {
+                        caps = value;
+                    } else if let Some(value) = VariantNumeric::bit(value.as_str()) {
+                        numeric = VariantNumeric(value);
+                    } else if let Some(value) = VariantEastAsian::bit(value.as_str()) {
+                        east_asian = VariantEastAsian(value);
+                    } else if let Some(value) = VariantPosition::parse(value.as_str()) {
+                        position = value;
+                    } else if value == "historical-forms" {
+                        historical = true;
+                    } else if value == "none" {
+                        common = Some(false);
+                        extra = LigatureExtras {
+                            contextual: Some(false),
+                            discretionary: Some(false),
+                            historical: Some(false),
+                        };
+                    } else if !ligature_keyword(value.as_str(), &mut common, &mut extra) {
+                        return Err(ParseError::unexpected_token());
                     }
+                    Property::VariantShorthand(
+                        common.unwrap_or(true),
+                        extra,
+                        caps,
+                        numeric,
+                        east_asian,
+                        position,
+                        historical,
+                    )
                 }
                 "font-variant-caps" => {
                     let value = input.expect_ident()?.to_ascii_lowercase();
@@ -2735,13 +2785,8 @@ impl<'i> DeclarationParser<'i> for Properties {
                     },
                 ),
                 "font-variant-ligatures" | "-webkit-font-variant-ligatures" => {
-                    let value = input.expect_ident()?.to_ascii_lowercase();
-                    let enabled = match value.as_str() {
-                        "normal" | "common-ligatures" => true,
-                        "no-common-ligatures" => false,
-                        _ => return Err(ParseError::unexpected_token()),
-                    };
-                    Property::CommonLigatures(enabled)
+                    let (common, extra) = parse_ligatures(input)?;
+                    Property::LigatureShorthand(common, extra)
                 }
                 "direction" => {
                     Property::Direction(match input.expect_ident()?.to_ascii_lowercase().as_str() {

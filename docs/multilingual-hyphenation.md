@@ -17,7 +17,7 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Danish | 2 / 2 | 1,144 |
 | Dutch | 2 / 2 | 12,764 |
 | French | 2 / 1 | 1,074 upstream rules; stock comparison pending |
-| German, reformed spelling | 2 / 2 | 36,709 upstream rules; stock comparison pending |
+| German, reformed spelling | 2 / 2 | 36,729 pinned KOReader rules; behavior comparison pending |
 | Bulgarian | 2 / 2 | 6,883 upstream word rules; stock comparison pending |
 | Galician | 2 / 2 | 2,321 upstream word rules; stock comparison pending |
 | Irish | 2 / 3 | 6,033 upstream word rules and 46 exceptions; stock comparison pending |
@@ -69,12 +69,13 @@ word's edges, so Reader compiles the 284 reachable patterns. The Dutch table
 includes 40 exceptions from the upstream TeX source. Sharing identical weight
 sequences keeps that table within its 16-bit weight indexes. The US and UK
 English tables retain their rule fingerprints. French uses the upstream 2016
-MIT patterns and German the 2024 reformed-spelling MIT patterns. KOReader's
-pinned French dictionary contains additional adaptations whose distribution
-terms are not established in that file, and its German dictionary uses a
-different 2023 pattern revision. These implementations provide automatic
-hyphenation but do not yet claim exact KOReader word-break parity. The
-comparison of real books and the associated Kindle checks remain pending.
+MIT patterns; KOReader's pinned French dictionary contains additional
+adaptations whose distribution terms are not established in that file. German
+uses the exact 2023 KOReader pattern file, including all 36,729 active rules,
+with word-edge notation converted during compilation. Its original MIT and
+historical LPPL notices are preserved; mixed-notice distribution review remains
+open. Rule loading, real-book behavior and Kindle checks remain unverified, so
+full KOReader word-break parity is not claimed.
 Bulgarian and Ukrainian (including explicit Cyrillic tags), Galician and Irish
 use licensed upstream patterns and KOReader's default minima. Ukrainian
 normalizes typographic apostrophes for matching, preserving source offsets;

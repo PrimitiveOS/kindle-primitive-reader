@@ -551,6 +551,72 @@ const READING_GUIDE_LABELS: &[(&str, &str)] = &[
     ("Set", "Đặt"),
 ];
 
+// Fixed reading-statistics settings; recorded data and destructive reset prompts stay untouched.
+const HISTORY_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Reading statistics", "Thống kê đọc"),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    ("Read page duration limits", "Giới hạn thời gian đọc trang"),
+    (
+        "Freeze finished books",
+        "Ngừng ghi thống kê sách đã đọc xong",
+    ),
+    ("Hourly histogram", "Biểu đồ theo giờ"),
+    ("Browse future months", "Duyệt các tháng tương lai"),
+    ("Reset statistics", "Đặt lại thống kê"),
+    (
+        "Visit filters apply to new reading",
+        "Bộ lọc lượt đọc áp dụng cho lần đọc mới",
+    ),
+    (
+        "Quick skims are ignored. Rereads retain their own sessions.",
+        "Bỏ qua các lượt đọc lướt nhanh. Lần đọc lại giữ các phiên riêng.",
+    ),
+    ("Minimum", "Tối thiểu"),
+    ("Maximum", "Tối đa"),
+    (
+        "Cap visits above the maximum. Otherwise, skip visits below the minimum.",
+        "Giới hạn lượt đọc vượt mức tối đa. Nếu không, bỏ qua lượt đọc dưới mức tối thiểu.",
+    ),
+    ("Defaults", "Mặc định"),
+    ("Cancel", "Hủy"),
+    ("Apply", "Áp dụng"),
+    ("Use value", "Dùng giá trị"),
+    ("Delete", "Xóa"),
+];
+
+// Fixed reading-statistics calendar settings; dates and recorded data are untouched.
+const HISTORY_CALENDAR_LABELS: &[(&str, &str)] = &[
+    ("Calendar week starts", "Tuần trong lịch bắt đầu vào"),
+    ("Books per calendar day", "Số sách mỗi ngày trên lịch"),
+    ("Sunday", "Chủ nhật"),
+    ("Monday", "Thứ hai"),
+    ("Tuesday", "Thứ ba"),
+    ("Wednesday", "Thứ tư"),
+    ("Thursday", "Thứ năm"),
+    ("Friday", "Thứ sáu"),
+    ("Saturday", "Thứ bảy"),
+    (
+        "Daily timeline starts at",
+        "Dòng thời gian mỗi ngày bắt đầu lúc",
+    ),
+    (
+        "Also use in calendar view",
+        "Cũng áp dụng cho chế độ xem lịch",
+    ),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    ("Selected", "Đã chọn"),
+    (
+        "Start after midnight to keep late-night reading with the previous evening.",
+        "Bắt đầu sau nửa đêm để tính việc đọc khuya vào buổi tối hôm trước.",
+    ),
+    ("Hour", "Giờ"),
+    ("Minute", "Phút"),
+    ("Cancel", "Hủy"),
+    ("Set time", "Đặt giờ"),
+];
+
 // Annotation-transfer settings only; folder paths and import previews stay untouched.
 const ANNOTATION_EXCHANGE_LABELS: &[(&str, &str)] = &[
     (
@@ -2190,6 +2256,30 @@ impl InterfaceLanguage {
             }
         }
         label
+    }
+
+    pub(super) fn history_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = HISTORY_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn history_calendar_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = HISTORY_CALENDAR_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
     }
 
     pub(super) fn annotation_exchange_text<'a>(self, english: &'a str) -> &'a str {
