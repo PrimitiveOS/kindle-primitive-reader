@@ -2,6 +2,56 @@
 
 ## Current Mac simulator checkpoint
 
+**Menu activation** lets readers control tap, swipe, and automatic opening
+of the bottom bar separately. The stock edge zones and Reader's upper-center
+shortcut both work. If two expanded panels would collide, only the bottom
+shortcuts open alongside the top panel. Reader preserves the reading
+location, footer, and Exit. [Menu comparison and screenshots](menu-activation.md)
+
+**Enlarged link taps** use KOReader's 57-pixel radius on the 300 DPI Oasis
+canvas. A tap near a web link honors the external-link setting. Allowed web
+links show the address, Copy, and QR controls over the EPUB page. Dismissal
+restores the same frame. [Link comparison and screenshot](link-taps.md)
+
+**Metadata archives** can move between Documents folders. Reader commits
+the merged destination before retiring the old snapshot and keeps newer
+dated copies for matching editions. Equal or unavailable dates
+retain both copies. KOReader's move uses the source copy on a collision.
+[Archive comparison and screenshots](book-metadata-archive.md#move-the-archive)
+
+**The optional EPUB header** has separate time, page, progress, chapter
+mark, and battery controls. A narrow header alternates author and title.
+Live metadata edits, immediate battery-event redraws, and exact whole-book
+counts for additional layouts remain open. The default chapter-and-page
+footer, marked progress track, and far-right Exit still render exactly.
+[Header comparison and screenshots](top-status-header.md)
+
+**Inline EPUB notes** join supported note paragraphs in the note band and
+at the original location. Per-paragraph anchors, selection, and backlinks
+still point to the source. Rich notes or failed composition retain their
+ordinary layout. [Inline notes and screenshots](in-page-footnotes.md#inline-all-footnote-content)
+
+The full Mac suite passed 1,595 library tests, one Kindle entry test,
+14 EPUB package tests, and four layout tests. The standard run skipped
+73 opt-in tests. The 18 focused Mac workflows passed twice. The five
+pinned native KOReader replays and the Mac simulator reproduced all 17
+new screenshots and the updated note-options screenshot byte for byte.
+
+The four original EPUB, PDF, AZW3, and MOBI documents opened through
+the normal picker, turned a page, and resumed with unchanged source
+bytes. A separate original EPUB note run verified 65 bands and 63
+canonical anchors across eight composed chapters.
+
+The local ARMHF package staged a stripped, statically linked
+38,889,212-byte executable with SHA-256
+`389c3341b6acaea8696dff12c31564f832b5a5375aeff627bf10d8bcfd059cb7`.
+The 30 staged files total 48,488,712 bytes. Both project licenses,
+SQLite notices, Launcher icon, OCR model, and the new control labels
+passed inspection. Foreground Kindle verification and Store publication
+remain pending.
+
+## Shortcuts, live metadata, note flows, and footer widths checkpoint
+
 **Book shortcuts** save a book or Documents folder. A folder can open its
 file list or the most recent available book, with optional subfolders.
 Reader verifies persistence, removal, unavailable targets, and reopening

@@ -48,20 +48,18 @@ only to find and compare relevant controls.
 device evidence. The control inventory and foreground Kindle acceptance
 checks below track the remaining feature and device work.
 
-**Pinned control inventory:** 309 of 540 in-scope reading-control rows have
-an implemented workflow, 180 are partial, 44 are gaps, and 7 need audit. The
-three newly in-scope rows represent Reader's own clock format and the two
-front-light readouts. Launcher continues to set the system clock and time zone.
-[Reading status controls](footer-composition.md#inactive-items-and-clock)
+**Pinned control inventory:** 316 of 540 in-scope reading-control rows have
+an implemented workflow, 173 are partial, 44 are gaps, and 7 need audit.
+The 44 gaps cover interface-language choices. The largest groups of partial
+controls are typography and style tweaks. [Control matrix](koreader-sdl-reference-controls.json)
 
-The Mac replay now covers file and folder shortcuts, three live metadata
-locations, grouped non-linear note originals, and separate width limits
-for footer author, book title and chapter title. It also verifies native
-dictionary fuzzy preferences and justified HTML article layout. Whole-note
-flattening, wider note layout support and complete gesture sampling remain open.
-[Book shortcuts](book-shortcuts.md) · [Live metadata](book-metadata-location.md) ·
-[Non-linear notes](in-page-footnotes.md#combined-non-linear-footnotes) ·
-[Footer widths](footer-composition.md#item-maximum-width)
+The Mac replay now covers separate menu gestures, enlarged EPUB link taps,
+archive relocation, alternate-header fields, and inline layout for simple
+in-page notes. Richer note layouts, live header metadata edits, immediate
+charging events, and complete gesture sampling remain open.
+[Menu activation](menu-activation.md) · [Link taps](link-taps.md) ·
+[Archive relocation](book-metadata-archive.md#move-the-archive) ·
+[Top header](top-status-header.md) · [Inline notes](in-page-footnotes.md#inline-all-footnote-content)
 
 The [statistics reset comparison](reading-statistics.md#reset-statistics) updates
 seven rows with an executable stock check and Mac verification. The

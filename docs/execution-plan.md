@@ -45,10 +45,10 @@ separate from Oasis acceptance. Schedule only relevant reading controls from
 this inventory; excluded controls are not implementation tasks, and inventory
 counts do not measure completed parity.
 
-The latest Mac workflow pass covers book and folder shortcuts, live sidecar
-locations, grouped non-linear footnotes, and independent footer width limits.
-The [implementation checklist](reading-parity-plan.md#execution-checklist)
-tracks remaining note layout, gesture and Kindle checks. The
+The latest Mac workflow pass covers menu activation, enlarged EPUB link taps,
+archive relocation, alternate-header controls, and inline layout for simple
+in-page notes. The [implementation checklist](reading-parity-plan.md#execution-checklist)
+tracks remaining layout, gesture and Kindle checks. The
 [simulator review](simulation-review.md) records the results for this checkpoint.
 
 ## Negotiated viewport verification
