@@ -26,6 +26,7 @@ enum Alphabet {
     Romanian,
     Latvian,
     French,
+    Polish,
 }
 
 #[derive(Default)]
@@ -93,6 +94,14 @@ impl OwnedPatterns {
     /// Accept a bounded KOReader pattern XML file as inert data. XML comments
     /// contain disabled rules and are ignored by the parser.
     pub(crate) fn parse_french(bytes: &[u8]) -> Option<Self> {
+        Self::parse_xml(bytes, Alphabet::French)
+    }
+
+    pub(crate) fn parse_polish(bytes: &[u8]) -> Option<Self> {
+        Self::parse_xml(bytes, Alphabet::Polish)
+    }
+
+    fn parse_xml(bytes: &[u8], alphabet: Alphabet) -> Option<Self> {
         if bytes.len() as u64 > MAX_FILE_BYTES {
             return None;
         }
@@ -102,7 +111,11 @@ impl OwnedPatterns {
         }
         let options = roxmltree::ParsingOptions {
             allow_dtd: false,
-            nodes_limit: 16_384,
+            nodes_limit: if matches!(alphabet, Alphabet::Polish) {
+                32_768
+            } else {
+                16_384
+            },
             ..Default::default()
         };
         let doc = roxmltree::Document::parse_with_options(input, options).ok()?;
@@ -127,7 +140,12 @@ impl OwnedPatterns {
             {
                 return None;
             }
-            if rules.len() >= MAX_RULES {
+            let max_rules = if matches!(alphabet, Alphabet::Polish) {
+                8192
+            } else {
+                MAX_RULES
+            };
+            if rules.len() >= max_rules {
                 return None;
             }
             let mut children = node.children();
@@ -153,7 +171,7 @@ impl OwnedPatterns {
             }
             rules.push(rule);
         }
-        Self::parse_rules(rules.iter().map(String::as_str), Alphabet::French)
+        Self::parse_rules(rules.iter().map(String::as_str), alphabet)
     }
 
     /// Czech TeX contains weighted patterns and explicit word exceptions.
@@ -247,6 +265,8 @@ impl OwnedPatterns {
         let scripts = CodePointMapData::<Script>::new();
         let (max_rules, max_nodes) = if matches!(alphabet, Alphabet::Latvian) {
             (16_384, 32_768)
+        } else if matches!(alphabet, Alphabet::Polish) {
+            (8192, MAX_NODES)
         } else {
             (MAX_RULES, MAX_NODES)
         };
@@ -282,7 +302,8 @@ impl OwnedPatterns {
                     | Alphabet::Czech
                     | Alphabet::Romanian
                     | Alphabet::Latvian
-                    | Alphabet::French => ch.is_lowercase() && scripts.get(ch) == Script::Latin,
+                    | Alphabet::French
+                    | Alphabet::Polish => ch.is_lowercase() && scripts.get(ch) == Script::Latin,
                     Alphabet::SerbianCyrillic => {
                         ch.is_lowercase() && scripts.get(ch) == Script::Cyrillic
                     }

@@ -254,6 +254,16 @@ Blitz do not yet support this property. Source text and saved anchors are
 unchanged. This addition has not yet been built or behaviorally tested.
 [Pinned CRE parser](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L3657-L3670)
 
+Publisher and user CSS `text-transform` support `none`, `uppercase`,
+`lowercase` and `capitalize` on ordinary horizontal ASCII paragraphs, including
+inline styles and inherited resets. Reader shapes a same-length display copy;
+search, selection, source text and saved anchors retain the original bytes.
+Non-ASCII paragraphs, Turkish, Azeri and Crimean Tatar language tags, complex
+projected text, ruby, images, generated content, first-letter/first-line styles,
+vertical layout and Blitz fall back to the original text. Hyphenation uses the
+original text. This bounded implementation has not yet been built or tested.
+[Pinned CRE parser](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L3674-L3677)
+
 **Spacing between paragraphs** contains three mutually exclusive choices.
 Full and half spacing add 1em or 0.5em before a paragraph that directly
 follows another paragraph. No spacing clears the two vertical margins

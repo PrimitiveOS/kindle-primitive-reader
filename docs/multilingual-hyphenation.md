@@ -567,3 +567,31 @@ license for those adaptations. Its link records provenance, not permission to
 use or redistribute it. Obtain any optional file only with the necessary
 permission. Source-rights and distribution review remain unresolved; keeping
 a file separate from Reader does not establish legal compliance.
+
+
+### Optional Polish pattern override
+
+Reader includes a Polish fallback dictionary. If you have permission to use a
+KOReader-format Polish pattern file, create `reader/data/hyphenation/`, copy
+it there as `polish.pattern`, and close and reopen Reader. In a Polish book,
+Text › Hyphenation reports whether the override is loaded, missing or invalid.
+A valid file replaces the built-in Polish rules; a missing or invalid file
+leaves the built-in dictionary active. Reader reads the file locally as inert
+data and does not download or execute it.
+
+The bounded parser accepts a `HyphenationDescription` XML root containing
+weighted lowercase Latin `<pattern>` elements and optional comments. Comments
+are ignored, word-edge spaces become boundary markers, and document type
+declarations are disabled. Files over 256 KiB, more than 8,192 patterns, more
+than 32,768 XML nodes, tries above 8,192 nodes, symlinks, unsupported elements
+and malformed rules are rejected. Reader applies 2 / 2 minima and emits only
+original UTF-8 grapheme boundaries. The pinned KOReader file has 4,836 active
+rules and fits these bounds; exact behavior, real-book comparison and memory
+use remain unverified. Reopen Reader after replacing the file.
+
+The [pinned KOReader Polish file](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/Polish.pattern)
+identifies LGPL terms for its converted/corrected patterns and contains
+historical source notices. It is not bundled with Reader. Obtain any optional
+file only with the necessary permission. Source-rights, licensing obligations
+and distribution review remain unresolved; keeping a file separate from
+Reader does not establish legal compliance.

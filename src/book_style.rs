@@ -472,6 +472,15 @@ impl VariantPosition {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum TextTransform {
+    #[default]
+    None,
+    Uppercase,
+    Lowercase,
+    Capitalize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LigatureExtras {
     pub(crate) contextual: Option<bool>,
     pub(crate) discretionary: Option<bool>,
@@ -594,6 +603,7 @@ pub(crate) struct Style {
     pub(crate) image_full_line: bool,
     pub alignment: Option<Alignment>,
     pub(crate) last_line_alignment: Option<Alignment>,
+    pub(crate) text_transform: TextTransform,
     pub line_break: Option<LineBreak>,
     /// CRE's private line-break mode, retained separately from standard CSS.
     pub(crate) loose_nonbreaking: bool,
@@ -670,6 +680,7 @@ impl Default for Style {
             image_full_line: false,
             alignment: None,
             last_line_alignment: None,
+            text_transform: TextTransform::None,
             line_break: None,
             loose_nonbreaking: false,
             word_break: WordBreak::Normal,
@@ -1334,6 +1345,7 @@ impl BookStyle {
                     Property::LastLineAlignment(alignment) => {
                         style.last_line_alignment = *alignment
                     }
+                    Property::TextTransform(value) => style.text_transform = *value,
                     Property::Weight(weight) => {
                         style.font_weight = weight.resolve(parent.font_weight)
                     }
@@ -2200,7 +2212,8 @@ const VARIANT_POSITION: usize = 61;
 const VARIANT_HISTORICAL: usize = 62;
 const LIGATURE_EXTRAS: usize = 63;
 const LAST_LINE_ALIGNMENT: usize = 64;
-const CASCADE_PROPERTY_COUNT: usize = 65;
+const TEXT_TRANSFORM: usize = 65;
+const CASCADE_PROPERTY_COUNT: usize = 66;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2261,6 +2274,7 @@ fn choose<'a>(
             Property::Background(_) => 3,
             Property::Alignment(_) => 4,
             Property::LastLineAlignment(_) => LAST_LINE_ALIGNMENT,
+            Property::TextTransform(_) => TEXT_TRANSFORM,
             Property::Weight(_) => 5,
             Property::Slant(_) => 6,
             Property::CommonLigatures(_) => COMMON_LIGATURES,
@@ -2383,6 +2397,7 @@ enum Property {
     Background(Option<u8>),
     Alignment(Alignment),
     LastLineAlignment(Option<Alignment>),
+    TextTransform(TextTransform),
     Weight(Weight),
     Slant(FontStyle),
     CommonLigatures(bool),
@@ -2897,6 +2912,15 @@ impl<'i> DeclarationParser<'i> for Properties {
                         "right" => Some(Alignment::Right),
                         "center" => Some(Alignment::Center),
                         "justify" => Some(Alignment::Justify),
+                        _ => return Err(ParseError::unexpected_token()),
+                    },
+                ),
+                "text-transform" => Property::TextTransform(
+                    match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                        "none" => TextTransform::None,
+                        "uppercase" => TextTransform::Uppercase,
+                        "lowercase" => TextTransform::Lowercase,
+                        "capitalize" => TextTransform::Capitalize,
                         _ => return Err(ParseError::unexpected_token()),
                     },
                 ),

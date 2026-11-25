@@ -209,6 +209,18 @@ impl Reader {
                             "French built-in · override invalid"
                         }
                     }
+                } else if dictionary == Some(Dictionary::Polish) {
+                    match &self.user_hyphenation.polish {
+                        crate::user_hyphenation::OptionalPatterns::Loaded(_) => {
+                            "Polish override loaded"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Missing => {
+                            "Polish built-in · override missing"
+                        }
+                        crate::user_hyphenation::OptionalPatterns::Invalid => {
+                            "Polish built-in · override invalid"
+                        }
+                    }
                 } else {
                     dictionary.map_or("No dictionary for the main language", Dictionary::label)
                 };
@@ -276,6 +288,12 @@ impl Reader {
             items.push(
                 Item::new("French pattern override", Action::Heading)
                     .detail("Copy french.pattern to reader/data/hyphenation, then reopen Reader"),
+            );
+        }
+        if dictionary == Some(Dictionary::Polish) {
+            items.push(
+                Item::new("Polish pattern override", Action::Heading)
+                    .detail("Copy polish.pattern to reader/data/hyphenation, then reopen Reader"),
             );
         }
         let defaults = self

@@ -138,7 +138,10 @@ impl Reader {
         if page == Page::Tokens {
             return filename::GUIDE
                 .iter()
-                .map(|(tokens, meaning)| Item::new(*tokens, Action::Heading).detail(*meaning))
+                .map(|(tokens, meaning)| {
+                    Item::new(*tokens, Action::Heading)
+                        .detail(language.export_settings_text(meaning))
+                })
                 .collect();
         }
         if page == Page::Settings {
@@ -295,21 +298,31 @@ impl Reader {
     }
 
     pub(super) fn draw_export_template(&self, canvas: &mut Canvas, scope: Scope) {
+        let language = self.controls.interface_language;
         canvas.single_line_field(
             Rect::new(LIST_X, LIST_Y, WIDTH as i32 - 2 * LIST_X, 130),
             &self.editor,
-            scope.hint(),
+            language.export_settings_text(scope.hint()),
             false,
         );
         canvas.text(
             Rect::new(LIST_X, LIST_Y + 148, WIDTH as i32 - 2 * LIST_X, 74),
-            self.notice
-                .as_deref()
-                .unwrap_or("Save an empty field to use the default name."),
+            self.notice.as_deref().unwrap_or_else(|| {
+                language.export_settings_text("Save an empty field to use the default name.")
+            }),
             CAPTION,
         );
-        canvas.button(CLEAR_DRAFT, "Clear", false, false);
-        canvas.keyboard(self.editor.layer, "Save", None);
+        canvas.button(
+            CLEAR_DRAFT,
+            language.export_settings_text("Clear"),
+            false,
+            false,
+        );
+        canvas.keyboard(
+            self.editor.layer,
+            language.export_settings_text("Save"),
+            None,
+        );
         if self.can_paste_text() {
             external_link::draw_paste(canvas);
         }
@@ -337,13 +350,25 @@ impl Reader {
             return Change::Partial;
         }
         let layout = Layout::new(WIDTH, HEIGHT, 4, 5);
-        let Some(key) = keyboard_key(&layout, &self.editor, "Save", x, y) else {
+        let Some(key) = keyboard_key(
+            &layout,
+            &self.editor,
+            self.controls
+                .interface_language
+                .export_settings_text("Save"),
+            x,
+            y,
+        ) else {
             return Change::None;
         };
         if matches!(self.editor.press(key), Press::Go) {
             let text = self.editor.string();
             if !filename::valid_template(&text) {
-                return self.report("Enter up to 120 characters on one line");
+                return self.report(
+                    self.controls
+                        .interface_language
+                        .export_settings_text("Enter up to 120 characters on one line"),
+                );
             }
             let mut preferences = self.export_settings.preferences.clone();
             preferences.store_template(scope, text);

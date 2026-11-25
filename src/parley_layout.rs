@@ -19,8 +19,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::book_style::{
-    CssLength, ImageLength, LigatureExtras, Style, TextDecoration, VariantCaps, VariantEastAsian,
-    VariantNumeric, VariantPosition,
+    CssLength, ImageLength, LigatureExtras, Style, TextDecoration, TextTransform, VariantCaps,
+    VariantEastAsian, VariantNumeric, VariantPosition,
 };
 use crate::comic::ImagePage;
 use crate::epub::Book;
@@ -3306,6 +3306,94 @@ fn make_paragraph(
     )
 }
 
+// A same-length visual copy keeps every canonical byte boundary intact. Avoid
+// synthetic/projection paths and language-sensitive casing until a general
+// many-to-many source mapping is available.
+fn ascii_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<String> {
+    if !block.text.is_ascii()
+        || block.text.len() > MAX_TEXT_BYTES
+        || !matches!(
+            &block.styled_text,
+            crate::flow_view::StyledRuns::Original(_)
+        )
+        || !block.generated.is_empty()
+        || !block.images.is_empty()
+        || !block.ruby.is_empty()
+        || !block.bidi_controls.is_empty()
+        || block.first_letter.is_some()
+        || styles.get(block.element)?.first_line.is_some()
+    {
+        return None;
+    }
+    let locale_sensitive = |language: Option<Language>| {
+        language.is_some_and(|language| {
+            matches!(language.language(), "tr" | "tur" | "az" | "aze" | "crh")
+        })
+    };
+    if locale_sensitive(block.language)
+        || block
+            .styled_text
+            .iter()
+            .any(|run| locale_sensitive(run.language))
+    {
+        return None;
+    }
+    let default = styles.get(block.element)?.text_transform;
+    if default == TextTransform::None
+        && block.styled_text.iter().all(|run| {
+            styles
+                .get(run.element)
+                .is_some_and(|style| style.text_transform == TextTransform::None)
+        })
+    {
+        return None;
+    }
+    let needs_words = default == TextTransform::Capitalize
+        || block.styled_text.iter().any(|run| {
+            styles
+                .get(run.element)
+                .is_some_and(|style| style.text_transform == TextTransform::Capitalize)
+        });
+    let mut starts = vec![false; if needs_words { block.text.len() } else { 0 }];
+    if needs_words {
+        for range in crate::selection::word_ranges(block.text) {
+            if let Some(start) = starts.get_mut(range.start) {
+                *start = true;
+            }
+        }
+    }
+    let original = block.text.as_bytes();
+    let mut result = original.to_vec();
+    let transform = |range: Range<usize>, value: TextTransform, output: &mut [u8]| {
+        for index in range {
+            output[index] = match value {
+                TextTransform::None => original[index],
+                TextTransform::Uppercase => original[index].to_ascii_uppercase(),
+                TextTransform::Lowercase => original[index].to_ascii_lowercase(),
+                TextTransform::Capitalize if starts[index] => original[index].to_ascii_uppercase(),
+                TextTransform::Capitalize => original[index],
+            };
+        }
+    };
+    transform(0..original.len(), default, &mut result);
+    let mut previous_end = 0;
+    for run in block.styled_text.iter() {
+        if run.bytes.start < previous_end
+            || run.bytes.end > original.len()
+            || run.bytes.start > run.bytes.end
+        {
+            return None;
+        }
+        transform(
+            run.bytes.clone(),
+            styles.get(run.element)?.text_transform,
+            &mut result,
+        );
+        previous_end = run.bytes.end;
+    }
+    String::from_utf8(result).ok()
+}
+
 fn shape_paragraph(
     context: &mut LayoutContext<PaintBrush>,
     fonts: &mut FontContext,
@@ -3359,7 +3447,9 @@ fn shape_paragraph(
     }
     relaxed_nonbreaking.sort_unstable();
     relaxed_nonbreaking.dedup();
-    let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
+    let visual_text = ascii_transformed(block, styles);
+    let layout_text = visual_text.as_deref().unwrap_or(block.text);
+    let mut builder = context.ranged_builder(fonts, layout_text, 1.0, true);
     builder.set_bidi_controls(&block.bidi_controls);
     builder.set_relaxed_nonbreaking(&relaxed_nonbreaking);
     let font_weights = style.font_weights.clone();
@@ -3708,7 +3798,7 @@ fn shape_paragraph(
     for image in images {
         builder.push_inline_box(image.clone());
     }
-    let mut layout = builder.build(&block.text);
+    let mut layout = builder.build(layout_text);
     if style.steady_line_heights
         && !fit_font_metrics
         && images.is_empty()

@@ -44,6 +44,7 @@ impl Reset {
                         | COMMON_LIGATURES
                         | LIGATURE_EXTRAS
                         | LAST_LINE_ALIGNMENT
+                        | TEXT_TRANSFORM
                         | DIRECTION
                         | LETTER_SPACING
                         | VARIANT_CAPS
@@ -76,6 +77,7 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "background" | "background-color" => vec![3],
         "text-align" => vec![4],
         "text-align-last" | "-epub-text-align-last" => vec![LAST_LINE_ALIGNMENT],
+        "text-transform" => vec![TEXT_TRANSFORM],
         "font-weight" => vec![5],
         "font-style" => vec![6],
         "direction" => vec![DIRECTION],
@@ -150,6 +152,7 @@ pub(super) fn apply_reset(
         3 => style.background = value.background,
         4 => style.alignment = value.alignment,
         LAST_LINE_ALIGNMENT => style.last_line_alignment = value.last_line_alignment,
+        TEXT_TRANSFORM => style.text_transform = value.text_transform,
         5 => style.font_weight = value.font_weight,
         6 => style.font_style = value.font_style,
         COMMON_LIGATURES => style.common_ligatures = value.common_ligatures,

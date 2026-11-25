@@ -580,6 +580,59 @@ const EXPORT_SETTINGS_LABELS: &[(&str, &str)] = &[
         "Some folders are unavailable",
         "Một số thư mục không khả dụng",
     ),
+    ("Title, author, series", "Tên sách, tác giả, bộ sách"),
+    (
+        "Source filename, full source path",
+        "Tên tệp nguồn, đường dẫn đầy đủ của tệp nguồn",
+    ),
+    (
+        "Date (year-month-day), month-day",
+        "Ngày (năm-tháng-ngày), tháng-ngày",
+    ),
+    (
+        "Local time (hour:minute), hour-minute-second",
+        "Giờ địa phương (giờ:phút), giờ-phút-giây",
+    ),
+    (
+        "Total or last page label, current page label",
+        "Nhãn tổng số trang hoặc trang cuối, nhãn trang hiện tại",
+    ),
+    (
+        "Percent read in the book, in the chapter",
+        "Phần trăm đã đọc trong sách, trong chương",
+    ),
+    (
+        "Chapter title, pages left in the chapter",
+        "Tên chương, số trang còn lại trong chương",
+    ),
+    (
+        "Estimated reading time left in the book, in the chapter",
+        "Thời gian đọc ước tính còn lại trong sách, trong chương",
+    ),
+    (
+        "Battery level, battery symbol, footer separator",
+        "Mức pin, biểu tượng pin, dấu phân cách chân trang",
+    ),
+    (
+        "Stays literal on its own. %%T writes % followed by the title.",
+        "Giữ nguyên khi đứng riêng. %%T ghi % rồi đến tên sách.",
+    ),
+    (
+        "Unknown or unavailable tokens become N-A in filenames.",
+        "Ký hiệu không rõ hoặc không khả dụng thành N-A trong tên tệp.",
+    ),
+    ("Example: %T - %D", "Ví dụ: %T - %D"),
+    ("Example: Reading notes %D", "Ví dụ: Reading notes %D"),
+    (
+        "Save an empty field to use the default name.",
+        "Lưu trường trống để dùng tên mặc định.",
+    ),
+    ("Clear", "Xóa"),
+    ("Save", "Lưu"),
+    (
+        "Enter up to 120 characters on one line",
+        "Nhập tối đa 120 ký tự trên một dòng",
+    ),
 ];
 
 // Fixed statistics-reset controls; book names and destructive scopes stay untouched.
