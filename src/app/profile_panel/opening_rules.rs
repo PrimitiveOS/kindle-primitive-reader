@@ -232,35 +232,41 @@ impl Reader {
         let Some(profile) = self.profiles.get(index) else {
             return Vec::new();
         };
+        let language = self.controls.interface_language;
         let empty = Conditions::default();
         let rules = event.conditions(profile).unwrap_or(&empty);
         let action = |title: &str, command| Item::new(title, event.action(index, command));
         match page {
             Page::Overview if event == Event::Closing => self.close_profile_items(index),
             Page::Overview => {
-                let mut items = vec![action("Always apply", Command::Always)];
+                let mut items = vec![action(
+                    language.reading_profile_text("Always apply"),
+                    Command::Always,
+                )];
                 if !profile.applies_on_open() {
                     items.extend(self.condition_rows(event, index, rules));
                 }
                 items.push(
                     Item::new(
-                        "Only within time window",
+                        language.reading_profile_text("Only within time window"),
                         Action::Show(Screen::ReadingProfileOpening(index, Page::TimeWindow)),
                     )
-                    .detail(
-                        profile
-                            .opening_time()
-                            .map_or_else(|| "Any time".into(), super::opening_time::window_label),
-                    ),
+                    .detail(profile.opening_time().map_or_else(
+                        || language.reading_profile_text("Any time").into(),
+                        super::opening_time::window_label,
+                    )),
                 );
-                items.push(action("Ask to execute", Command::Ask));
+                items.push(action(
+                    language.reading_profile_text("Ask to execute"),
+                    Command::Ask,
+                ));
                 items.push(
                     Item::new(
-                        "Execution delay",
+                        language.reading_profile_text("Execution delay"),
                         Action::Show(Screen::ReadingProfileOpening(index, Page::Delay)),
                     )
                     .detail(profile.opening_execution().map_or_else(
-                        || "At opening".into(),
+                        || language.reading_profile_text("At opening").into(),
                         |options| super::opening_execution::timing_label(options.timing),
                     )),
                 );
@@ -317,43 +323,61 @@ impl Reader {
     }
 
     fn condition_rows(&self, event: Event, index: usize, rules: &Conditions) -> Vec<Item> {
+        let language = self.controls.interface_language;
+        let selected_label = |count| {
+            if language.is_english() {
+                selected(count)
+            } else if count == 0 {
+                language.reading_profile_text("Off").into()
+            } else {
+                format!("Đã chọn {count}")
+            }
+        };
         let command = |text, command| Item::new(text, event.action(index, command));
         let mut items = vec![
             Item::new(
                 match event {
-                    Event::Closing => "Closing screen orientation",
+                    Event::Closing => language.reading_profile_text("Closing screen orientation"),
                     Event::Opening if self.negotiated_opening_profiles => {
-                        "Opening screen orientation"
+                        language.reading_profile_text("Opening screen orientation")
                     }
-                    Event::Opening => "Preferred opening orientation",
+                    Event::Opening => {
+                        language.reading_profile_text("Preferred opening orientation")
+                    }
                 },
                 Action::Show(event.screen(index, Page::Orientation)),
             )
-            .detail(selected(rules.orientations.len())),
+            .detail(selected_label(rules.orientations.len())),
             Item::new(
-                "Book metadata contains",
+                language.reading_profile_text("Book metadata contains"),
                 Action::Show(event.screen(index, Page::Metadata)),
             )
-            .detail(selected(rules.metadata.len())),
+            .detail(selected_label(rules.metadata.len())),
             Item::new(
-                "File path contains",
+                language.reading_profile_text("File path contains"),
                 Action::Show(Screen::ProfileName(event.path_name(index))),
             )
             .detail(rules.path.as_deref().map_or_else(
-                || "Off".into(),
+                || language.reading_profile_text("Off").into(),
                 |pattern| self.opening_rule_path_detail(pattern),
             )),
             Item::new(
-                "Book is in a collection",
+                language.reading_profile_text("Book is in a collection"),
                 Action::Show(event.screen(index, Page::Collections)),
             )
-            .detail(selected(rules.collections.len())),
+            .detail(selected_label(rules.collections.len())),
         ];
         if event == Event::Opening {
-            items.push(command("Only for new books", Command::NewOnly));
+            items.push(command(
+                language.reading_profile_text("Only for new books"),
+                Command::NewOnly,
+            ));
         }
         if rules.has_matchers() || rules.new_only {
-            items.push(command("Clear conditions", Command::Clear));
+            items.push(command(
+                language.reading_profile_text("Clear conditions"),
+                Command::Clear,
+            ));
         }
         items
     }

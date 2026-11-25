@@ -3413,8 +3413,8 @@ fn contextual_transformed(block: &LayoutBlock<'_>, styles: &[Style]) -> Option<O
     Some(Some(visual.into_owned()))
 }
 
-// Pseudo styles use the same source byte ranges as the existing first-line
-// measure/replay passes. Restrict this path to ASCII so casing is one-to-one.
+// Pseudo and generated styles use the same layout byte ranges as the existing
+// first-line passes and source projection. ASCII keeps casing one-to-one.
 fn pseudo_ascii_transformed(
     block: &LayoutBlock<'_>,
     styles: &[Style],
@@ -3445,6 +3445,7 @@ fn pseudo_ascii_transformed(
         return None;
     }
     let mut modes = vec![base.text_transform; block.text.len()];
+    let mut covered = vec![false; block.text.len()];
     if let Some(line) = base.first_line.as_ref().filter(|_| first_end > 0) {
         modes[..first_end].fill(line.apply(base).text_transform);
     }
@@ -3465,6 +3466,7 @@ fn pseudo_ascii_transformed(
         }
         let style = styles.get(run.element)?;
         modes[run.bytes.clone()].fill(style.text_transform);
+        covered[run.bytes.clone()].fill(true);
         let first_part = run.bytes.start..run.bytes.end.min(first_end);
         if !first_part.is_empty() {
             let transformed = first_style(style).map_or(style.text_transform, |s| s.text_transform);
@@ -3472,8 +3474,59 @@ fn pseudo_ascii_transformed(
         }
         previous_end = run.bytes.end;
     }
+    let mut generated_end = 0;
+    let mut source_run = 0;
+    for generated in block.generated {
+        if generated.bytes.start < generated_end
+            || generated.bytes.start > generated.bytes.end
+            || generated.bytes.end > modes.len()
+        {
+            return None;
+        }
+        while block
+            .styled_text
+            .get(source_run)
+            .is_some_and(|run| run.bytes.end <= generated.bytes.start)
+        {
+            source_run += 1;
+        }
+        if block
+            .styled_text
+            .get(source_run)
+            .is_some_and(|run| run.bytes.start < generated.bytes.end)
+        {
+            return None;
+        }
+        modes[generated.bytes.clone()].fill(generated.style.text_transform);
+        covered[generated.bytes.clone()].fill(true);
+        let first_part = generated.bytes.start..generated.bytes.end.min(first_end);
+        if !first_part.is_empty() {
+            let transformed = generated
+                .host
+                .and_then(|owner| styles.get(owner))
+                .and_then(|owner| owner.first_line.as_deref())
+                .filter(|line| line.host == block.element)
+                .map(|line| line.apply(generated.style).text_transform)
+                .unwrap_or(generated.style.text_transform);
+            modes[first_part].fill(transformed);
+        }
+        generated_end = generated.bytes.end;
+    }
+    if block
+        .text
+        .bytes()
+        .zip(&covered)
+        .any(|(byte, covered)| byte.is_ascii_alphabetic() && !*covered)
+    {
+        return None;
+    }
     if let Some(letter) = &block.first_letter {
         if letter.bytes.start > letter.bytes.end || letter.bytes.end > modes.len() {
+            return None;
+        }
+        if block.generated.iter().any(|generated| {
+            generated.bytes.start < letter.bytes.end && letter.bytes.start < generated.bytes.end
+        }) {
             return None;
         }
         let style = styles.get(letter.owner)?;
@@ -3521,18 +3574,20 @@ fn bounded_transformed(
     pass: first_line::Pass,
 ) -> Option<String> {
     if block.text.len() > MAX_TEXT_BYTES
-        || !matches!(
+        || (!matches!(
             &block.styled_text,
             crate::flow_view::StyledRuns::Original(_)
-        )
-        || !block.generated.is_empty()
+        ) && block.generated.is_empty())
         || !block.images.is_empty()
         || !block.ruby.is_empty()
         || !block.bidi_controls.is_empty()
     {
         return None;
     }
-    if block.first_letter.is_some() || styles.get(block.element)?.first_line.is_some() {
+    if !block.generated.is_empty()
+        || block.first_letter.is_some()
+        || styles.get(block.element)?.first_line.is_some()
+    {
         return pseudo_ascii_transformed(block, styles, pass);
     }
     if let Some(result) = contextual_transformed(block, styles) {
@@ -3742,7 +3797,11 @@ fn shape_paragraph(
     }
     relaxed_nonbreaking.sort_unstable();
     relaxed_nonbreaking.dedup();
-    let visual_text = bounded_transformed(block, styles, pass);
+    let visual_text = if images.is_empty() {
+        bounded_transformed(block, styles, pass)
+    } else {
+        None
+    };
     let layout_text = visual_text.as_deref().unwrap_or(block.text);
     // Transformations may change byte positions, so only pass boundaries when
     // the layout is using the unchanged visible source text.

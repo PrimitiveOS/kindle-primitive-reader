@@ -45,12 +45,37 @@ pub(crate) struct Rules {
     pub(crate) brazilian: OptionalPatterns,
     words: BTreeMap<String, BTreeMap<String, Vec<u16>>>,
 }
-pub(crate) fn locale(tag: &Language) -> &str {
+fn legacy_locale(tag: &Language) -> &str {
     match tag.as_str() {
         "en" | "eng" | "en-Latn" | "en-Latn-US" => "en-US",
         "en-Latn-GB" => "en-GB",
         other => other,
     }
+}
+
+/// The personal dictionaries shared by the corresponding built-in patterns.
+/// Keep the old exact tag for scripts that cannot use those patterns.
+pub(crate) fn locale(tag: &Language) -> &str {
+    if matches!(tag.script(), None | Some("Latn")) {
+        match crate::typography_language::canonical_dictionary_language(tag.language()) {
+            "en" => {
+                return if tag.region() == Some("GB") {
+                    "en-GB"
+                } else {
+                    "en-US"
+                };
+            }
+            "pt" => {
+                return if tag.region() == Some("BR") {
+                    "pt-BR"
+                } else {
+                    "pt-PT"
+                };
+            }
+            _ => {}
+        }
+    }
+    legacy_locale(tag)
 }
 
 fn letters(word: &str) -> Option<String> {
@@ -78,6 +103,17 @@ fn boundaries(word: &str) -> Vec<usize> {
 }
 
 impl Rules {
+    /// Existing exact-region entries take precedence over a shared dictionary
+    /// key, so changing the default does not discard or override saved rules.
+    pub(crate) fn locale_for_word<'a>(&self, language: &'a Language, word: &str) -> &'a str {
+        let old = legacy_locale(language);
+        if self.contains(old, word) {
+            old
+        } else {
+            locale(language)
+        }
+    }
+
     pub(crate) fn has_rules(&self) -> bool {
         self.enabled && !self.words.is_empty()
     }

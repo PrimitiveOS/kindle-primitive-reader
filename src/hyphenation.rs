@@ -915,7 +915,8 @@ pub(crate) fn with_user_rules_text(
         let Some(language) = run.language else {
             continue;
         };
-        let loc = crate::user_hyphenation::locale(&language);
+        let word = &text[range.clone()];
+        let loc = rules.locale_for_word(&language, word);
         let allowed = allows_user_rules;
         let mut covered = run.bytes.end.min(range.end);
         if run.bytes.start > range.start
@@ -925,7 +926,7 @@ pub(crate) fn with_user_rules_text(
                     && allowed(&styles[s.element])
                     && s.language
                         .as_ref()
-                        .is_some_and(|l| crate::user_hyphenation::locale(l) == loc);
+                        .is_some_and(|l| rules.locale_for_word(l, word) == loc);
                 covered = covered.max(s.bytes.end.min(range.end));
                 valid
             })
@@ -933,7 +934,6 @@ pub(crate) fn with_user_rules_text(
         {
             continue;
         }
-        let word = &text[range.clone()];
         if let Some(mask) = rules.mask(loc, word) {
             for byte in crate::user_hyphenation::source_offsets(word, &mask) {
                 // A matching publisher soft hyphen already supplies the boundary and glyph.

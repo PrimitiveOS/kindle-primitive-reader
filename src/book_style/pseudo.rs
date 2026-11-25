@@ -609,7 +609,7 @@ pub(super) fn accepts_user_declaration(target: Target, property: &Property) -> b
                 })
         }
         (Target::Generated(_), _) => {
-            property_slot(property).is_some_and(|slot| slot <= 8 || (13..=20).contains(&slot))
+            property_slot(property).is_some_and(|slot| slot <= 8 || (13..=21).contains(&slot))
         }
         (Target::FirstLine, _) => is_first_line_typography(property),
         (
@@ -774,9 +774,6 @@ impl<'a> Rules<'a> {
                     let Some(slot) = property_slot(&decl.property) else {
                         continue;
                     };
-                    if matches!(target, Target::Generated(_)) && slot == 21 {
-                        continue;
-                    }
                     let priority = super::cascade_priority(
                         *origin,
                         decl.important,

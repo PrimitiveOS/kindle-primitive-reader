@@ -312,9 +312,11 @@ root language otherwise. Mixed-style and capitalization cases retain the
 bounded ASCII, Latin-1, Latin Extended A/B and Cyrillic implementation, with
 conservative fallbacks for combining marks and context-sensitive languages.
 First-letter and first-line overrides use the bounded ASCII path and the
-existing first-line measurement and replay. Complex projected text, ruby,
-images, generated content, non-ASCII pseudo-element paragraphs, vertical
-layout and Blitz also fall back to the original text. Search,
+existing first-line measurement and replay. Generated before/after text and
+its surrounding paragraph use that path only when their projected runs have
+validated, unambiguous ownership; generated-content budgets still apply.
+Other projected text, ruby, images, non-ASCII pseudo-element or generated
+paragraphs, vertical layout and Blitz fall back to the original text. Search,
 selection and hyphenation use the original text, and saved anchors are
 unchanged. This bounded implementation has not yet been built or tested.
 [Pinned CRE parser](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L3674-L3677)

@@ -1,6 +1,6 @@
 //! Edit a single word from its selection. Personal rules follow language across documents.
 use super::*;
-use crate::user_hyphenation::{Rules, eligible, locale};
+use crate::user_hyphenation::{Rules, eligible};
 
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 const REMOVE: Rect = Rect::new(LIST_X, LIST_Y + 350, 330, 96);
@@ -261,13 +261,14 @@ impl Reader {
             .skip_while(|s| s.bytes.end <= start)
             .take_while(|s| s.bytes.start < end);
         let run = spans.next()?;
-        let language = locale(run.language.as_ref()?);
+        let language = self
+            .user_hyphenation
+            .locale_for_word(run.language.as_ref()?, word);
         let allowed = |span: &crate::source::StyledText| {
             probe.custom_hyphenation_allowed.get(span.element) == Some(&true)
-                && span
-                    .language
-                    .as_ref()
-                    .is_some_and(|lang| locale(lang) == language)
+                && span.language.as_ref().is_some_and(|lang| {
+                    self.user_hyphenation.locale_for_word(lang, word) == language
+                })
         };
         let mut covered = run.bytes.end.min(end);
         (run.bytes.start <= start

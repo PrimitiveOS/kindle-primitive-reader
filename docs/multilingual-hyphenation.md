@@ -15,6 +15,14 @@ including supported accented graphemes, and authored soft hyphens can be
 matched; mixed or non-Latin scripts are rejected. Actual breaking and
 comparison with KOReader on real books remain unverified.
 
+New personal rules for English and Portuguese use shared keys corresponding
+to their selected US/UK or Portugal/Brazil dictionary. An existing old
+exact-region rule for the same word takes precedence and is kept intact;
+removing it can reveal a shared rule if one already exists. Other languages
+continue to use their existing personal-rule keys. Unlike KOReader's single
+main-language personal dictionary, Reader still selects rules per embedded
+language run. Migration and real-book behavior remain unverified.
+
 | Dictionary | Before / after | Pinned rules |
 | --- | ---: | ---: |
 | Spanish | 2 / 2 | 4,692 |

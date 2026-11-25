@@ -190,12 +190,12 @@ impl Reader {
                     opening_rules::Page::Overview,
                 )),
             )
-            .detail(opening_rules::summary(profile)),
+            .detail(language.reading_profile_text(opening_rules::summary(profile))),
             Item::new(
                 language.reading_profile_text("Apply on book closing"),
                 Action::Show(Event::Closing.screen(index, Page::Overview)),
             )
-            .detail(on_close::summary(profile)),
+            .detail(language.reading_profile_text(on_close::summary(profile))),
             Item::new(
                 language.reading_profile_text("Rename"),
                 Action::Show(Screen::ProfileName(Name::Rename(index))),

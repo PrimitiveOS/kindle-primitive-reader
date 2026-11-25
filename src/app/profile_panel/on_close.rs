@@ -84,16 +84,17 @@ impl Reader {
         let Some(profile) = self.profiles.get(index) else {
             return Vec::new();
         };
+        let language = self.controls.interface_language;
         let options = profile.closing_options();
         let mut items: Vec<_> = [None, Some(OnClose::Apply), Some(OnClose::Ask)]
             .into_iter()
             .map(|policy| {
                 Item::new(
-                    policy_label(policy, options.is_some()),
+                    language.reading_profile_text(policy_label(policy, options.is_some())),
                     Action::SetClosingProfile(index, policy),
                 )
                 .detail(if policy == profile.apply_on_close() {
-                    "Selected"
+                    language.reading_profile_text("Selected")
                 } else {
                     ""
                 })
@@ -101,25 +102,24 @@ impl Reader {
             .collect();
         items.extend([
             Item::new(
-                "Closing conditions",
+                language.reading_profile_text("Closing conditions"),
                 Action::Show(Event::Closing.screen(index, Page::Conditions)),
             )
             .detail(
                 if options.is_some_and(|options| options.conditions.has_matchers()) {
-                    "Match any selected condition"
+                    language.reading_profile_text("Match any selected condition")
                 } else {
-                    "Any book"
+                    language.reading_profile_text("Any book")
                 },
             ),
             Item::new(
-                "Only within time window",
+                language.reading_profile_text("Only within time window"),
                 Action::Show(Event::Closing.screen(index, Page::TimeWindow)),
             )
-            .detail(
-                options
-                    .and_then(|options| options.time)
-                    .map_or_else(|| "Any time".into(), super::opening_time::window_label),
-            ),
+            .detail(options.and_then(|options| options.time).map_or_else(
+                || language.reading_profile_text("Any time").into(),
+                super::opening_time::window_label,
+            )),
         ]);
         items
     }
