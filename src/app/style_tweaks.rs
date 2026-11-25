@@ -175,7 +175,7 @@ impl Reader {
             return true;
         }
         self.active.as_ref().is_some_and(|book| {
-            supports_note_format(name, book.entry.format)
+            supports_note_format(name, book.reading_format())
                 && self.style_store.data.book(book.id).enabled
         })
     }
@@ -422,7 +422,7 @@ impl Reader {
         };
         let data = &self.style_store.data;
         let b = data.book(book.id);
-        let format = book.entry.format;
+        let format = book.reading_format();
         let action = |title: &str, command: Command| Item::new(title, Action::Style(command));
         match screen {
             Screen::StyleTweaks => {

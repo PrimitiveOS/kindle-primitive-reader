@@ -224,6 +224,15 @@ impl Reader {
                 );
             }
         }
+        // Every title and detail in this group is Reader-owned, including the
+        // numeric status strings. Preserve actions and order for menu search.
+        let language = self.controls.interface_language;
+        for item in &mut items {
+            item.title = language.navigation_title(&item.title).to_owned();
+            if let Some(detail) = &mut item.detail {
+                *detail = language.navigation_detail(detail);
+            }
+        }
         items
     }
 
@@ -593,6 +602,15 @@ impl Reader {
             Item::new("Vocabulary", Action::Show(Screen::Vocabulary)),
             self.preferred_dictionary_item(),
         ]);
+        // This group contains only Reader-owned fixed titles and descriptions.
+        // Leave search queries, book text and dictionary data untouched.
+        let language = self.controls.interface_language;
+        for item in &mut items {
+            item.title = language.search_title(&item.title).to_owned();
+            if let Some(detail) = &mut item.detail {
+                *detail = language.search_detail(detail).to_owned();
+            }
+        }
         items
     }
 

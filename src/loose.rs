@@ -143,7 +143,20 @@ pub(crate) struct Document {
 
 impl Document {
     /// Open the selected file with any supported resources contained inside it.
+    #[cfg(test)]
     pub(crate) fn open(path: &Path, format: Format) -> Result<Self> {
+        Self::open_classified(path, format).map(|(document, _)| document)
+    }
+
+    /// Keep the path-derived format for identity, but return the content format
+    /// separately when an XML document was successfully decoded as FictionBook.
+    pub(crate) fn open_classified(path: &Path, format: Format) -> Result<(Self, Format)> {
+        let mut effective_format = format;
+        let document = Self::open_inner(path, format, &mut effective_format)?;
+        Ok((document, effective_format))
+    }
+
+    fn open_inner(path: &Path, format: Format, effective_format: &mut Format) -> Result<Self> {
         let metadata = fs::metadata(path)?;
         let limit = match format {
             Format::Fb2 => MAX_FB2_INPUT,
@@ -215,7 +228,11 @@ impl Document {
                     .ok()
                     .map(|xml| xml.root_element().tag_name().name().to_owned());
                     if root.as_deref() == Some("FictionBook") {
-                        return fb2_document(input, fallback_title);
+                        // fb2_document checks the exact FictionBook namespace as
+                        // well as document validity before this affects behavior.
+                        let document = fb2_document(input, fallback_title)?;
+                        *effective_format = Format::Fb2;
+                        return Ok(document);
                     }
                     if root.as_deref() != Some("html") {
                         // Generic XML has no universal document stylesheet. Preserve

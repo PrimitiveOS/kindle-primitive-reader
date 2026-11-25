@@ -186,7 +186,7 @@ impl Reader {
                     || current == Some(value)
                     || self.active.as_ref().is_some_and(|book| {
                         matches!(
-                            book.entry.format,
+                            book.reading_format(),
                             crate::library::DocumentFormat::Fb2
                                 | crate::library::DocumentFormat::Fb3
                                 | crate::library::DocumentFormat::Text

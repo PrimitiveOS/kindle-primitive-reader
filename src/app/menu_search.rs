@@ -201,9 +201,19 @@ impl Catalog<'_> {
                 continue;
             }
             let path = format!("{breadcrumb} › {}", item.title);
-            // Screen panel rows are localized at creation. Match their English
-            // names as aliases without adding duplicate hits or altering ordinals.
+            // Localized top actions and Screen rows retain English
+            // aliases without duplicate hits or altered destination ordinals.
             let english_alias = match menu {
+                Menu::Top(TopGroup::Search) => self
+                    .reader
+                    .controls
+                    .interface_language
+                    .search_english(&item.title),
+                Menu::Top(TopGroup::Navigation) => self
+                    .reader
+                    .controls
+                    .interface_language
+                    .navigation_english(&item.title),
                 Menu::Bottom(BarPanel::TextScreen | BarPanel::ViewScreen) => self
                     .reader
                     .controls

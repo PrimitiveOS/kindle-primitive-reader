@@ -36,7 +36,7 @@ impl fmt::Display for TiffError {
             Self::Directory => "This TIFF has an invalid image directory",
             Self::Strips => "This TIFF has invalid or overlapping image strips",
             Self::Limit => "This TIFF exceeds Reader's image limits",
-            Self::Unsupported => "Reader supports single-page grayscale (1-bit or 8-bit) and RGB (8-bit) TIFF strips, with orientations 1–8",
+            Self::Unsupported => "Reader supports single-page grayscale, RGB and indexed-color TIFF strips, with orientations 1–8",
         })
     }
 }
@@ -58,7 +58,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
 
     let photometric = image.required(262, SHORT_ONLY)?;
     let samples = image.scalar(277, SHORT_ONLY, 1)?;
-    if !matches!((photometric, samples), (0 | 1, 1) | (2, 3)) {
+    if !matches!((photometric, samples), (0 | 1 | 3, 1) | (2, 3)) {
         return Err(TiffError::Unsupported);
     }
     let bits_values = image.numbers(258, SHORT_ONLY, samples as usize)?;
@@ -68,11 +68,12 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let compression = image.scalar(259, SHORT_ONLY, 1)?;
     let predictor = image.scalar(317, SHORT_ONLY, 1)?;
     let orientation = image.scalar(274, SHORT_ONLY, 1)?;
-    if !matches!(bits, 1 | 8)
+    if !matches!(bits, 1 | 2 | 4 | 8)
+        || (photometric != 3 && !matches!(bits, 1 | 8))
         || (samples == 3 && bits != 8)
         || bits_values.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != bits))
         || formats.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != 1))
-        || !(fill_order == 1 || (bits == 1 && fill_order == 2))
+        || !(fill_order == 1 || (bits < 8 && fill_order == 2))
         || !matches!(compression, 1 | 5 | 8 | 32946 | 32773)
         // TIFF reserves reverse fill order for special-purpose bilevel data;
         // the bit ordering of LZW streams is ambiguous in that combination.
@@ -86,6 +87,19 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     {
         return Err(TiffError::Unsupported);
     }
+
+    // TIFF ColorMap stores all 16-bit red entries, then green, then blue.
+    // Validate its complete count before making any palette lookup.
+    let palette_size = 1usize << bits;
+    let palette = if photometric == 3 {
+        Some(
+            image
+                .numbers(320, SHORT_ONLY, 3 * palette_size)?
+                .ok_or(TiffError::Directory)?,
+        )
+    } else {
+        None
+    };
 
     let rows_per_strip = image.scalar(278, SHORT_OR_LONG, u32::MAX)?;
     if rows_per_strip == 0 {
@@ -106,6 +120,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
             .as_ref()
             .and_then(|values| values.external.as_ref()),
         formats.as_ref().and_then(|values| values.external.as_ref()),
+        palette.as_ref().and_then(|values| values.external.as_ref()),
     ];
     let external: Vec<_> = occupied.iter().flatten().copied().collect();
     if external.iter().enumerate().any(|(index, first)| {
@@ -151,6 +166,16 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         return Err(TiffError::Strips);
     }
 
+    let palette_gray = palette.as_ref().map(|values| {
+        (0..palette_size)
+            .map(|index| {
+                let red = values.value(index) >> 8;
+                let green = values.value(palette_size + index) >> 8;
+                let blue = values.value(2 * palette_size + index) >> 8;
+                ((red * 2126 + green * 7152 + blue * 722) / 10000) as u8
+            })
+            .collect::<Vec<_>>()
+    });
     let invert = if photometric == 0 { 255 } else { 0 };
     let mut pixels = Vec::with_capacity(pixel_count as usize);
     remaining_rows = height;
@@ -174,7 +199,21 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
             }
         }
         let strip = unpacked.as_deref().unwrap_or(strip);
-        if samples == 3 {
+        if let Some(palette) = &palette_gray {
+            for row in strip.chunks_exact(row_bytes) {
+                for x in 0..width as usize {
+                    let offset = x * bits as usize;
+                    let byte = if fill_order == 1 {
+                        row[offset / 8]
+                    } else {
+                        row[offset / 8].reverse_bits()
+                    };
+                    let shift = 8 - bits as usize - offset % 8;
+                    let index = usize::from((byte >> shift) & ((1u16 << bits) - 1) as u8);
+                    pixels.push(palette[index]);
+                }
+            }
+        } else if samples == 3 {
             // Match image's sRGB-to-luma conversion used by other comic pages.
             pixels.extend(strip.chunks_exact(3).map(|rgb| {
                 ((u32::from(rgb[0]) * 2126 + u32::from(rgb[1]) * 7152 + u32::from(rgb[2]) * 722)
@@ -577,7 +616,7 @@ mod tests {
 
     fn fixture(order: ByteOrder, geometry: Geometry, strips: &[&[u8]]) -> Vec<u8> {
         let samples = if geometry.photometric == 2 { 3 } else { 1 };
-        let mut fields = [
+        let mut fields = vec![
             (256u16, SHORT, vec![geometry.width]),
             (257, LONG, vec![geometry.height]),
             (258, SHORT, vec![geometry.bits; samples]),
@@ -596,6 +635,23 @@ mod tests {
             (284, SHORT, vec![1]),
             (339, SHORT, vec![1; samples]),
         ];
+        if geometry.photometric == 3 {
+            let colors = 1usize << geometry.bits;
+            let palette = (0..3)
+                .flat_map(|channel| {
+                    (0..colors).map(move |index| {
+                        let rgb = match index % 4 {
+                            0 => [0, 0, 0],
+                            1 => [65535, 0, 0],
+                            2 => [0, 65535, 0],
+                            _ => [65535, 65535, 65535],
+                        };
+                        rgb[channel]
+                    })
+                })
+                .collect();
+            fields.insert(12, (320, SHORT, palette));
+        }
         let mut bytes = vec![0; HEADER_BYTES + 2 + fields.len() * FIELD_BYTES + 4];
         bytes[..2].copy_from_slice(match order {
             ByteOrder::Little => b"II",
@@ -732,6 +788,116 @@ mod tests {
         }
         assert!(unpack_deflate(&first[..first.len() - 1], 3, 2).is_err());
         assert!(unpack_deflate(&first, 2, 2).is_err());
+    }
+
+    #[test]
+    fn palette_indices_follow_bit_depth_fill_order_and_orientation() {
+        let cases: [(u32, &[u8], &[u8]); 4] = [
+            (1, &[0b0101_0000], &[0, 54, 0, 54]),
+            (2, &[0b0001_1011], &[0, 54, 182, 255]),
+            (4, &[0x01, 0x23], &[0, 54, 182, 255]),
+            (8, &[0, 1, 2, 3], &[0, 54, 182, 255]),
+        ];
+        for order in [ByteOrder::Little, ByteOrder::Big] {
+            for (bits, packed, expected) in cases {
+                for fill_order in if bits < 8 { &[1, 2][..] } else { &[1][..] } {
+                    let data = packed
+                        .iter()
+                        .map(|&byte| {
+                            if *fill_order == 2 {
+                                byte.reverse_bits()
+                            } else {
+                                byte
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    let geometry = Geometry {
+                        width: 4,
+                        height: 1,
+                        rows_per_strip: 1,
+                        bits,
+                        photometric: 3,
+                        fill_order: *fill_order,
+                    };
+                    let mut bytes = fixture(order, geometry, &[&data]);
+                    assert_eq!(decode(&bytes).unwrap().into_raw(), expected);
+                    let tag = field(&bytes, 274, order);
+                    put(&mut bytes, tag + 8, SHORT, 2, order);
+                    assert_eq!(
+                        decode(&bytes).unwrap().into_raw(),
+                        expected.iter().rev().copied().collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn palette_compressed_strips_and_predictor_use_indices() {
+        let raw = [0, 1, 2, 3];
+        let predicted = [0, 1, 1, 1];
+        let mut codes = vec![256];
+        codes.extend(predicted.iter().copied().map(u16::from));
+        codes.push(257);
+        let lzw = lzw_short(&codes);
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&predicted).unwrap();
+        let zlib = encoder.finish().unwrap();
+        let packbits = [3, 0, 1, 2, 3];
+        for order in [ByteOrder::Little, ByteOrder::Big] {
+            for (compression, data, predictor) in [
+                (1, raw.as_slice(), 1),
+                (32773, packbits.as_slice(), 1),
+                (5, lzw.as_slice(), 2),
+                (8, zlib.as_slice(), 2),
+                (32946, zlib.as_slice(), 2),
+            ] {
+                let geometry = Geometry {
+                    width: 4,
+                    height: 1,
+                    rows_per_strip: 1,
+                    bits: 8,
+                    photometric: 3,
+                    fill_order: 1,
+                };
+                let mut bytes = fixture(order, geometry, &[data]);
+                let tag = field(&bytes, 259, order);
+                put(&mut bytes, tag + 8, SHORT, compression, order);
+                if predictor == 2 {
+                    // Replace optional PlanarConfiguration, preserving tag order.
+                    let tag = field(&bytes, 284, order);
+                    put(&mut bytes, tag, SHORT, 317, order);
+                    put(&mut bytes, tag + 8, SHORT, predictor, order);
+                }
+                assert_eq!(decode(&bytes).unwrap().into_raw(), [0, 54, 182, 255]);
+            }
+        }
+    }
+
+    #[test]
+    fn palette_rejects_missing_wrong_sized_or_overlapping_color_maps() {
+        for order in [ByteOrder::Little, ByteOrder::Big] {
+            let geometry = Geometry {
+                width: 96,
+                height: 1,
+                rows_per_strip: 1,
+                bits: 2,
+                photometric: 3,
+                fill_order: 1,
+            };
+            let bytes = fixture(order, geometry, &[&[0; 24]]);
+            let map = field(&bytes, 320, order);
+            let mut short = bytes.clone();
+            put(&mut short, map + 4, LONG, 4, order);
+            assert_eq!(decode(&short).unwrap_err(), TiffError::Directory);
+            let mut missing = bytes.clone();
+            put(&mut missing, map, SHORT, 319, order);
+            assert_eq!(decode(&missing).unwrap_err(), TiffError::Directory);
+            let mut alias = bytes.clone();
+            let strip = order.long(at(&bytes, field(&bytes, 273, order) + 8).unwrap());
+            put(&mut alias, map + 8, LONG, strip, order);
+            assert_eq!(decode(&alias).unwrap_err(), TiffError::Strips);
+        }
     }
 
     #[test]

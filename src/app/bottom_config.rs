@@ -667,7 +667,7 @@ impl Reader {
                                 .filter(|style| {
                                     *style != BaseStylesheet::FictionBook
                                         || matches!(
-                                            active.entry.format,
+                                            active.reading_format(),
                                             crate::library::DocumentFormat::Fb2
                                                 | crate::library::DocumentFormat::Fb3
                                                 | crate::library::DocumentFormat::Text
@@ -676,7 +676,7 @@ impl Reader {
                                 .map(|base_stylesheet| {
                                     Choice::option(
                                         if base_stylesheet == BaseStylesheet::FictionBook
-                                            && active.entry.format
+                                            && active.reading_format()
                                                 == crate::library::DocumentFormat::Fb3
                                         {
                                             "FB3"

@@ -22,7 +22,7 @@ The latter also supports other compression and color modes, so this is a subset
 of KOReader's TIFF support, not complete TIFF parity. [KOReader TIFF provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L410-L415) · [Pinned MuPDF TIFF decoder](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L360-L369) · [PackBits filter](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L408-L418) · [TIFF 6.0 specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
 These additions have not yet been compared against KOReader or exercised on
-the simulator or Kindle. Palette, alpha, CMYK, multi-page and tiled TIFFs and CCITT remain outside this decoder's support. [TIFF 6.0 LZW
+the simulator or Kindle. Alpha, CMYK, multi-page and tiled TIFFs and CCITT remain outside this decoder's support. [TIFF 6.0 LZW
 and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
 ## Image orientation
@@ -56,9 +56,29 @@ and its grayscale output together are bounded to 32 MiB, plus the Deflate
 decoder's one-byte overflow sentinel. The compressed input is a separate
 bounded buffer.
 
-Palette, alpha, CMYK, planar, tiled and multi-page TIFFs remain unsupported.
+Alpha, CMYK, planar, tiled and multi-page TIFFs remain unsupported.
 KOReader exposes TIFF via MuPDF, whose pinned loader accepts RGB photometric
 data and horizontal differencing; this limited subset is not full MuPDF
 parity. The authored compression, byte-order, predictor, orientation and
 invalid-metadata checks have not yet run on the computer or Kindle.
 [KOReader TIFF provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L414-L415) · [Pinned MuPDF loader](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c)
+
+
+## Palette-color strips
+
+Reader accepts TIFF photometric palette images with 1, 2, 4, or 8 bits per
+index, including rows padded to a byte boundary. It checks the required
+16-bit ColorMap count, bounds its storage, rejects overlap with strip data or
+other tracked metadata, and converts the mapped RGB colors to the same sRGB
+grayscale used for other image pages. Stored, PackBits, LZW and both Deflate
+variants use the existing strip decoders. Eight-bit compressed indices support
+horizontal prediction; packed indices support either fill order in stored and
+PackBits strips. Reverse fill order with LZW or Deflate is still unsupported.
+Orientation and existing image limits apply. At most 256 grayscale palette
+entries are allocated in addition to the existing bounded strip buffers.
+
+KOReader registers TIFF through MuPDF, whose pinned loader recognizes palette
+photometric data and reads the ColorMap. This is a limited local implementation,
+not a claim of full TIFF parity. The authored packed-index, endian, orientation,
+compression, predictor and invalid-palette checks have not been built or run on
+the computer or Kindle. [KOReader provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L414-L415) · [Pinned MuPDF loader](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c)

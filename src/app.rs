@@ -914,6 +914,18 @@ struct ActiveBook {
     header_metadata: Option<top_header::Metadata>,
 }
 
+impl ActiveBook {
+    /// Use the parsed content type for reading controls, while retaining the
+    /// path-derived entry format for library identity and storage operations.
+    fn reading_format(&self) -> DocumentFormat {
+        if self.entry.format == DocumentFormat::Html && self.reading.probe.fictionbook {
+            DocumentFormat::Fb2
+        } else {
+            self.entry.format
+        }
+    }
+}
+
 struct SavedMarkRow {
     created_at: i64,
     location: (usize, usize, usize, usize),
@@ -1547,12 +1559,30 @@ impl Reader {
             .clone()
             .unwrap_or_else(BookPreferences::for_new_reflow);
         if initial_preferences.base_stylesheet.is_none() {
-            initial_preferences.base_stylesheet =
-                if matches!(entry.format, DocumentFormat::Fb2 | DocumentFormat::Fb3) {
-                    self.controls.fictionbook_stylesheet_default
-                } else {
-                    self.controls.base_stylesheet_default
-                };
+            // Only inspect XML separately when the two defaults differ: the
+            // library identity must stay path-based and normal openings should
+            // not pay for a second parse.
+            let xml_fictionbook = unseen
+                && entry.format == DocumentFormat::Html
+                && entry
+                    .path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("xml"))
+                && self.controls.fictionbook_stylesheet_default
+                    != self.controls.base_stylesheet_default
+                && with_storage(|| {
+                    crate::epub::Book::open(&absolute)
+                        .map(|book| book.is_fictionbook())
+                        .map_err(io::Error::other)
+                })
+                .unwrap_or(false);
+            initial_preferences.base_stylesheet = if xml_fictionbook
+                || matches!(entry.format, DocumentFormat::Fb2 | DocumentFormat::Fb3)
+            {
+                self.controls.fictionbook_stylesheet_default
+            } else {
+                self.controls.base_stylesheet_default
+            };
         }
         if entry.format == DocumentFormat::Epub {
             initial_preferences.publisher_render_mode = self.controls.publisher_render_mode_default;
@@ -4802,7 +4832,7 @@ impl Reader {
             Action::ConfirmBaseStylesheetDefault(style) => {
                 let fictionbook = self.active.as_ref().is_some_and(|active| {
                     matches!(
-                        active.entry.format,
+                        active.reading_format(),
                         DocumentFormat::Fb2 | DocumentFormat::Fb3
                     )
                 });

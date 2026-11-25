@@ -1102,6 +1102,8 @@ chapter_probe! {
     pub chapter: String,
     pub chapter_label: String,
     #[cfg(feature = "kindle")]
+    pub(crate) fictionbook: bool,
+    #[cfg(feature = "kindle")]
     pub(crate) publication_language: Option<TypographyLocale>,
     #[cfg(feature = "kindle")]
     pub(crate) main_language: Option<TypographyLocale>,
@@ -1321,6 +1323,8 @@ impl Probe {
         let title = book.title.clone();
         let author = book.author.clone();
         let first_series = book.series().first().cloned();
+        #[cfg(feature = "kindle")]
+        let fictionbook = book.is_fictionbook();
         let publication = book.revision();
         let spine_rtl = book.spine_rtl;
         let chapters = book.chapters.clone();
@@ -1663,6 +1667,8 @@ impl Probe {
             first_series,
             chapter: href,
             chapter_label,
+            #[cfg(feature = "kindle")]
+            fictionbook,
             #[cfg(feature = "kindle")]
             publication_language,
             #[cfg(feature = "kindle")]

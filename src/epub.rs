@@ -192,8 +192,8 @@ impl Book {
                 loose::Format::Mobi => Self::open_mobi(path),
                 loose::Format::Chm => Self::open_chm(path),
                 loose::Format::Fb3 => Self::open_fb3(path),
-                _ => loose::Document::open(path, format)
-                    .map(|document| Self::from_loose(document, format)),
+                _ => loose::Document::open_classified(path, format)
+                    .map(|(document, actual_format)| Self::from_loose(document, actual_format)),
             };
         }
         Self::from_archive(Archive::open(path)?)
@@ -1038,6 +1038,17 @@ impl Book {
                 crate::BaseStylesheet::Traditional
             }
         }
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn is_fictionbook(&self) -> bool {
+        matches!(
+            self.content,
+            Content::Loose {
+                format: loose::Format::Fb2 | loose::Format::Fb3,
+                ..
+            }
+        )
     }
 
     pub(crate) fn take_fixed_spine(&mut self) -> Option<FixedSpine> {
