@@ -150,6 +150,14 @@ pub(super) fn bookmark_index_for_page(
 ) -> Option<usize> {
     book.bookmarks.iter().position(|mark| {
         let position = &mark.position;
+        if let Some(anchor) = position
+            .anchor
+            .as_ref()
+            .filter(|anchor| anchor.raw_caret.is_some())
+        {
+            return chapter == Some(position.chapter)
+                && probe.and_then(|probe| probe.page_for(anchor)) == Some(page);
+        }
         match chapter {
             None => position.page == page,
             Some(chapter) => {

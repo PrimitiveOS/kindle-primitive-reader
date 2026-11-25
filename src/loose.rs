@@ -1798,6 +1798,8 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
         authored_ids,
         section_id: 0,
     };
+    let primary_cover = info.and_then(|item| fb2_child(item, "coverpage"));
+    let mut extra_cover_resource = None;
     let cover = info
         .and_then(|item| fb2_child(item, "coverpage"))
         .and_then(|item| fb2_child(item, "image"))
@@ -1815,11 +1817,43 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
                 path: image.path.clone(),
                 kind,
             })
+        })
+        .or_else(|| {
+            let coverpage = primary_cover.or_else(|| {
+                fb2_child(root, "description")
+                    .and_then(|description| fb2_child(description, "src-title-info"))
+                    .and_then(|source| fb2_child(source, "coverpage"))
+            })?;
+            let id = fb2_child(coverpage, "image").and_then(fb2_image_id)?;
+            let mut binaries = root.children().filter(|item| {
+                item.has_tag_name((FB2_NS, "binary")) && item.attribute("id") == Some(id.as_str())
+            });
+            let binary = binaries.next()?;
+            if binaries.next().is_some() {
+                return None;
+            }
+            if let Some(image) = output.images.get(id.as_str()) {
+                let kind = if image.path.ends_with(".png") {
+                    CoverKind::Png
+                } else if image.path.ends_with(".jpg") {
+                    CoverKind::Jpeg
+                } else {
+                    return None;
+                };
+                return Some(BookCover {
+                    path: image.path.clone(),
+                    kind,
+                });
+            }
+            let bytes = fb2_gif_cover(binary, &output.images)?;
+            let path = "fb2-cover/cover.gif".to_owned();
+            extra_cover_resource = Some((path.clone(), bytes));
+            Some(BookCover {
+                path,
+                kind: CoverKind::Gif,
+            })
         });
-    if let Some(cover) = info
-        .and_then(|item| fb2_child(item, "coverpage"))
-        .and_then(|item| fb2_child(item, "image"))
-    {
+    if let Some(cover) = primary_cover.and_then(|item| fb2_child(item, "image")) {
         output.write_image(cover)?;
     }
     for body in bodies {
@@ -1827,6 +1861,14 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
     }
     output.xhtml.push_str("</body></html>");
     check_output(&output.xhtml)?;
+    let mut resources: BTreeMap<_, _> = output
+        .images
+        .into_values()
+        .map(|image| (image.path, image.bytes))
+        .collect();
+    if let Some((path, bytes)) = extra_cover_resource {
+        resources.insert(path, bytes);
+    }
     Ok(Document {
         title,
         author: (!authors.is_empty()).then(|| authors.join(", ")),
@@ -1838,11 +1880,7 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
         xhtml: output.xhtml,
         toc: output.toc,
         fb2_note_sections: note_sections,
-        resources: output
-            .images
-            .into_values()
-            .map(|image| (image.path, image.bytes))
-            .collect(),
+        resources,
     })
 }
 
@@ -2117,6 +2155,55 @@ fn fb2_image_bytes(
         return None;
     }
     Some((bytes, extension, (width * height) as usize))
+}
+
+/// A cover-only GIF does not enter the XHTML or its image numbering. Charge it
+/// against the same FB2 resource and pixel budgets as ordinary illustrations.
+fn fb2_gif_cover(binary: Node<'_, '_>, images: &BTreeMap<&str, Fb2Image>) -> Option<Vec<u8>> {
+    if binary.attribute("content-type")? != "image/gif" || images.len() >= MAX_FB2_IMAGES {
+        return None;
+    }
+    let (used_bytes, used_pixels) =
+        images
+            .values()
+            .try_fold((0usize, 0usize), |(bytes, pixels), image| {
+                let (width, height) = crate::image_reader(&image.bytes)
+                    .ok()?
+                    .into_dimensions()
+                    .ok()?;
+                Some((
+                    bytes.checked_add(image.bytes.len())?,
+                    pixels.checked_add((width as usize).checked_mul(height as usize)?)?,
+                ))
+            })?;
+    let limit = MAX_FB2_IMAGE.min(MAX_FB2_IMAGE_BYTES.checked_sub(used_bytes)?);
+    let max_encoded = limit.div_ceil(3).checked_mul(4)?;
+    let encoded: Vec<u8> = binary
+        .children()
+        .filter(Node::is_text)
+        .filter_map(|item| item.text())
+        .flat_map(str::bytes)
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .take(max_encoded + 1)
+        .collect();
+    if encoded.len() > max_encoded {
+        return None;
+    }
+    let bytes = STANDARD_PAD_INDIFFERENT.decode(encoded).ok()?;
+    if bytes.len() > limit {
+        return None;
+    }
+    let (width, height) = crate::gif_image::dimensions(&bytes).ok()?;
+    if !(1..=2048).contains(&width)
+        || !(1..=2048).contains(&height)
+        || used_pixels.checked_add((width as usize).checked_mul(height as usize)?)?
+            > MAX_FB2_IMAGE_PIXELS
+    {
+        return None;
+    }
+    // Validate the first frame now; the normal cover path decodes it again.
+    crate::gif_image::gray(&bytes).ok()?;
+    Some(bytes)
 }
 
 fn fb2_section_title(section: Node<'_, '_>) -> Option<String> {

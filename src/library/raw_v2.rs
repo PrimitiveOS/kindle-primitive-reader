@@ -329,7 +329,7 @@ fn attach(anchor: &mut Anchor, caret: RawCaret) -> io::Result<()> {
     Ok(())
 }
 
-fn check(anchor: &Anchor, caret: &RawCaret) -> io::Result<()> {
+pub(super) fn check(anchor: &Anchor, caret: &RawCaret) -> io::Result<()> {
     if anchor.illustration.is_some()
         || anchor.chapter.is_empty()
         || anchor.chapter.len() > super::MAX_ANCHOR_PATH_BYTES

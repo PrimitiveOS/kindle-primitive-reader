@@ -3620,8 +3620,8 @@ impl InterfaceLanguage {
             "The handle is browsing; the caret is reading. Squares show fixed-page history." => {
                 "Nút kéo là vị trí đang duyệt; mũi tên là vị trí đọc. Ô vuông là lịch sử trang cố định."
             }
-            "Icons mark bookmarks, highlights and notes. Some reflow marks may be omitted." => {
-                "Biểu tượng đánh dấu trang, tô sáng và ghi chú. Một số dấu trong sách dàn trang lại có thể bị bỏ qua."
+            "Fixed-page ribbon: gray highlight, black note, tall bookmark. Icons mark thumbnails." => {
+                "Thanh trang cố định: xám là tô sáng, đen là ghi chú, vạch cao là dấu trang. Biểu tượng đánh dấu ảnh thu nhỏ."
             }
             "Page-number mode saves per book. Set as default applies when no choice is saved." => {
                 "Chế độ số trang lưu theo sách. Mặc định áp dụng khi sách chưa có lựa chọn riêng."

@@ -91,7 +91,7 @@ impl Reader {
                 "Swipe along the top or left edge to change the grid columns or rows.",
                 "Tap or drag the ribbon to browse. Hold it to open the book map.",
                 "The handle is browsing; the caret is reading. Squares show fixed-page history.",
-                "Icons mark bookmarks, highlights and notes. Some reflow marks may be omitted.",
+                "Fixed-page ribbon: gray highlight, black note, tall bookmark. Icons mark thumbnails.",
                 "Page-number mode saves per book. Set as default applies when no choice is saved.",
             ]
             .into_iter()

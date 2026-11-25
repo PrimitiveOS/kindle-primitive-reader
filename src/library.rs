@@ -3120,8 +3120,9 @@ fn valid_position(position: &ReadingPosition) -> bool {
 }
 
 fn valid_anchor(anchor: &Anchor) -> bool {
-    anchor.raw_caret.is_none()
-        && !anchor.chapter.is_empty()
+    anchor.raw_caret.as_ref().is_none_or(|caret| {
+        crate::parley_layout::RAW_LAYOUT_ENABLED && raw_v2::check(anchor, caret).is_ok()
+    }) && !anchor.chapter.is_empty()
         && anchor.chapter.len() <= MAX_ANCHOR_PATH_BYTES
         && !anchor.chapter.chars().any(char::is_control)
 }
@@ -3132,13 +3133,27 @@ fn same_position(left: &ReadingPosition, right: &ReadingPosition) -> bool {
 
 fn valid_highlight(mark: &Highlight) -> bool {
     let selection = &mark.selection;
+    let raw_order = match (&selection.start.raw_caret, &selection.end.raw_caret) {
+        (None, None) => None,
+        (Some(start), Some(end)) => Some(
+            selection.start.chapter == selection.end.chapter
+                && selection.start.revision == selection.end.revision
+                && (selection.start.block < selection.end.block
+                    || (selection.start.block == selection.end.block
+                        && start.raw_sha256 == end.raw_sha256
+                        && start.raw_offset < end.raw_offset)),
+        ),
+        _ => Some(false),
+    };
     valid_anchor(&selection.start)
         && valid_anchor(&selection.end)
         && selection.start.book == selection.end.book
-        && (selection.start.chapter != selection.end.chapter
-            || (selection.start.revision == selection.end.revision
-                && (selection.start.block, selection.start.offset)
-                    < (selection.end.block, selection.end.offset)))
+        && raw_order.unwrap_or_else(|| {
+            selection.start.chapter != selection.end.chapter
+                || (selection.start.revision == selection.end.revision
+                    && (selection.start.block, selection.start.offset)
+                        < (selection.end.block, selection.end.offset))
+        })
         && !selection.text.trim().is_empty()
         && selection.text.len() <= MAX_HIGHLIGHT_TEXT_BYTES
         && mark

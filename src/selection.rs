@@ -374,6 +374,25 @@ impl Probe {
                     Affinity::Upstream => SourceAffinity::Before,
                     Affinity::Downstream => SourceAffinity::After,
                 };
+                if paragraph.raw_binding.is_some() {
+                    let block = &self.source.blocks[self.selection_block(paragraph.key)?];
+                    if child.is_some() || !paragraph.is_verified_raw(block) {
+                        return None;
+                    }
+                    let raw_affinity = match affinity {
+                        SourceAffinity::Before => {
+                            crate::source::raw_whitespace::CaretAffinity::Before
+                        }
+                        SourceAffinity::After => {
+                            crate::source::raw_whitespace::CaretAffinity::After
+                        }
+                    };
+                    let raw =
+                        self.raw_whitespace_anchor(paragraph.key, cursor.index(), raw_affinity)?;
+                    let mut anchor = raw.canonical;
+                    anchor.raw_caret = Some(raw.caret);
+                    return Some(anchor);
+                }
                 let visible = match child {
                     Some(child) => child.source.start + cursor.index(),
                     None => paragraph.visible_text_offset(cursor.index(), affinity)?,

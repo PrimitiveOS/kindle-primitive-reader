@@ -1931,6 +1931,9 @@ impl Reading {
             .map(|candidate| &mut candidate.probe)
             .unwrap_or(&mut self.probe);
         let focused_page = anchor.and_then(|anchor| probe.page_for(anchor));
+        if anchor.is_some_and(|anchor| anchor.raw_caret.is_some()) && focused_page.is_none() {
+            return Err("The raw whitespace position cannot be opened in this layout".into());
+        }
         let page = focused_page.unwrap_or(fallback_page);
         let top = (self.config.scroll && !probe.is_vertical()).then(|| {
             let top = anchor

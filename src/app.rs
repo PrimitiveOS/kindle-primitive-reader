@@ -1647,11 +1647,11 @@ impl Reader {
                 fixed_preferences = state.fixed_preferences;
                 state.position.clone()
             });
-        if position
+        let raw_resume = position
             .as_ref()
             .and_then(|saved| saved.anchor.as_ref())
-            .is_some_and(|anchor| anchor.raw_caret.is_some())
-        {
+            .is_some_and(|anchor| anchor.raw_caret.is_some());
+        if raw_resume && !crate::parley_layout::RAW_LAYOUT_ENABLED {
             return Err("This raw whitespace position cannot yet be restored safely".into());
         }
         let strict_odt_anchor = split_odt
@@ -1685,6 +1685,9 @@ impl Reader {
             }
             result => result?,
         };
+        if raw_resume && fixed.is_some() {
+            return Err("A raw whitespace position cannot be opened as a fixed page".into());
+        }
         if self.screen == Screen::PdfPassword
             && let Some(reading) = &mut fixed
             && reading.viewport() != self.reading_viewport()
@@ -1969,7 +1972,7 @@ impl Reader {
                     position.page,
                     position.anchor.as_ref(),
                 );
-                if split_odt {
+                if split_odt || raw_resume {
                     restored?
                 } else {
                     restored.or_else(|_| Reading::open(config))?
@@ -6031,6 +6034,7 @@ impl Reader {
             .anchor
             .as_ref()
             .is_some_and(|anchor| anchor.raw_caret.is_some())
+            && (self.fixed.is_some() || !crate::parley_layout::RAW_LAYOUT_ENABLED)
         {
             return Err("This raw whitespace position cannot yet be restored safely".into());
         }

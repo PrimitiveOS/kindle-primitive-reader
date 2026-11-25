@@ -763,6 +763,59 @@ impl Reader {
         for offset in ticks {
             canvas.fill(Rect::new(track.x + 10 + offset, center - 10, 2, 20), 85);
         }
+        if let Some(fixed) = self.fixed.as_ref().filter(|_| overview.chapter.is_none())
+            && let Some(state) = self.library.state(fixed.id)
+        {
+            // 1 = highlight, 2 = note, 4 = bookmark. Coalesce nearby pages
+            // to bound the marker count by available ribbon width.
+            let mut saved = BTreeMap::<i32, u8>::new();
+            let mut mark_page = |page: usize, flags: u8| {
+                if page >= count {
+                    return;
+                }
+                let portion = page as f64 / count.saturating_sub(1).max(1) as f64;
+                let portion = if layout.navigation.mirrored {
+                    1.0 - portion
+                } else {
+                    portion
+                };
+                let offset = (portion * (track.w - 20).max(0) as f64).round() as i32;
+                *saved.entry(offset / 5 * 5).or_default() |= flags;
+            };
+            for bookmark in &state.bookmarks {
+                if bookmark.position.chapter == 0 && bookmark.position.anchor.is_none() {
+                    mark_page(bookmark.position.page, 4);
+                }
+            }
+            for highlight in &state.pdf_highlights {
+                let flags = 1 | if highlight
+                    .note
+                    .as_ref()
+                    .is_some_and(|note| !note.trim().is_empty())
+                {
+                    2
+                } else {
+                    0
+                };
+                for page in std::iter::once(highlight.page)
+                    .chain(highlight.continuation.iter().map(|part| part.page))
+                {
+                    mark_page(page, flags);
+                }
+            }
+            for (offset, flags) in saved {
+                let x = track.x + 10 + offset;
+                if flags & 1 != 0 {
+                    canvas.fill(Rect::new(x - 2, center - 5, 5, 10), 85);
+                }
+                if flags & 2 != 0 {
+                    canvas.fill(Rect::new(x - 2, center - 5, 5, 10), 0);
+                }
+                if flags & 4 != 0 {
+                    canvas.fill(Rect::new(x - 2, center - 13, 5, 26), 0);
+                }
+            }
+        }
         let portion = selected as f64 / count.saturating_sub(1).max(1) as f64;
         let portion = if layout.navigation.mirrored {
             1.0 - portion

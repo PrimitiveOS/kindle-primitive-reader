@@ -28,7 +28,16 @@ unsupported entries are ignored. Archive identity is checked again after the
 read, and existing cached information remains if the source cannot be read.
 This addition has not been behaviorally tested or verified on Kindle.
 
-Declared EPUB, FictionBook 2, supported FictionBook 3 and supported MOBI/KF8 covers and the first page of supported fixed documents can be inspected. The FB2 cover uses the same validated, bounded local resource as the reading page. MOBI/KF8 uses the primary header's EXTH 201 cover record when it contains a bounded PNG, JPEG or GIF; other declarations remain open. Missing or unsupported image data does not create a cover. The new FB2 and MOBI/KF8 previews await integrated testing. Fixed covers become a single-image preview, so page buttons stay within that preview. The source book's page and history retain their previous values. An archived source offers its cached description and information. Its cover action is unavailable while the file is missing. [KOReader cover API](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L556-L561)
+Declared EPUB, FictionBook 2, supported FictionBook 3 and supported MOBI/KF8 covers and the first page of supported fixed documents can be inspected. FB2 PNG and JPEG covers use the same validated, bounded local resources as the reading page. MOBI/KF8 uses the primary header's EXTH 201 cover record when it contains a bounded PNG, JPEG or GIF; other declarations remain open. Missing or unsupported image data does not create a cover. The new FB2 and MOBI/KF8 previews await integrated testing. Fixed covers become a single-image preview, so page buttons stay within that preview. The source book's page and history retain their previous values. An archived source offers its cached description and information. Its cover action is unavailable while the file is missing. [KOReader cover API](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L556-L561)
+
+The FB2 cover candidate also checks `src-title-info` when the primary
+`title-info` coverpage is absent, as in the pinned CREngine, and permits a
+uniquely identified GIF cover with a validated first frame. The fallback shares
+the existing 32-image, 1 MiB per-image, 4 MiB total and 8 Mi-pixel budgets;
+duplicate binary IDs, invalid images and excess resources are skipped. GIF is
+cover-only in this path; FB2 reading-page images and generated XHTML remain
+unchanged, preserving reading anchors. The fallback has not yet been compared
+with KOReader or verified in simulation or on Kindle. [KOReader FB2 cover selection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L1039-L1061)
 
 Descriptions are shown as text. The existing bounded markup converter resolves supported character references and paragraph structure. Long descriptions have text paging, swipes and physical-button navigation. Previous and next text controls use expanded 100 px touch targets.
 
