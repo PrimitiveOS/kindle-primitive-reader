@@ -288,6 +288,7 @@ impl Bars {
         above: i32,
         large: bool,
         current: BarPanel,
+        language: super::interface_language::InterfaceLanguage,
         sections: &[(BarPanel, &str)],
         rows: Vec<ConfigRow>,
         focus: Option<usize>,
@@ -310,7 +311,7 @@ impl Bars {
             for (index, &(section, label)) in sections.iter().enumerate() {
                 self.shortcut(
                     cell(row, index, sections.len()),
-                    label,
+                    language.text(label),
                     Target::BottomSection(section),
                     section == current,
                 );
@@ -563,6 +564,7 @@ impl Reader {
                     above,
                     large,
                     panel,
+                    language,
                     self.bottom_menu_sections(panel),
                     self.bottom_config_rows(panel),
                     self.menu_search.focused_bottom(panel),

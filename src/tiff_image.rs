@@ -36,7 +36,7 @@ impl fmt::Display for TiffError {
             Self::Directory => "This TIFF has an invalid image directory",
             Self::Strips => "This TIFF has invalid or overlapping image strips",
             Self::Limit => "This TIFF exceeds Reader's image limits",
-            Self::Unsupported => "Reader supports single-page grayscale TIFF stored in uncompressed, PackBits, LZW or Deflate strips (1-bit or 8-bit, orientations 1–8)",
+            Self::Unsupported => "Reader supports single-page grayscale (1-bit or 8-bit) and RGB (8-bit) TIFF strips, with orientations 1–8",
         })
     }
 }
@@ -56,24 +56,30 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         return Err(TiffError::Limit);
     }
 
-    let bits = image.scalar(258, SHORT_ONLY, 1)?;
     let photometric = image.required(262, SHORT_ONLY)?;
+    let samples = image.scalar(277, SHORT_ONLY, 1)?;
+    if !matches!((photometric, samples), (0 | 1, 1) | (2, 3)) {
+        return Err(TiffError::Unsupported);
+    }
+    let bits_values = image.numbers(258, SHORT_ONLY, samples as usize)?;
+    let bits = bits_values.as_ref().map_or(1, |values| values.value(0));
+    let formats = image.numbers(339, SHORT_ONLY, samples as usize)?;
     let fill_order = image.scalar(266, SHORT_ONLY, 1)?;
     let compression = image.scalar(259, SHORT_ONLY, 1)?;
     let predictor = image.scalar(317, SHORT_ONLY, 1)?;
     let orientation = image.scalar(274, SHORT_ONLY, 1)?;
     if !matches!(bits, 1 | 8)
-        || photometric > 1
+        || (samples == 3 && bits != 8)
+        || bits_values.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != bits))
+        || formats.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != 1))
         || !(fill_order == 1 || (bits == 1 && fill_order == 2))
         || !matches!(compression, 1 | 5 | 8 | 32946 | 32773)
         // TIFF reserves reverse fill order for special-purpose bilevel data;
         // the bit ordering of LZW streams is ambiguous in that combination.
         || (fill_order == 2 && matches!(compression, 5 | 8 | 32946))
         || !matches!(orientation, 1..=8)
-        || image.scalar(277, SHORT_ONLY, 1)? != 1 // SamplesPerPixel
         || image.scalar(284, SHORT_ONLY, 1)? != 1 // PlanarConfiguration
         || !(predictor == 1 || (predictor == 2 && bits == 8 && matches!(compression, 5 | 8 | 32946)))
-        || image.scalar(339, SHORT_ONLY, 1)? != 1 // SampleFormat
         || image.scalar(254, LONG_ONLY, 0)? != 0 // NewSubfileType
         || image.scalar(255, SHORT_ONLY, 1)? != 1
     // SubfileType
@@ -92,17 +98,31 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let lengths = image
         .numbers(279, SHORT_OR_LONG, strip_count)?
         .ok_or(TiffError::Strips)?;
-    if let (Some(a), Some(b)) = (&offsets.external, &lengths.external)
-        && overlaps(a, b)
-    {
-        return Err(TiffError::Strips);
-    }
-    let row_bytes = (width * bits).div_ceil(8) as usize;
     let occupied = [
         Some(&image.range),
         offsets.external.as_ref(),
         lengths.external.as_ref(),
+        bits_values
+            .as_ref()
+            .and_then(|values| values.external.as_ref()),
+        formats.as_ref().and_then(|values| values.external.as_ref()),
     ];
+    let external: Vec<_> = occupied.iter().flatten().copied().collect();
+    if external.iter().enumerate().any(|(index, first)| {
+        external[index + 1..]
+            .iter()
+            .any(|second| overlaps(first, second))
+    }) {
+        return Err(TiffError::Strips);
+    }
+    // Checked dimensions and 1/3 samples limit the expanded strip to 24 MiB;
+    // together with the output grayscale image this stays within 32 MiB,
+    // plus the Deflate decoder's one-byte overflow sentinel.
+    let row_bits = width
+        .checked_mul(bits)
+        .and_then(|n| n.checked_mul(samples))
+        .ok_or(TiffError::Limit)?;
+    let row_bytes = row_bits.div_ceil(8) as usize;
     let mut ranges = Vec::with_capacity(strip_count);
     let mut remaining_rows = height;
     for index in 0..strip_count {
@@ -145,15 +165,22 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
             _ => None,
         };
         if predictor == 2 {
-            let samples = unpacked.as_mut().ok_or(TiffError::Unsupported)?;
-            for row in samples.chunks_exact_mut(row_bytes) {
-                for index in 1..row.len() {
-                    row[index] = row[index].wrapping_add(row[index - 1]);
+            let decoded = unpacked.as_mut().ok_or(TiffError::Unsupported)?;
+            let channels = samples as usize;
+            for row in decoded.chunks_exact_mut(row_bytes) {
+                for index in channels..row.len() {
+                    row[index] = row[index].wrapping_add(row[index - channels]);
                 }
             }
         }
         let strip = unpacked.as_deref().unwrap_or(strip);
-        if bits == 8 {
+        if samples == 3 {
+            // Match image's sRGB-to-luma conversion used by other comic pages.
+            pixels.extend(strip.chunks_exact(3).map(|rgb| {
+                ((u32::from(rgb[0]) * 2126 + u32::from(rgb[1]) * 7152 + u32::from(rgb[2]) * 722)
+                    / 10000) as u8
+            }));
+        } else if bits == 8 {
             pixels.extend(strip.iter().map(|&gray| gray ^ invert));
         } else {
             for row in strip.chunks_exact(row_bytes) {
@@ -549,16 +576,17 @@ mod tests {
     const STRIPS: [&[u8]; 3] = [&[1, 2, 3, 4, 5, 6], &[7, 8, 9, 10, 11, 12], &[13, 14, 15]];
 
     fn fixture(order: ByteOrder, geometry: Geometry, strips: &[&[u8]]) -> Vec<u8> {
+        let samples = if geometry.photometric == 2 { 3 } else { 1 };
         let mut fields = [
             (256u16, SHORT, vec![geometry.width]),
             (257, LONG, vec![geometry.height]),
-            (258, SHORT, vec![geometry.bits]),
+            (258, SHORT, vec![geometry.bits; samples]),
             (259, SHORT, vec![1]),
             (262, SHORT, vec![geometry.photometric]),
             (266, SHORT, vec![geometry.fill_order]),
             (273, LONG, vec![0; strips.len()]),
             (274, SHORT, vec![1]),
-            (277, SHORT, vec![1]),
+            (277, SHORT, vec![samples as u32]),
             (278, LONG, vec![geometry.rows_per_strip]),
             (
                 279,
@@ -566,7 +594,7 @@ mod tests {
                 strips.iter().map(|strip| strip.len() as u32).collect(),
             ),
             (284, SHORT, vec![1]),
-            (339, SHORT, vec![1]),
+            (339, SHORT, vec![1; samples]),
         ];
         let mut bytes = vec![0; HEADER_BYTES + 2 + fields.len() * FIELD_BYTES + 4];
         bytes[..2].copy_from_slice(match order {
@@ -704,6 +732,88 @@ mod tests {
         }
         assert!(unpack_deflate(&first[..first.len() - 1], 3, 2).is_err());
         assert!(unpack_deflate(&first, 2, 2).is_err());
+    }
+
+    #[test]
+    fn rgb_strips_match_existing_grayscale_and_predict_per_channel() {
+        let pixels = [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+        let predicted = [255, 0, 0, 1, 255, 0, 0, 0, 255, 255, 255, 0];
+        let lzw = |input: &[u8]| {
+            let mut codes = vec![256];
+            codes.extend(input.iter().copied().map(u16::from));
+            codes.push(257);
+            lzw_short(&codes)
+        };
+        let deflate = |input: &[u8]| {
+            let mut encoder =
+                flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+            encoder.write_all(input).unwrap();
+            encoder.finish().unwrap()
+        };
+        let packed = [5, 255, 0, 0, 0, 255, 0, 5, 0, 0, 255, 255, 255, 255];
+        let lzw_data = lzw(&predicted);
+        let zlib_data = deflate(&predicted);
+        for order in [ByteOrder::Little, ByteOrder::Big] {
+            for (compression, data, predictor) in [
+                (1, pixels.as_slice(), 1),
+                (32773, packed.as_slice(), 1),
+                (5, lzw_data.as_slice(), 2),
+                (8, zlib_data.as_slice(), 2),
+                (32946, zlib_data.as_slice(), 2),
+            ] {
+                let geometry = Geometry {
+                    width: 2,
+                    height: 2,
+                    rows_per_strip: 2,
+                    bits: 8,
+                    photometric: 2,
+                    fill_order: 1,
+                };
+                let mut bytes = fixture(order, geometry, &[data]);
+                let tag = field(&bytes, 259, order);
+                put(&mut bytes, tag + 8, SHORT, compression, order);
+                if predictor == 2 {
+                    // Replace the optional SampleFormat entry with Predictor.
+                    let tag = field(&bytes, 339, order);
+                    put(&mut bytes, tag, SHORT, 317, order);
+                    put(&mut bytes, tag + 4, LONG, 1, order);
+                    put(&mut bytes, tag + 8, SHORT, predictor, order);
+                }
+                let image = decode(&bytes).unwrap();
+                assert_eq!(image.into_raw(), [54, 182, 18, 255]);
+                let tag = field(&bytes, 274, order);
+                put(&mut bytes, tag + 8, SHORT, 6, order);
+                assert_eq!(decode(&bytes).unwrap().into_raw(), [18, 54, 255, 182]);
+            }
+        }
+    }
+
+    #[test]
+    fn rgb_rejects_mixed_bit_depth_and_metadata_overlapping_strip() {
+        for order in [ByteOrder::Little, ByteOrder::Big] {
+            let geometry = Geometry {
+                width: 2,
+                height: 2,
+                rows_per_strip: 2,
+                bits: 8,
+                photometric: 2,
+                fill_order: 1,
+            };
+            let bytes = fixture(order, geometry, &[&[0; 12]]);
+            let bits = field(&bytes, 258, order);
+            let array = order.long(at(&bytes, bits + 8).unwrap()) as usize;
+            let mut mixed = bytes.clone();
+            put(&mut mixed, array + 4, SHORT, 16, order);
+            assert_eq!(decode(&mixed).unwrap_err(), TiffError::Unsupported);
+            let mut aliased = bytes.clone();
+            let strip = order.long(at(&bytes, field(&bytes, 273, order) + 8).unwrap());
+            put(&mut aliased, bits + 8, LONG, strip, order);
+            // All three values still look valid, but may not alias image data.
+            for offset in [0, 2, 4] {
+                put(&mut aliased, strip as usize + offset, SHORT, 8, order);
+            }
+            assert_eq!(decode(&aliased).unwrap_err(), TiffError::Strips);
+        }
     }
 
     #[test]

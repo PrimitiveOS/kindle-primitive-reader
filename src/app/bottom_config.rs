@@ -216,6 +216,15 @@ impl Reader {
                     }),
                 ));
             }
+            // These rows and choices are all Reader-owned fixed labels; never
+            // apply this transformation to font names or publication content.
+            let language = controls.interface_language;
+            for row in &mut rows {
+                row.label = language.text(&row.label).to_owned();
+                for choice in &mut row.choices {
+                    choice.title = language.text(&choice.title).to_owned();
+                }
+            }
             return rows;
         }
         if let Some(active) = &self.active {

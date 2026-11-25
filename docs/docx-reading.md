@@ -15,6 +15,15 @@ effects are not yet reproduced; images appear in the reflow text order.
 External hyperlinks remain plain text. Complex fields, notes and broader
 WordprocessingML features remain incomplete.
 
+Numbered and bulleted Word paragraphs currently lose their list markers.
+KOReader reads the numbering part and renders nested list structures. Reader
+cannot simply add those structures to its generated XHTML: its existing saved
+positions and highlights use that XHTML's revision and source-byte keys. A
+future implementation needs an independently verified out-of-band marker
+projection or a source-verified anchor migration. The current MOBI link
+projection requires matching element structure and cannot directly project
+Word list wrappers.
+
 Macro-enabled Word documents (`.docm`) use the same bounded reflow subset.
 The DOCM importer reads only the main document, its local styles, metadata,
 and supported embedded images. It ignores external targets and unrelated

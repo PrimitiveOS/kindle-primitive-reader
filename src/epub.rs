@@ -647,10 +647,20 @@ impl Book {
     }
 
     fn from_loose(document: loose::Document, format: loose::Format) -> Self {
+        // Loose document importers retain publisher language independently of
+        // their generated XHTML. Use the same bounded validation as EPUB so
+        // automatic typography can select language-aware shaping and patterns.
+        let language = document
+            .metadata
+            .language
+            .as_deref()
+            .map(str::trim)
+            .filter(|tag| !tag.is_empty() && tag.len() <= crate::source::MAX_LANGUAGE_BYTES)
+            .and_then(|tag| parley::Language::parse(tag).ok());
         let chapter_path = document.chapter_path;
         Self {
             revision: crate::revision(&document.xhtml),
-            language: None,
+            language,
             spine_rtl: false,
             fixed_placements: None,
             series: Vec::new(),

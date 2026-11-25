@@ -201,7 +201,19 @@ impl Catalog<'_> {
                 continue;
             }
             let path = format!("{breadcrumb} › {}", item.title);
-            if item.title.to_lowercase().contains(self.term) {
+            // Screen panel rows are localized at creation. Match their English
+            // names as aliases without adding duplicate hits or altering ordinals.
+            let english_alias = match menu {
+                Menu::Bottom(BarPanel::TextScreen | BarPanel::ViewScreen) => self
+                    .reader
+                    .controls
+                    .interface_language
+                    .screen_row_english(&item.title),
+                _ => &item.title,
+            };
+            if item.title.to_lowercase().contains(self.term)
+                || english_alias.to_lowercase().contains(self.term)
+            {
                 self.hits.push(Hit {
                     destination: Destination { menu, ordinal },
                     title: item.title,
