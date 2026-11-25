@@ -170,3 +170,19 @@ For raw saved marks, direct note editing and reviewed bulk note/mark removal
 verify the source location or complete saved quotation both at review and again
 before changing state. Stale or unresolvable locations are rejected. This path
 is staged and has not been behaviorally tested.
+
+Page overview can show raw highlight cues spanning chapters after validating
+the complete saved quotation and deriving a chapter-local fragment. To bound
+layout work, it checks at most four such highlights covering at most eight chapters
+each per overview draw; other cues are omitted. This remains untested.
+
+Stock XPointer annotation import preserves raw local marks and reports them as
+unavailable; it disables remote deletion cutoffs and never matches an incoming
+canonical mark to a raw mark. Raw marks are omitted from export and reported
+unavailable, so the existing complete-snapshot guard does not publish an
+incomplete replacement. This behavior remains untested.
+
+For split ODT and large text documents, a raw anchor already in a current
+section survives the legacy migration check unchanged; opening the page still
+validates its source fingerprint. Raw anchors that would require translation
+from an older unsplit section remain rejected. This path remains untested.

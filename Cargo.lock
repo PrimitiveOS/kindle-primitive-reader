@@ -2241,6 +2241,7 @@ dependencies = [
  "gif",
  "harfrust",
  "hayro",
+ "hayro-ccitt",
  "hayro-interpret",
  "hayro-jpeg2000",
  "html5ever",

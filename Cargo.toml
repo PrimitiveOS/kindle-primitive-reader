@@ -34,6 +34,7 @@ flate2 = "=1.1.11"
 gif = { version = "=0.14.2", default-features = false, features = ["std", "raii_no_panic"] }
 harfrust = "=0.12.0"
 hayro = "=0.9.0"
+hayro-ccitt = "=0.5.0"
 hayro-interpret = { version = "=0.9.0", default-features = false }
 hayro-jpeg2000 = { version = "=0.5.0", default-features = false, features = ["std"] }
 html5ever = "=0.40.1"

@@ -3709,6 +3709,7 @@ impl InterfaceLanguage {
             "Reading page" => "Trang đang đọc",
             "Reading time" => "Thời gian đọc",
             "Gray: this session" => "Xám: phiên này",
+            "Filled: previous; outline: next" => "Đặc: vị trí trước; viền: vị trí sau",
             "Map focus" => "Vị trí đang chọn",
             "Hidden" => "Đã ẩn",
             "Includes hidden pages" => "Có trang bị ẩn",

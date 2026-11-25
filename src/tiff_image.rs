@@ -116,7 +116,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         || bits_values.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != bits))
         || formats.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != 1))
         || !(fill_order == 1 || (bits < 8 && fill_order == 2))
-        || !matches!(compression, 1 | 5 | 8 | 32946 | 32773)
+        || !matches!(compression, 1 | 4 | 5 | 8 | 32946 | 32773)
+        || (compression == 4 && (!matches!(photometric, 0 | 1) || samples != 1 || bits != 1 || predictor != 1 || image.scalar(293, LONG_ONLY, 0)? != 0))
         || !matches!(orientation, 1..=8)
         || image.scalar(284, SHORT_ONLY, 1)? != 1 // PlanarConfiguration
         || !(predictor == 1 || (predictor == 2 && (matches!(bits, 8 | 16) || (samples == 1 && matches!(bits, 1 | 2 | 4))) && matches!(compression, 5 | 8 | 32946)))
@@ -225,7 +226,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         let strip = &bytes[range];
         let rows = remaining_rows.min(rows_per_strip) as usize;
         remaining_rows -= rows as u32;
-        let reverse_compressed = fill_order == 2 && matches!(compression, 5 | 8 | 32946);
+        let reverse_compressed = fill_order == 2 && matches!(compression, 4 | 5 | 8 | 32946);
         let reversed = if reverse_compressed {
             if strip.len() > MAX_REVERSED_COMPRESSED_STRIP {
                 return Err(TiffError::Limit);
@@ -242,6 +243,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         let compressed = reversed.as_deref().unwrap_or(strip);
         let mut unpacked = match compression {
             32773 => Some(unpack_packbits(compressed, row_bytes, rows)?),
+            4 => Some(unpack_group4(compressed, width, rows, photometric)?),
             5 => Some(unpack_lzw(compressed, row_bytes, rows)?),
             8 | 32946 => Some(unpack_deflate(compressed, row_bytes, rows)?),
             _ => None,
@@ -295,7 +297,11 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         let strip = unpacked.as_deref().unwrap_or(strip);
         // Reversing the compressed stream already normalized its packed
         // samples. Existing stored and PackBits fill-order handling is kept.
-        let sample_fill_order = if reverse_compressed { 1 } else { fill_order };
+        let sample_fill_order = if reverse_compressed || compression == 4 {
+            1
+        } else {
+            fill_order
+        };
         if let Some(palette) = &palette_gray {
             if alpha.is_some() {
                 // The supported two-sample palette mode is always 8-bit with
@@ -428,6 +434,85 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         }
     }
     GrayImage::from_raw(out_width, out_height, visual).ok_or(TiffError::Strips)
+}
+
+/// Decode one TIFF Group 4 strip to MSB-first samples. The decoder reports
+/// physical white/black runs, so choose sample values for the TIFF polarity.
+fn unpack_group4(
+    input: &[u8],
+    width: u32,
+    rows: usize,
+    photometric: u32,
+) -> Result<Vec<u8>, TiffError> {
+    use hayro_ccitt::{DecodeSettings, Decoder, DecoderContext, EncodingMode};
+
+    struct Sink {
+        output: Vec<u8>,
+        width: usize,
+        stride: usize,
+        rows: usize,
+        limit: usize,
+        invalid: bool,
+    }
+    impl Decoder for Sink {
+        fn push_row(&mut self, changes: &[u32]) {
+            if self.rows >= self.limit
+                || changes.iter().any(|&point| point as usize >= self.width)
+                || changes.windows(2).any(|pair| pair[0] >= pair[1])
+            {
+                self.invalid = true;
+                return;
+            }
+            let start = self.rows * self.stride;
+            let row = &mut self.output[start..start + self.stride];
+            for pair in changes.chunks(2) {
+                let from = pair[0] as usize;
+                let to = pair.get(1).map_or(self.width, |&value| value as usize);
+                for x in from..to {
+                    row[x / 8] ^= 0x80 >> (x % 8);
+                }
+            }
+            self.rows += 1;
+        }
+    }
+
+    if input.len() > MAX_REVERSED_COMPRESSED_STRIP {
+        return Err(TiffError::Limit);
+    }
+    let stride = (width as usize).div_ceil(8);
+    let length = stride.checked_mul(rows).ok_or(TiffError::Limit)?;
+    let white = if photometric == 0 { 0 } else { 255 };
+    let mut sink = Sink {
+        output: vec![white; length],
+        width: width as usize,
+        stride,
+        rows: 0,
+        limit: rows,
+        invalid: false,
+    };
+    let settings = DecodeSettings {
+        columns: width,
+        rows: u32::try_from(rows).map_err(|_| TiffError::Limit)?,
+        end_of_block: true,
+        end_of_line: false,
+        rows_are_byte_aligned: false,
+        encoding: EncodingMode::Group4,
+        strict: true,
+    };
+    let mut context = DecoderContext::new(settings);
+    let consumed =
+        hayro_ccitt::decode(input, &mut sink, &mut context).map_err(|_| TiffError::Strips)?;
+    if sink.invalid
+        || sink.rows != rows
+        || input
+            .get(consumed..)
+            .ok_or(TiffError::Strips)?
+            .iter()
+            .any(|&byte| byte != 0)
+    {
+        return Err(TiffError::Strips);
+    }
+    Ok(sink.output)
 }
 
 /// TIFF LZW uses MSB-first codes, an initial Clear, and the TIFF early-change

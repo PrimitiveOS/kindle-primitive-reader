@@ -7,15 +7,15 @@ use crate::library::HighlightPage;
 use exchange::{Mark, PageBox, PageBoxes, Place, Range};
 use std::num::NonZeroU32;
 
-fn has_raw_marks(state: &BookState) -> bool {
-    state.bookmarks.iter().any(|mark| {
-        mark.position
-            .anchor
-            .as_ref()
-            .is_some_and(|anchor| anchor.raw_caret.is_some())
-    }) || state.highlights.iter().any(|mark| {
-        mark.selection.start.raw_caret.is_some() || mark.selection.end.raw_caret.is_some()
-    })
+fn raw_bookmark(mark: &Bookmark) -> bool {
+    mark.position
+        .anchor
+        .as_ref()
+        .is_some_and(|anchor| anchor.raw_caret.is_some())
+}
+
+fn raw_highlight(mark: &Highlight) -> bool {
+    mark.selection.start.raw_caret.is_some() || mark.selection.end.raw_caret.is_some()
 }
 
 impl Reader {
@@ -24,16 +24,12 @@ impl Reader {
         source: &Path,
         state: &BookState,
     ) -> Result<(Vec<Mark>, usize)> {
-        if has_raw_marks(state) {
-            return Err(
-                "This book has raw whitespace marks that cannot yet be synchronized safely".into(),
-            );
-        }
         with_storage(|| {
             let result = if let Some(fixed) = &self.fixed {
                 let points = state
                     .bookmarks
                     .iter()
+                    .filter(|mark| !raw_bookmark(mark))
                     .filter_map(|mark| export_fixed_bookmark(mark, fixed.reading.count()));
                 let ranges = state
                     .pdf_highlights
@@ -44,6 +40,9 @@ impl Reader {
                 let mut book = Book::open(source).map_err(io::Error::other)?;
                 let mut marks = Vec::new();
                 for mark in &state.bookmarks {
+                    if raw_bookmark(mark) {
+                        continue;
+                    }
                     if let Some(anchor) = &mark.position.anchor
                         && let Ok(place) = crate::cre_pointer::encode(&mut book, anchor, false)
                     {
@@ -59,6 +58,9 @@ impl Reader {
                     }
                 }
                 for mark in &state.highlights {
+                    if raw_highlight(mark) {
+                        continue;
+                    }
                     if let Ok(start) =
                         crate::cre_pointer::encode(&mut book, &mark.selection.start, false)
                         && let Ok(end) =
@@ -100,15 +102,22 @@ impl Reader {
         // Stock XPointer snapshots cannot represent positions inside collapsed
         // whitespace. In particular, their timestamp cutoff must not delete
         // such local marks merely because they could not appear remotely.
-        if has_raw_marks(state) {
-            return Err(
-                "This book has raw whitespace marks that cannot yet be synchronized safely".into(),
-            );
-        }
         let mut points = Vec::new();
         let mut ranges = Vec::new();
         let mut fixed_ranges = Vec::new();
-        let mut unavailable = snapshot.unavailable;
+        // The remote format cannot express these marks. Count them as
+        // unavailable so a timestamp cutoff never deletes unseen local data.
+        let mut unavailable = snapshot.unavailable
+            + state
+                .bookmarks
+                .iter()
+                .filter(|mark| raw_bookmark(mark))
+                .count()
+            + state
+                .highlights
+                .iter()
+                .filter(|mark| raw_highlight(mark))
+                .count();
         if let Some(fixed) = &self.fixed {
             for mark in snapshot.marks {
                 if let Some(location) = load_fixed_mark(mark, &fixed.reading) {
@@ -175,10 +184,13 @@ impl Reader {
             points,
             cutoff,
             |mark| mark.updated_at.or(mark.created_at),
-            |a, b| match (&a.position.anchor, &b.position.anchor) {
-                (Some(a), Some(b)) => a == b,
-                (None, None) => a.position.page == b.position.page,
-                _ => false,
+            |a, b| {
+                !raw_bookmark(a)
+                    && match (&a.position.anchor, &b.position.anchor) {
+                        (Some(a), Some(b)) => a == b,
+                        (None, None) => a.position.page == b.position.page,
+                        _ => false,
+                    }
             },
             &mut summary,
         );
@@ -198,7 +210,11 @@ impl Reader {
                 cutoff,
                 |mark| mark.updated_at.or(mark.created_at),
                 |a, b| {
-                    crate::library::raw_positions::same_selection_start(&a.selection, &b.selection)
+                    !raw_highlight(a)
+                        && crate::library::raw_positions::same_selection_start(
+                            &a.selection,
+                            &b.selection,
+                        )
                 },
                 &mut summary,
             );

@@ -788,14 +788,25 @@ impl Book {
         anchor: &crate::Anchor,
         end: bool,
     ) -> Result<Option<(usize, crate::Anchor)>> {
-        if anchor.raw_caret.is_some() {
-            return Err("Raw whitespace locations cannot yet be migrated safely".into());
-        }
         match &self.content {
             Content::Loose {
                 odt_history: Some(history),
                 ..
-            } => history.migrate(anchor, end),
+            } => {
+                if anchor.raw_caret.is_none() {
+                    return history.migrate(anchor, end);
+                }
+                // Do not translate a raw caret through a legacy split. If its
+                // canonical portion already belongs to the verified current
+                // section, retain the entire original anchor unchanged; page
+                // opening still validates its raw source fingerprint.
+                let mut canonical = anchor.clone();
+                canonical.raw_caret = None;
+                match history.migrate(&canonical, end)? {
+                    None => Ok(None),
+                    Some(_) => Err("Raw whitespace locations cannot yet be migrated safely".into()),
+                }
+            }
             _ => Ok(None),
         }
     }

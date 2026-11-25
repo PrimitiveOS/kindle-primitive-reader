@@ -529,8 +529,45 @@ impl Reader {
                 // Page-local geometry handles half-open end anchors accurately.
                 // Limit expensive checks on books with many large selections.
                 let mut checks = 0usize;
+                let mut cross_chapter_checks = 0usize;
                 'marks: for mark in &state.highlights {
-                    let selection = &mark.selection;
+                    let saved = &mark.selection;
+                    let local;
+                    let selection = if saved.start.chapter != saved.end.chapter
+                        && (saved.start.raw_caret.is_some() || saved.end.raw_caret.is_some())
+                    {
+                        let (Some(first), Some(last)) = (
+                            probe.chapter_index(&saved.start.chapter),
+                            probe.chapter_index(&saved.end.chapter),
+                        ) else {
+                            continue;
+                        };
+                        if first > last
+                            || !(first..=last).contains(&chapter)
+                            || last.saturating_sub(first) >= 8
+                            || cross_chapter_checks == 4
+                        {
+                            continue;
+                        }
+                        cross_chapter_checks += 1;
+                        if active
+                            .reading
+                            .anchored_quote(&saved.start, &saved.end)
+                            .ok()
+                            .as_ref()
+                            != Some(saved)
+                        {
+                            continue;
+                        }
+                        let Some(fragment) = probe.raw_chapter_fragment(&saved.start, &saved.end)
+                        else {
+                            continue;
+                        };
+                        local = fragment;
+                        &local
+                    } else {
+                        saved
+                    };
                     if probe.chapter_index(&selection.start.chapter) != Some(chapter)
                         || probe.chapter_index(&selection.end.chapter) != Some(chapter)
                     {

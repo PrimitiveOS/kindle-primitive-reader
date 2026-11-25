@@ -137,6 +137,21 @@ impl Reader {
         let window = self.map_window;
         let pages = window.pages(count);
         let sections = self.fixed_sections(fixed);
+        let history_pages = |locations: &[super::HistoryLocation]| {
+            locations
+                .iter()
+                .rev()
+                .take(3)
+                .enumerate()
+                .filter_map(|(index, location)| {
+                    let position = &location.position;
+                    (position.chapter == 0 && position.anchor.is_none() && position.page < count)
+                        .then_some((position.page, index + 1))
+                })
+                .collect::<Vec<_>>()
+        };
+        let previous_history = history_pages(&self.back);
+        let next_history = history_pages(&self.forward);
         // Fixed-document visit keys are zero-based physical pages. Aggregate
         // only the visible bounded slots, not unrelated or undated totals.
         let mut slot_seconds = [0u64; CAPACITY];
@@ -188,9 +203,25 @@ impl Reader {
                 summary.push_str(language.book_map_text("Gray: this session"));
             }
         }
+        if previous_history
+            .iter()
+            .chain(&next_history)
+            .any(|(page, _)| pages.contains(page))
+        {
+            summary.push_str("   ·   ");
+            summary.push_str(language.book_map_text("Filled: previous; outline: next"));
+        }
         canvas.text(layout.body(137, 65), &summary, CAPTION.lines(2));
         for (index, slot) in window.slots(count).enumerate() {
             let rect = projected_cell(layout, index);
+            let previous = previous_history
+                .iter()
+                .find(|(page, _)| slot.contains(page))
+                .map(|(_, number)| *number);
+            let next = next_history
+                .iter()
+                .find(|(page, _)| slot.contains(page))
+                .map(|(_, number)| *number);
             let selected = slot.contains(&focus);
             let hidden = reading
                 .hidden_flow_map()
@@ -237,9 +268,49 @@ impl Reader {
             };
             if let Some(title) = chapter.or(folio.as_deref()) {
                 canvas.text(
-                    Rect::new(rect.x + 12, rect.y + 54, rect.w - 24, rect.h - 93),
+                    Rect::new(
+                        rect.x + 12,
+                        rect.y + 54,
+                        (rect.w
+                            - 24
+                            - if previous.is_some() || next.is_some() {
+                                66
+                            } else {
+                                0
+                            })
+                        .max(1),
+                        rect.h - 93,
+                    ),
                     title,
                     TextStyle::new(24).ink(ink).lines(2),
+                );
+            }
+            // Filled and outlined numbered badges mirror the two history
+            // directions. Grouped slots show only the nearest in each stack.
+            let background = if pressed {
+                0
+            } else if hidden {
+                235
+            } else {
+                255
+            };
+            if let Some(number) = previous {
+                let badge = Rect::new(rect.right() - 72, rect.y + 64, 24, 24);
+                canvas.fill(badge, ink);
+                canvas.text(
+                    badge,
+                    &number.to_string(),
+                    TextStyle::new(18).bold().center().ink(background),
+                );
+            }
+            if let Some(number) = next {
+                let badge = Rect::new(rect.right() - 43, rect.y + 64, 24, 24);
+                canvas.fill(badge, ink);
+                canvas.fill(badge.inset(2), background);
+                canvas.text(
+                    badge,
+                    &number.to_string(),
+                    TextStyle::new(18).bold().center().ink(ink),
                 );
             }
             // The rail locates the current page inside a grouped tile.
