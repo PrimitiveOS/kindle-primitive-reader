@@ -58,7 +58,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
 
     let photometric = image.required(262, SHORT_ONLY)?;
     let samples = image.scalar(277, SHORT_ONLY, 1)?;
-    if !matches!((photometric, samples), (0 | 1 | 3, 1) | (1, 2) | (2, 3 | 4)) {
+    if !matches!(
+        (photometric, samples),
+        (0 | 1 | 3, 1) | (0 | 1, 2) | (2, 3 | 4)
+    ) {
         return Err(TiffError::Unsupported);
     }
     // Alpha-bearing grayscale and RGB must explicitly describe the extra
@@ -66,6 +69,11 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let alpha = if samples == 2 || samples == 4 {
         let kind = image.scalar(338, SHORT_ONLY, 0)?;
         if !matches!(kind, 1 | 2) {
+            return Err(TiffError::Unsupported);
+        }
+        // Associated alpha with WhiteIsZero needs separate validation of the
+        // premultiplied sample convention; do not guess at that case.
+        if photometric == 0 && kind != 2 {
             return Err(TiffError::Unsupported);
         }
         if u64::from(pixel_count) * (u64::from(samples) + 1) > 32 * 1024 * 1024 {
@@ -235,7 +243,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
             // page used by Reader's other transparent-image paths.
             pixels.extend(strip.chunks_exact(samples as usize).map(|pixel| {
                 let gray = if samples == 2 {
-                    u32::from(pixel[0])
+                    u32::from(pixel[0] ^ invert)
                 } else {
                     (u32::from(pixel[0]) * 2126
                         + u32::from(pixel[1]) * 7152

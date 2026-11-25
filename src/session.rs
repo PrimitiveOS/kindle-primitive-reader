@@ -1428,13 +1428,48 @@ impl Reading {
     ) -> Result<TextSelection> {
         let anchors = [&saved.start, &saved.end, &word.start, &word.end];
         if anchors.iter().any(|anchor| anchor.raw_caret.is_some()) {
-            let start_order = self
-                .probe
-                .compare_text_anchors(&saved.start, &word.start)
+            let compare = |a: &Anchor, b: &Anchor| -> Option<std::cmp::Ordering> {
+                let a_chapter = self.probe.chapter_index(&a.chapter)?;
+                let b_chapter = self.probe.chapter_index(&b.chapter)?;
+                let verify = |anchor: &Anchor, chapter: usize| {
+                    let loaded;
+                    let probe = if chapter == self.chapter {
+                        &self.probe
+                    } else {
+                        loaded = self.config.chapter(chapter).ok()?;
+                        &loaded
+                    };
+                    if let Some(caret) = &anchor.raw_caret {
+                        let mut canonical = anchor.clone();
+                        canonical.raw_caret = None;
+                        probe.validate_raw_whitespace_anchor(
+                            &crate::source::raw_whitespace::RawAnchor {
+                                canonical,
+                                caret: caret.clone(),
+                            },
+                        )?;
+                    } else {
+                        probe.project_anchor(anchor)?;
+                    }
+                    Some(())
+                };
+                if a_chapter != b_chapter {
+                    verify(a, a_chapter)?;
+                    verify(b, b_chapter)?;
+                    return Some(a_chapter.cmp(&b_chapter));
+                }
+                if a_chapter == self.chapter {
+                    self.probe.compare_text_anchors(a, b)
+                } else {
+                    self.config
+                        .chapter(a_chapter)
+                        .ok()?
+                        .compare_text_anchors(a, b)
+                }
+            };
+            let start_order = compare(&saved.start, &word.start)
                 .ok_or("These raw selection positions cannot be compared safely")?;
-            let end_order = self
-                .probe
-                .compare_text_anchors(&saved.end, &word.end)
+            let end_order = compare(&saved.end, &word.end)
                 .ok_or("These raw selection positions cannot be compared safely")?;
             let start = if start_order.is_le() {
                 &saved.start
@@ -1446,10 +1481,7 @@ impl Reading {
             } else {
                 &word.end
             };
-            return self
-                .probe
-                .select_range(start, end)
-                .ok_or_else(|| "The raw selection cannot be extended safely".into());
+            return self.collect_anchored_quote(start, end, true);
         }
         if let Some(band) = self.probe.foreign_note_bands.iter().find(|band| {
             anchors
@@ -1527,27 +1559,73 @@ impl Reading {
         canonical: bool,
     ) -> Result<TextSelection> {
         if start.raw_caret.is_some() || end.raw_caret.is_some() {
-            if start.chapter != end.chapter {
-                return Err("Raw whitespace selection across sections is not yet supported".into());
-            }
-            let index = self
+            let first = self
                 .probe
                 .chapter_index(&start.chapter)
                 .ok_or("The saved section is unavailable")?;
-            let loaded;
-            let probe = if index == self.chapter {
-                &self.probe
-            } else {
-                loaded = self.config.chapter(index)?;
-                &loaded
-            };
-            let selection = probe
-                .select_raw_anchors(start, end)
-                .ok_or("The raw whitespace selection cannot be resolved safely")?;
-            if selection.text.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES {
-                return Err("This selection exceeds the saved highlight size limit".into());
+            let last = self
+                .probe
+                .chapter_index(&end.chapter)
+                .ok_or("The saved section is unavailable")?;
+            if first > last || start.book != end.book {
+                return Err("The passage endpoints are out of order".into());
             }
-            return Ok(selection);
+            if first == last {
+                let loaded;
+                let probe = if first == self.chapter {
+                    &self.probe
+                } else {
+                    loaded = self.config.chapter(first)?;
+                    &loaded
+                };
+                let selection = probe
+                    .select_raw_anchors(start, end)
+                    .ok_or("The raw whitespace selection cannot be resolved safely")?;
+                if selection.text.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES {
+                    return Err("This selection exceeds the saved highlight size limit".into());
+                }
+                return Ok(selection);
+            }
+            let mut text = String::new();
+            for index in first..=last {
+                let loaded;
+                let probe = if index == self.chapter {
+                    &self.probe
+                } else {
+                    loaded = self.config.chapter(index)?;
+                    &loaded
+                };
+                let fragment = probe
+                    .raw_chapter_fragment(start, end)
+                    .ok_or("A raw selection section cannot be resolved safely")?;
+                let joins = self
+                    .probe
+                    .odt_continued_before
+                    .get(index)
+                    .copied()
+                    .unwrap_or(false);
+                let extra = usize::from(!text.is_empty() && !joins);
+                if text
+                    .len()
+                    .saturating_add(extra)
+                    .saturating_add(fragment.text.len())
+                    > crate::library::MAX_HIGHLIGHT_TEXT_BYTES
+                {
+                    return Err("This selection exceeds the saved highlight size limit".into());
+                }
+                if extra != 0 {
+                    text.push('\n');
+                }
+                text.push_str(&fragment.text);
+            }
+            if text.trim().is_empty() {
+                return Err("The passage is empty".into());
+            }
+            return Ok(TextSelection {
+                start: start.clone(),
+                end: end.clone(),
+                text,
+            });
         }
         let first = self
             .probe
@@ -1589,6 +1667,8 @@ impl Reading {
                     text.push('\n');
                 }
                 text.push_str(&part.text);
+            } else if probe.has_raw_layout() {
+                return Err("A selection spanning raw text cannot be resolved safely".into());
             } else if index == first || index == last {
                 if canonical || probe.select_source_range(start, end).is_none() {
                     return Err("The saved selection no longer resolves in this edition".into());
@@ -1606,6 +1686,36 @@ impl Reading {
     }
 
     pub(crate) fn highlight_rects(&self, selection: &TextSelection) -> Vec<HighlightRect> {
+        if selection.start.chapter != selection.end.chapter
+            && (selection.start.raw_caret.is_some() || selection.end.raw_caret.is_some())
+        {
+            let Ok(verified) = self.anchored_quote(&selection.start, &selection.end) else {
+                return Vec::new();
+            };
+            if verified != *selection {
+                return Vec::new();
+            }
+            let Some(fragment) = self
+                .probe
+                .raw_chapter_fragment(&selection.start, &selection.end)
+            else {
+                return Vec::new();
+            };
+            return self
+                .visible_parts()
+                .into_iter()
+                .flat_map(|part| {
+                    self.probe
+                        .selection_rects_in(part.range, &fragment)
+                        .into_iter()
+                        .map(move |mut rect| {
+                            rect.x += part.x as i32;
+                            rect.y += part.y as i32;
+                            rect
+                        })
+                })
+                .collect();
+        }
         let mut rects: Vec<_> = self
             .visible_parts()
             .into_iter()
@@ -1706,18 +1816,26 @@ impl Reading {
         } else {
             usize::MAX
         };
+        let mut raw_failure = false;
         let mut edges = self
             .visible_columns()
             .take(column_count)
             .filter_map(|(range, _)| {
                 let mut lines = self.probe.lines.iter().filter(|line| {
-                    !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
+                    (!line.bytes.is_empty() || line.raw_whitespace.is_some())
+                        && line.bottom > range.start
+                        && line.top < range.end
                 });
                 let line = if previous {
                     lines.next_back()
                 } else {
                     lines.next()
                 }?;
+                if line.raw_whitespace.is_some() {
+                    let anchor = self.probe.raw_line_anchor(line, previous);
+                    raw_failure |= anchor.is_none();
+                    return anchor;
+                }
                 let (key, byte) = if previous {
                     line.sources().last().map(|(key, span)| (key, span.end))?
                 } else {
@@ -1725,26 +1843,57 @@ impl Reading {
                 };
                 Some(self.probe.anchor(key, byte))
             });
-        if previous { edges.last() } else { edges.next() }.or_else(|| self.anchor())
+        let result = if previous {
+            edges.by_ref().last()
+        } else {
+            edges.next()
+        };
+        drop(edges);
+        if raw_failure {
+            None
+        } else {
+            result.or_else(|| self.anchor())
+        }
     }
 
     pub(crate) fn visible_text(&self) -> String {
         let mut text = String::new();
         for (range, _) in self.visible_columns() {
+            let raw_in_view = self.probe.lines.iter().any(|line| {
+                line.raw_whitespace.is_some() && line.bottom > range.start && line.top < range.end
+            });
             let mut visible = self.probe.lines.iter().filter(|line| {
-                !line.bytes.is_empty() && line.bottom > range.start && line.top < range.end
+                (!line.bytes.is_empty() || line.raw_whitespace.is_some())
+                    && line.bottom > range.start
+                    && line.top < range.end
             });
             let Some(first) = visible.next() else {
                 continue;
             };
             let last = visible.last().unwrap_or(first);
-            let start = self.probe.anchor(first.block, first.bytes.start);
-            let end = self.probe.anchor(last.block, last.bytes.end);
+            let start = if first.raw_whitespace.is_some() {
+                let Some(anchor) = self.probe.raw_line_anchor(first, false) else {
+                    return String::new();
+                };
+                anchor
+            } else {
+                self.probe.anchor(first.block, first.bytes.start)
+            };
+            let end = if last.raw_whitespace.is_some() {
+                let Some(anchor) = self.probe.raw_line_anchor(last, true) else {
+                    return String::new();
+                };
+                anchor
+            } else {
+                self.probe.anchor(last.block, last.bytes.end)
+            };
             if let Some(selection) = self.probe.select_range(&start, &end) {
                 if !text.is_empty() {
                     text.push('\n');
                 }
                 text.push_str(&selection.text);
+            } else if raw_in_view {
+                return String::new();
             }
         }
         for note in self.probe.foreign_bands(self.page) {

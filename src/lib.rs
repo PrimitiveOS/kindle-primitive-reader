@@ -2672,6 +2672,12 @@ impl Probe {
         let line = self.lines.iter().find(|line| {
             line.raw_whitespace.is_some() && line.bottom > range.start && line.top < range.end
         })?;
+        self.raw_line_anchor(line, false)
+    }
+
+    /// Return one verified raw line boundary. This never guesses an offset
+    /// from the normalized span, including on a blank line.
+    fn raw_line_anchor(&self, line: &Line, end: bool) -> Option<Anchor> {
         let location = line.raw_whitespace.as_ref()?;
         if !line.top.is_finite()
             || !line.bottom.is_finite()
@@ -2687,7 +2693,11 @@ impl Probe {
             canonical: end_anchor,
             caret: location.end.clone(),
         })?;
-        let caret = location.start.clone();
+        let caret = if end {
+            location.end.clone()
+        } else {
+            location.start.clone()
+        };
         let mut anchor = self.anchor(line.block, caret.canonical_offset);
         let raw = source::raw_whitespace::RawAnchor {
             canonical: anchor.clone(),

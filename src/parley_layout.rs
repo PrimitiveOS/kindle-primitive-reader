@@ -1607,6 +1607,7 @@ impl ParleyChapter {
                     None
                 };
                 let raw_candidate = if RAW_LAYOUT_ENABLED
+                    && !settings.in_page_footnotes
                     && plan.is_none()
                     && generated.is_none()
                     && tabular.is_none()
@@ -2335,6 +2336,15 @@ impl ParleyChapter {
             else {
                 return artwork.max(paragraph.bottom);
             };
+            if paragraph.raw_binding.is_some() {
+                // Blank lines are meaningful in preformatted content and
+                // must remain reachable even when they paint no glyphs.
+                return artwork.max(if paragraph.is_verified_raw(&source.blocks[index]) {
+                    paragraph.text_bottom
+                } else {
+                    paragraph.bottom
+                });
+            }
             let text = paragraph
                 .flow
                 .as_ref()

@@ -33,6 +33,7 @@ pub(crate) struct Chm {
     archive: ChmFile,
     members: BTreeMap<String, Entry>,
     encoding: &'static Encoding,
+    alternate_topics: Option<BTreeSet<String>>,
 }
 
 impl Chm {
@@ -56,11 +57,19 @@ impl Chm {
                 return Err("The CHM directory contains ambiguous case-insensitive paths".into());
             }
         }
-        let topics: BTreeSet<_> = members
+        let mut topics: BTreeSet<_> = members
             .keys()
             .filter(|path| is_topic(path))
             .cloned()
             .collect();
+        let alternate = topics.is_empty();
+        if alternate {
+            topics = members
+                .keys()
+                .filter(|path| is_alternate_topic(path))
+                .cloned()
+                .collect();
+        }
         if topics.is_empty() || topics.len() > MAX_TOPICS {
             return Err("The CHM file has no readable topics or exceeds the topic limit".into());
         }
@@ -103,6 +112,20 @@ impl Chm {
             .transpose()?
             .and_then(|path| destination("index.html", &path).map(|target| target.path))
             .filter(|path| topics.contains(path));
+        if alternate {
+            let referenced: BTreeSet<_> = home
+                .iter()
+                .chain(
+                    toc.iter()
+                        .filter_map(|item| item.destination.as_ref().map(|target| &target.path)),
+                )
+                .cloned()
+                .collect();
+            topics.retain(|path| referenced.contains(path));
+            if topics.is_empty() {
+                return Err("The CHM has no metadata-referenced readable topics".into());
+            }
+        }
         let mut added = BTreeSet::new();
         let mut chapters = Vec::with_capacity(topics.len());
         // The declared home topic opens first. Repeated TOC references still share one chapter.
@@ -154,6 +177,7 @@ impl Chm {
             archive,
             members,
             encoding,
+            alternate_topics: alternate.then_some(topics),
         })
     }
 
@@ -161,18 +185,34 @@ impl Chm {
         let entry = self
             .members
             .get(path)
-            .filter(|_| is_topic(path))
+            .filter(|_| {
+                is_topic(path)
+                    || self
+                        .alternate_topics
+                        .as_ref()
+                        .is_some_and(|topics| topics.contains(path))
+            })
             .ok_or("The CHM topic is unavailable")?;
         let raw = read_limited(&mut self.archive, entry, MAX_TOPIC_BYTES)?;
         let input = decode_html(&raw, self.encoding)?;
-        read_topic(&input, path, &self.members)
+        if let Some(topics) = &self.alternate_topics {
+            read_topic_allowed(&input, path, &self.members, Some(topics))
+        } else {
+            read_topic(&input, path, &self.members)
+        }
     }
 
     #[cfg(feature = "kindle")]
     pub(crate) fn chapter_length(&self, path: &str) -> Result<u64> {
         self.members
             .get(path)
-            .filter(|_| is_topic(path))
+            .filter(|_| {
+                is_topic(path)
+                    || self
+                        .alternate_topics
+                        .as_ref()
+                        .is_some_and(|topics| topics.contains(path))
+            })
             .map(|entry| entry.length)
             .ok_or_else(|| "The CHM topic is unavailable".into())
     }
@@ -227,6 +267,10 @@ fn extension(path: &str) -> &str {
 
 fn is_topic(path: &str) -> bool {
     matches!(extension(path), "html" | "htm" | "xhtml")
+}
+
+fn is_alternate_topic(path: &str) -> bool {
+    matches!(extension(path), "asp" | "aspx" | "shtml" | "xml")
 }
 
 fn is_image(path: &str) -> bool {
@@ -597,6 +641,7 @@ struct Topic<'a> {
     invalid: bool,
     content: bool,
     bmp_fallback: bool,
+    alternate_topics: Option<&'a BTreeSet<String>>,
 }
 
 struct TopicSink<'a>(RefCell<Topic<'a>>);
@@ -722,7 +767,10 @@ impl Topic<'_> {
         }
         if name == "a"
             && let Some(target) = attr(&tag, "href").and_then(|input| destination(self.base, input))
-            && is_topic(&target.path)
+            && (is_topic(&target.path)
+                || self
+                    .alternate_topics
+                    .is_some_and(|topics| topics.contains(&target.path)))
             && self.members.contains_key(&target.path)
         {
             attribute(&mut self.xhtml, "href", &reference(self.base, &target));
@@ -816,8 +864,19 @@ impl std::fmt::Display for EmptyTopic {
 impl std::error::Error for EmptyTopic {}
 
 fn read_topic(input: &str, base: &str, members: &BTreeMap<String, Entry>) -> Result<String> {
-    match read_topic_mode(input, base, members, false) {
-        Err(error) if error.is::<EmptyTopic>() => read_topic_mode(input, base, members, true),
+    read_topic_allowed(input, base, members, None)
+}
+
+fn read_topic_allowed(
+    input: &str,
+    base: &str,
+    members: &BTreeMap<String, Entry>,
+    alternate_topics: Option<&BTreeSet<String>>,
+) -> Result<String> {
+    match read_topic_mode(input, base, members, alternate_topics, false) {
+        Err(error) if error.is::<EmptyTopic>() => {
+            read_topic_mode(input, base, members, alternate_topics, true)
+        }
         result => result,
     }
 }
@@ -826,6 +885,7 @@ fn read_topic_mode(
     input: &str,
     base: &str,
     members: &BTreeMap<String, Entry>,
+    alternate_topics: Option<&BTreeSet<String>>,
     bmp_fallback: bool,
 ) -> Result<String> {
     let topic = Topic {
@@ -838,6 +898,7 @@ fn read_topic_mode(
         invalid: false,
         content: false,
         bmp_fallback,
+        alternate_topics,
     };
     let mut topic = tokenize(input, TopicSink(RefCell::new(topic)))
         .0

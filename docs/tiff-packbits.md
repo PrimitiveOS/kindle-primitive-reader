@@ -22,7 +22,7 @@ The latter also supports other compression and color modes, so this is a subset
 of KOReader's TIFF support, not complete TIFF parity. [KOReader TIFF provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L410-L415) · [Pinned MuPDF TIFF decoder](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L360-L369) · [PackBits filter](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L408-L418) · [TIFF 6.0 specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
 These additions have not yet been compared against KOReader or exercised on
-the simulator or Kindle. White-is-zero grayscale and palette alpha, CMYK, multi-page and tiled TIFFs and CCITT remain outside this decoder's support. [TIFF 6.0 LZW
+the simulator or Kindle. Associated-alpha white-is-zero grayscale and palette alpha, CMYK, multi-page and tiled TIFFs and CCITT remain outside this decoder's support. [TIFF 6.0 LZW
 and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
 ## Image orientation
@@ -58,11 +58,16 @@ bounded buffer.
 
 Contiguous 8-bit RGB and white-is-black grayscale strips with an explicitly
 associated or unassociated alpha channel are also implemented, composited over
-white. The
+white. White-is-zero 8-bit grayscale strips additionally support an explicitly
+unassociated alpha channel: the sample is inverted before the same white-page
+blend. Associated-alpha white-is-zero remains unsupported pending validation
+of its premultiplied sample convention. Pinned MuPDF recognizes white-is-zero
+with extra samples, but its pixel results have not yet been compared with this
+candidate. The
 combined decoded-strip and grayscale-output allocation is capped at 32 MiB,
 plus Deflate’s one-byte overflow sentinel; compressed input remains separately
 bounded. These alpha changes are not yet
-behaviorally tested. White-is-zero grayscale and palette alpha, CMYK, planar, tiled and
+behaviorally tested. Associated-alpha white-is-zero grayscale, palette alpha, CMYK, planar, tiled and
 multi-page TIFFs remain unsupported.
 KOReader exposes TIFF via MuPDF, whose pinned loader accepts RGB photometric
 data and horizontal differencing; this limited subset is not full MuPDF

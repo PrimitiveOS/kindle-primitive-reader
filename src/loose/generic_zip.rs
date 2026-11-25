@@ -1,4 +1,5 @@
 //! One bounded reflowable document in a generic ZIP. No extraction to disk.
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
@@ -34,7 +35,7 @@ pub(super) fn open(file: File, length: u64, title: &str) -> Result<(Document, Fo
     if archive.len() != count {
         return Err("The ZIP has ambiguous or duplicate entries".into());
     }
-    let mut selected = None;
+    let mut candidates = Vec::new();
     let mut unsupported_document = false;
     for index in 0..archive.len() {
         let entry = archive.by_index_raw(index)?;
@@ -80,10 +81,8 @@ pub(super) fn open(file: File, length: u64, title: &str) -> Result<(Document, Fo
             }
             _ => None,
         };
-        if let Some(kind) = kind
-            && selected.replace((index, path.to_owned(), kind)).is_some()
-        {
-            return Err("The ZIP contains more than one readable document".into());
+        if let Some(kind) = kind {
+            candidates.push((index, path.to_owned(), kind));
         }
     }
     if unsupported_document {
@@ -91,7 +90,35 @@ pub(super) fn open(file: File, length: u64, title: &str) -> Result<(Document, Fo
             "The ZIP contains a document format not supported inside a generic archive".into(),
         );
     }
-    let (index, name, kind) = selected.ok_or("The ZIP has no supported readable document")?;
+    let (index, name, kind) = if candidates.len() == 1 {
+        candidates.pop().unwrap()
+    } else if candidates.is_empty() {
+        return Err("The ZIP has no supported readable document".into());
+    } else {
+        // Only recover a unique root default HTML document. XML and duplicate
+        // candidates remain ambiguous, and no existing single-document path
+        // changes its selected member or publication identity.
+        let mut names = BTreeSet::new();
+        if candidates
+            .iter()
+            .any(|(_, name, kind)| matches!(kind, Kind::Xml) || !names.insert(name.as_str()))
+        {
+            return Err("The ZIP contains ambiguous readable documents".into());
+        }
+        let mut defaults = candidates.iter().filter(|(_, name, kind)| {
+            matches!(kind, Kind::Html)
+                && !name.contains('/')
+                && name.rsplit_once('.').is_some_and(|(stem, ext)| {
+                    (stem.eq_ignore_ascii_case("index") || stem.eq_ignore_ascii_case("default"))
+                        && (ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm"))
+                })
+        });
+        let chosen = defaults.next().cloned();
+        if defaults.next().is_some() {
+            return Err("The ZIP has more than one default HTML document".into());
+        }
+        chosen.ok_or("The ZIP contains more than one readable document")?
+    };
     match kind {
         Kind::Html => Ok((
             super::read_htmlz_archive(archive, count, title)?,

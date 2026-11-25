@@ -27,6 +27,16 @@ mixed topics remain unavailable. External images are still rejected. This
 fallback has not been behaviorally compared with KOReader or verified in the
 simulator or on Kindle.
 
+When an archive has no ordinary HTML topic members, Reader can now use local
+`.asp`, `.aspx`, `.shtml` or `.xml` members explicitly referenced by its CHM
+home or contents metadata. Only these metadata-referenced members become
+chapters or link targets; paths, duplicate members, topic count and 512 KiB
+topic reads retain the existing checks. Content goes through the same inert
+HTML sanitizer; server scripts are never executed. Archives that already have
+ordinary HTML topics keep their previous selection and anchors. The alternate
+extension fallback and KOReader's exact behavior remain unverified in the
+simulator and on Kindle. [KOReader CHM topic selection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/chmfmt.cpp#L1063-L1078)
+
 This implementation has not yet been compared with KOReader on sample CHM
 files or tested in the simulator or on Kindle. Other CHM variants, merged
 help files and active content remain outside the current adapter.

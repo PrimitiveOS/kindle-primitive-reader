@@ -112,7 +112,16 @@ pub(super) fn matches_anchors(
 impl VerifiedRawLayout {
     pub(super) fn from_probe(probe: &Probe) -> Result<Self> {
         let Renderer::Parley(renderer) = &probe.renderer else {
-            return Err("Raw search requires the horizontal Parley layout".into());
+            if probe.lines.iter().any(|line| line.raw_whitespace.is_some()) {
+                return Err("Raw search lines have no horizontal layout".into());
+            }
+            return Ok(Self {
+                book: probe.book,
+                chapter: probe.chapter.clone(),
+                revision: probe.source.revision,
+                flow: probe.search_flow_config.clone(),
+                blocks: BTreeMap::new(),
+            });
         };
         let mut blocks = BTreeMap::new();
         let mut line_groups = BTreeMap::<usize, Vec<&crate::Line>>::new();

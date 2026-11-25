@@ -325,6 +325,81 @@ impl Probe {
         )
     }
 
+    pub(crate) fn has_raw_layout(&self) -> bool {
+        matches!(&self.renderer, Renderer::Parley(renderer)
+            if renderer.paragraphs().iter().any(|paragraph| paragraph.raw_binding.is_some()))
+    }
+
+    /// Resolve a chapter's first or last selectable boundary without inventing
+    /// canonical offsets for raw whitespace. Unsupported projections fail closed.
+    fn selectable_chapter_edge(&self, first: bool) -> Option<Anchor> {
+        let raw_blocks = self.verified_raw_blocks()?;
+        let mut indexes = 0..self.source.blocks.len();
+        while let Some(index) = if first {
+            indexes.next()
+        } else {
+            indexes.next_back()
+        } {
+            let block = &self.source.blocks[index];
+            if raw_blocks.contains(&index) {
+                let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+                if bound.raw().is_empty() {
+                    continue;
+                }
+                let offset = if first { 0 } else { bound.raw().len() };
+                let affinity = if first {
+                    crate::source::raw_whitespace::CaretAffinity::After
+                } else {
+                    crate::source::raw_whitespace::CaretAffinity::Before
+                };
+                let raw = self.raw_whitespace_anchor(block.key, offset, affinity)?;
+                let mut anchor = raw.canonical;
+                anchor.raw_caret = Some(raw.caret);
+                return Some(anchor);
+            }
+            let view = self.reading_flow.view(&self.source, block).ok()?;
+            let spans = view.source_spans(0..view.text().len())?;
+            let span = if first {
+                spans.iter().find(|span| !span.is_empty())
+            } else {
+                spans.iter().rev().find(|span| !span.is_empty())
+            };
+            if let Some(span) = span {
+                return Some(self.anchor(block.key, if first { span.start } else { span.end }));
+            }
+        }
+        None
+    }
+
+    /// Localize a raw cross-section range to this chapter. The caller must
+    /// separately verify the complete quote before using saved geometry.
+    pub(crate) fn raw_chapter_fragment(
+        &self,
+        start: &Anchor,
+        end: &Anchor,
+    ) -> Option<TextSelection> {
+        if start.book != self.book || end.book != self.book {
+            return None;
+        }
+        let first = self.chapter_index(&start.chapter)?;
+        let last = self.chapter_index(&end.chapter)?;
+        let current = self.chapter_index(&self.chapter)?;
+        if first > last || !(first..=last).contains(&current) {
+            return None;
+        }
+        let local_start = if current == first {
+            start.clone()
+        } else {
+            self.selectable_chapter_edge(true)?
+        };
+        let local_end = if current == last {
+            end.clone()
+        } else {
+            self.selectable_chapter_edge(false)?
+        };
+        self.select_range(&local_start, &local_end)
+    }
+
     /// Select exact raw content inside one verified source block. Reject
     /// cross-block, stale or unrepresentable endpoints rather than snapping.
     #[allow(dead_code)]

@@ -3178,17 +3178,17 @@ fn valid_highlight(mark: &Highlight) -> bool {
     let raw_order = match (&selection.start.raw_caret, &selection.end.raw_caret) {
         (None, None) => None,
         (Some(start), Some(end)) => Some(
-            selection.start.chapter == selection.end.chapter
-                && selection.start.revision == selection.end.revision
-                && (selection.start.block < selection.end.block
-                    || (selection.start.block == selection.end.block
-                        && start.raw_sha256 == end.raw_sha256
-                        && start.raw_offset < end.raw_offset)),
+            selection.start.chapter != selection.end.chapter
+                || (selection.start.revision == selection.end.revision
+                    && (selection.start.block < selection.end.block
+                        || (selection.start.block == selection.end.block
+                            && start.raw_sha256 == end.raw_sha256
+                            && start.raw_offset < end.raw_offset))),
         ),
         _ => Some(
-            selection.start.chapter == selection.end.chapter
-                && selection.start.revision == selection.end.revision
-                && selection.start.block < selection.end.block,
+            selection.start.chapter != selection.end.chapter
+                || (selection.start.revision == selection.end.revision
+                    && selection.start.block < selection.end.block),
         ),
     };
     valid_anchor(&selection.start)

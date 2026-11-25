@@ -6,7 +6,9 @@ use super::{
     Screen, mark_chapters::location_caption, navigation_layout::NavigationLayout, with_storage,
 };
 use crate::highlight_style::{HighlightColor, HighlightStyle};
-use crate::library::{BookState, BrowseKind, DocumentFormat, Library, fold_search};
+use crate::library::{
+    BookState, Bookmark, BrowseKind, DocumentFormat, Highlight, Library, PdfHighlight, fold_search,
+};
 use crate::search::Query;
 use primitive_ui::{BODY, CAPTION, Press, keyboard_key};
 use serde::{Deserialize, Serialize};
@@ -56,6 +58,7 @@ pub(super) enum Page {
     Sources,
     Results,
     Filters,
+    RemoveNotesConfirm,
     Colors,
     Search,
     Detail,
@@ -82,6 +85,7 @@ impl Page {
             Self::Sources => "Bookmark sources",
             Self::Results => "Bookmark browser",
             Self::Filters => "Bookmark filters",
+            Self::RemoveNotesConfirm => "Remove notes",
             Self::Colors => "Highlight color filter",
             Self::Search => "Find saved marks",
             Self::Detail => "Saved mark",
@@ -189,6 +193,8 @@ pub(super) enum Command {
     Use(Source),
     UseCurrentBook,
     FocusCurrentPage,
+    PreviewRemoveCurrentNotes,
+    ConfirmRemoveCurrentNotes,
     ToggleDefault(Source),
     OpenFolder(PathBuf, bool),
     ToggleBook(u64),
@@ -210,6 +216,94 @@ pub(super) enum Command {
     ViewBook(u64),
     Inspect(MarkKey),
     ViewMark(MarkKey),
+}
+
+/// Complete snapshots prevent an index from silently targeting a changed mark.
+enum NoteTarget {
+    Bookmark(usize, Bookmark),
+    Reflow(usize, Highlight),
+    Fixed(usize, PdfHighlight),
+}
+
+impl NoteTarget {
+    fn capture(book: &BookState, locator: Locator) -> Result<Option<Self>> {
+        Ok(match locator {
+            Locator::Bookmark(index) => {
+                let mark = book
+                    .bookmarks
+                    .get(index)
+                    .ok_or("A matching mark is unavailable")?;
+                if mark.note.as_ref().is_none_or(|note| note.trim().is_empty()) {
+                    None
+                } else if mark
+                    .position
+                    .anchor
+                    .as_ref()
+                    .is_some_and(|anchor| anchor.raw_caret.is_some())
+                {
+                    return Err("A matching note uses an unsupported raw location".into());
+                } else {
+                    Some(Self::Bookmark(index, mark.clone()))
+                }
+            }
+            Locator::Reflow(index) => {
+                let mark = book
+                    .highlights
+                    .get(index)
+                    .ok_or("A matching mark is unavailable")?;
+                if mark.note.as_ref().is_none_or(|note| note.trim().is_empty()) {
+                    None
+                } else if mark.selection.start.raw_caret.is_some()
+                    || mark.selection.end.raw_caret.is_some()
+                {
+                    return Err("A matching note uses an unsupported raw location".into());
+                } else {
+                    Some(Self::Reflow(index, mark.clone()))
+                }
+            }
+            Locator::Fixed(index) => {
+                let mark = book
+                    .pdf_highlights
+                    .get(index)
+                    .ok_or("A matching mark is unavailable")?;
+                mark.note
+                    .as_ref()
+                    .filter(|note| !note.trim().is_empty())
+                    .map(|_| Self::Fixed(index, mark.clone()))
+            }
+        })
+    }
+
+    fn matches(&self, book: &BookState) -> bool {
+        match self {
+            Self::Bookmark(index, original) => book.bookmarks.get(*index) == Some(original),
+            Self::Reflow(index, original) => book.highlights.get(*index) == Some(original),
+            Self::Fixed(index, original) => book.pdf_highlights.get(*index) == Some(original),
+        }
+    }
+
+    fn clear(&self, book: &mut BookState, now: Option<i64>) {
+        match self {
+            Self::Bookmark(index, _) => {
+                book.bookmarks[*index].note = None;
+                book.bookmarks[*index].updated_at = now;
+            }
+            Self::Reflow(index, _) => {
+                book.highlights[*index].note = None;
+                book.highlights[*index].updated_at = now;
+            }
+            Self::Fixed(index, _) => {
+                book.pdf_highlights[*index].note = None;
+                book.pdf_highlights[*index].updated_at = now;
+            }
+        }
+    }
+}
+
+struct PendingNoteRemoval {
+    book: u64,
+    title: String,
+    targets: Vec<NoteTarget>,
 }
 
 struct ListedBook {
@@ -295,6 +389,7 @@ pub(super) struct Browser {
     text_offset: usize,
     text_pages: RefCell<Vec<Range<usize>>>,
     list_anchor: Option<(usize, usize)>,
+    pending_note_removal: Option<PendingNoteRemoval>,
     pub(super) after_password: Option<MarkKey>,
 }
 
@@ -352,6 +447,7 @@ impl Default for Browser {
             text_offset: 0,
             text_pages: RefCell::default(),
             list_anchor: None,
+            pending_note_removal: None,
             after_password: None,
         }
     }
@@ -553,6 +649,7 @@ impl Reader {
         match action {
             Command::Open => {
                 let browser = &mut self.bookmark_browser;
+                browser.pending_note_removal = None;
                 browser.origin = match self.screen {
                     Screen::BookTools => Screen::Book,
                     Screen::FixedTools => Screen::Fixed,
@@ -570,6 +667,9 @@ impl Reader {
                 self.show(Screen::BookmarkBrowser(Page::Sources));
             }
             Command::Go(page) => {
+                if page != Page::RemoveNotesConfirm {
+                    self.bookmark_browser.pending_note_removal = None;
+                }
                 if page == Page::Sources {
                     self.bookmark_browser.sources_from_results = true;
                 }
@@ -755,6 +855,98 @@ impl Reader {
                             .to_owned(),
                     );
                 }
+            }
+            Command::PreviewRemoveCurrentNotes => {
+                if self.screen != Screen::BookmarkBrowser(Page::Filters)
+                    || !matches!(self.bookmark_browser.origin, Screen::Book | Screen::Fixed)
+                {
+                    return Err("Open a book before removing its notes".into());
+                }
+                let id = self.open_book_id().ok_or("Open a book first")?;
+                let book = self.library.state(id).ok_or("That book is unavailable")?;
+                let mut targets = Vec::new();
+                let mut seen = BTreeSet::new();
+                for key in self
+                    .bookmark_browser
+                    .marks
+                    .iter()
+                    .filter(|key| key.book == id)
+                {
+                    let identity = match key.locator {
+                        Locator::Bookmark(index) => (0, index),
+                        Locator::Reflow(index) => (1, index),
+                        Locator::Fixed(index) => (2, index),
+                    };
+                    if !seen.insert(identity) {
+                        continue;
+                    }
+                    if let Some(target) = NoteTarget::capture(book, key.locator)? {
+                        if targets.len() == 512 {
+                            return Err("Too many matching notes; narrow the filters first".into());
+                        }
+                        targets.push(target);
+                    }
+                }
+                if targets.is_empty() {
+                    return Err("No matching notes in the current book".into());
+                }
+                self.bookmark_browser.pending_note_removal = Some(PendingNoteRemoval {
+                    book: id,
+                    title: book.title.clone(),
+                    targets,
+                });
+                self.notice = None;
+                self.show(Screen::BookmarkBrowser(Page::RemoveNotesConfirm));
+            }
+            Command::ConfirmRemoveCurrentNotes => {
+                if self.screen != Screen::BookmarkBrowser(Page::RemoveNotesConfirm) {
+                    return Err("Review the notes before removing them".into());
+                }
+                let pending = self
+                    .bookmark_browser
+                    .pending_note_removal
+                    .as_ref()
+                    .ok_or("Review the notes before removing them")?;
+                if self.open_book_id() != Some(pending.book)
+                    || !matches!(self.bookmark_browser.origin, Screen::Book | Screen::Fixed)
+                {
+                    return Err("The open book changed; review the notes again".into());
+                }
+                let id = pending.book;
+                let state = self.library.state(id).ok_or("That book is unavailable")?;
+                if state.title != pending.title
+                    || pending.targets.is_empty()
+                    || !pending.targets.iter().all(|target| target.matches(state))
+                {
+                    return Err("A matching mark changed; review the notes again".into());
+                }
+                // Roll back all in-memory changes if the existing atomic library
+                // persistence fails; only the reviewed book is ever modified.
+                let before = state.clone();
+                let state = self
+                    .library
+                    .state_mut(id)
+                    .ok_or("That book is unavailable")?;
+                let now = crate::mark_time::now();
+                for target in &pending.targets {
+                    target.clear(state, now);
+                }
+                if let Err(error) = self.library.persist() {
+                    if let Some(state) = self.library.state_mut(id) {
+                        *state = before;
+                    }
+                    return Err(error.into());
+                }
+                self.bookmark_browser.pending_note_removal = None;
+                self.mark_book_changed();
+                self.refresh_bookmark_browser();
+                self.show(Screen::BookmarkBrowser(Page::Results));
+                self.notice = Some(
+                    self.controls
+                        .interface_language
+                        .bookmark_text("Notes removed")
+                        .into(),
+                );
             }
             Command::ToggleDefault(source) => {
                 let browser = &mut self.bookmark_browser;
@@ -1263,6 +1455,17 @@ impl Reader {
                     selection_row("Date added", C::SortByDate(true), browser.sort_by_date),
                     item("All types", C::SetKind(None)).detail(kind),
                 ];
+                if matches!(browser.origin, Screen::Book | Screen::Fixed)
+                    && self.open_book_id().is_some()
+                {
+                    rows.insert(
+                        1,
+                        item(
+                            "Remove matching notes (this book)",
+                            C::PreviewRemoveCurrentNotes,
+                        ),
+                    );
+                }
                 if (browser.origin == Screen::Fixed && self.fixed.is_some())
                     || (browser.origin == Screen::Book && self.active.is_some())
                 {
@@ -1294,6 +1497,34 @@ impl Reader {
                         *detail = language.bookmark_text(detail).to_owned();
                     }
                 }
+                rows
+            }
+            Page::RemoveNotesConfirm => {
+                let mut rows = Vec::new();
+                if let Some(pending) = &browser.pending_note_removal {
+                    let message = if language.is_english() {
+                        format!(
+                            "Delete {} matching notes in this book?",
+                            pending.targets.len()
+                        )
+                    } else {
+                        format!(
+                            "Xóa {} ghi chú phù hợp trong sách này?",
+                            pending.targets.len()
+                        )
+                    };
+                    rows.push(Item::new(message, Action::Heading));
+                    rows.push(Item::new(pending.title.clone(), Action::Heading));
+                    rows.push(Item::new(
+                        language.bookmark_text("Bookmarks and highlights will remain"),
+                        Action::Heading,
+                    ));
+                    rows.push(item(
+                        language.bookmark_text("Delete notes"),
+                        C::ConfirmRemoveCurrentNotes,
+                    ));
+                }
+                rows.push(item(language.bookmark_text("Cancel"), C::Go(Page::Filters)));
                 rows
             }
             Page::Colors => Vec::new(),
@@ -1749,6 +1980,10 @@ impl Reader {
             }
             Page::Description => self.show(Screen::BookmarkBrowser(Page::Book)),
             Page::Colors => self.show(Screen::BookmarkBrowser(Page::Filters)),
+            Page::RemoveNotesConfirm => {
+                self.bookmark_browser.pending_note_removal = None;
+                self.show(Screen::BookmarkBrowser(Page::Filters));
+            }
             _ => self.show(Screen::BookmarkBrowser(Page::Results)),
         }
     }
