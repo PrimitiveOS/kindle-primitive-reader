@@ -428,6 +428,7 @@ impl Reader {
         self.save()?;
         let (library, _) = self.library.merged_backup_bytes(&preview.library)?;
         let state = self.library.state_path().to_owned();
+        let baseline = self.library.v2_disk_baseline()?;
         let documents = self.library.documents_path().to_owned();
         let fonts = self.fonts.clone();
         let mut updates = vec![(Key::Library, library)];
@@ -461,7 +462,13 @@ impl Reader {
             count += 1;
         }
         let mut restored = with_storage(|| {
+            if baseline.is_some() {
+                archive::require_no_pending(&state)?;
+            }
             archive::transaction(&state, &updates, || {
+                if let Some(expected) = baseline {
+                    archive::verify_captured_state(&state, &expected)?;
+                }
                 Self::open_data(&documents, &state, fonts)
             })
         })?;

@@ -25,6 +25,16 @@ These additions have not yet been compared against KOReader or exercised on
 the simulator or Kindle. Associated-alpha white-is-zero grayscale and palette images, packed palette alpha, profiled or nonstandard CMYK, multi-page and tiled TIFFs and CCITT remain outside this decoder's support. [TIFF 6.0 LZW
 and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
+## Packed grayscale strips
+
+Single-sample 2-bit and 4-bit unsigned grayscale strips can also be read.
+Samples are unpacked independently for each byte-aligned row, scaled to the
+full grayscale range and inverted for WhiteIsZero. Existing stored, PackBits,
+LZW and Deflate strip decoders and resource bounds apply. Reverse fill order
+remains unavailable with LZW/Deflate, and packed predictors and alpha are not
+supported. This candidate has not been compared with KOReader or behaviorally
+checked on the simulator or Kindle. [Pinned MuPDF grayscale handling](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L1370-L1381)
+
 ## Image orientation
 
 Reader applies the TIFF orientation tag after reconstructing the grayscale or

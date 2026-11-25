@@ -1663,6 +1663,38 @@ pub struct Library {
 }
 
 impl Library {
+    #[cfg(feature = "kindle")]
+    pub(crate) fn v2_disk_baseline(&self) -> io::Result<Option<[u8; 32]>> {
+        if self.state_version.get() == 2 {
+            self.state_digest
+                .get()
+                .map(Some)
+                .ok_or_else(|| invalid_state("The reader state has no verified disk baseline"))
+        } else {
+            Ok(None)
+        }
+    }
+    fn v2_snapshot(&self) -> SavedLibrary {
+        SavedLibrary {
+            version: 2,
+            books: self.recent.clone(),
+            collections: self.collections.clone(),
+            page_browser_grid: self.page_browser_grid,
+        }
+    }
+
+    fn merge_v2_import(&self, import: &BackupImport) -> io::Result<(SavedLibrary, BackupSummary)> {
+        raw_v2::merge_libraries(
+            &self.v2_snapshot(),
+            &SavedLibrary {
+                version: 2,
+                books: import.books.clone(),
+                collections: import.collections.clone(),
+                page_browser_grid: import.page_browser_grid,
+            },
+        )
+    }
+
     pub(crate) fn has_raw_whitespace_state(&self, id: u64) -> bool {
         self.state(id).is_some_and(raw_v2::book_has_raw)
     }
@@ -2438,12 +2470,7 @@ impl Library {
 
     pub fn bytes(&self) -> io::Result<Vec<u8>> {
         if self.state_version.get() == 2 {
-            return raw_v2::encode(&SavedLibrary {
-                version: 2,
-                books: self.recent.clone(),
-                collections: self.collections.clone(),
-                page_browser_grid: self.page_browser_grid,
-            });
+            return raw_v2::encode(&self.v2_snapshot());
         }
         encode_library(
             &self.recent,
@@ -2469,6 +2496,10 @@ impl Library {
     /// Validate and project the existing additive restore without mutating live state.
     pub(crate) fn merged_backup_bytes(&self, bytes: &[u8]) -> io::Result<(Vec<u8>, BackupSummary)> {
         let import = self.preview_backup(bytes)?;
+        if self.state_version.get() == 2 {
+            let (merged, summary) = self.merge_v2_import(&import)?;
+            return Ok((raw_v2::encode(&merged)?, summary));
+        }
         let (merged, mut summary) = merge_states(&self.recent, &import.books);
         let collections = merge_collections(
             &self.collections,
@@ -2490,9 +2521,15 @@ impl Library {
     /// Calculate the effect of an import without touching the library, books, or state file.
     pub fn preview_backup(&self, bytes: &[u8]) -> io::Result<BackupImport> {
         if self.state_version.get() == 2 {
-            return Err(invalid_state(
-                "Merging backups into a v2 reader library is not yet supported",
-            ));
+            let backup = raw_v2::decode_backup(bytes)?;
+            let import = BackupImport {
+                books: backup.books,
+                collections: backup.collections,
+                page_browser_grid: backup.page_browser_grid,
+                summary: BackupSummary::default(),
+            };
+            let (_, summary) = self.merge_v2_import(&import)?;
+            return Ok(BackupImport { summary, ..import });
         }
         if bytes.len() as u64 > MAX_BACKUP_BYTES {
             return Err(invalid_state("Reader backup exceeds its size limit"));
@@ -2527,9 +2564,11 @@ impl Library {
     /// Revalidate the proposed merge against current state, then apply it in memory.
     pub fn merge_backup(&mut self, import: BackupImport) -> io::Result<BackupSummary> {
         if self.state_version.get() == 2 {
-            return Err(invalid_state(
-                "Merging backups into a v2 reader library is not yet supported",
-            ));
+            let (merged, summary) = self.merge_v2_import(&import)?;
+            self.recent = merged.books;
+            self.collections = merged.collections;
+            self.page_browser_grid = merged.page_browser_grid;
+            return Ok(summary);
         }
         let (merged, mut summary) = merge_states(&self.recent, &import.books);
         let collections = merge_collections(
@@ -2735,12 +2774,7 @@ impl Library {
                 "The reader state changed since it was loaded",
             ));
         }
-        let next = raw_v2::encode(&SavedLibrary {
-            version: 2,
-            books: self.recent.clone(),
-            collections: self.collections.clone(),
-            page_browser_grid: self.page_browser_grid,
-        })?;
+        let next = raw_v2::encode(&self.v2_snapshot())?;
         crate::reading_backup::publish_raw_anchor_v2(
             &self.state_path,
             &prior,

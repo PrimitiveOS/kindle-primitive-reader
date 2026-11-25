@@ -3083,6 +3083,17 @@ impl InterfaceLanguage {
             "Bookmark browser" => "Duyệt dấu trang",
             "Bookmark filters" => "Bộ lọc dấu trang",
             "Remove notes" => "Xóa ghi chú",
+            "Remove marks" => "Xóa dấu",
+            "Choose marks" => "Chọn dấu",
+            "No marks selected" => "Chưa chọn dấu nào",
+            "Remove matching marks (this book)" => "Xóa dấu phù hợp (sách này)",
+            "Selected marks and their notes will be deleted" => {
+                "Dấu đã chọn và ghi chú của chúng sẽ bị xóa"
+            }
+            "Delete marks" => "Xóa dấu",
+            "Marks removed" => "Đã xóa dấu",
+            "Page" => "Trang",
+            "Chapter" => "Chương",
             "Choose notes" => "Chọn ghi chú",
             "Clear selection" => "Bỏ chọn tất cả",
             "Not selected" => "Chưa chọn",

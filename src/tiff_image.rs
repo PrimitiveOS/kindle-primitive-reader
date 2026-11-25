@@ -109,7 +109,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let predictor = image.scalar(317, SHORT_ONLY, 1)?;
     let orientation = image.scalar(274, SHORT_ONLY, 1)?;
     if !matches!(bits, 1 | 2 | 4 | 8)
-        || (photometric != 3 && !matches!(bits, 1 | 8))
+        || (!matches!(photometric, 0 | 1 | 3) && !matches!(bits, 1 | 8))
         || (samples >= 2 && bits != 8)
         || bits_values.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != bits))
         || formats.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != 1))
@@ -298,6 +298,24 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
             }));
         } else if bits == 8 {
             pixels.extend(strip.iter().map(|&gray| gray ^ invert));
+        } else if matches!(bits, 2 | 4) {
+            // Packed grayscale has one sample per pixel, with each row
+            // independently byte-aligned. Alpha modes require 8-bit samples.
+            let max_sample = (1u16 << bits) - 1;
+            for row in strip.chunks_exact(row_bytes) {
+                for x in 0..width as usize {
+                    let offset = x * bits as usize;
+                    let byte = if fill_order == 1 {
+                        row[offset / 8]
+                    } else {
+                        row[offset / 8].reverse_bits()
+                    };
+                    let shift = 8 - bits as usize - offset % 8;
+                    let sample = u16::from(byte >> shift) & max_sample;
+                    let gray = ((sample * 255) / max_sample) as u8;
+                    pixels.push(gray ^ invert);
+                }
+            }
         } else {
             for row in strip.chunks_exact(row_bytes) {
                 for x in 0..width as usize {

@@ -67,13 +67,17 @@ the canonical part, reinserts them at the approved paths and runs the decoder on
 the result. A separate check can validate a raw caret against an open book's
 source fingerprint and grapheme mapping. Reader can load a validated v2 library
 without legacy sanitization and save it through the checked encoder and Kindle
-recovery journal. Backup merging into v2 is rejected. Raw resumes and history
+recovery journal. V2 libraries can preview and apply a conservative additive
+merge from verified v1 or v2 backups; conflicting positions, marks, metadata,
+contents or flow settings reject the entire merge instead of silently choosing
+one. The multi-component restore verifies the captured disk baseline before
+commit. Restoring a v2 backup into a v1 library remains unsupported. Raw resumes and history
 locations are rejected before fixed or reflow page fallback. Operations using
 an unjournaled generic save are rejected for v2, and a pending journal requires
 Reader to reopen before saving its in-memory state. While raw rendering is
 disabled, Reader refuses to open books containing any raw positions or marks
 instead of exposing incomplete legacy editing paths. Raw rendering, app-level
-raw restoration and v2 merging remain incomplete.
+raw restoration and v1-to-v2 backup restore remain incomplete.
 Archive moves of a v2 or raw-bearing library use the journaled save. If a save
 fails and recovery is pending or cannot be inspected, Reader retains both the
 source and staged archive copy; cleanup is deferred until recovery determines

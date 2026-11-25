@@ -1,13 +1,16 @@
 //! Browse saved marks across the library without changing an open document.
+mod bulk_marks;
 mod metadata;
 mod metadata_view;
 use super::{
     Action, AnnotationListText, Book, Canvas, Change, Editor, Input, Item, Reader, Rect, Result,
     Screen, mark_chapters::location_caption, navigation_layout::NavigationLayout, with_storage,
 };
+use crate::Anchor;
 use crate::highlight_style::{HighlightColor, HighlightStyle};
 use crate::library::{
-    BookState, Bookmark, BrowseKind, DocumentFormat, Highlight, Library, PdfHighlight, fold_search,
+    BookState, Bookmark, BrowseKind, DocumentFormat, Highlight, Library, PdfHighlight,
+    ReadingPosition, fold_search,
 };
 use crate::search::Query;
 use primitive_ui::{BODY, CAPTION, Press, keyboard_key};
@@ -21,8 +24,8 @@ use std::path::PathBuf;
 const CASE: Rect = Rect::new(40, 314, 386, 72);
 const FIRST_MARK: Rect = Rect::new(40, 147, 210, 70);
 const CONTROL_WIDTH: i32 = 386;
-// The selectable-note list starts with Select all, Clear selection and Done.
-const NOTE_SELECTION_CONTROL_ROWS: usize = 3;
+// Both review lists start with Select all, Clear selection and Done.
+const REVIEW_SELECTION_CONTROL_ROWS: usize = 3;
 
 #[derive(Clone, Copy)]
 struct BrowserLayout(NavigationLayout);
@@ -67,6 +70,8 @@ pub(super) enum Page {
     Filters,
     RemoveNotesConfirm,
     SelectNotes,
+    SelectMarks,
+    RemoveMarksConfirm,
     Colors,
     Search,
     Detail,
@@ -95,6 +100,8 @@ impl Page {
             Self::Filters => "Bookmark filters",
             Self::RemoveNotesConfirm => "Remove notes",
             Self::SelectNotes => "Choose notes",
+            Self::SelectMarks => "Choose marks",
+            Self::RemoveMarksConfirm => "Remove marks",
             Self::Colors => "Highlight color filter",
             Self::Search => "Find saved marks",
             Self::Detail => "Saved mark",
@@ -207,6 +214,11 @@ pub(super) enum Command {
     ToggleReviewedNote(usize),
     SetAllReviewedNotes(bool),
     SelectReviewedNotePage,
+    PreviewRemoveCurrentMarks,
+    ConfirmRemoveCurrentMarks,
+    ToggleReviewedMark(usize),
+    SetAllReviewedMarks(bool),
+    SelectReviewedMarkPage,
     ToggleDefault(Source),
     OpenFolder(PathBuf, bool),
     ToggleBook(u64),
@@ -237,23 +249,32 @@ enum NoteTarget {
     Fixed(usize, PdfHighlight),
 }
 
+enum ReviewLocation<'a> {
+    Saved(&'a ReadingPosition),
+    Reflow(&'a Anchor),
+    Fixed(usize),
+}
+
 impl NoteTarget {
-    fn preview(&self) -> (&str, &str, Option<&str>) {
+    fn preview(&self) -> (&str, &str, Option<&str>, ReviewLocation<'_>) {
         match self {
             Self::Bookmark(_, mark) => (
                 mark.note.as_deref().unwrap_or(""),
                 &mark.label,
                 mark.chapter_title.as_deref(),
+                ReviewLocation::Saved(&mark.position),
             ),
             Self::Reflow(_, mark) => (
                 mark.note.as_deref().unwrap_or(""),
                 &mark.selection.text,
                 mark.chapter_title.as_deref(),
+                ReviewLocation::Reflow(&mark.selection.start),
             ),
             Self::Fixed(_, mark) => (
                 mark.note.as_deref().unwrap_or(""),
                 &mark.text,
                 mark.chapter_title.as_deref(),
+                ReviewLocation::Fixed(mark.page),
             ),
         }
     }
@@ -432,6 +453,7 @@ pub(super) struct Browser {
     text_pages: RefCell<Vec<Range<usize>>>,
     list_anchor: Option<(usize, usize)>,
     pending_note_removal: Option<PendingNoteRemoval>,
+    pending_mark_removal: Option<bulk_marks::Pending>,
     pub(super) after_password: Option<MarkKey>,
 }
 
@@ -490,6 +512,7 @@ impl Default for Browser {
             text_pages: RefCell::default(),
             list_anchor: None,
             pending_note_removal: None,
+            pending_mark_removal: None,
             after_password: None,
         }
     }
@@ -692,6 +715,7 @@ impl Reader {
             Command::Open => {
                 let browser = &mut self.bookmark_browser;
                 browser.pending_note_removal = None;
+                browser.pending_mark_removal = None;
                 browser.origin = match self.screen {
                     Screen::BookTools => Screen::Book,
                     Screen::FixedTools => Screen::Fixed,
@@ -711,6 +735,9 @@ impl Reader {
             Command::Go(page) => {
                 if !matches!(page, Page::RemoveNotesConfirm | Page::SelectNotes) {
                     self.bookmark_browser.pending_note_removal = None;
+                }
+                if !matches!(page, Page::RemoveMarksConfirm | Page::SelectMarks) {
+                    self.bookmark_browser.pending_mark_removal = None;
                 }
                 if page == Page::Sources {
                     self.bookmark_browser.sources_from_results = true;
@@ -1034,12 +1061,61 @@ impl Reader {
                     .pending_note_removal
                     .as_mut()
                     .ok_or("Review the notes before selecting them")?;
-                let first_note = first.saturating_sub(NOTE_SELECTION_CONTROL_ROWS);
+                let first_note = first.saturating_sub(REVIEW_SELECTION_CONTROL_ROWS);
                 let last_note = last
-                    .saturating_sub(NOTE_SELECTION_CONTROL_ROWS)
+                    .saturating_sub(REVIEW_SELECTION_CONTROL_ROWS)
                     .min(pending.targets.len());
                 if first_note < last_note {
                     for item in &mut pending.targets[first_note..last_note] {
+                        item.selected = true;
+                    }
+                }
+            }
+            Command::PreviewRemoveCurrentMarks => bulk_marks::preview(self)?,
+            Command::ConfirmRemoveCurrentMarks => bulk_marks::confirm(self)?,
+            Command::ToggleReviewedMark(index) => {
+                if self.screen != Screen::BookmarkBrowser(Page::SelectMarks) {
+                    return Err("Review the marks before selecting them".into());
+                }
+                let item = self
+                    .bookmark_browser
+                    .pending_mark_removal
+                    .as_mut()
+                    .and_then(|pending| pending.targets.get_mut(index))
+                    .ok_or("That reviewed mark is unavailable")?;
+                item.selected = !item.selected;
+            }
+            Command::SetAllReviewedMarks(selected) => {
+                if self.screen != Screen::BookmarkBrowser(Page::SelectMarks) {
+                    return Err("Review the marks before selecting them".into());
+                }
+                let pending = self
+                    .bookmark_browser
+                    .pending_mark_removal
+                    .as_mut()
+                    .ok_or("Review the marks before selecting them")?;
+                for item in &mut pending.targets {
+                    item.selected = selected;
+                }
+            }
+            Command::SelectReviewedMarkPage => {
+                if self.screen != Screen::BookmarkBrowser(Page::SelectMarks) {
+                    return Err("Review the marks before selecting them".into());
+                }
+                let rows = self.list_geometry().rows;
+                let first = self.list_page.saturating_mul(rows);
+                let last = first.saturating_add(rows);
+                let pending = self
+                    .bookmark_browser
+                    .pending_mark_removal
+                    .as_mut()
+                    .ok_or("Review the marks before selecting them")?;
+                let first_mark = first.saturating_sub(REVIEW_SELECTION_CONTROL_ROWS);
+                let last_mark = last
+                    .saturating_sub(REVIEW_SELECTION_CONTROL_ROWS)
+                    .min(pending.targets.len());
+                if first_mark < last_mark {
+                    for item in &mut pending.targets[first_mark..last_mark] {
                         item.selected = true;
                     }
                 }
@@ -1483,6 +1559,53 @@ impl Reader {
         )
     }
 
+    fn review_location_text(&self, location: ReviewLocation<'_>) -> Option<String> {
+        let language = self.controls.interface_language;
+        if let Some(fixed) = &self.fixed {
+            let page = match location {
+                ReviewLocation::Saved(position) if position.chapter == 0 => position.page,
+                ReviewLocation::Fixed(page) => page,
+                _ => return None,
+            };
+            return (page < fixed.reading.count())
+                .then(|| format!("{} {}", language.bookmark_text("Page"), page + 1));
+        }
+        let reading = &self.active.as_ref()?.reading;
+        let probe = &reading.probe;
+        let (chapter, anchor) = match location {
+            ReviewLocation::Saved(position) => match &position.anchor {
+                Some(anchor) => {
+                    if anchor.raw_caret.is_some() || anchor.book != probe.book {
+                        return None;
+                    }
+                    (probe.chapter_index(&anchor.chapter)?, Some(anchor))
+                }
+                None => (position.chapter, None),
+            },
+            ReviewLocation::Reflow(anchor) => {
+                if anchor.raw_caret.is_some() || anchor.book != probe.book {
+                    return None;
+                }
+                (probe.chapter_index(&anchor.chapter)?, Some(anchor))
+            }
+            ReviewLocation::Fixed(_) => return None,
+        };
+        if chapter >= probe.chapter_count() {
+            return None;
+        }
+        let mut result = format!("{} {}", language.bookmark_text("Chapter"), chapter + 1);
+        if chapter == reading.chapter
+            && let Some(page) = anchor.and_then(|anchor| probe.page_for(anchor))
+        {
+            result.push_str(&format!(
+                " · {} {}",
+                language.bookmark_text("Page"),
+                page + 1
+            ));
+        }
+        Some(result)
+    }
+
     fn bookmark_rows(&self, page: Page) -> Vec<Item> {
         let browser = &self.bookmark_browser;
         let language = self.controls.interface_language;
@@ -1559,6 +1682,13 @@ impl Reader {
                         item(
                             "Remove matching notes (this book)",
                             C::PreviewRemoveCurrentNotes,
+                        ),
+                    );
+                    rows.insert(
+                        2,
+                        item(
+                            "Remove matching marks (this book)",
+                            C::PreviewRemoveCurrentMarks,
                         ),
                     );
                 }
@@ -1648,19 +1778,104 @@ impl Reader {
                 ];
                 if let Some(pending) = &browser.pending_note_removal {
                     rows.extend(pending.targets.iter().enumerate().map(|(index, item_)| {
-                        let (note, quote, chapter) = item_.target.preview();
+                        let (note, quote, chapter, location) = item_.target.preview();
                         let selection = language.bookmark_text(if item_.selected {
                             "Selected"
                         } else {
                             "Not selected"
                         });
-                        let detail = chapter
-                            .filter(|title| !title.trim().is_empty())
-                            .map_or_else(
-                                || format!("{selection} · {}", excerpt(quote, 8)),
-                                |title| format!("{selection} · {title} · {}", excerpt(quote, 8)),
-                            );
+                        let mut detail = selection.to_owned();
+                        if let Some(location) = self.review_location_text(location) {
+                            detail.push_str(" · ");
+                            detail.push_str(&location);
+                        }
+                        if let Some(title) = chapter.filter(|title| !title.trim().is_empty()) {
+                            detail.push_str(" · ");
+                            detail.push_str(title);
+                        }
+                        detail.push_str(" · ");
+                        detail.push_str(&excerpt(quote, 8));
                         item(excerpt(note, 22), C::ToggleReviewedNote(index)).detail(detail)
+                    }));
+                }
+                rows
+            }
+            Page::RemoveMarksConfirm => {
+                let mut rows = Vec::new();
+                if let Some(pending) = &browser.pending_mark_removal {
+                    let count = pending.selected_count();
+                    let message = if count == 0 {
+                        language.bookmark_text("No marks selected").to_owned()
+                    } else if language.is_english() {
+                        format!("Delete {count} selected marks in this book?")
+                    } else {
+                        format!("Xóa {count} dấu đã chọn trong sách này?")
+                    };
+                    rows.push(Item::new(message, Action::Heading));
+                    rows.push(Item::new(pending.title.clone(), Action::Heading));
+                    rows.push(Item::new(
+                        language.bookmark_text("Selected marks and their notes will be deleted"),
+                        Action::Heading,
+                    ));
+                    rows.push(item(
+                        language.bookmark_text("Choose marks"),
+                        C::Go(Page::SelectMarks),
+                    ));
+                    if count > 0 {
+                        rows.push(item(
+                            language.bookmark_text("Delete marks"),
+                            C::ConfirmRemoveCurrentMarks,
+                        ));
+                    }
+                }
+                rows.push(item(language.bookmark_text("Cancel"), C::Go(Page::Filters)));
+                rows
+            }
+            Page::SelectMarks => {
+                let mut rows = vec![
+                    item(
+                        language.bookmark_text("Select all"),
+                        C::SetAllReviewedMarks(true),
+                    ),
+                    item(
+                        language.bookmark_text("Clear selection"),
+                        C::SetAllReviewedMarks(false),
+                    ),
+                    item(
+                        language.bookmark_text("Done"),
+                        C::Go(Page::RemoveMarksConfirm),
+                    ),
+                ];
+                if let Some(pending) = &browser.pending_mark_removal {
+                    rows.extend(pending.targets.iter().enumerate().map(|(index, reviewed)| {
+                        let (kind, text, note, chapter, location) = reviewed.target.preview();
+                        let selected = language.bookmark_text(if reviewed.selected {
+                            "Selected"
+                        } else {
+                            "Not selected"
+                        });
+                        let kind_label = language.bookmark_text(kind);
+                        let mut detail = format!("{selected} · {kind_label}");
+                        if let Some(location) = self.review_location_text(location) {
+                            detail.push_str(" · ");
+                            detail.push_str(&location);
+                        }
+                        if let Some(title) = chapter.filter(|title| !title.trim().is_empty()) {
+                            detail.push_str(" · ");
+                            detail.push_str(title);
+                        }
+                        if let Some(note) = note.filter(|note| !note.trim().is_empty()) {
+                            detail.push_str(" · ");
+                            detail.push_str(language.bookmark_text("Note"));
+                            detail.push_str(": ");
+                            detail.push_str(&excerpt(note, 8));
+                        }
+                        let title = if text.trim().is_empty() {
+                            kind_label.to_owned()
+                        } else {
+                            excerpt(text, 22)
+                        };
+                        item(title, C::ToggleReviewedMark(index)).detail(detail)
                     }));
                 }
                 rows
@@ -1810,7 +2025,7 @@ impl Reader {
         let layout = BrowserLayout(self.navigation_layout());
         let language = self.controls.interface_language;
         match page {
-            Page::SelectNotes => {
+            Page::SelectNotes | Page::SelectMarks => {
                 canvas.button(
                     layout.select_note_page(),
                     language.bookmark_text("Select page"),
@@ -2008,10 +2223,15 @@ impl Reader {
             self.back_from_bookmark_browser(page);
             return Some(Change::Partial);
         }
-        if page == Page::SelectNotes
+        if matches!(page, Page::SelectNotes | Page::SelectMarks)
             && matches!(input, Input::Tap(x, y) if layout.select_note_page().contains(x, y))
         {
-            return Some(self.bookmark_change(Command::SelectReviewedNotePage));
+            let action = if page == Page::SelectNotes {
+                Command::SelectReviewedNotePage
+            } else {
+                Command::SelectReviewedMarkPage
+            };
+            return Some(self.bookmark_change(action));
         }
         if page == Page::Colors {
             if input == Input::PageBack {
@@ -2137,6 +2357,11 @@ impl Reader {
                 self.show(Screen::BookmarkBrowser(Page::Filters));
             }
             Page::SelectNotes => self.show(Screen::BookmarkBrowser(Page::RemoveNotesConfirm)),
+            Page::RemoveMarksConfirm => {
+                self.bookmark_browser.pending_mark_removal = None;
+                self.show(Screen::BookmarkBrowser(Page::Filters));
+            }
+            Page::SelectMarks => self.show(Screen::BookmarkBrowser(Page::RemoveMarksConfirm)),
             _ => self.show(Screen::BookmarkBrowser(Page::Results)),
         }
     }

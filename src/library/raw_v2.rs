@@ -14,6 +14,14 @@ use std::{fmt, io};
 
 const MAX_CARETS: usize = 8192;
 mod encoder;
+mod merge;
+
+pub(super) fn merge_libraries(
+    current: &SavedLibrary,
+    incoming: &SavedLibrary,
+) -> io::Result<(SavedLibrary, super::BackupSummary)> {
+    merge::merge_libraries(current, incoming)
+}
 
 pub(super) fn encode(library: &SavedLibrary) -> io::Result<Vec<u8>> {
     encoder::encode(library)
@@ -62,6 +70,24 @@ pub(super) fn validate_v1_for_promotion(bytes: &[u8]) -> io::Result<()> {
         ));
     }
     validate_library(&library)
+}
+
+pub(super) fn decode_backup(bytes: &[u8]) -> io::Result<SavedLibrary> {
+    if bytes.len() as u64 > MAX_STATE_BYTES {
+        return Err(invalid_state("Reader backup exceeds its size limit"));
+    }
+    let UniqueValue(value) = serde_json::from_slice(bytes).map_err(io::Error::other)?;
+    match value.get("version").and_then(Value::as_u64) {
+        Some(2) => decode(bytes),
+        Some(1) => {
+            validate_v1_for_promotion(bytes)?;
+            let mut saved: SavedLibrary =
+                serde_json::from_value(value).map_err(io::Error::other)?;
+            saved.version = 2;
+            Ok(saved)
+        }
+        _ => Err(invalid_state("Reader backup version is unsupported")),
+    }
 }
 
 /// Parse a candidate v2 library while leaving the original bytes untouched.
@@ -286,7 +312,7 @@ fn validate_library(library: &SavedLibrary) -> io::Result<()> {
     Ok(())
 }
 
-fn valid_position(position: &super::ReadingPosition) -> io::Result<()> {
+pub(super) fn valid_position(position: &super::ReadingPosition) -> io::Result<()> {
     if let Some(anchor) = &position.anchor {
         valid_anchor(anchor)?;
     }

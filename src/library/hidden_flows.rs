@@ -71,6 +71,28 @@ impl HiddenFlows {
                 "This flow boundary has no valid source location",
             ));
         }
+        self.insert_checked(point)
+    }
+
+    pub(super) fn merge_exact_v2(&mut self, point: &FlowPoint) -> io::Result<bool> {
+        super::raw_v2::valid_position(&point.position)?;
+        if let Some(existing) = self
+            .points
+            .iter()
+            .find(|p| same_position(&p.position, &point.position))
+        {
+            return if existing == point {
+                Ok(false)
+            } else {
+                Err(invalid_state(
+                    "A hidden flow point has conflicting metadata",
+                ))
+            };
+        }
+        self.insert_checked(point.clone())
+    }
+
+    fn insert_checked(&mut self, point: FlowPoint) -> io::Result<bool> {
         if self
             .points
             .iter()

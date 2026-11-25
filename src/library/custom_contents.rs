@@ -87,6 +87,27 @@ impl CustomContents {
         Ok(())
     }
 
+    /// Merge a complete v2 entry without discarding its note or timestamps.
+    pub(super) fn merge_exact_v2(&mut self, mark: &Bookmark) -> io::Result<bool> {
+        super::raw_v2::valid_position(&mark.position)?;
+        if let Some(index) = self.find(&mark.position) {
+            return if self.entries[index] == *mark {
+                Ok(false)
+            } else {
+                Err(invalid_state("A custom chapter has conflicting metadata"))
+            };
+        }
+        if self.entries.len() >= ENTRY_LIMIT {
+            return Err(invalid_state("This book already has 256 custom chapters"));
+        }
+        let key = super::raw_positions::contents_order(&mark.position);
+        let index = self
+            .entries
+            .partition_point(|entry| super::raw_positions::contents_order(&entry.position) <= key);
+        self.entries.insert(index, mark.clone());
+        Ok(true)
+    }
+
     pub fn remove(&mut self, position: &ReadingPosition) -> io::Result<()> {
         let index = self
             .find(position)
