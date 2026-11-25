@@ -669,6 +669,58 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("h1,h2 {break-before:page !important;}"),
     },
     Preset {
+        id: "h1_page-break-before_always",
+        title: "New page on H1",
+        group: "heading-break-h1",
+        priority: 0,
+        effect: Effect::Css("h1 {page-break-before:always !important;}"),
+    },
+    Preset {
+        id: "h2_page-break-before_always",
+        title: "New page on H2",
+        group: "heading-break-h2",
+        priority: 0,
+        effect: Effect::Css(
+            "h2 {page-break-before:always !important;} h1 + h2 {page-break-before:avoid !important;}",
+        ),
+    },
+    Preset {
+        id: "h3_page-break-before_always",
+        title: "New page on H3",
+        group: "heading-break-h3",
+        priority: 0,
+        effect: Effect::Css(
+            "h3 {page-break-before:always !important;} h1 + h3,h2 + h3 {page-break-before:avoid !important;}",
+        ),
+    },
+    Preset {
+        id: "h4_page-break-before_always",
+        title: "New page on H4",
+        group: "heading-break-h4",
+        priority: 0,
+        effect: Effect::Css(
+            "h4 {page-break-before:always !important;} h1 + h4,h2 + h4,h3 + h4 {page-break-before:avoid !important;}",
+        ),
+    },
+    Preset {
+        id: "h5_page-break-before_always",
+        title: "New page on H5",
+        group: "heading-break-h5",
+        priority: 0,
+        effect: Effect::Css(
+            "h5 {page-break-before:always !important;} h1 + h5,h2 + h5,h3 + h5,h4 + h5 {page-break-before:avoid !important;}",
+        ),
+    },
+    Preset {
+        id: "h6_page-break-before_always",
+        title: "New page on H6",
+        group: "heading-break-h6",
+        priority: 0,
+        effect: Effect::Css(
+            "h6 {page-break-before:always !important;} h1 + h6,h2 + h6,h3 + h6,h4 + h6,h5 + h6 {page-break-before:avoid !important;}",
+        ),
+    },
+    Preset {
         id: "protect-lines",
         title: "Protect widows and orphans",
         group: "lines",

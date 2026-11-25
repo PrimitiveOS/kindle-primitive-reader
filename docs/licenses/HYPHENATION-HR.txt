@@ -1,0 +1,11 @@
+Croatian hyphenation patterns
+Copyright (C) 1994, 1996, 2011, 2015 Igor Marinović
+
+Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-hr.tex
+Source SHA-256: 69d684289c626c2576678112699c960d5821b52e7addbd473c0e8d0ef0c1694e
+
+The upstream source offers the LaTeX Project Public License 1 or later
+among its alternatives. Reader uses version 1.3c, included in LPPL-1.3c.txt.
+The unmodified upstream TeX file is included in hyph-hr.tex; Reader compiles
+its supported single-word patterns into its own native lookup tables.
+Reader's compiled tables are a derived form, not the original TeX file.

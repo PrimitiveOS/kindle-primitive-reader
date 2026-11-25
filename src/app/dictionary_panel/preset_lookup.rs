@@ -79,7 +79,14 @@ impl Reader {
 
     pub(in crate::app) fn draw_lookup_preset_button(&self, canvas: &mut Canvas) {
         if let Some(button) = self.lookup_preset_button() {
-            canvas.button(button, SEARCH_WITH_PRESET, false, false);
+            canvas.button(
+                button,
+                self.controls
+                    .interface_language
+                    .dictionary_popup_text(SEARCH_WITH_PRESET),
+                false,
+                false,
+            );
         }
     }
 
@@ -139,15 +146,21 @@ impl Reader {
         let Some(picker) = &self.dictionary_navigation.preset_picker else {
             return;
         };
+        let language = self.controls.interface_language;
         let face = self.preset_picker_layout(picker.page);
         let panel = face.panel;
         canvas.popup(panel);
         canvas.text(
             Rect::new(panel.x + 32, panel.y + 32, panel.w - 282, 88),
-            SEARCH_WITH_PRESET,
+            language.dictionary_popup_text(SEARCH_WITH_PRESET),
             BODY.bold(),
         );
-        canvas.button(face.close(), "Cancel", false, false);
+        canvas.button(
+            face.close(),
+            language.dictionary_popup_text("Cancel"),
+            false,
+            false,
+        );
         for (slot, name) in self
             .dictionary_settings
             .presets
@@ -171,11 +184,16 @@ impl Reader {
         if face.paging {
             let (previous, next) = face.pages();
             if picker.page > 0 {
-                canvas.button(previous, "Previous", false, false);
+                canvas.button(
+                    previous,
+                    language.dictionary_popup_text("Previous"),
+                    false,
+                    false,
+                );
             }
             if (picker.page + 1) * PRESETS_PER_PAGE < self.dictionary_settings.presets.names().len()
             {
-                canvas.button(next, "Next", false, false);
+                canvas.button(next, language.dictionary_popup_text("Next"), false, false);
             }
         }
     }

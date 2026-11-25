@@ -208,15 +208,19 @@ impl Grid {
         })
     }
 
-    pub(super) fn draw_pager(&self, canvas: &mut Canvas) {
+    pub(super) fn draw_pager(
+        &self,
+        canvas: &mut Canvas,
+        language: crate::app::interface_language::InterfaceLanguage,
+    ) {
         for &(next, rect) in &self.pager {
             canvas.button(
                 rect,
-                if next {
+                language.dictionary_popup_text(if next {
                     "Next actions"
                 } else {
                     "Previous actions"
-                },
+                }),
                 false,
                 false,
             );
@@ -458,7 +462,7 @@ impl Reader {
         for &(button, rect) in &grid.items {
             super::draw_preview_button(canvas, button, rect);
         }
-        grid.draw_pager(canvas);
+        grid.draw_pager(canvas, self.controls.interface_language);
     }
 
     pub(in crate::app) fn dictionary_button_preview_input(&mut self, input: Input) -> Change {

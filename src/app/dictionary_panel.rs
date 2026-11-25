@@ -1805,7 +1805,7 @@ impl Reader {
         for &(button, rect) in &grid.items {
             self.draw_dictionary_button(canvas, button, rect);
         }
-        grid.draw_pager(canvas);
+        grid.draw_pager(canvas, self.controls.interface_language);
     }
 
     fn draw_definition_metadata(&self, canvas: &mut Canvas, popup: Rect) {

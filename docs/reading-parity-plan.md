@@ -117,6 +117,11 @@ These changes pass a Mac build-only check. Exact Catalan middle-dot line breaks,
 complex ruby, complete interface translation and behavioral validation remain
 open.
 
+The current local candidate also includes Croatian hyphenation, independent
+heading-level page-break presets, and Vietnamese dictionary picker controls.
+It passes a Mac build-only check; behavior, layout and device comparisons are
+still deferred.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or

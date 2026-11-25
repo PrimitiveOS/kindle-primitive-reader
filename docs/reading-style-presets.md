@@ -73,6 +73,17 @@ alignment setting can still override publisher-style alignment. The original
 document and saved anchors do not change. These additions have not yet been
 built or behaviorally tested. [Pinned alignment choices](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L263-L295) · [Pinned hyphenation choice](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L347-L353)
 
+## Heading page breaks
+
+Six independent **New page on H1** through **New page on H6** choices use
+the corresponding KOReader rules. A chosen heading starts a page unless it
+immediately follows a higher-level heading, in which case the rule avoids a
+break between the two. The previous combined H1/H2 choice remains available
+for existing settings. These are layout rules: source text, revisions and
+saved anchors stay unchanged. Horizontal Parley pagination supports these
+rules; other rendering modes and the interaction of multiple settings need
+simulator and Kindle verification. [Pinned KOReader rules](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L130-L175)
+
 ## Paragraph spacing and browser defaults
 
 **Spacing between paragraphs** contains three mutually exclusive choices.

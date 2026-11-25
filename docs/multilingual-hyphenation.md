@@ -27,6 +27,7 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Swedish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Catalan | 2 / 2 | Upstream single-word patterns and exceptions; stock comparison pending |
 | Turkish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
+| Croatian | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
 | Russian + English (US) | 2 / 2 | Combined existing Russian and US English tries; stock comparison pending |
 | Slovak | 2 / 3 | 2,467 upstream word patterns and four active exceptions; stock comparison pending |
@@ -185,3 +186,9 @@ real-document comparisons remain open. The unmodified upstream source,
 LPPL 1.3c and provenance are included in release packages. These changes have
 not been built or tested on the computer or Kindle.
 [Turkish terms](licenses/HYPHENATION-TR.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+Croatian uses Igor Marinović's upstream TeX patterns with KOReader's 2 / 2
+minima. The original source, LPPL 1.3c and provenance are included in release
+packages. The compiled rules and their word breaks have not been compared
+with the pinned KOReader dictionary, built, or tested on the computer or Kindle.
+[Croatian terms](licenses/HYPHENATION-HR.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
