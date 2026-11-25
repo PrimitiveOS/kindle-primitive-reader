@@ -107,6 +107,30 @@ pub(super) const SINGLE_VIEW_SECTIONS: [(BarPanel, &str); 2] =
 
 impl Reader {
     pub(super) fn bottom_config_rows(&self, panel: BarPanel) -> Vec<ConfigRow> {
+        let mut rows = self.raw_bottom_config_rows(panel);
+        if matches!(
+            panel,
+            BarPanel::Text
+                | BarPanel::TextMargins
+                | BarPanel::TextSpacing
+                | BarPanel::TextRendering
+                | BarPanel::View
+                | BarPanel::Scan
+        ) {
+            // These audited panels contain fixed labels and numeric settings;
+            // leave information messages and action/feedback payloads unchanged.
+            let language = self.controls.interface_language;
+            for row in &mut rows {
+                row.label = language.other_bottom_title(&row.label);
+                for choice in &mut row.choices {
+                    choice.title = language.other_bottom_title(&choice.title);
+                }
+            }
+        }
+        rows
+    }
+
+    fn raw_bottom_config_rows(&self, panel: BarPanel) -> Vec<ConfigRow> {
         if matches!(panel, BarPanel::TextScreen | BarPanel::ViewScreen) {
             let controls = self.controls;
             let selected = self.displayed_reading_orientation();
@@ -459,6 +483,15 @@ impl Reader {
                                     )
                                 }),
                             ));
+                        }
+                    }
+                    // Only Reader-owned row and choice labels are translated;
+                    // numeric values, action payloads and feedback stay intact.
+                    let language = self.controls.interface_language;
+                    for row in &mut rows {
+                        row.label = language.text_layout_title(&row.label);
+                        for choice in &mut row.choices {
+                            choice.title = language.text_layout_title(&choice.title);
                         }
                     }
                     return rows;
@@ -966,6 +999,15 @@ impl Reader {
                             Choice::live("Reset text settings", Action::ResetText),
                         ],
                     ));
+                    // This panel contains built-in labels and numeric values,
+                    // never a publication title or the selected font name.
+                    let language = self.controls.interface_language;
+                    for row in &mut rows {
+                        row.label = language.text_style_title(&row.label);
+                        for choice in &mut row.choices {
+                            choice.title = language.text_style_title(&choice.title);
+                        }
+                    }
                     return rows;
                 }
                 _ => {}
@@ -1124,6 +1166,15 @@ impl Reader {
                                 Action::Show(Screen::ReadingProfiles),
                             )],
                         ));
+                    }
+                    // These labels are built in; the pixel-gap choices and
+                    // all action values are preserved exactly.
+                    let language = self.controls.interface_language;
+                    for row in &mut rows {
+                        row.label = language.view_layout_title(&row.label).to_owned();
+                        for choice in &mut row.choices {
+                            choice.title = language.view_layout_title(&choice.title).to_owned();
+                        }
                     }
                     return rows;
                 }

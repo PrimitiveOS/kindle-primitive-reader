@@ -201,25 +201,77 @@ impl Catalog<'_> {
                 continue;
             }
             let path = format!("{breadcrumb} › {}", item.title);
-            // Localized top actions and Screen rows retain English
+            // Localized top actions and configuration rows retain English
             // aliases without duplicate hits or altered destination ordinals.
-            let english_alias = match menu {
+            let english_alias: std::borrow::Cow<'_, str> = match menu {
+                Menu::Bottom(BarPanel::Pages) => self
+                    .reader
+                    .controls
+                    .interface_language
+                    .page_action_english(&item.title)
+                    .into(),
+                Menu::Bottom(
+                    BarPanel::Text
+                    | BarPanel::TextMargins
+                    | BarPanel::TextSpacing
+                    | BarPanel::TextRendering
+                    | BarPanel::View
+                    | BarPanel::Scan,
+                ) => self
+                    .reader
+                    .controls
+                    .interface_language
+                    .other_bottom_english(&item.title)
+                    .into(),
+                Menu::Bottom(BarPanel::TextLayout) => self
+                    .reader
+                    .controls
+                    .interface_language
+                    .text_layout_english(&item.title)
+                    .into(),
+                Menu::Bottom(BarPanel::ViewLayout) => self
+                    .reader
+                    .controls
+                    .interface_language
+                    .view_layout_english(&item.title)
+                    .into(),
+                Menu::Bottom(BarPanel::TextStyle) => self
+                    .reader
+                    .controls
+                    .interface_language
+                    .text_style_english(&item.title)
+                    .into(),
+                Menu::Top(TopGroup::Appearance | TopGroup::Settings | TopGroup::Tools) => self
+                    .reader
+                    .controls
+                    .interface_language
+                    .top_control_english(&item.title)
+                    .into(),
+                Menu::Top(TopGroup::Library) => self
+                    .reader
+                    .controls
+                    .interface_language
+                    .library_english(&item.title)
+                    .into(),
                 Menu::Top(TopGroup::Search) => self
                     .reader
                     .controls
                     .interface_language
-                    .search_english(&item.title),
+                    .search_english(&item.title)
+                    .into(),
                 Menu::Top(TopGroup::Navigation) => self
                     .reader
                     .controls
                     .interface_language
-                    .navigation_english(&item.title),
+                    .navigation_english(&item.title)
+                    .into(),
                 Menu::Bottom(BarPanel::TextScreen | BarPanel::ViewScreen) => self
                     .reader
                     .controls
                     .interface_language
-                    .screen_row_english(&item.title),
-                _ => &item.title,
+                    .screen_row_english(&item.title)
+                    .into(),
+                _ => item.title.as_str().into(),
             };
             if item.title.to_lowercase().contains(self.term)
                 || english_alias.to_lowercase().contains(self.term)
@@ -293,13 +345,18 @@ impl Reader {
             return Err("Enter a short menu name on one line".into());
         }
         let term = query.to_lowercase();
+        let language = self.controls.interface_language;
         let mut catalog = Catalog {
             reader: self,
             term: &term,
             hits: Vec::new(),
         };
         for group in TopGroup::ALL {
-            catalog.walk(Menu::Top(group), group.label(), &mut Vec::new());
+            catalog.walk(
+                Menu::Top(group),
+                language.text(group.label()),
+                &mut Vec::new(),
+            );
         }
         for (panel, label) in self.menu_search_panels() {
             catalog.walk(Menu::Bottom(panel), &label, &mut Vec::new());

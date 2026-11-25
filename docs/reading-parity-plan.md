@@ -88,6 +88,14 @@ check after these changes. Other interface languages, full Vietnamese coverage,
 and the format-specific limits remain open. The related Files source handoff
 is also being updated; none of this constitutes behavioral or device acceptance.
 
+Later local implementation extends Vietnamese labels and bilingual search
+across the top-bar groups, recognizes FictionBook content in XML without
+changing its library identity, and adds RGB and palette TIFF decoding. The
+large-ODT implementation now partitions long text with transactional saved-state
+mapping; unsupported or ambiguous older positions fail closed. Further typography
+and interface coverage remain in progress. These additions also await the
+deferred behavioral, simulator and device checks.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or

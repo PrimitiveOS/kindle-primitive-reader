@@ -1424,7 +1424,13 @@ impl Reading {
                 probe.select_range(start, end)
             };
             if let Some(part) = part {
-                let extra = usize::from(!text.is_empty());
+                let joins_paragraph = self
+                    .probe
+                    .odt_continued_before
+                    .get(index)
+                    .copied()
+                    .unwrap_or(false);
+                let extra = usize::from(!text.is_empty() && !joins_paragraph);
                 if text.len() + extra + part.text.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES {
                     return Err("This selection exceeds the saved highlight size limit".into());
                 }

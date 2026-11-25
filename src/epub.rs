@@ -109,6 +109,7 @@ enum Content {
         xhtml: BTreeMap<String, String>,
         prior_mobi: BTreeMap<String, Vec<String>>,
         mobi_shadow: Option<MobiShadow>,
+        odt_history: Option<crate::odt_sections::History>,
         resources: BTreeMap<String, Vec<u8>>,
         fonts: Option<kf8::fonts::FontSource>,
         fb2_note_sections: BTreeMap<String, loose::Fb2NoteKind>,
@@ -192,8 +193,14 @@ impl Book {
                 loose::Format::Mobi => Self::open_mobi(path),
                 loose::Format::Chm => Self::open_chm(path),
                 loose::Format::Fb3 => Self::open_fb3(path),
-                _ => loose::Document::open_classified(path, format)
-                    .map(|(document, actual_format)| Self::from_loose(document, actual_format)),
+                _ => {
+                    let (document, actual_format) = loose::Document::open_classified(path, format)?;
+                    if actual_format == loose::Format::Odt {
+                        Self::from_odt(document)
+                    } else {
+                        Ok(Self::from_loose(document, actual_format))
+                    }
+                }
             };
         }
         Self::from_archive(Archive::open(path)?)
@@ -683,12 +690,94 @@ impl Book {
                 xhtml: BTreeMap::from([(chapter_path, document.xhtml)]),
                 prior_mobi: BTreeMap::new(),
                 mobi_shadow: None,
+                odt_history: None,
                 resources: document.resources,
                 fb2_note_sections: document.fb2_note_sections,
                 incomplete_fb3_notes: BTreeSet::new(),
                 complete_fb3_notes: BTreeMap::new(),
                 fonts: None,
             },
+        }
+    }
+
+    fn from_odt(document: loose::Document) -> Result<Self> {
+        let split = if document.xhtml.len() <= 512 * 1024 {
+            None
+        } else {
+            crate::odt_sections::prepare(
+                &document.xhtml,
+                &document.chapter_path,
+                &document.title,
+                &document.toc,
+            )?
+        };
+        let mut book = Self::from_loose(document, loose::Format::Odt);
+        if let Some(split) = split {
+            book.toc = split.toc;
+            let Content::Loose {
+                xhtml, odt_history, ..
+            } = &mut book.content
+            else {
+                unreachable!()
+            };
+            xhtml.clear();
+            book.chapters.clear();
+            for part in split.chapters {
+                book.chapters.push(Chapter {
+                    href: part.path.clone(),
+                    label: part.label,
+                    is_svg: false,
+                    nonlinear: false,
+                });
+                xhtml.insert(part.path, part.xhtml);
+            }
+            *odt_history = Some(split.history);
+        }
+        Ok(book)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn odt_continued_before(&self) -> Vec<bool> {
+        match &self.content {
+            Content::Loose {
+                odt_history: Some(history),
+                ..
+            } => history.continued_before().to_vec(),
+            _ => Vec::new(),
+        }
+    }
+
+    pub(crate) fn is_odt(&self) -> bool {
+        matches!(
+            self.content,
+            Content::Loose {
+                format: loose::Format::Odt,
+                ..
+            }
+        )
+    }
+
+    pub(crate) fn has_split_odt(&self) -> bool {
+        matches!(
+            self.content,
+            Content::Loose {
+                odt_history: Some(_),
+                ..
+            }
+        )
+    }
+
+    pub(crate) fn migrate_old_odt_anchor(
+        &self,
+        anchor: &crate::Anchor,
+        end: bool,
+    ) -> Result<Option<(usize, crate::Anchor)>> {
+        match &self.content {
+            Content::Loose {
+                odt_history: Some(history),
+                ..
+            } => history.migrate(anchor, end),
+            _ => Ok(None),
         }
     }
 
@@ -954,6 +1043,7 @@ impl Book {
                 xhtml,
                 prior_mobi,
                 mobi_shadow,
+                odt_history: None,
                 resources: publication.resources,
                 fb2_note_sections: Default::default(),
                 incomplete_fb3_notes: BTreeSet::new(),

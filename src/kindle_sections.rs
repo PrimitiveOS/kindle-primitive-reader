@@ -16,6 +16,7 @@ type Result<T> = std::result::Result<T, MobiError>;
 struct Cut<'a, 'input> {
     offset: usize,
     parent: Node<'a, 'input>,
+    odt_space_before: bool,
 }
 
 fn parse(xml: &str) -> Result<Document<'_>> {
@@ -91,7 +92,7 @@ fn whole(chapter: Kf8Chapter) -> Part {
         chapter,
     }
 }
-fn split(chapter: Kf8Chapter) -> Result<Vec<Part>> {
+fn split(chapter: Kf8Chapter, odt: bool) -> Result<Vec<Part>> {
     if chapter.xhtml.len() <= SECTION_BYTES
         && chapter
             .xhtml
@@ -136,6 +137,7 @@ fn split(chapter: Kf8Chapter) -> Result<Vec<Part>> {
             cuts.push(Cut {
                 offset,
                 parent: node.parent_element().ok_or(MobiError::InvalidText)?,
+                odt_space_before: false,
             });
             last = offset;
             images = 0;
@@ -171,7 +173,19 @@ fn split(chapter: Kf8Chapter) -> Result<Vec<Part>> {
                 if at <= last || at >= end {
                     break;
                 }
-                cuts.push(Cut { offset: at, parent });
+                let marked = parent
+                    .ancestors()
+                    .any(|ancestor| ancestor.attribute("data-primitive-odt-space") == Some("1"));
+                let ordinary_space = odt
+                    && !marked
+                    && at > offset
+                    && raw[at..end].starts_with(|ch: char| matches!(ch, ' ' | '\t' | '\r' | '\n'))
+                    && raw[offset..at].chars().any(|ch| !ch.is_whitespace());
+                cuts.push(Cut {
+                    offset: at,
+                    parent,
+                    odt_space_before: ordinary_space,
+                });
                 images = 0;
                 last = at;
             }
@@ -209,6 +223,11 @@ fn split(chapter: Kf8Chapter) -> Result<Vec<Part>> {
         let end = cuts.get(part).map_or(raw.len(), |cut| cut.offset);
         if let Some(end) = cuts.get(part) {
             xhtml.push_str(&raw[start..end.offset]);
+            if end.odt_space_before {
+                // The next fragment's normal leading XML whitespace is dropped
+                // by extraction. Keep the source's single collapsed boundary.
+                xhtml.push_str("<span data-primitive-odt-space=\"1\"> </span>");
+            }
             for node in end.parent.ancestors().filter(Node::is_element) {
                 closing(raw, node, &mut xhtml);
             }
@@ -237,13 +256,24 @@ fn split(chapter: Kf8Chapter) -> Result<Vec<Part>> {
 pub(crate) fn partition(chapters: Vec<Kf8Chapter>) -> Result<Vec<Kf8Chapter>> {
     let groups = chapters.into_iter().map(|chapter| {
         let original = chapter.path.clone();
-        let parts = split(chapter)?
+        let parts = split(chapter, false)?
             .into_iter()
             .map(|part| part.chapter)
             .collect();
         Ok((original, parts))
     });
     retarget(groups)
+}
+
+/// ODT uses its own literal whitespace markers; regular MOBI splits retain
+/// their existing byte-for-byte output and historical anchor behavior.
+pub(crate) fn partition_odt(chapter: Kf8Chapter) -> Result<Vec<Kf8Chapter>> {
+    let original = chapter.path.clone();
+    let parts = split(chapter, true)?
+        .into_iter()
+        .map(|part| part.chapter)
+        .collect();
+    retarget([Ok((original, parts))])
 }
 
 pub(crate) fn partition_with_contents(
@@ -253,7 +283,7 @@ pub(crate) fn partition_with_contents(
     let groups = chapters.into_iter().map(|chapter| {
         let original = chapter.path.clone();
         let offsets = contents.requested_offsets(&chapter)?;
-        let parts = split(chapter)?;
+        let parts = split(chapter, false)?;
         if parts.len() > 1 && !offsets.is_empty() {
             for part in &parts {
                 contents.map_section(&part.chapter, part.range.clone(), part.prefix, &offsets)?;
@@ -275,7 +305,7 @@ pub(crate) fn legacy(
 ) -> Result<(Vec<Kf8Chapter>, BTreeMap<String, Vec<String>>)> {
     let original = chapter.path.clone();
     let parts = if split_long {
-        split(chapter)?
+        split(chapter, false)?
     } else {
         vec![whole(chapter)]
     };

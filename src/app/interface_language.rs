@@ -1,6 +1,7 @@
 //! Reader interface language, independent of book language and document text.
 //!
-//! Vietnamese covers reading bar labels, Navigation and Search actions, Screen settings,
+//! Vietnamese covers reading bars, top action titles and built-in bottom
+//! configuration labels,
 //! and the language picker.
 //! All other UI remains English until each surface is explicitly localized.
 
@@ -60,6 +61,288 @@ const SEARCH_LABELS: &[(&str, &str)] = &[
     ("Dictionary history", "Lịch sử từ điển"),
     ("Vocabulary", "Từ vựng"),
     ("Dictionaries", "Từ điển"),
+];
+
+// Only fixed top Library actions belong here, never document names or paths.
+const LIBRARY_LABELS: &[(&str, &str)] = &[
+    ("Browse Documents", "Duyệt tài liệu"),
+    ("Recently read", "Đã đọc gần đây"),
+    ("Bookmark browser", "Duyệt dấu trang"),
+    ("Open previous document", "Mở tài liệu trước"),
+    ("Favorites", "Yêu thích"),
+    (
+        "Collections and reading lists",
+        "Bộ sưu tập và danh sách đọc",
+    ),
+    ("Current book folder", "Thư mục sách hiện tại"),
+    ("Previous file in folder", "Tệp trước trong thư mục"),
+    ("Next file in folder", "Tệp tiếp trong thư mục"),
+    ("Move to archive", "Chuyển vào lưu trữ"),
+    ("Book details", "Chi tiết sách"),
+];
+
+// Fixed titles from the top Appearance, Settings and Tools groups. Dynamic
+// detail strings may contain user-selected fonts or folders and stay untouched.
+const TOP_CONTROL_LABELS: &[(&str, &str)] = &[
+    ("Reading font", "Phông chữ đọc"),
+    ("Reading profiles", "Hồ sơ đọc"),
+    ("Reading guides", "Đường hướng dẫn đọc"),
+    ("Typography rules", "Quy tắc kiểu chữ"),
+    ("Switch to pages", "Chuyển sang lật trang"),
+    ("Switch to continuous scroll", "Chuyển sang cuộn liên tục"),
+    ("Larger text", "Chữ lớn hơn"),
+    ("Smaller text", "Chữ nhỏ hơn"),
+    ("Set font size", "Đặt cỡ chữ"),
+    ("Wider margins", "Lề rộng hơn"),
+    ("Narrower margins", "Lề hẹp hơn"),
+    ("More line spacing", "Giãn dòng thêm"),
+    ("Less line spacing", "Giãn dòng ít hơn"),
+    ("Text alignment", "Căn chỉnh văn bản"),
+    ("Hyphenation", "Ngắt từ"),
+    ("Use regular body text", "Dùng nét chữ thường"),
+    ("Use bold body text", "Dùng chữ đậm"),
+    ("Use publisher fonts", "Dùng phông của nhà xuất bản"),
+    ("Use selected reading font", "Dùng phông chữ đã chọn"),
+    ("Reset text settings", "Đặt lại kiểu chữ"),
+    ("Fit page", "Vừa trang"),
+    ("Fit width", "Vừa chiều rộng"),
+    ("Fit height", "Vừa chiều cao"),
+    ("Rotate", "Xoay"),
+    ("One page", "Một trang"),
+    ("Two pages", "Hai trang"),
+    ("Page turns", "Lật trang"),
+    ("Scroll", "Cuộn"),
+    ("Left to right", "Trái sang phải"),
+    ("Right to left", "Phải sang trái"),
+    ("Highlight style", "Kiểu tô sáng"),
+    ("Quickstart guide", "Hướng dẫn bắt đầu"),
+    ("Interface language", "Ngôn ngữ giao diện"),
+    ("Bookmarks and notes", "Dấu trang và ghi chú"),
+    ("Selection dialog position", "Vị trí hộp chọn"),
+    ("Long-press on text", "Nhấn giữ văn bản"),
+    ("Document defaults", "Mặc định tài liệu"),
+    ("Reading gestures", "Cử chỉ đọc"),
+    ("Navigation settings", "Cài đặt điều hướng"),
+    ("Notifications", "Thông báo"),
+    ("Links", "Liên kết"),
+    ("Invert page-turn buttons", "Đảo nút lật trang"),
+    ("At the end of a book", "Khi đọc hết sách"),
+    ("Save reading data", "Lưu dữ liệu đọc"),
+    ("Book metadata location", "Vị trí siêu dữ liệu sách"),
+    ("Book metadata archive", "Kho siêu dữ liệu sách"),
+    ("Style tweaks", "Điều chỉnh kiểu"),
+    ("Font size rendering", "Cách hiển thị cỡ chữ"),
+    ("Interface palette", "Giao diện sáng tối"),
+    ("Screen orientation", "Hướng màn hình"),
+    ("Refresh screen now", "Làm mới màn hình"),
+    ("Reading status bar", "Thanh trạng thái đọc"),
+    ("Front light −", "Đèn trước −"),
+    ("Front light +", "Đèn trước +"),
+    ("Warmth −", "Độ ấm −"),
+    ("Warmth +", "Độ ấm +"),
+    ("Night pages", "Trang ban đêm"),
+    ("Reading toolbar size", "Cỡ thanh công cụ đọc"),
+    ("Full screen refresh", "Làm mới toàn màn hình"),
+    ("Menu activation", "Mở trình đơn"),
+    ("Lock page touch", "Khóa cảm ứng trang"),
+    ("Normal contrast", "Tương phản thường"),
+    ("Higher contrast", "Tăng tương phản"),
+    ("Crop", "Cắt lề"),
+    ("Columns", "Cột"),
+    ("Semi-auto crop", "Cắt lề bán tự động"),
+    ("Recognize text", "Nhận dạng văn bản"),
+    ("Read text", "Đọc văn bản"),
+    ("Reflow scan", "Sắp xếp lại bản quét"),
+    ("Read timer", "Hẹn giờ đọc"),
+    ("Reading statistics", "Thống kê đọc"),
+    ("Saved marks", "Dấu đã lưu"),
+    ("Import KOReader position", "Nhập vị trí KOReader"),
+    ("Reading data", "Dữ liệu đọc"),
+    ("Book shortcuts", "Lối tắt sách"),
+];
+
+// Text → Style contains fixed labels and numeric settings only, never font names.
+const TEXT_STYLE_LABELS: &[(&str, &str)] = &[
+    ("Font weight", "Độ đậm chữ"),
+    ("Font contrast", "Độ tương phản chữ"),
+    ("Alignment", "Căn chỉnh"),
+    ("Hyphenation", "Ngắt từ"),
+    ("Custom rules", "Quy tắc tùy chỉnh"),
+    ("Publisher", "Nhà xuất bản"),
+    ("Start", "Đầu dòng"),
+    ("Center", "Giữa"),
+    ("Justify", "Căn đều"),
+    ("Automatic", "Tự động"),
+    ("Algorithmic", "Thuật toán"),
+    ("Authored", "Theo tác giả"),
+    ("Off", "Tắt"),
+    ("On", "Bật"),
+    ("Use publisher fonts", "Dùng phông của nhà xuất bản"),
+    ("Use selected font", "Dùng phông đã chọn"),
+    ("Reset text settings", "Đặt lại kiểu chữ"),
+];
+
+// Fixed-document View → Layout rows and choices contain no user-supplied labels.
+const VIEW_LAYOUT_LABELS: &[(&str, &str)] = &[
+    ("Reading mode", "Chế độ đọc"),
+    ("Page gap", "Khoảng cách trang"),
+    ("Page layout", "Bố cục trang"),
+    ("Page overlap", "Phần trang chồng"),
+    ("Overlap marker", "Dấu phần chồng"),
+    ("Reading direction", "Hướng đọc"),
+    ("Reading profiles", "Hồ sơ đọc"),
+    ("Page turns", "Lật trang"),
+    ("Scroll", "Cuộn"),
+    ("One page", "Một trang"),
+    ("Two pages", "Hai trang"),
+    ("Off", "Tắt"),
+    ("On", "Bật"),
+    ("No indicator", "Không có dấu"),
+    ("Gray out", "Tô xám"),
+    ("Arrow", "Mũi tên"),
+    ("Solid line", "Đường liền"),
+    ("Dashed line", "Đường đứt"),
+    ("Left to right", "Trái sang phải"),
+    ("Right to left", "Phải sang trái"),
+    ("Profiles", "Hồ sơ"),
+];
+
+// Reflow Text → Layout controls and choice labels are Reader-owned.
+const TEXT_LAYOUT_LABELS: &[(&str, &str)] = &[
+    ("Render mode", "Chế độ kết xuất"),
+    ("New-book mode", "Chế độ cho sách mới"),
+    ("Pages · single view here", "Trang · chỉ một trang ở đây"),
+    ("Pages", "Trang"),
+    ("One page", "Một trang"),
+    ("Two pages", "Hai trang"),
+    ("Line spacing", "Giãn dòng"),
+    ("Set value", "Đặt giá trị"),
+    ("Page overlap", "Phần trang chồng"),
+    ("Overlap marker", "Dấu phần chồng"),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    ("No indicator", "Không có dấu"),
+    ("Gray out", "Tô xám"),
+    ("Arrow", "Mũi tên"),
+    ("Solid line", "Đường liền"),
+    ("Dashed line", "Đường đứt"),
+    ("Less", "Ít hơn"),
+    ("More", "Nhiều hơn"),
+    ("Legacy", "Cũ"),
+    ("Flat", "Phẳng"),
+    ("Book", "Sách"),
+];
+
+// Fixed controls used by Type, Margins, Spacing, Rendering, View and Scan.
+// These panels do not place document titles or user-selected font names in rows.
+const OTHER_BOTTOM_LABELS: &[(&str, &str)] = &[
+    ("Font size", "Cỡ chữ"),
+    ("Smaller text", "Chữ nhỏ hơn"),
+    ("Larger text", "Chữ lớn hơn"),
+    ("More", "Thêm"),
+    ("Reading mode", "Chế độ đọc"),
+    ("Page turns", "Lật trang"),
+    ("Scroll", "Cuộn"),
+    ("Reading font", "Phông chữ đọc"),
+    ("Text settings", "Cài đặt văn bản"),
+    ("Profiles", "Hồ sơ"),
+    ("Top and bottom", "Trên và dưới"),
+    ("Independent", "Độc lập"),
+    ("Linked", "Liên kết"),
+    ("Reset margins", "Đặt lại lề"),
+    ("Word spacing", "Khoảng cách từ"),
+    ("Small", "Nhỏ"),
+    ("Medium", "Vừa"),
+    ("Large", "Lớn"),
+    ("Letter spacing", "Khoảng cách chữ"),
+    ("Tight", "Hẹp"),
+    ("Normal", "Bình thường"),
+    ("Wide", "Rộng"),
+    ("Wider", "Rộng hơn"),
+    ("Word expansion", "Mở rộng khoảng từ"),
+    ("None", "Không"),
+    ("Some", "Một ít"),
+    ("Style tweaks", "Điều chỉnh kiểu"),
+    ("Open", "Mở"),
+    (
+        "Base stylesheet (hold for default)",
+        "Kiểu cơ sở (nhấn giữ để mặc định)",
+    ),
+    ("Auto", "Tự động"),
+    ("Traditional", "Truyền thống"),
+    ("Publisher CSS", "CSS nhà xuất bản"),
+    ("Off", "Tắt"),
+    ("On", "Bật"),
+    ("Embedded fonts", "Phông chữ nhúng"),
+    ("Details", "Chi tiết"),
+    ("Zoom (dpi)", "Thu phóng (dpi)"),
+    ("Custom zoom", "Thu phóng tùy chỉnh"),
+    ("Set value", "Đặt giá trị"),
+    ("Font kerning", "Khoảng cách cặp chữ"),
+    ("Fast", "Nhanh"),
+    ("Good", "Tốt"),
+    ("Best", "Tốt nhất"),
+    ("Font hinting", "Làm nét chữ"),
+    ("Native", "Gốc"),
+    ("Image scaling", "Thu phóng hình"),
+    ("Smooth", "Mịn"),
+    ("Night images", "Hình ban đêm"),
+    ("Original", "Nguyên bản"),
+    ("Inverted", "Đảo màu"),
+    ("Fit", "Vừa khung"),
+    ("Fit page", "Vừa trang"),
+    ("Fit width", "Vừa chiều rộng"),
+    ("Fit height", "Vừa chiều cao"),
+    ("Zoom", "Thu phóng"),
+    ("Columns", "Cột"),
+    ("Rows", "Hàng"),
+    ("Custom", "Tùy chỉnh"),
+    ("Rotation", "Xoay"),
+    ("Image dithering", "Hòa sắc hình"),
+    ("Contrast", "Độ tương phản"),
+    ("Fine contrast", "Tinh chỉnh tương phản"),
+    ("Adaptive", "Thích ứng"),
+    ("Normal contrast", "Tương phản thường"),
+    ("Higher contrast", "Tăng tương phản"),
+    ("Scan white level", "Mức trắng bản quét"),
+    ("Low", "Thấp"),
+    ("High", "Cao"),
+    ("Auto straighten", "Tự làm thẳng"),
+    ("Text selection", "Chọn văn bản"),
+    ("Embedded first", "Ưu tiên văn bản nhúng"),
+    ("Force OCR", "Luôn dùng OCR"),
+    ("Decrease 1°", "Giảm 1°"),
+    ("Increase 1°", "Tăng 1°"),
+    ("Crop", "Cắt lề"),
+    ("Semi-auto crop", "Cắt lề bán tự động"),
+    ("Recognize text", "Nhận dạng văn bản"),
+    ("Read text", "Đọc văn bản"),
+    ("Reflow scan", "Sắp xếp lại bản quét"),
+];
+
+const OTHER_BOTTOM_PREFIXES: &[(&str, &str)] = &[
+    ("Size · ", "Cỡ · "),
+    ("Left · ", "Trái · "),
+    ("Right · ", "Phải · "),
+    ("Top · ", "Trên · "),
+    ("Bottom · ", "Dưới · "),
+    ("Legacy: ", "Cũ: "),
+    ("Fine tune · ", "Tinh chỉnh · "),
+    ("CJK width · ", "Độ rộng CJK · "),
+    ("Fine · ", "Điều chỉnh · "),
+    ("Limit · ", "Giới hạn · "),
+    ("Margin · ", "Lề · "),
+];
+
+// Pages grid labels are fixed actions, never document or user content.
+const PAGE_ACTION_LABELS: &[(&str, &str)] = &[
+    ("Thumbnails", "Ảnh thu nhỏ"),
+    ("Skim", "Đọc lướt"),
+    ("Add bookmark", "Thêm dấu trang"),
+    ("Links", "Liên kết"),
+    ("History", "Lịch sử"),
+    ("Previous location", "Vị trí trước"),
+    ("Matches", "Kết quả tìm kiếm"),
 ];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -231,6 +514,201 @@ impl InterfaceLanguage {
             "Display, sources and book preferences" => "Hiển thị, nguồn và tùy chọn cho sách",
             _ => english,
         }
+    }
+
+    /// Localize only a title from the fixed top Library action group.
+    pub(super) fn library_title<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = LIBRARY_LABELS.iter().find(|(key, _)| *key == english) {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    /// Preserve English queries for Library actions displayed in Vietnamese.
+    pub(super) fn library_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = LIBRARY_LABELS.iter().find(|(_, value)| *value == label) {
+                return english;
+            }
+        }
+        label
+    }
+
+    /// Localize only an allowlisted built-in top control title.
+    pub(super) fn top_control_title<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                TOP_CONTROL_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    /// Preserve English queries for the localized top controls.
+    pub(super) fn top_control_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = TOP_CONTROL_LABELS.iter().find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    /// Style rows only use app-owned labels and numeric fine-tune values.
+    pub(super) fn text_style_title(self, english: &str) -> String {
+        if self != Self::Vietnamese {
+            return english.to_owned();
+        }
+        if let Some(value) = english.strip_prefix("Fine tune · ") {
+            return format!("Tinh chỉnh · {value}");
+        }
+        TEXT_STYLE_LABELS
+            .iter()
+            .find_map(|(key, value)| (*key == english).then_some(*value))
+            .unwrap_or(english)
+            .to_owned()
+    }
+
+    /// Match the untranslated name while displaying a localized Style row.
+    pub(super) fn text_style_english(self, label: &str) -> String {
+        if self != Self::Vietnamese {
+            return label.to_owned();
+        }
+        if let Some(value) = label.strip_prefix("Tinh chỉnh · ") {
+            return format!("Fine tune · {value}");
+        }
+        TEXT_STYLE_LABELS
+            .iter()
+            .find_map(|(key, value)| (*value == label).then_some(*key))
+            .unwrap_or(label)
+            .to_owned()
+    }
+
+    /// Localize only fixed-document layout labels, preserving numeric values.
+    pub(super) fn view_layout_title<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                VIEW_LAYOUT_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    /// Preserve English search aliases for localized layout rows.
+    pub(super) fn view_layout_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = VIEW_LAYOUT_LABELS.iter().find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    /// Translate fixed layout labels and known numeric prefixes only.
+    pub(super) fn text_layout_title(self, english: &str) -> String {
+        if self != Self::Vietnamese {
+            return english.to_owned();
+        }
+        for (source, target) in [
+            ("Side margins · ", "Lề bên · "),
+            ("Fine · ", "Tinh chỉnh · "),
+            ("Repeated lines · ", "Dòng lặp · "),
+        ] {
+            if let Some(value) = english.strip_prefix(source) {
+                return format!("{target}{value}");
+            }
+        }
+        TEXT_LAYOUT_LABELS
+            .iter()
+            .find_map(|(key, value)| (*key == english).then_some(*value))
+            .unwrap_or(english)
+            .to_owned()
+    }
+
+    /// Preserve English search aliases for layout rows, including numeric values.
+    pub(super) fn text_layout_english(self, label: &str) -> String {
+        if self != Self::Vietnamese {
+            return label.to_owned();
+        }
+        for (source, target) in [
+            ("Lề bên · ", "Side margins · "),
+            ("Tinh chỉnh · ", "Fine · "),
+            ("Dòng lặp · ", "Repeated lines · "),
+        ] {
+            if let Some(value) = label.strip_prefix(source) {
+                return format!("{target}{value}");
+            }
+        }
+        TEXT_LAYOUT_LABELS
+            .iter()
+            .find_map(|(key, value)| (*value == label).then_some(*key))
+            .unwrap_or(label)
+            .to_owned()
+    }
+
+    /// Translate labels on the six audited panels, retaining numeric suffixes.
+    pub(super) fn other_bottom_title(self, english: &str) -> String {
+        if self != Self::Vietnamese {
+            return english.to_owned();
+        }
+        for &(source, target) in OTHER_BOTTOM_PREFIXES {
+            if let Some(value) = english.strip_prefix(source) {
+                return format!("{target}{value}");
+            }
+        }
+        OTHER_BOTTOM_LABELS
+            .iter()
+            .find_map(|(key, value)| (*key == english).then_some(*value))
+            .unwrap_or(english)
+            .to_owned()
+    }
+
+    /// Return the English alias for a localized audited-panel row.
+    pub(super) fn other_bottom_english(self, label: &str) -> String {
+        if self != Self::Vietnamese {
+            return label.to_owned();
+        }
+        for &(target, source) in OTHER_BOTTOM_PREFIXES {
+            if let Some(value) = label.strip_prefix(source) {
+                return format!("{target}{value}");
+            }
+        }
+        OTHER_BOTTOM_LABELS
+            .iter()
+            .find_map(|(key, value)| (*value == label).then_some(*key))
+            .unwrap_or(label)
+            .to_owned()
+    }
+
+    /// Translate an app-owned Pages grid action title.
+    pub(super) fn page_action_title<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                PAGE_ACTION_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    /// Preserve English menu searches for translated Pages actions.
+    pub(super) fn page_action_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = PAGE_ACTION_LABELS.iter().find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
     }
 
     /// Return the canonical English search alias for a known Screen-panel row.

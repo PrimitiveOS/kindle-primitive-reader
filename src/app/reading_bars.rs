@@ -585,19 +585,25 @@ impl Reader {
     }
 
     pub(super) fn menu_search_panels(&self) -> Vec<(BarPanel, String)> {
+        let language = self.controls.interface_language;
         let (root, panel) = if self.fixed.is_some() {
             ("View", BarPanel::View)
         } else {
             ("Text", BarPanel::Text)
         };
-        let mut panels = vec![(BarPanel::Pages, "Pages".into())];
+        let mut panels = vec![(BarPanel::Pages, language.text("Pages").into())];
         panels.extend(
             self.bottom_menu_sections(panel)
                 .iter()
-                .map(|&(section, name)| (section, format!("{root} › {name}"))),
+                .map(|&(section, name)| {
+                    (
+                        section,
+                        format!("{} › {}", language.text(root), language.text(name)),
+                    )
+                }),
         );
         if self.supports_scan_panel() {
-            panels.push((BarPanel::Scan, "Scan".into()));
+            panels.push((BarPanel::Scan, language.text("Scan").into()));
         }
         panels
     }
@@ -680,6 +686,10 @@ impl Reader {
         }
         if !self.hits.is_empty() || !self.pdf_hits.is_empty() {
             items.push(Item::new("Matches", Action::Show(Screen::Matches)));
+        }
+        let language = self.controls.interface_language;
+        for item in &mut items {
+            item.title = language.page_action_title(&item.title).to_owned();
         }
         items
     }

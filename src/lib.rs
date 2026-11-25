@@ -70,6 +70,7 @@ mod ocr;
 #[cfg(feature = "kindle")]
 mod ocr_job;
 pub mod odt;
+mod odt_sections;
 #[cfg(feature = "kindle")]
 pub mod online_lookup;
 mod parley_layout;
@@ -1111,6 +1112,8 @@ chapter_probe! {
     pub(crate) embedded_font_usage: embedded_font_usage::Families,
     book: u64,
     chapters: Vec<Chapter>,
+    #[cfg(feature = "kindle")]
+    odt_continued_before: Vec<bool>,
     pub toc: Vec<TocEntry>,
     #[cfg(feature = "kindle")]
     pub(crate) printed_pages: Vec<TocEntry>,
@@ -1328,6 +1331,8 @@ impl Probe {
         let publication = book.revision();
         let spine_rtl = book.spine_rtl;
         let chapters = book.chapters.clone();
+        #[cfg(feature = "kindle")]
+        let odt_continued_before = book.odt_continued_before();
         let toc = book.toc.clone();
         #[cfg(feature = "kindle")]
         let printed_pages = book.printed_pages().to_vec();
@@ -1683,6 +1688,8 @@ impl Probe {
             #[cfg(feature = "kindle")]
             requests_vertical,
             chapters,
+            #[cfg(feature = "kindle")]
+            odt_continued_before,
             toc,
             #[cfg(feature = "kindle")]
             printed_pages,

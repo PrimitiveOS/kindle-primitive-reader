@@ -11,6 +11,8 @@ pub(crate) mod live_metadata;
 pub(crate) mod metadata_archive;
 #[cfg(feature = "kindle")]
 mod nearby_custom_metadata;
+#[cfg(feature = "kindle")]
+mod odt_migration;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
@@ -2175,6 +2177,19 @@ impl Library {
 
     pub fn state(&self, id: u64) -> Option<&BookState> {
         self.recent.iter().find(|state| state.id == id)
+    }
+
+    /// Return a fully translated clone; the caller commits only after a safe open.
+    #[cfg(feature = "kindle")]
+    pub(crate) fn migrated_odt_state(
+        &self,
+        id: u64,
+        book: &Book,
+    ) -> crate::Result<Option<BookState>> {
+        let Some(state) = self.state(id).filter(|_| book.has_split_odt()) else {
+            return Ok(None);
+        };
+        odt_migration::translate(state, book)
     }
 
     #[cfg(feature = "kindle")]

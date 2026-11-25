@@ -29,7 +29,7 @@ impl TopGroup {
 
 impl Reader {
     pub(super) fn top_config_items(&self, group: TopGroup) -> Vec<Item> {
-        match group {
+        let mut items = match group {
             TopGroup::Navigation => self.navigation_items(),
             TopGroup::Appearance if self.fixed.is_some() => self.fixed_display_items(),
             TopGroup::Appearance => self.text_display_items(),
@@ -45,7 +45,19 @@ impl Reader {
             TopGroup::Tools => self.document_tool_items(),
             TopGroup::Search => self.document_search_items(),
             TopGroup::Library => self.reading_library_items(),
+        };
+        if matches!(
+            group,
+            TopGroup::Appearance | TopGroup::Settings | TopGroup::Tools
+        ) {
+            let language = self.controls.interface_language;
+            for item in &mut items {
+                // The allowlist covers fixed UI titles only; detail may contain
+                // a user font, archive path, or live status and stays untouched.
+                item.title = language.top_control_title(&item.title).to_owned();
+            }
         }
+        items
     }
 
     fn navigation_items(&self) -> Vec<Item> {
@@ -666,6 +678,12 @@ impl Reader {
                 ));
             }
             items.push(Item::new("Book details", Action::OrganizeCurrent));
+        }
+        // All these are built-in action labels; actual book and file names are
+        // presented elsewhere and must remain untouched.
+        let language = self.controls.interface_language;
+        for item in &mut items {
+            item.title = language.library_title(&item.title).to_owned();
         }
         items
     }

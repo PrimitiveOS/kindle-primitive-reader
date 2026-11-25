@@ -47,6 +47,25 @@ impl HiddenFlows {
         &self.points
     }
 
+    #[cfg(feature = "kindle")]
+    pub(super) fn points_mut_for_odt_migration(&mut self) -> &mut [FlowPoint] {
+        &mut self.points
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(super) fn sort_after_odt_migration(&mut self) -> bool {
+        if self.points.iter().enumerate().any(|(index, point)| {
+            self.points[..index]
+                .iter()
+                .any(|other| same_position(&point.position, &other.position))
+        }) {
+            return false;
+        }
+        self.points
+            .sort_by_key(|point| source_order(&point.position));
+        true
+    }
+
     pub fn insert(&mut self, point: FlowPoint) -> io::Result<bool> {
         if !valid_position(&point.position) {
             return Err(invalid_state(

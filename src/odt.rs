@@ -10,9 +10,9 @@ use zip::{CompressionMethod, ZipArchive};
 
 pub(crate) const MAX_INPUT: usize = 16 * 1024 * 1024;
 const MAX_XML: usize = 4 * 1024 * 1024;
-// The current reflow provider admits at most 512 KiB of chapter text. A bound
-// on the generated XHTML is conservative but ensures its text fits that limit.
-const MAX_OUTPUT: usize = 512 * 1024;
+// The complete generated document remains bounded; large text is partitioned
+// into layout-sized sections after conversion.
+const MAX_OUTPUT: usize = 4 * 1024 * 1024;
 const MAX_IMAGE: u64 = 4 * 1024 * 1024;
 const TEXT: &str = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 const OFFICE: &str = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";

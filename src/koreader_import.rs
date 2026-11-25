@@ -320,7 +320,15 @@ impl QuoteResolver {
             self.incomplete = true;
             return Ok(Some(self.finish()));
         }
-        match Source::parse(&xhtml) {
+        // ODT has a dedicated extraction mode for explicit text:s whitespace.
+        // Use the same source model as the reader, so imported byte offsets
+        // refer to exactly the text and chapter being rendered.
+        let source = if book.is_odt() {
+            book.chapter_source(&book.chapters[index].href, &xhtml)
+        } else {
+            Source::parse(&xhtml)
+        };
+        match source {
             Ok(source) => self.scan(&source, publication.0, &book.chapters[index].href),
             Err(_) => self.incomplete = true,
         }

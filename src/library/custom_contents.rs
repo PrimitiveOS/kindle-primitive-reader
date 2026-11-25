@@ -22,6 +22,29 @@ impl CustomContents {
         &self.entries
     }
 
+    #[cfg(feature = "kindle")]
+    pub(super) fn entries_mut_for_odt_migration(&mut self) -> &mut [Bookmark] {
+        &mut self.entries
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(super) fn sort_after_odt_migration(&mut self) -> bool {
+        if self.entries.iter().enumerate().any(|(index, entry)| {
+            self.entries[..index]
+                .iter()
+                .any(|other| same_position(&entry.position, &other.position))
+        }) {
+            return false;
+        }
+        self.entries.sort_by_key(|entry| {
+            let p = &entry.position;
+            p.anchor.as_ref().map_or((p.chapter, 0, p.page, 0), |a| {
+                (p.chapter, 1, a.block, a.offset)
+            })
+        });
+        true
+    }
+
     pub fn find(&self, position: &ReadingPosition) -> Option<usize> {
         self.entries.iter().position(|entry| {
             entry.position.chapter == position.chapter && same_position(&entry.position, position)
