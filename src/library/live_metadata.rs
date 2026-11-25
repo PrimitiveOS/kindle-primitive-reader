@@ -112,6 +112,13 @@ impl Store {
         let mut warning = self.warning.borrow_mut();
         *warning = None;
         for book in &library.recent {
+            if super::raw_v2::book_has_raw(book) {
+                requested.insert(book.id);
+                *warning = Some(
+                    "Raw whitespace positions cannot yet be saved to a metadata sidecar.".into(),
+                );
+                continue;
+            }
             if book.file_deleted {
                 requested.remove(&book.id);
                 continue;

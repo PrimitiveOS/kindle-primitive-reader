@@ -163,7 +163,139 @@ pub(super) fn decode(bytes: &[u8]) -> io::Result<SavedLibrary> {
         .ok_or_else(|| invalid_state("The raw caret's anchor is unavailable"))?;
         attach(anchor, entry.caret)?;
     }
+    validate_library(&library)?;
     Ok(library)
+}
+
+/// Unlike the legacy loader, v2 must reject invalid state rather than
+/// sanitize it and risk dropping distinct raw locations or absent books.
+fn validate_library(library: &SavedLibrary) -> io::Result<()> {
+    super::validate_state(&library.books)?;
+    let mut ids = std::collections::HashSet::new();
+    for state in &library.books {
+        if !super::safe_path(&state.path)
+            || super::DocumentFormat::for_path(&state.path).is_none()
+            || !ids.insert(state.id)
+            || state.bookmarks.len() > super::MAX_IMPORTED_MARKS
+            || state.highlights.len() > super::MAX_IMPORTED_MARKS
+        {
+            return Err(invalid_state(
+                "The v2 library contains an invalid or duplicate book",
+            ));
+        }
+        if let Some(position) = &state.position {
+            valid_position(position)?;
+        }
+        for mark in &state.bookmarks {
+            valid_position(&mark.position)?;
+        }
+        let custom = state.custom_contents.entries();
+        if custom.len() > super::custom_contents::ENTRY_LIMIT {
+            return Err(invalid_state("The custom contents list is too large"));
+        }
+        for (i, mark) in custom.iter().enumerate() {
+            valid_position(&mark.position)?;
+            if mark.label.is_empty()
+                || mark.label.trim() != mark.label
+                || mark.label.chars().count() > super::custom_contents::TITLE_LIMIT
+                || mark.label.chars().any(char::is_control)
+                || custom[..i]
+                    .iter()
+                    .any(|prior| super::same_position(&prior.position, &mark.position))
+                || (i > 0
+                    && super::raw_positions::contents_order(&custom[i - 1].position)
+                        > super::raw_positions::contents_order(&mark.position))
+            {
+                return Err(invalid_state(
+                    "The custom contents list cannot be preserved safely",
+                ));
+            }
+        }
+        let flows = state.hidden_flows.points();
+        if flows.len() > super::hidden_flows::MAX_POINTS {
+            return Err(invalid_state("The hidden flow list is too large"));
+        }
+        for (i, point) in flows.iter().enumerate() {
+            valid_position(&point.position)?;
+            if flows[..i]
+                .iter()
+                .any(|prior| super::same_position(&prior.position, &point.position))
+                || (i > 0
+                    && super::raw_positions::flow_order(&flows[i - 1].position)
+                        > super::raw_positions::flow_order(&point.position))
+            {
+                return Err(invalid_state(
+                    "The hidden flow list cannot be preserved safely",
+                ));
+            }
+        }
+        for mark in &state.highlights {
+            valid_anchor(&mark.selection.start)?;
+            valid_anchor(&mark.selection.end)?;
+            if mark.selection.start.book != mark.selection.end.book
+                || mark.selection.text.len() > super::MAX_HIGHLIGHT_TEXT_BYTES
+                || mark
+                    .note
+                    .as_ref()
+                    .is_some_and(|note| note.len() > super::MAX_NOTE_BYTES)
+            {
+                return Err(invalid_state("A saved selection is invalid"));
+            }
+        }
+    }
+    let merged = super::merge_collections(
+        &[],
+        &library.collections,
+        &library.books,
+        &mut super::BackupSummary::default(),
+    );
+    if merged != library.collections {
+        return Err(invalid_state(
+            "The collection list cannot be preserved safely",
+        ));
+    }
+    Ok(())
+}
+
+fn valid_position(position: &super::ReadingPosition) -> io::Result<()> {
+    if let Some(anchor) = &position.anchor {
+        valid_anchor(anchor)?;
+    }
+    Ok(())
+}
+
+fn valid_anchor(anchor: &Anchor) -> io::Result<()> {
+    if let Some(caret) = &anchor.raw_caret {
+        check(anchor, caret)
+    } else if super::valid_anchor(anchor) {
+        Ok(())
+    } else {
+        Err(invalid_state("A saved anchor is invalid"))
+    }
+}
+
+pub(super) fn book_has_raw(state: &super::BookState) -> bool {
+    let raw = |position: &super::ReadingPosition| {
+        position
+            .anchor
+            .as_ref()
+            .is_some_and(|anchor| anchor.raw_caret.is_some())
+    };
+    state.position.as_ref().is_some_and(raw)
+        || state.bookmarks.iter().any(|mark| raw(&mark.position))
+        || state
+            .custom_contents
+            .entries()
+            .iter()
+            .any(|mark| raw(&mark.position))
+        || state
+            .hidden_flows
+            .points()
+            .iter()
+            .any(|point| raw(&point.position))
+        || state.highlights.iter().any(|mark| {
+            mark.selection.start.raw_caret.is_some() || mark.selection.end.raw_caret.is_some()
+        })
 }
 
 fn capture(

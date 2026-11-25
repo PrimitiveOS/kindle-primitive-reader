@@ -721,6 +721,7 @@ enum Action {
     Chapter(chapter_navigation::Direction),
     SavedMark(chapter_navigation::Direction),
     SavedMarkEdge(chapter_navigation::Direction),
+    LatestSavedMark,
     ChapterLevel(chapter_navigation::LevelSetting),
     SetCharacterPages(Option<u16>),
     CharacterPage(usize),
@@ -4719,6 +4720,11 @@ impl Reader {
             Action::Chapter(direction) => self.jump_chapter(direction)?,
             Action::SavedMark(direction) => self.jump_saved_mark(direction, false)?,
             Action::SavedMarkEdge(direction) => self.jump_saved_mark(direction, true)?,
+            Action::LatestSavedMark => {
+                let action = self.latest_bookmark_action().ok_or("No saved marks")?;
+                self.auto_turn.activity(Instant::now());
+                self.activate(action)?;
+            }
             Action::ChapterLevel(setting) => self.set_chapter_level(setting)?,
             Action::Custom(action) => self.custom_action(action)?,
             Action::SetCharacterPages(stride) => self.set_character_pages(stride)?,

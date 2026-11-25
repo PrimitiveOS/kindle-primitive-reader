@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::io;
 
 pub(crate) const TITLE_LIMIT: usize = 96;
-const ENTRY_LIMIT: usize = 256;
+pub(super) const ENTRY_LIMIT: usize = 256;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]

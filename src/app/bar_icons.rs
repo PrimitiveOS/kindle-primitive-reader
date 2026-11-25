@@ -62,6 +62,11 @@ const MARK_LAST: Icon = line(&[
     "M15 8 L19 12 L15 16",
     "M21 5 V19",
 ]);
+const MARK_LATEST: Icon = line(&[
+    "M4 4 H12 V20 L8 17 L4 20 Z",
+    "M17 9 A4 4 0 1 0 17 17 A4 4 0 1 0 17 9 Z",
+    "M17 10.5 V13 L19 14",
+]);
 const INFO: Icon = line(&["M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 11 V16 M12 8 V8.1"]);
 const SAVE: Icon = line(&["M4 4 H16 L20 8 V20 H4 Z M8 4 V10 H16 V4 M8 20 V14 H16 V20"]);
 
@@ -109,6 +114,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::SavedMark(super::chapter_navigation::Direction::Next) => super::skim::MARK_FORWARD,
         Action::SavedMarkEdge(super::chapter_navigation::Direction::Previous) => MARK_FIRST,
         Action::SavedMarkEdge(super::chapter_navigation::Direction::Next) => MARK_LAST,
+        Action::LatestSavedMark => MARK_LATEST,
         Action::OpenFolderFile(super::FolderDirection::Previous) => FIRST_PAGE,
         Action::OpenFolderFile(super::FolderDirection::Next) => LAST_PAGE,
         Action::Show(Screen::FixedBookmarks | Screen::Bookmarks)

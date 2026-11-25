@@ -564,7 +564,16 @@ fn read_text_zip(file: File, length: u64, extension: &str, limit: usize) -> Resu
 }
 
 fn read_markdown_zip(file: File, length: u64, title: &str) -> Result<Document> {
-    let (mut archive, index, name) = open_text_zip(file, length, "md")?;
+    let (archive, index, name) = open_text_zip(file, length, "md")?;
+    read_markdown_archive(archive, index, name, title)
+}
+
+fn read_markdown_archive(
+    mut archive: ZipArchive<BufReader<File>>,
+    index: usize,
+    name: String,
+    title: &str,
+) -> Result<Document> {
     let bytes = {
         let entry = archive.by_index(index)?;
         if entry.size() > MAX_INPUT as u64 {
@@ -647,7 +656,15 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
     if count > MAX_HTMLZ_ENTRIES {
         return Err("The HTMLZ ZIP has too many entries".into());
     }
-    let mut archive = ZipArchive::new(input)?;
+    let archive = ZipArchive::new(input)?;
+    read_htmlz_archive(archive, count, fallback)
+}
+
+fn read_htmlz_archive(
+    mut archive: ZipArchive<BufReader<File>>,
+    count: usize,
+    fallback: &str,
+) -> Result<Document> {
     if archive.len() != count {
         return Err("The HTMLZ ZIP has ambiguous or duplicate entries".into());
     }

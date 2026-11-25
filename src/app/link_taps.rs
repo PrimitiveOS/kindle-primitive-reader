@@ -254,9 +254,11 @@ impl Reader {
         self.jump_to_latest_bookmark()
     }
 
-    pub(super) fn jump_to_latest_bookmark(&mut self) -> Option<Change> {
+    /// Select the newest saved mark without altering its source data.
+    pub(super) fn latest_bookmark_action(&self) -> Option<Action> {
         let state = self.library.state(self.open_book_id()?)?;
-        let fixed = self.screen == Screen::Fixed;
+        // This selector is also used while the reading menu is open.
+        let fixed = self.fixed.is_some();
         let (_, action) = state
             .bookmarks
             .iter()
@@ -278,6 +280,11 @@ impl Reader {
                     .map(|mark| (mark.created_at, Action::FixedPage(mark.page))),
             )
             .max_by_key(|(created, _)| *created)?;
+        Some(action)
+    }
+
+    pub(super) fn jump_to_latest_bookmark(&mut self) -> Option<Change> {
+        let action = self.latest_bookmark_action()?;
         self.auto_turn.activity(Instant::now());
         Some(match self.activate(action) {
             Ok(()) => self.applied_change(),

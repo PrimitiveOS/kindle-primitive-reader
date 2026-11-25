@@ -67,6 +67,11 @@ the canonical part, reinserts them at the approved paths and runs the decoder on
 the result. A separate check can validate a raw caret against an open book's
 source fingerprint and grapheme mapping. None of this activates the resulting
 library or completes v2 merge, restore and UI behavior.
+The detached decoder also validates book identities, retained collection
+membership, position lists and mark limits without invoking v1 sanitization or
+checking whether each book file is present. Raw-bearing books are explicitly
+excluded from legacy metadata sidecar checkpoints, which cannot represent them;
+the user receives a warning instead of a silently incomplete sidecar.
 Resume, canonical selection, saved-mark validation and old ODT anchor migration
 also reject transient raw carets instead of silently using their collapsed
 canonical positions. Mark comparisons and custom-contents/flow ordering account

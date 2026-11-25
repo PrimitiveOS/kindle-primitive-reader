@@ -126,6 +126,7 @@ impl Reader {
                 "Last saved mark",
                 Action::SavedMarkEdge(Direction::Next),
             ));
+            items.push(Item::new("Latest saved mark", Action::LatestSavedMark));
         }
         if let Some(book) = self
             .active

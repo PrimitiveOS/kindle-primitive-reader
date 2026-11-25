@@ -45,6 +45,7 @@ const NAVIGATION_LABELS: &[(&str, &str)] = &[
     ("Next saved mark", "Dấu đã lưu tiếp"),
     ("First saved mark", "Dấu đã lưu đầu tiên"),
     ("Last saved mark", "Dấu đã lưu cuối cùng"),
+    ("Latest saved mark", "Dấu mới lưu nhất"),
 ];
 
 // Titles in the Reader-owned Search group; values also supply reverse search aliases.

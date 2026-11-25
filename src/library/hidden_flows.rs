@@ -3,7 +3,7 @@ use super::{ReadingPosition, invalid_state, same_position, valid_position};
 use serde::{Deserialize, Serialize};
 use std::io;
 
-const MAX_POINTS: usize = 512;
+pub(super) const MAX_POINTS: usize = 512;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub(crate) struct FlowPoint {
