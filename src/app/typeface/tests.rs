@@ -201,3 +201,125 @@ fn typeface_viewport_preserves_font_focus_and_the_exact_epub_source() {
         Some(selected_file)
     );
 }
+
+// Assemble a temporary collection from already licensed local test faces.
+// TTC table offsets are file-absolute, unlike offsets in the source fonts.
+fn test_collection(faces: &[Vec<u8>]) -> Vec<u8> {
+    let header = 12 + 4 * faces.len();
+    let mut out = vec![0; header];
+    out[..4].copy_from_slice(b"ttcf");
+    out[4..8].copy_from_slice(&0x0001_0000u32.to_be_bytes());
+    out[8..12].copy_from_slice(&(faces.len() as u32).to_be_bytes());
+    for (index, face) in faces.iter().enumerate() {
+        while out.len() % 4 != 0 {
+            out.push(0);
+        }
+        let offset = out.len();
+        out[12 + index * 4..16 + index * 4].copy_from_slice(&(offset as u32).to_be_bytes());
+        let mut relocated = face.clone();
+        let tables = u16::from_be_bytes([relocated[4], relocated[5]]) as usize;
+        for table in 0..tables {
+            let pos = 12 + table * 16 + 8;
+            let old = u32::from_be_bytes(relocated[pos..pos + 4].try_into().unwrap());
+            relocated[pos..pos + 4].copy_from_slice(&(old + offset as u32).to_be_bytes());
+        }
+        out.extend_from_slice(&relocated);
+    }
+    out
+}
+
+#[test]
+fn true_type_collection_can_be_previewed_selected_and_restored() {
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let font_paths: Vec<_> = fonts.iter().map(|p| p.display().to_string()).collect();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    let original = app.current_position().unwrap().anchor;
+    app.open_font_chooser().unwrap();
+    let files = [
+        fs::read(crate::test_fixture("fonts/Silkscreen-Regular.ttf")).unwrap(),
+        fs::read(crate::test_fixture("fonts/NotoSans-Regular.ttf")).unwrap(),
+    ];
+    let data = test_collection(&files);
+    assert!(FontRef::from_index(&data, 0).is_ok());
+    assert!(FontRef::from_index(&data, 1).is_ok());
+    let name = "Collected faces.TTC";
+    fs::write(app.fonts_directory.join(name), &data).unwrap();
+    let mut context = crate::font_context(&[app.fonts_directory.join(name)]).unwrap();
+    let families = context
+        .collection
+        .generic_families(parley::GenericFamily::Serif)
+        .collect::<Vec<_>>();
+    assert!(families.len() >= 2);
+    assert!(
+        context
+            .collection
+            .family(families[0])
+            .unwrap()
+            .fonts()
+            .iter()
+            .any(|face| face.index() == 0)
+    );
+    assert!(
+        context
+            .collection
+            .family(families[1])
+            .unwrap()
+            .fonts()
+            .iter()
+            .any(|face| face.index() == 1)
+    );
+    fs::write(app.fonts_directory.join("Invalid.ttc"), b"bad font").unwrap();
+    app.open_font_chooser().unwrap();
+    assert!(app.available_fonts.iter().any(|file| file == name));
+    let (title, specimen) = app
+        .typeface_preview(name, &font_paths, false, false)
+        .unwrap();
+    assert!(title.contains("Silkscreen"));
+    assert!(specimen.pixels.iter().any(|&ink| ink < 128));
+    assert!(
+        app.typeface_preview("Invalid.ttc", &font_paths, false, false)
+            .is_none()
+    );
+    crate::app::tests::capture_test_screen(&app, &fonts, "READER_TTC_FONT_CHOOSER_FRAME", false);
+    app.activate(Action::SetFont(Some(name.into()))).unwrap();
+    assert_eq!(app.current_position().unwrap().anchor, original);
+    let id = app.open_book_id().unwrap();
+    let preferences = &app.library.state(id).unwrap().preferences;
+    assert_eq!(preferences.font_file.as_deref(), Some(name));
+    crate::document_defaults::validate_preferences(preferences).unwrap();
+    let before = app.current_position();
+    assert!(
+        app.activate(Action::SetFont(Some("Invalid.ttc".into())))
+            .is_err()
+    );
+    assert_eq!(app.current_position(), before);
+    assert_eq!(
+        app.library
+            .state(id)
+            .unwrap()
+            .preferences
+            .font_file
+            .as_deref(),
+        Some(name)
+    );
+    app.save().unwrap();
+    drop(app);
+    let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    reopened.open_path(&fixture.book).unwrap();
+    assert_eq!(
+        reopened
+            .library
+            .state(id)
+            .unwrap()
+            .preferences
+            .font_file
+            .as_deref(),
+        Some(name)
+    );
+    assert_eq!(
+        reopened.active.as_ref().unwrap().reading.config.fonts[0],
+        reopened.fonts_directory.join(name)
+    );
+}

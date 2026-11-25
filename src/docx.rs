@@ -100,6 +100,7 @@ pub(crate) fn open(
         metadata,
         title: title.unwrap_or_else(|| fallback_title.into()),
         author,
+        cover: None,
         chapter_path: CHAPTER_PATH.to_owned(),
         xhtml: output.xhtml,
         toc: output.toc,

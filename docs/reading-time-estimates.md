@@ -2,7 +2,14 @@
 
 Tap the reading footer to cycle to **Chapter time left** or **Book time left**. To keep a time estimate beside the percentage, open **Reading controls → Reading status bar**, enable **Show items together**, then choose **Chapter** or **Book** under **Time estimate in combined status**. The choice applies to the next book you open. Each book learns its own pace. [Full Kindle-size screenshot from the simulator](screenshots/reading-time-left.png)
 
-Reader starts with one minute per page. It replaces that starting value with the average time spent on distinct pages of the current book. A visit under five seconds counts as a skim. Rereading adds to the previous time for that page up to two minutes total. A two-page spread divides the active time by the number of displayed pages. Menus and sleep pause the clock. For example, 20 seconds on one page and two visits of 40 and 10 seconds on another give a pace of 35 seconds per page.
+With the default duration limits, Reader starts with one minute per page. It replaces that starting value with the average time spent on distinct pages of the current book. A visit under five seconds counts as a skim. Rereading adds to the previous time for that page up to two minutes total. A two-page spread divides the active time by the number of displayed pages. Menus and sleep pause the clock. For example, 20 seconds on one page and two visits of 40 and 10 seconds on another give a pace of 35 seconds per page.
+
+The **Read page duration limits** in Reading statistics now also govern pace:
+the initial estimate is half the configured maximum, short visits use the
+configured minimum, and each distinct page is capped at the configured maximum.
+Existing saved samples remain readable. Changing the cap does not erase them;
+the estimate applies the current maximum when calculating the average. The
+new behavior has not yet been compiled or tested. [KOReader's duration limits](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L1067-L1098) · [KOReader's capped page totals](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/statistics.koplugin/main.lua#L36-L50)
 
 The footer multiplies the pace by the pages still to read after the displayed page or spread. In a PDF or other fixed-page book, the count runs to the next chapter destination or the end of the document. Reflowable books use the actual pages in the current spine item. A book-wide estimate for later items uses their uncompressed source sizes and the current item's laid-out page density. **About** marks that estimate. Illustrations, markup density and changes in type size can affect it. A final page shows **0 min**.
 

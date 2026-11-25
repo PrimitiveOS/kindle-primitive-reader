@@ -8,6 +8,31 @@ use std::collections::{HashSet, VecDeque};
 pub(super) const MAX_CANDIDATES: usize = 128;
 const MAX_DEPTH: usize = 4;
 
+/// The default KOReader conversion maps katakana to its hiragana reading
+/// before deinflection. NFKC has already expanded half-width kana at the
+/// caller. Leave all unrelated characters and the source selection untouched.
+pub(super) fn hiragana(text: &str) -> Option<String> {
+    let mut converted = String::with_capacity(text.len());
+    let mut changed = false;
+    for ch in text.chars() {
+        let code = u32::from(ch);
+        match code {
+            0x30a1..=0x30f6 | 0x30fd..=0x30fe => {
+                converted.push(char::from_u32(code - 0x60)?);
+                changed = true;
+            }
+            // These katakana do not have single-codepoint hiragana forms.
+            0x30f7..=0x30fa => {
+                converted.push(['わ', 'ゐ', 'ゑ', 'を'][(code - 0x30f7) as usize]);
+                converted.push('\u{3099}');
+                changed = true;
+            }
+            _ => converted.push(ch),
+        }
+    }
+    (changed && converted.len() <= super::super::MAX_WORD_BYTES).then_some(converted)
+}
+
 pub(super) fn candidates(word: &str) -> Vec<(String, usize)> {
     let normalized = icu_normalizer::ComposingNormalizer::new_nfkc().normalize(word);
     if !normalized

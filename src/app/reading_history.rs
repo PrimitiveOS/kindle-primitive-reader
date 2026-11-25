@@ -281,6 +281,8 @@ impl Reader {
             Configure(options) => {
                 self.reading_history
                     .configure(options, Instant::now(), crate::mark_time::now())?;
+                self.pace
+                    .set_duration_limits(options.min_seconds, options.max_seconds);
                 if !options.future_months {
                     self.history_view.month = self.history_view.month.min(Date::today().first());
                 }

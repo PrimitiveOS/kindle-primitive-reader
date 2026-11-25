@@ -41,6 +41,13 @@ definitions. These new forms have not yet been checked against the pinned
 KOReader replay, simulator or Kindle. Other colloquial, honorific and archaic
 forms and lexical-class matching remain open.
 
+The dictionary also tries a hiragana reading of katakana after compatibility
+normalization, including half-width katakana, and applies the existing bounded
+inflection rules to that reading. The selected passage and literal lookup stay
+unchanged. KOReader enables katakana-to-hiragana and half-width conversion by
+default; its other configurable conversions remain open. This new fallback has
+not yet been tested on the computer or Kindle. [Pinned conversion defaults](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/japanese.koplugin/deinflector.lua#L257-L299)
+
 Desktop tests exercise conjugation families, ambiguous entries, normalization precedence, synonyms and dictionary order, complete voiced/variation clusters, cancellation, manual ranges and returning from the popup. The retained W3C Japanese EPUB supplies real publication passages; an unchanged owner EPUB supplies a non-CJK regression. The owner corpus audited earlier has no CJK text, so it cannot supply a Japanese positive case. [Corpus and public-edition provenance](cjk-width.md)
 
 Kindle acceptance remains pending the combined build. These desktop results do not establish complete Japanese lexical coverage or full KOReader reading parity.

@@ -1219,6 +1219,9 @@ impl Reader {
             data.join("reading-history.json"),
             stats.recorded_totals(),
         );
+        let mut pace = crate::reading_pace::ReadingPace::new(data.join("reading-pace"));
+        let pace_options = reading_history.options();
+        pace.set_duration_limits(pace_options.min_seconds, pace_options.max_seconds);
         let profiles_path = data.join("reading-profiles.json");
         let profiles = reading_profiles::load(&profiles_path);
         let footer_presets_path = data.join("status-bar-presets.json");
@@ -1287,7 +1290,7 @@ impl Reader {
             stats,
             reading_history,
             history_view: Default::default(),
-            pace: crate::reading_pace::ReadingPace::new(data.join("reading-pace")),
+            pace,
             stats_path,
             stats_awake: true,
             backup_import: None,
@@ -7742,9 +7745,43 @@ impl Reader {
             .library
             .state(fixed.id)
             .map_or(&[][..], |book| book.pdf_highlights.as_slice());
+        // Imports are in page order; retaining only the last page bounds memory.
+        let mut quote_page = None;
+        let mut quote_pages_remaining = 16usize;
         let pending: Vec<_> = annotations
             .into_iter()
             .filter_map(|annotation| {
+                let quote = annotation
+                    .text
+                    .as_ref()
+                    .filter(|quote| !quote.trim().is_empty())
+                    .cloned()
+                    .or_else(|| {
+                        if quote_page
+                            .as_ref()
+                            .is_none_or(|(page, _)| *page != annotation.page)
+                        {
+                            if quote_pages_remaining == 0 {
+                                return None;
+                            }
+                            quote_pages_remaining -= 1;
+                            quote_page = Some((
+                                annotation.page,
+                                fixed.reading.page_text(annotation.page).ok(),
+                            ));
+                        }
+                        quote_page
+                            .as_ref()?
+                            .1
+                            .as_ref()
+                            .and_then(|page| pdf_annotations::recover_quote(&annotation, page))
+                    })
+                    .unwrap_or_else(|| {
+                        format!(
+                            "Highlight on {}",
+                            fixed_page_label(&fixed.reading, annotation.page)
+                        )
+                    });
                 let mark = PdfHighlight {
                     updated_at: None,
                     chapter_title: None,
@@ -7754,15 +7791,7 @@ impl Reader {
                     continuation: Vec::new(),
                     page: annotation.page,
                     bounds: annotation.bounds,
-                    text: annotation
-                        .text
-                        .filter(|quote| !quote.trim().is_empty())
-                        .unwrap_or_else(|| {
-                            format!(
-                                "Highlight on {}",
-                                fixed_page_label(&fixed.reading, annotation.page)
-                            )
-                        }),
+                    text: quote,
                     note: annotation.note,
                 };
                 (mark.is_valid()

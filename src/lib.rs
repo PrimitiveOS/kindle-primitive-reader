@@ -2801,13 +2801,18 @@ fn font_context_with_font_data(
             continue;
         }
         let data = read(path)?;
-        families.extend(
-            fonts
-                .collection
-                .register_fonts(data, None)
-                .into_iter()
-                .map(|(id, _)| id),
-        );
+        let mut registered = fonts.collection.register_fonts(data, None);
+        // Fontique returns a hash map's family order. Restore collection-face
+        // order so a TTC preview of face zero matches the chosen family, and
+        // retain every later family as a fallback. Single-family files are unchanged.
+        registered.sort_by_key(|(_, faces)| {
+            faces
+                .iter()
+                .map(|face| face.index())
+                .min()
+                .unwrap_or(u32::MAX)
+        });
+        families.extend(registered.into_iter().map(|(id, _)| id));
     }
     if families.is_empty() {
         return Err("No valid font was loaded".into());

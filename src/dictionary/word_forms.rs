@@ -17,9 +17,22 @@ impl WordForms {
             for rank in forms.order.values_mut() {
                 *rank += 1;
             }
-            forms.order.insert(normalized.into_owned(), 0);
+            forms.order.insert(normalized.to_string(), 0);
         }
-        for (variant, cost) in japanese::candidates(word) {
+        let converted = japanese::hiragana(&normalized);
+        let mut original = japanese::candidates(word).into_iter();
+        let mut hiragana = converted
+            .into_iter()
+            .flat_map(|text| std::iter::once((text.clone(), 1)).chain(japanese::candidates(&text)));
+        // Interleave the two bounded sets so original and converted forms both
+        // remain useful even when a long inflection generates many candidates.
+        for index in 0..japanese::MAX_CANDIDATES {
+            let next = if index % 2 == 0 {
+                original.next().or_else(|| hiragana.next())
+            } else {
+                hiragana.next().or_else(|| original.next())
+            };
+            let Some((variant, cost)) = next else { break };
             forms.order.entry(variant).or_insert(cost);
         }
         forms

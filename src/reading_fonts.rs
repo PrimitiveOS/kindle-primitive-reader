@@ -43,11 +43,15 @@ fn font_file(directory: &Path, name: &str) -> io::Result<PathBuf> {
         && path
             .extension()
             .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf"));
+            .is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("ttf")
+                    || ext.eq_ignore_ascii_case("otf")
+                    || ext.eq_ignore_ascii_case("ttc")
+            });
     if !valid_name || !fs::symlink_metadata(directory)?.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "Choose a TTF or OTF from Reader's font folder",
+            "Choose a TTF, OTF or TTC from Reader's font folder",
         ));
     }
     let path = directory.join(name);

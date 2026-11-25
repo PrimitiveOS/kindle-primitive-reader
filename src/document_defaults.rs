@@ -269,10 +269,11 @@ fn valid_font_name(name: &str) -> bool {
         && name.len() <= 255
         && !name.chars().any(|c| c.is_control() || c == '\\')
         && path.file_name() == Some(std::ffi::OsStr::new(name))
-        && path
-            .extension()
-            .and_then(|s| s.to_str())
-            .is_some_and(|s| s.eq_ignore_ascii_case("ttf") || s.eq_ignore_ascii_case("otf"))
+        && path.extension().and_then(|s| s.to_str()).is_some_and(|s| {
+            s.eq_ignore_ascii_case("ttf")
+                || s.eq_ignore_ascii_case("otf")
+                || s.eq_ignore_ascii_case("ttc")
+        })
 }
 fn invalid() -> io::Error {
     io::Error::new(

@@ -55,7 +55,87 @@ pub struct ImportedHighlight {
     pub note: Option<String>,
 }
 
-/// Imports visible `/Highlight` annotations with quadrilaterals or a rectangle alone.
+/// Recover a foreign PDF markup quote from word boxes in reading order. The
+/// caller retains its fallback if the page has no reliable bounded text layer.
+#[cfg(feature = "kindle")]
+pub(crate) fn recover_quote(
+    annotation: &ImportedHighlight,
+    page: &crate::fixed_text::PdfPageText,
+) -> Option<String> {
+    const MAX_WORDS: usize = 8192;
+    if page.truncated
+        || page.words.is_empty()
+        || page.words.len() > MAX_WORDS
+        || annotation.bounds.is_empty()
+        || annotation.bounds.len() > MAX_QUADS
+    {
+        return None;
+    }
+    let envelope = annotation.bounds.iter().fold(
+        (
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ),
+        |(x0, y0, x1, y1), r| (x0.min(r.x0), y0.min(r.y0), x1.max(r.x1), y1.max(r.y1)),
+    );
+    let mut quote = String::new();
+    let mut previous_end = None;
+    let mut last_seen = 0usize;
+    let mut overlap_budget = 32_768usize;
+    for word in &page.words {
+        if word.bytes.start < last_seen || word.bytes.start >= word.bytes.end {
+            return None;
+        }
+        let text = page.text.get(word.bytes.clone())?;
+        last_seen = word.bytes.end;
+        let rect = word.bounds;
+        let width = rect.x1 - rect.x0;
+        let height = rect.y1 - rect.y0;
+        if !width.is_finite()
+            || !height.is_finite()
+            || width <= 0.0
+            || height <= 0.0
+            || rect.x1 <= envelope.0
+            || rect.y1 <= envelope.1
+            || rect.x0 >= envelope.2
+            || rect.y0 >= envelope.3
+        {
+            continue;
+        }
+        let mut selected = false;
+        for mark in &annotation.bounds {
+            overlap_budget = overlap_budget.checked_sub(1)?;
+            let overlap_x = (rect.x1.min(mark.x1) - rect.x0.max(mark.x0)).max(0.0);
+            let overlap_y = (rect.y1.min(mark.y1) - rect.y0.max(mark.y0)).max(0.0);
+            if overlap_x * overlap_y >= width * height * 0.5 {
+                selected = true;
+                break;
+            }
+        }
+        if !selected || text.trim().is_empty() {
+            continue;
+        }
+        if let Some(end) = previous_end {
+            let gap = page.text.get(end..word.bytes.start)?;
+            if !gap.is_empty() && gap.chars().all(char::is_whitespace) {
+                quote.push_str(gap);
+            } else {
+                quote.push(' ');
+            }
+        }
+        quote.push_str(text);
+        if quote.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES {
+            return None;
+        }
+        previous_end = Some(word.bytes.end);
+    }
+    let quote = quote.trim();
+    (!quote.is_empty()).then(|| quote.to_owned())
+}
+
+/// Imports supported visible text-markup annotations with quadrilaterals or a rectangle.
 pub fn import_highlights(
     input: &[u8],
     mut geometry: impl FnMut(usize) -> Option<PageGeometry>,
@@ -579,7 +659,7 @@ fn pdf_drawing_style(
         .as_name()
         .ok()?;
     match subtype {
-        b"Underline" => Some(HighlightStyle::Underline),
+        b"Underline" | b"Squiggly" => Some(HighlightStyle::Underline),
         b"StrikeOut" => Some(HighlightStyle::Strikethrough),
         b"Highlight" => Some(
             if annotation

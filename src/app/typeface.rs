@@ -84,7 +84,7 @@ impl Reader {
         );
         items.push(
             Item::new("Add more fonts", Action::Heading)
-                .detail("Copy TTF or OTF files to reader/data/fonts"),
+                .detail("Copy TTF, OTF or TTC files to reader/data/fonts"),
         );
         items
     }
@@ -195,7 +195,7 @@ impl Reader {
         let path = crate::reading_fonts::resolve(&self.fonts_directory, filename).ok()?;
         let (title, specimen) = with_storage(|| {
             let data = fs::read(&path)?;
-            let face = FontRef::new(&data).map_err(std::io::Error::other)?;
+            let face = FontRef::from_index(&data, 0).map_err(std::io::Error::other)?;
             let title = face
                 .localized_strings(StringId::FULL_NAME)
                 .english_or_first()

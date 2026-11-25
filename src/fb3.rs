@@ -139,6 +139,7 @@ pub(crate) fn open(input: impl Read + Seek, len: u64, fallback: &str) -> Result<
             metadata,
             title: title.unwrap_or(fallback).to_owned(),
             author,
+            cover: None,
             chapter_path,
             xhtml,
             toc: output.toc,

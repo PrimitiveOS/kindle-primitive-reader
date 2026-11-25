@@ -8,9 +8,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MIN_SECONDS: u64 = 5;
-const MAX_SECONDS: u64 = 120;
-const DEFAULT_SECONDS: f64 = 60.0;
+const DEFAULT_MIN_SECONDS: u32 = 5;
+const DEFAULT_MAX_SECONDS: u32 = 120;
+const MAX_STORED_SECONDS: u16 = 7200;
 const MAX_PAGES: usize = 16_384;
 const MAX_BYTES: u64 = 512 * 1024;
 
@@ -19,7 +19,7 @@ struct Stored {
     version: u8,
     #[serde(default)]
     generation: u64,
-    pages: BTreeMap<u64, u8>,
+    pages: BTreeMap<u64, u16>,
 }
 
 pub(crate) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
@@ -30,7 +30,7 @@ pub(crate) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
         || stored
             .pages
             .values()
-            .any(|&n| !(MIN_SECONDS..=MAX_SECONDS).contains(&u64::from(n)))
+            .any(|&n| !(1..=MAX_STORED_SECONDS).contains(&n))
     {
         return Err(io::Error::other("The reading-pace backup is invalid"));
     }
@@ -40,7 +40,7 @@ pub(crate) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
 #[derive(Default)]
 struct Samples {
     generation: u64,
-    pages: BTreeMap<u64, u8>,
+    pages: BTreeMap<u64, u16>,
     total: u32,
     dirty: bool,
     read_only: bool,
@@ -66,7 +66,7 @@ impl Samples {
                 || stored
                     .pages
                     .values()
-                    .any(|&n| !(MIN_SECONDS..=MAX_SECONDS).contains(&u64::from(n)))
+                    .any(|&n| !(1..=MAX_STORED_SECONDS).contains(&n))
             {
                 return Err(io::Error::other("Unrecognized reading-pace data"));
             }
@@ -95,14 +95,16 @@ impl Samples {
         }
     }
 
-    fn record(&mut self, visit: &Visit, now: Instant) {
+    fn record(&mut self, visit: &Visit, now: Instant, min_seconds: u32, max_seconds: u32) {
         let elapsed = visit.elapsed(now).as_secs() / u64::from(visit.visible_pages);
-        if elapsed < MIN_SECONDS
+        if elapsed == 0
+            || (elapsed < u64::from(min_seconds) && elapsed <= u64::from(max_seconds))
             || (!self.pages.contains_key(&visit.page) && self.pages.len() >= MAX_PAGES)
         {
             return;
         }
-        let total = (u64::from(visit.baseline) + elapsed.min(MAX_SECONDS)).min(MAX_SECONDS) as u8;
+        let total = (u64::from(visit.baseline) + elapsed.min(u64::from(max_seconds)))
+            .min(u64::from(max_seconds)) as u16;
         let previous = self.pages.get(&visit.page).copied().unwrap_or_default();
         if total > previous {
             self.pages.insert(visit.page, total);
@@ -117,7 +119,7 @@ impl Samples {
             struct Record<'a> {
                 version: u8,
                 generation: u64,
-                pages: &'a BTreeMap<u64, u8>,
+                pages: &'a BTreeMap<u64, u16>,
             }
             let bytes = serde_json::to_vec(&Record {
                 version: 1,
@@ -139,7 +141,7 @@ impl Samples {
 struct Visit {
     book: u64,
     page: u64,
-    baseline: u8,
+    baseline: u16,
     visible_pages: u8,
     accumulated: Duration,
     since: Option<Instant>,
@@ -158,6 +160,8 @@ pub(crate) struct ReadingPace {
     directory: PathBuf,
     books: BTreeMap<u64, Samples>,
     visit: Option<Visit>,
+    min_seconds: u32,
+    max_seconds: u32,
 }
 
 impl ReadingPace {
@@ -166,7 +170,16 @@ impl ReadingPace {
             directory,
             books: BTreeMap::new(),
             visit: None,
+            min_seconds: DEFAULT_MIN_SECONDS,
+            max_seconds: DEFAULT_MAX_SECONDS,
         }
+    }
+
+    pub(crate) fn set_duration_limits(&mut self, min_seconds: u32, max_seconds: u32) {
+        // Callers supply validated reading-history options; retain a defensive
+        // bound because saved samples use an unsigned 16-bit representation.
+        self.min_seconds = min_seconds.min(u32::from(MAX_STORED_SECONDS));
+        self.max_seconds = max_seconds.clamp(1, u32::from(MAX_STORED_SECONDS));
     }
 
     fn file(directory: &Path, book: u64) -> PathBuf {
@@ -177,8 +190,13 @@ impl ReadingPace {
         self.books
             .get(&book)
             .filter(|s| !s.pages.is_empty())
-            .map_or(DEFAULT_SECONDS, |s| {
-                f64::from(s.total) / s.pages.len() as f64
+            .map_or(f64::from(self.max_seconds) / 2.0, |s| {
+                let total: u64 = s
+                    .pages
+                    .values()
+                    .map(|&seconds| u64::from(seconds).min(u64::from(self.max_seconds)))
+                    .sum();
+                total as f64 / s.pages.len() as f64
             })
     }
 
@@ -192,7 +210,7 @@ impl ReadingPace {
                 visit.accumulated = visit.elapsed(now);
                 visit.since = None;
                 if let Some(samples) = self.books.get_mut(&visit.book) {
-                    samples.record(visit, now);
+                    samples.record(visit, now, self.min_seconds, self.max_seconds);
                 }
             }
         }
@@ -229,7 +247,7 @@ impl ReadingPace {
         if let Some(visit) = &self.visit
             && let Some(samples) = self.books.get_mut(&visit.book)
         {
-            samples.record(visit, now);
+            samples.record(visit, now, self.min_seconds, self.max_seconds);
         }
         for (&id, samples) in &mut self.books {
             samples.save(&Self::file(&self.directory, id))?;

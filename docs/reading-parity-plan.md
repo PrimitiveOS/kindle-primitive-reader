@@ -66,6 +66,12 @@ The Mac library and both Reader executables have passed a build-only check;
 this is not behavioral validation. The implementation pass continues before
 the planned full tests.
 
+The next unverified implementation batch adds Adobe-obfuscated EPUB fonts,
+TTC font discovery, FB2 cover previews, paged animated GIFs, PDF annotation
+quote recovery, reading-pace limits and Japanese dictionary normalization.
+Individual TTC face selection and the limits documented for each feature remain
+open. These changes have only had the combined Mac build-only check.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or

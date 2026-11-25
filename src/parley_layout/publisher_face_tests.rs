@@ -566,3 +566,115 @@ fn original_idpf_fonts_match_independent_assets_and_painted_text() {
     );
     assert!(!seen.is_empty() && clusters > 0 && ink_pages > 0);
 }
+
+#[test]
+fn adobe_and_idpf_font_obfuscation_can_coexist_without_touching_other_resources() {
+    use std::io::{Read, Write};
+    const ADOBE_KEY: [u8; 16] = [
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+        0xff,
+    ];
+    const IDPF_KEY: [u8; 20] = [
+        222, 234, 161, 42, 141, 244, 104, 153, 6, 135, 177, 51, 57, 123, 171, 78, 195, 119, 87, 104,
+    ];
+    let fixture = crate::test_fixture("publisher-faces.epub");
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut baseline =
+        Probe::open(&fixture, Engine::Parley, &fonts, Settings::default(), 0).unwrap();
+    let pixels = baseline.capture(0).unwrap();
+    let adobe_font = "EPUB/fonts/Silkscreen-Regular.ttf";
+    let idpf_font = "EPUB/fonts/NotoSans-Regular.ttf";
+    let css = "EPUB/styles/reader.css";
+    let mut reference = Book::open(&fixture).unwrap();
+    let expected_adobe = reference.resource(adobe_font).unwrap();
+    let expected_idpf = reference.resource(idpf_font).unwrap();
+    for variant in ["both", "missing-uuid", "duplicate-adobe", "unknown-adobe"] {
+        let path = std::env::temp_dir().join(format!(
+            "reader-adobe-{}-{variant}.epub",
+            std::process::id()
+        ));
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(path.clone());
+        let out = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let mut dst = zip::ZipWriter::new(out);
+        let mut src = zip::ZipArchive::new(fs::File::open(&fixture).unwrap()).unwrap();
+        for index in 0..src.len() {
+            let mut member = src.by_index(index).unwrap();
+            let name = member.name().to_owned();
+            if name == adobe_font || name == idpf_font || name.ends_with(".opf") {
+                let mut data = Vec::new();
+                member.read_to_end(&mut data).unwrap();
+                if name == adobe_font {
+                    for (i, byte) in data.iter_mut().take(1024).enumerate() {
+                        *byte ^= ADOBE_KEY[i % ADOBE_KEY.len()];
+                    }
+                } else if name == idpf_font {
+                    for (i, byte) in data.iter_mut().take(1040).enumerate() {
+                        *byte ^= IDPF_KEY[i % IDPF_KEY.len()];
+                    }
+                } else if variant != "missing-uuid" {
+                    let xml = String::from_utf8(data).unwrap().replace("</metadata>", "<dc:identifier>urn:uuid:00112233-4455-6677-8899-aabbccddeeff</dc:identifier></metadata>");
+                    data = xml.into_bytes();
+                }
+                dst.start_file(name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                dst.write_all(&data).unwrap();
+            } else {
+                dst.raw_copy_file(member).unwrap();
+            }
+        }
+        let adobe_method = if variant == "unknown-adobe" {
+            "urn:unknown"
+        } else {
+            "http://ns.adobe.com/pdf/enc#RC"
+        };
+        let entry = |name: &str, method: &str| {
+            format!(
+                "<e:EncryptedData><e:EncryptionMethod Algorithm='{method}'/><e:CipherData><e:CipherReference URI='{name}'/></e:CipherData></e:EncryptedData>"
+            )
+        };
+        let duplicate = if variant == "duplicate-adobe" {
+            entry(adobe_font, adobe_method)
+        } else {
+            String::new()
+        };
+        let encryption = format!(
+            "<encryption xmlns='urn:oasis:names:tc:opendocument:xmlns:container' xmlns:e='http://www.w3.org/2001/04/xmlenc#'>{}{}{}{duplicate}</encryption>",
+            entry(adobe_font, adobe_method),
+            entry(idpf_font, "http://www.idpf.org/2008/embedding"),
+            entry(css, adobe_method)
+        );
+        dst.start_file(
+            "META-INF/encryption.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        dst.write_all(encryption.as_bytes()).unwrap();
+        drop(dst.finish().unwrap());
+        let mut book = Book::open(&path).unwrap();
+        assert_eq!(
+            book.local_font(idpf_font, 2 * 1024 * 1024).unwrap(),
+            expected_idpf
+        );
+        let adobe = book.local_font(adobe_font, 2 * 1024 * 1024).unwrap();
+        assert_eq!(adobe == expected_adobe, variant == "both", "{variant}");
+        assert_eq!(
+            book.resource(css).unwrap(),
+            book.local_font(css, 16384).unwrap()
+        );
+        if variant == "both" {
+            let mut probe =
+                Probe::open(&path, Engine::Parley, &fonts, Settings::default(), 0).unwrap();
+            assert_eq!(probe.capture(0).unwrap(), pixels);
+        }
+    }
+}

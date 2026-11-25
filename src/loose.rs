@@ -21,7 +21,9 @@ use roxmltree::{Document as Xml, Node, ParsingOptions};
 use zip::{CompressionMethod, ZipArchive};
 
 use crate::Result;
-use crate::epub::{Book, Destination, TocEntry, check_zip_directory, is_archive_path};
+use crate::epub::{
+    Book, BookCover, CoverKind, Destination, TocEntry, check_zip_directory, is_archive_path,
+};
 
 pub(crate) const CHAPTER_PATH: &str = "document.xhtml";
 pub(crate) const MAX_INPUT: usize = 512 * 1024;
@@ -115,6 +117,7 @@ pub(crate) struct Document {
     pub(crate) metadata: crate::publication_metadata::Metadata,
     pub(crate) title: String,
     pub(crate) author: Option<String>,
+    pub(crate) cover: Option<BookCover>,
     pub(crate) chapter_path: String,
     pub(crate) xhtml: String,
     pub(crate) toc: Vec<TocEntry>,
@@ -636,6 +639,7 @@ fn text_document(input: &str, title: &str) -> Result<Document> {
         title: title.to_owned(),
         metadata: Default::default(),
         author: None,
+        cover: None,
         chapter_path: CHAPTER_PATH.to_owned(),
         xhtml: text_as_xhtml(&cleaned)?,
         toc: Vec::new(),
@@ -765,6 +769,7 @@ fn html_document(input: &str, fallback_title: &str) -> Result<Document> {
     Ok(Document {
         title,
         author,
+        cover: None,
         metadata: crate::publication_metadata::Metadata::html(html),
         chapter_path: CHAPTER_PATH.to_owned(),
         xhtml: xhtml.into_owned(),
@@ -960,6 +965,24 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
         authored_ids,
         section_id: 0,
     };
+    let cover = info
+        .and_then(|item| fb2_child(item, "coverpage"))
+        .and_then(|item| fb2_child(item, "image"))
+        .and_then(fb2_image_id)
+        .and_then(|id| output.images.get(id.as_str()))
+        .and_then(|image| {
+            let kind = if image.path.ends_with(".png") {
+                CoverKind::Png
+            } else if image.path.ends_with(".jpg") {
+                CoverKind::Jpeg
+            } else {
+                return None;
+            };
+            Some(BookCover {
+                path: image.path.clone(),
+                kind,
+            })
+        });
     if let Some(cover) = info
         .and_then(|item| fb2_child(item, "coverpage"))
         .and_then(|item| fb2_child(item, "image"))
@@ -974,6 +997,7 @@ fn fb2_document(input: &str, fallback_title: &str) -> Result<Document> {
     Ok(Document {
         title,
         author: (!authors.is_empty()).then(|| authors.join(", ")),
+        cover,
         metadata: info
             .map(|info| crate::publication_metadata::Metadata::fb2(info, input))
             .unwrap_or_default(),

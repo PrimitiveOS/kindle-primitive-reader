@@ -493,6 +493,7 @@ enum FixedDocument {
     Djvu(Box<Djvu>),
     Pdf(ReadingPdf),
     Comic(Comic),
+    Gif(crate::gif_image::Sequence),
     Image(ImagePage),
 }
 
@@ -582,6 +583,20 @@ impl FixedReading {
             format if format.is_comic() => FixedDocument::Comic(with_storage(|| {
                 Comic::open(path).map_err(io::Error::other)
             })?),
+            DocumentFormat::Gif => {
+                let sequence = with_storage(|| {
+                    let mut bytes = Vec::new();
+                    File::open(path)?
+                        .take(crate::comic::MAX_IMAGE_BYTES + 1)
+                        .read_to_end(&mut bytes)?;
+                    crate::gif_image::Sequence::open(bytes).map_err(io::Error::other)
+                })?;
+                if sequence.page_count() == 1 {
+                    FixedDocument::Image(sequence.image_page(0)?)
+                } else {
+                    FixedDocument::Gif(sequence)
+                }
+            }
             format if format.is_still_image() => FixedDocument::Image(with_storage(|| {
                 ImagePage::open(path).map_err(io::Error::other)
             })?),
@@ -892,6 +907,7 @@ impl FixedReading {
                     .map_err(io::Error::other)
             })?,
             FixedDocument::Image(image) => image.fit(width, height, turns)?,
+            FixedDocument::Gif(gif) => gif.image_page(page)?.fit(width, height, turns)?,
             FixedDocument::Djvu(book) => {
                 let (mut w, mut h) = book.page_size(page)?;
                 if !turns.is_multiple_of(2) {
@@ -2860,6 +2876,7 @@ impl FixedReading {
                         .map_err(io::Error::other)
                 })?,
                 FixedDocument::Image(image) => image.page_size(),
+                FixedDocument::Gif(gif) => gif.page_size(),
             };
             let old = view_metrics(size, &view, self.frame_size());
             let new = view_metrics(size, &view, self.frame_size().with_height(viewport_height));
@@ -2903,7 +2920,7 @@ impl FixedReading {
             FixedDocument::Pdf(_) => Some(FixedProvider::Pdf),
             FixedDocument::Djvu(_) => Some(FixedProvider::Djvu),
             FixedDocument::Comic(_) => Some(FixedProvider::Comic),
-            FixedDocument::Epub(_) | FixedDocument::Image(_) => None,
+            FixedDocument::Epub(_) | FixedDocument::Gif(_) | FixedDocument::Image(_) => None,
         }
     }
 
@@ -3326,6 +3343,7 @@ impl FixedDocument {
             Self::Djvu(book) => book.page_count(),
             Self::Pdf(pdf) => pdf.page_count(),
             Self::Comic(comic) => comic.page_count(),
+            Self::Gif(gif) => gif.page_count(),
             Self::Image(_) => 1,
         }
     }
@@ -3350,6 +3368,7 @@ impl FixedDocument {
                     .map_err(io::Error::other)
             })?),
             Self::Image(image) => Ok(image.page_size()),
+            Self::Gif(gif) => Ok(gif.page_size()),
         }
     }
 
@@ -3489,6 +3508,10 @@ impl FixedDocument {
                 image.render(viewport(image.page_size(), view, viewport_size))?
             }
             Self::Image(image) => image.render(viewport(image.page_size(), view, viewport_size))?,
+            Self::Gif(gif) => {
+                let image = gif.image_page(page)?;
+                image.render(viewport(image.page_size(), view, viewport_size))?
+            }
         };
         Ok(GrayImage {
             width: viewport_size.width,
