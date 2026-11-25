@@ -930,26 +930,91 @@ mod tests {
     }
 
     #[test]
-    fn whole_note_inline_keeps_nested_lists_and_disabled_notes_ordinary() {
+    fn whole_note_inline_flattens_nested_and_multiblock_list_items() {
         use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
         let mut before = advanced_note_layout(15, &[EPUB_FOOTNOTES]);
-        let mut option = advanced_note_layout(15, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
-        let page = before
-            .page_for(&before.fragment("nested-start").unwrap())
-            .unwrap();
+        let mut joined = advanced_note_layout(15, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        let reference = before.fragment("nested-ref").unwrap();
+        let page = before.page_for(&reference).unwrap();
+        let anchors = [
+            ("nested-intro", "Drawer notes."),
+            ("nested-parent", "Upper shelf."),
+            ("nested-detail", "Oak lip."),
+            ("nested-child", "Tin key"),
+            ("nested-next", "Low bin."),
+        ]
+        .map(|(id, phrase)| {
+            let anchor = before.fragment(id).unwrap();
+            assert_eq!(joined.fragment(id).as_ref(), Some(&anchor));
+            assert_eq!(before.matches(phrase), joined.matches(phrase));
+            (anchor, phrase)
+        });
+        let original = before.page_for(&anchors[0].0).unwrap();
+        assert!(original > page);
+        assert_eq!(joined.page_for(&reference), Some(page));
+        assert_eq!(before.coverage(), joined.coverage());
+        assert!(anchors.iter().all(|(anchor, _)| {
+            before.page_for(anchor) == Some(original) && joined.page_for(anchor) == Some(original)
+        }));
         assert!(
             before.in_page_notes.as_ref().unwrap()[page]
                 .separator
                 .is_some()
         );
-        assert!(before.capture(page).unwrap() == option.capture(page).unwrap());
         assert!(
-            option
-                .lines
-                .iter()
-                .all(|line| line.additional_sources.is_none())
+            joined.in_page_notes.as_ref().unwrap()[page]
+                .separator
+                .is_some()
         );
+        let ordinary = anchors
+            .each_ref()
+            .map(|(_, phrase)| phrase_rects(&before, page, phrase)[0]);
+        assert!(ordinary.windows(2).all(|pair| pair[0].y < pair[1].y));
+        for current in [page, original] {
+            let combined = anchors
+                .each_ref()
+                .map(|(_, phrase)| phrase_rects(&joined, current, phrase)[0]);
+            assert!(
+                combined
+                    .windows(2)
+                    .all(|pair| pair[0].y == pair[1].y && pair[0].x < pair[1].x)
+            );
+            let link = combined[3];
+            let x = (link.x + 5) as f32;
+            let y = (link.y + link.height / 2) as f32;
+            let word = joined.word_at(current, x, y).unwrap();
+            assert_eq!(word.text, "Tin");
+            assert_eq!(word.start.block, anchors[3].0.block);
+            assert_eq!(
+                joined.link_at(current, x, y).unwrap().fragment.as_deref(),
+                Some("nested-ref")
+            );
+        }
+        let selection = joined
+            .select_range(
+                &anchors[1].0,
+                &joined.anchor(anchors[3].0.block, "Tin key".len()),
+            )
+            .unwrap();
+        assert_eq!(selection.text, "Upper shelf.\nOak lip.\nTin key");
+        let rects = joined.selection_rects(page, &selection);
+        assert!(rects.len() >= 3 && rects.iter().all(|part| part.y == rects[0].y));
+        assert_eq!(
+            phrase_rects(&before, page, "The entry lists the compartments"),
+            phrase_rects(&joined, page, "The entry lists the compartments")
+        );
+        capture(&mut before, page, "reader-note-inline-nested-before.png");
+        capture(&mut joined, page, "reader-note-inline-nested-after.png");
+        capture(
+            &mut joined,
+            original,
+            "reader-note-inline-nested-original.png",
+        );
+    }
 
+    #[test]
+    fn whole_note_inline_keeps_unsupported_note_contents_ordinary() {
+        use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
         let ordinary = advanced_note_layout(12, &[]);
         let disabled = advanced_note_layout(12, &[INLINE_ALL_FOOTNOTE_CONTENT]);
         assert!(disabled.in_page_notes.is_none());
@@ -971,7 +1036,18 @@ mod tests {
                 .iter()
                 .all(|line| line.additional_sources.is_none())
         );
-        assert_eq!(ordinary.capture(0).unwrap(), option.capture(0).unwrap());
+        assert!(ordinary.capture(0).unwrap() == option.capture(0).unwrap());
+
+        // An image inside a nested item prevents joining the note. Keep its
+        // original list, source IDs and illustration.
+        let mut ordinary = advanced_note_layout(16, &[EPUB_FOOTNOTES]);
+        let mut option = advanced_note_layout(16, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        let end = ordinary.fragment("image-fallback-end").unwrap();
+        let page = ordinary.page_for(&end).unwrap();
+        assert_eq!(option.fragment("image-fallback-end"), Some(end.clone()));
+        assert_eq!(option.page_for(&end), Some(page));
+        assert!(ordinary.in_page_notes.is_none() && option.in_page_notes.is_none());
+        assert!(ordinary.capture(page).unwrap() == option.capture(page).unwrap());
     }
 
     #[test]

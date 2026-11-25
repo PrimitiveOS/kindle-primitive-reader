@@ -779,6 +779,10 @@ pub struct FixedPreferences {
     pub zoom_overlap_h: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zoom_overlap_v: Option<u8>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub page_overlap_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_overlap_style: Option<crate::PageOverlapStyle>,
     /// Pan up/down before left/right, used by fixed-page AutoTurn.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zoom_direction_vertical: Option<bool>,
@@ -952,6 +956,10 @@ impl<'de> Deserialize<'de> for FixedPreferences {
             right_to_left: switch("right_to_left"),
             zoom_overlap_h: optional_overlap("zoom_overlap_h"),
             zoom_overlap_v: optional_overlap("zoom_overlap_v"),
+            page_overlap_enabled: switch("page_overlap_enabled"),
+            page_overlap_style: values
+                .get("page_overlap_style")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
             zoom_direction_vertical: optional_switch("zoom_direction_vertical"),
             zoom_bottom_to_top: optional_switch("zoom_bottom_to_top"),
             epub_spread: optional_switch("epub_spread"),
@@ -4102,6 +4110,8 @@ mod tests {
                 right_to_left: true,
                 zoom_overlap_h: None,
                 zoom_overlap_v: None,
+                page_overlap_enabled: false,
+                page_overlap_style: None,
                 zoom_direction_vertical: None,
                 zoom_bottom_to_top: None,
                 epub_spread: None,

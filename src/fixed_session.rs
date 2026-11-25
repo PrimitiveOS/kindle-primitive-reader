@@ -38,6 +38,9 @@ mod selection_range;
 #[path = "comic_panel.rs"]
 mod comic_panel;
 
+#[path = "fixed_page_overlap.rs"]
+mod page_overlap;
+
 #[path = "pdf_text_session.rs"]
 mod pdf_text_session;
 use pdf_text_session::ReadingPdf;
@@ -88,6 +91,7 @@ pub(crate) struct FixedReading {
     viewport_owner: Rc<()>,
     retained_viewport_anchor: Option<ViewportAnchor>,
     presentation_generation: u64,
+    overlap_cue: Option<crate::session::page_overlap::Marker>,
     hidden_flows: Option<PageFlows>,
     crop_seeds: Seeds,
     detected_crops: CropCache,
@@ -135,6 +139,7 @@ struct ViewportBasis {
 pub(crate) struct PreparedFixedViewport {
     owner: Rc<()>,
     basis: ViewportBasis,
+    overlap_cue: Option<crate::session::page_overlap::Marker>,
     viewport: ReadingViewport,
     view: View,
     frame: GrayImage,
@@ -689,6 +694,7 @@ impl FixedReading {
             viewport_owner: Rc::new(()),
             retained_viewport_anchor: None,
             presentation_generation: 0,
+            overlap_cue: None,
             hidden_flows: None,
             crop_seeds,
             detected_crops,
@@ -2166,7 +2172,7 @@ impl FixedReading {
             self.end_attempt = end_attempt;
             return Ok(false);
         }
-        self.present(page, view)?;
+        self.present_page_turn(page, view)?;
         self.end_attempt = end_attempt;
         Ok(true)
     }
@@ -2250,7 +2256,7 @@ impl FixedReading {
         if !self.is_spread()
             && let Some((page, view)) = self.automatic_fixed_view(distance)?
         {
-            self.present(page, view)?;
+            self.present_page_turn(page, view)?;
             self.end_attempt = false;
             return Ok(true);
         }
@@ -2712,6 +2718,7 @@ impl FixedReading {
             )
         };
         Ok(PreparedFixedViewport {
+            overlap_cue: None,
             owner: self.viewport_owner.clone(),
             basis: self.viewport_basis(),
             viewport: target,
@@ -2813,6 +2820,7 @@ impl FixedReading {
         }
         use std::mem::swap;
         swap(&mut self.viewport, &mut next.viewport);
+        swap(&mut self.overlap_cue, &mut next.overlap_cue);
         swap(&mut self.page, &mut next.page);
         swap(&mut self.view, &mut next.view);
         swap(&mut self.frame, &mut next.frame);
@@ -3040,6 +3048,7 @@ impl FixedReading {
         }
         self.frame = frame;
         self.visible = visible;
+        self.overlap_cue = None;
         self.retained_viewport_anchor = None;
         self.presentation_generation = self.presentation_generation.wrapping_add(1);
         if self.page != page
@@ -3190,6 +3199,7 @@ impl FixedReading {
         footer_cover_top: i32,
     ) {
         let mut frame = self.display_frame(paint.visible.clone());
+        self.paint_page_overlap(&mut frame);
         let mut appearance = paint.highlight_appearance;
         if !selection.is_empty() {
             // Stock ReaderView draws saved gray marks and the temporary selection

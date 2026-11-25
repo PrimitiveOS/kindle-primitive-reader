@@ -1,5 +1,25 @@
 //! Horizontal glyph advances used by KOReader's CJK width control.
 
+pub(super) fn grid(width: u32, em: f32, percent: u8) -> Option<(u32, u32, u32)> {
+    let unit = (em.floor() as u32 * u32::from(percent) / 100).max(1);
+    let aligned = width / unit * unit;
+    (aligned > 0).then(|| ((width - aligned) / 2, aligned, unit))
+}
+
+pub(super) fn grid_indent(pixels: f32, column: u32, unit: u32) -> f32 {
+    let pixels = pixels.round() as i32;
+    let magnitude = pixels.unsigned_abs();
+    let cells = magnitude / unit;
+    let cells = if magnitude == 0 || magnitude % unit == 0 {
+        cells
+    } else if cells == 0 || column >= 8 * unit {
+        cells + 1
+    } else {
+        cells
+    };
+    (cells * unit) as f32 * pixels.signum() as f32
+}
+
 /// CREngine's lStr_isCJK with its default inclusion of punctuation and fullwidth ASCII.
 pub(super) fn eligible(ch: char) -> bool {
     matches!(ch as u32, 0x2e80..=0x9fff | 0xac00..=0xd7ff | 0xf900..=0xfaff |

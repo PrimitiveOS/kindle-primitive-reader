@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 #[cfg(test)]
 mod css_flow_tests;
 mod hidden_flows;
+pub(crate) mod page_overlap;
 pub(crate) mod screen_pages;
 #[cfg(test)]
 mod viewport_tests;
@@ -1898,65 +1899,8 @@ fn paint_page_overlap(
     requested_height: u32,
     style: crate::PageOverlapStyle,
 ) {
-    use crate::PageOverlapStyle;
-
-    if style == PageOverlapStyle::None || frame.width == 0 || frame.height == 0 {
-        return;
-    }
-    let height = requested_height.min(frame.height);
-    if height == 0 {
-        return;
-    }
-    let top = if forward { 0 } else { frame.height - height };
-    let bottom = top + height;
-    let width = frame.width as usize;
-    match style {
-        PageOverlapStyle::None => {}
-        PageOverlapStyle::Dim => {
-            for pixel in &mut frame.pixels[top as usize * width..bottom as usize * width] {
-                *pixel = ((u16::from(*pixel) + 255) / 2) as u8;
-            }
-        }
-        PageOverlapStyle::Arrow => {
-            let boundary = if forward { bottom } else { top };
-            paint_overlap_arrow(frame, boundary);
-        }
-        PageOverlapStyle::Line | PageOverlapStyle::DashedLine => {
-            let boundary = if forward { bottom } else { top };
-            let y = boundary.min(frame.height - 1) as usize;
-            let ink = 102;
-            for row in y..(y + 2).min(frame.height as usize) {
-                let line = &mut frame.pixels[row * width..(row + 1) * width];
-                if style == PageOverlapStyle::Line {
-                    line.fill(ink);
-                } else {
-                    for start in (0..width).step_by(20) {
-                        line[start..(start + 14).min(width)].fill(ink);
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn paint_overlap_arrow(frame: &mut GrayImage, boundary: u32) {
-    // KOReader's 16×16 `control.expand.alpha` icon is a right-pointing
-    // triangle, centered on the boundary and kept at the left screen edge.
-    let half_height = 8_i32;
-    for offset in -half_height..=half_height {
-        let y = boundary as i32 + offset;
-        if !(0..frame.height as i32).contains(&y) {
-            continue;
-        }
-        let inward = half_height - offset.abs();
-        let extent = 3 + inward * 10 / half_height;
-        let left = 3.min(frame.width.saturating_sub(1) as i32) as u32;
-        let right = extent
-            .min(frame.width.saturating_sub(1) as i32)
-            .max(left as i32) as u32;
-        for x in left..=right {
-            frame.pixels[y as usize * frame.width as usize + x as usize] = 64;
-        }
+    if let Some(marker) = page_overlap::Marker::scroll(frame, forward, requested_height) {
+        marker.paint(frame, style);
     }
 }
 
@@ -2949,9 +2893,9 @@ mod tests {
         };
         paint_page_overlap(&mut line, true, 20, crate::PageOverlapStyle::Line);
         assert!(
-            line.pixels[20 * 100..22 * 100]
+            line.pixels[20 * 100..23 * 100]
                 .iter()
-                .all(|&pixel| pixel == 102)
+                .all(|&pixel| pixel == 136)
         );
 
         let mut dashed = GrayImage {
@@ -2960,7 +2904,7 @@ mod tests {
             pixels: source,
         };
         paint_page_overlap(&mut dashed, true, 20, crate::PageOverlapStyle::DashedLine);
-        assert_eq!(dashed.pixels[20 * 100], 102);
+        assert_eq!(dashed.pixels[20 * 100], 136);
         assert_eq!(dashed.pixels[20 * 100 + 15], 220);
     }
 

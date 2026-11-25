@@ -797,6 +797,7 @@ enum Action {
     FitHeight,
     SetFixedZoom(usize),
     SetFixedTileZoom(FixedTileAxis, u8),
+    SetFixedPageOverlap(bool, crate::PageOverlapStyle),
     SetFixedRotation(u8),
     FixedScroll(bool),
     ComicSpread(bool),
@@ -4486,6 +4487,14 @@ impl Reader {
                     .ok_or("Open a fixed-page document first")?;
                 fixed.reading.set_tile_zoom(axis, count)?;
                 self.show(Screen::Fixed);
+                self.record_position();
+            }
+            Action::SetFixedPageOverlap(enabled, style) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.set_page_overlap(enabled, style)?;
                 self.record_position();
             }
             Action::SetFixedRotation(turns) => {
@@ -9931,6 +9940,13 @@ impl App for Reader {
         } else {
             (PREV, NEXT)
         };
+        let last = count.saturating_sub(1) / geometry.rows;
+        if let Some(page) =
+            navigation_layout::pager_destination(input, prev, next, self.list_page, last)
+        {
+            self.navigate_list_page(page);
+            return Change::Partial;
+        }
         let direction = match input {
             Input::Tap(x, y)
                 if broad
@@ -9943,9 +9959,9 @@ impl App for Reader {
             Input::Tap(x, y)
                 if broad
                     && shortcuts.edge_footer(LAST_MATCH_PAGE).contains(x, y)
-                    && (self.list_page + 1) * geometry.rows < count =>
+                    && self.list_page < last =>
             {
-                self.navigate_list_page(count.saturating_sub(1) / geometry.rows);
+                self.navigate_list_page(last);
                 return Change::Partial;
             }
             Input::PageBack => -1,
@@ -10176,8 +10192,6 @@ impl App for Reader {
                 }
                 return Change::Partial;
             }
-            Input::Tap(x, y) if prev.contains(x, y) => -1,
-            Input::Tap(x, y) if next.contains(x, y) => 1,
             Input::LongTap(x, y)
                 if self.screen == Screen::BookShortcuts(book_shortcuts::Page::List) =>
             {

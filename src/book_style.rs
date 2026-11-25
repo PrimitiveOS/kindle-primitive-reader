@@ -350,6 +350,7 @@ pub(crate) struct Style {
     pub padding: [CssLength; 2],
     pub vertical_padding: [CssLength; 2],
     pub vertical_margin: [CssLength; 2],
+    pub(crate) cjk_tailored: bool,
     pub horizontal_margin: [BoxMargin; 2],
     pub float_side: Option<Side>,
     pub clear: Clear,
@@ -397,6 +398,7 @@ impl Default for Style {
             padding: Default::default(),
             vertical_padding: Default::default(),
             vertical_margin: Default::default(),
+            cjk_tailored: false,
             horizontal_margin: Default::default(),
             float_side: None,
             clear: Clear::default(),
@@ -442,6 +444,7 @@ pub(crate) struct BookStyle {
     rules: Vec<Rule>,
     base_rules: Vec<Rule>,
     user_rules: Vec<Rule>,
+    layout_tweaks: crate::user_styles::LayoutTweaks,
     families: HashMap<String, Arc<str>>,
     font_weights: Arc<HashMap<u64, f32>>,
     #[cfg(feature = "kindle")]
@@ -451,6 +454,7 @@ pub(crate) struct BookStyle {
 impl BookStyle {
     pub fn with_user_css(mut self, snapshot: &crate::user_styles::Snapshot) -> crate::Result<Self> {
         self.user_rules = user_css::parse(snapshot.css())?;
+        self.layout_tweaks = snapshot.layout_tweaks();
         Ok(self)
     }
 
@@ -728,6 +732,7 @@ impl BookStyle {
         };
         let defaults = Style {
             font_weights: self.font_weights.clone(),
+            cjk_tailored: self.layout_tweaks.cjk_tailored,
             ..Style::default()
         };
         let mut result: Vec<Style> = Vec::with_capacity(elements.len());
@@ -1123,6 +1128,14 @@ impl BookStyle {
                 style.size_scale.clamp(0.125, 8.0)
             };
             style.flow = flow::resolve(parent.flow, style.display, style.visibility);
+            if self.layout_tweaks.monochrome {
+                style.background = None;
+                if let Some(borders) = &mut style.borders {
+                    for border in Arc::make_mut(borders) {
+                        border.gray = Some((0, 255));
+                    }
+                }
+            }
             result.push(style);
         }
         result

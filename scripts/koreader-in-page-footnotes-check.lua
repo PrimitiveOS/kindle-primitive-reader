@@ -152,27 +152,50 @@ local function width_in_canonical_note(view_, text)
     return boxes[#boxes].x1 - boxes[1].x0, boxes[1].x0
 end
 
-if arg[5] == "inline-list" then
+if arg[5] == "inline-list" or arg[5] == "inline-nested" then
     controller:onReadSettings(Settings:wrap({}))
     local option = assert(find_tweak(menu.style_tweaks.sub_item_table,
         "inpage_footnote_all_inline"))
-    local function measure(name, same_line)
+    local nested = arg[5] == "inline-nested"
+    local name = nested and "nested" or "list"
+    local body = nested and "The entry lists the compartments" or "The final ledger"
+    local phrases = nested and { "Drawer notes.", "Upper shelf.", "Oak lip.", "Tin key", "Low bin." }
+        or { "Inventory number eight.", "North lantern.", "Spare wick" }
+    local function measure(phase, same_line)
         local view = open(assert(controller:getCssText()))
-        local reference, body_y = position(view, "The final ledger")
-        assert(capture(view, reference, "stock-note-inline-list-" .. name))
-        local original, intro_y = position(view, "Inventory number eight.")
-        local first, first_y = position(view, "North lantern.")
-        local second, second_y = position(view, "Spare wick")
-        assert(original == first and first == second and original > reference)
+        local reference, body_y = position(view, body)
+        local prefix = "stock-note-inline-" .. name .. "-"
+        assert(capture(view, reference, prefix .. phase))
+        local original, previous_y, previous_x
+        for _, phrase in ipairs(phrases) do
+            local page, y = position(view, phrase)
+            original = original or page
+            assert(original == page and page > reference)
+            local _, x = width_in_canonical_note(view, phrase)
+            if previous_y then
+                if same_line then
+                    assert(previous_y == y and previous_x < x)
+                else
+                    assert(previous_y < y)
+                end
+            end
+            previous_y, previous_x = y, x
+        end
         if same_line then
-            assert(intro_y == first_y and first_y == second_y)
-            local _, intro_x = width_in_canonical_note(view, "Inventory number eight.")
-            local _, first_x = width_in_canonical_note(view, "North lantern.")
-            local _, second_x = width_in_canonical_note(view, "Spare wick")
-            assert(intro_x < first_x and first_x < second_x)
-            assert(not capture(view, original, "stock-note-inline-list-original"))
-        else
-            assert(intro_y < first_y and first_y < second_y)
+            assert(not capture(view, original, prefix .. "original"))
+            if nested then
+                local target = "nested-ref"
+                local backlink
+                for _, link in ipairs(view:getPageLinks(true)) do
+                    if link.section:sub(-#target) == target then
+                        backlink = link
+                        break
+                    end
+                end
+                assert(backlink)
+                local hit = view:getLinkFromPosition(backlink.start_x + 3, backlink.start_y + 4)
+                assert(hit == backlink.section)
+            end
         end
         view:close()
         return body_y

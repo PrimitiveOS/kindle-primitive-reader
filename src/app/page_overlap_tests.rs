@@ -68,3 +68,73 @@ fn scroll_page_overlap_controls_are_visible_and_persist_per_book() {
         crate::PageOverlapStyle::DashedLine
     );
 }
+
+#[test]
+fn fixed_page_overlap_controls_apply_on_a_hardware_turn_and_restore_per_pdf() {
+    let fixture = Fixture::new();
+    let book = fixture.root.join("Overlap.pdf");
+    std::fs::copy(crate::test_fixture("scan-reflow/vector.pdf"), &book).unwrap();
+    let fonts = vec![
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        crate::test_fixture("fonts/NotoSans-Bold.ttf"),
+    ];
+    let font_paths = fonts
+        .iter()
+        .map(|font| font.display().to_string())
+        .collect::<Vec<_>>();
+    let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.open_path(&book).unwrap();
+    assert!(!app.fixed.as_ref().unwrap().reading.allows_page_overlap());
+    app.activate(Action::FitPage(true)).unwrap();
+    app.open_reading_edge(false, WIDTH as f32 / 2.0);
+    if app.reading_panel != Some(BarPanel::ViewLayout) {
+        tap_button(&mut app, "Layout");
+    }
+    tap_row_button(&mut app, "Page overlap", "On");
+    tap_row_button(&mut app, "Overlap marker", "Dashed line");
+    capture_test_screen(&app, &fonts, "READER_FIXED_OVERLAP_SETTINGS", false);
+    app.show(Screen::Fixed);
+
+    let start = app.fixed.as_ref().unwrap().reading.preferences();
+    let _ = app.input(Input::PageForward);
+    app.tick(Instant::now() + Duration::from_secs(1));
+    let reading = &app.fixed.as_ref().unwrap().reading;
+    let pose = reading.preferences();
+    assert_eq!(reading.page(), 0);
+    assert!(pose.offset_y < start.offset_y);
+    let current_location = app.current_history_location();
+    let repeated = primitive_app::frame(&app, &mut canvas, false);
+    capture_test_screen(&app, &fonts, "READER_FIXED_OVERLAP_READING", false);
+
+    app.activate(Action::SetFixedPageOverlap(
+        true,
+        crate::PageOverlapStyle::None,
+    ))
+    .unwrap();
+    assert_eq!(app.current_history_location(), current_location);
+    let unmarked = primitive_app::frame(&app, &mut canvas, false);
+    let distance = (start.offset_y - pose.offset_y).round() as usize;
+    let viewport_height = app.fixed.as_ref().unwrap().reading.frame_height() as usize;
+    let boundary = (viewport_height - distance) * WIDTH as usize;
+    let next_row = boundary + 3 * WIDTH as usize;
+    assert_eq!(&repeated[..boundary], &unmarked[..boundary]);
+    assert_ne!(&repeated[boundary..next_row], &unmarked[boundary..next_row]);
+    assert_eq!(&repeated[next_row..], &unmarked[next_row..]);
+
+    app.activate(Action::SetFixedPageOverlap(
+        true,
+        crate::PageOverlapStyle::DashedLine,
+    ))
+    .unwrap();
+    app.save().unwrap();
+    let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    reopened.open_path(&book).unwrap();
+    let prefs = reopened.fixed.as_ref().unwrap().reading.preferences();
+    assert!(prefs.page_overlap_enabled);
+    assert_eq!(
+        prefs.page_overlap_style,
+        Some(crate::PageOverlapStyle::DashedLine)
+    );
+    assert_eq!(reopened.current_history_location(), current_location);
+}

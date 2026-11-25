@@ -199,10 +199,11 @@ the original position after reopening, and unchanged EPUB bytes.
 ## Inline all footnote content
 
 Open **Style tweaks › More footnote options › Inline all footnote content**.
-The note number, simple paragraphs and single-level text list items share
-the same text flow inside the note. This removes the extra line for a
-number stored in its own paragraph. Generated markers disappear from
-flattened list items. Reader uses a space between adjacent source blocks.
+The note number, paragraphs and text list items share the same flow inside
+the note. This removes the extra line for a number stored in its own
+paragraph. Nested list items and items containing several paragraphs use
+the same flow. Generated markers disappear from flattened list items.
+Reader uses a space between adjacent source blocks.
 The page band and canonical note use the same layout. Tapping or selecting
 text on their shared lines resolves to the original block and byte offset.
 Selection spanning the two paragraphs keeps their original text and newline,
@@ -213,9 +214,10 @@ and backlinks keep their targets.
 [Reader after](screenshots/reader-note-inline-after.png) ·
 [Reader original note](screenshots/reader-note-inline-original.png)
 
-Formatting applies to supported horizontal in-page notes. Nested lists,
-multi-block list items, tables, images, ruby, inline boxes, preformatted
-blocks, and authored page breaks inside a note keep their original layout.
+Formatting applies to supported horizontal in-page notes. Tables, images,
+ruby, inline boxes, preformatted blocks, and authored page breaks inside
+a note keep their original layout. A note whose own container is a list
+item also keeps its block layout.
 If the chapter cannot fit the joined notes, Reader retries the original
 layout. The publication stays unchanged.
 Reader stores this option with the edition's existing style settings.
@@ -241,6 +243,21 @@ and the backlink hit from the second item.
 [KOReader list before](screenshots/stock-note-inline-list-before.png) ·
 [KOReader list after](screenshots/stock-note-inline-list-after.png) ·
 [KOReader original list](screenshots/stock-note-inline-list-original.png)
+
+The pinned `inline-nested` replay checks a bulleted item with two
+paragraphs and a nested numbered item. The five source blocks start at
+y=72, 112, 152, 192 and 232 before flattening. With the tweak on, they
+share y=72 in their original order. The body stays at y=32. The native
+replay taps the original item's backlink and checks its reference target.
+The Reader simulator checks search matches, selection across the parent
+paragraphs and child item, and the child's backlink in both locations.
+An illustrated nested item keeps the ordinary layout.
+[Reader nested list before](screenshots/reader-note-inline-nested-before.png) ·
+[Reader nested list after](screenshots/reader-note-inline-nested-after.png) ·
+[Reader original nested list](screenshots/reader-note-inline-nested-original.png) ·
+[KOReader nested list before](screenshots/stock-note-inline-nested-before.png) ·
+[KOReader nested list after](screenshots/stock-note-inline-nested-after.png) ·
+[KOReader original nested list](screenshots/stock-note-inline-nested-original.png)
 
 ## Replay on macOS
 
@@ -270,8 +287,8 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
   "$reader/tests/fixtures/fonts/NotoSans-Regular.ttf" "$scratch/captures"
 ```
 
-Pass `cosmetic`, `wikipedia`, `inline-all`, or `inline-list` as the fifth argument
-to select the corresponding advanced style replay.
+Pass `cosmetic`, `wikipedia`, `inline-all`, `inline-list`, or `inline-nested`
+as the fifth argument to select the corresponding advanced style replay.
 
 Run the combined note flow checks with the same stock runtime and scratch
 paths.

@@ -1090,12 +1090,27 @@ impl ParleyChapter {
                         (left as f32, width, width)
                     })
                 };
-                let indent = LineIndent::resolve(
+                let cjk_grid = if style.cjk_tailored && contour.is_none() && inline_boxes.is_empty()
+                {
+                    cjk_width::grid(
+                        text_width,
+                        style.font_pixels(settings),
+                        settings.cjk_width_percent,
+                    )
+                } else {
+                    None
+                };
+                let (text_x, text_width, unit) = cjk_grid
+                    .map_or((text_x, text_width, None), |(left, width, unit)| {
+                        (text_x + left as f32, width, Some(unit))
+                    });
+                let indent = LineIndent::with_grid(
                     style,
                     indent_base,
                     text_width,
                     settings.font_size,
                     hanging,
+                    unit,
                 );
                 let mut plan = None;
                 if settings.inline_block_mode != crate::InlineBlockMode::Ignore
@@ -2025,18 +2040,31 @@ struct LineIndent {
 
 impl LineIndent {
     fn resolve(style: &Style, content_width: u32, width: u32, font: f32, marker: u32) -> Self {
+        Self::with_grid(style, content_width, width, font, marker, None)
+    }
+
+    fn with_grid(
+        style: &Style,
+        content_width: u32,
+        width: u32,
+        font: f32,
+        marker: u32,
+        unit: Option<u32>,
+    ) -> Self {
         // Keep enough of the column for a word or glyph, even for malformed
         // publisher lengths. An outdent at the reading margin uses the first
         // available column and shifts the other lines inward (as CREngine does
         // when page overflow is disabled). This also protects adjacent cells.
         let limit = (width as f32 - font.min(width as f32 / 2.0)).max(0.0);
-        let requested = style.text_indent.pixels(content_width, font);
+        let indent_font = unit.map_or(font, |unit| unit as f32);
+        let requested = style.text_indent.pixels(content_width, indent_font);
         let css = if requested < 0.0 {
-            style.text_indent.box_pixels(content_width, font)
+            style.text_indent.box_pixels(content_width, indent_font)
         } else {
             requested
-        }
-        .clamp(-limit, limit);
+        };
+        let css = unit.map_or(css, |unit| cjk_width::grid_indent(css, width, unit));
+        let css = css.clamp(-limit, limit);
         let (first, rest) = if style.text_indent.hanging {
             (0.0, marker as f32 + css)
         } else {
@@ -4947,6 +4975,8 @@ mod word_expansion_cases;
 
 #[cfg(test)]
 mod cjk_width_tests;
+#[cfg(test)]
+mod style_presets_tests;
 
 #[cfg(test)]
 mod publisher_padding_tests;

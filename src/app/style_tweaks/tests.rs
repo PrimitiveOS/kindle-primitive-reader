@@ -22,6 +22,51 @@ fn choose(app: &mut Reader, id: &str, value: Option<bool>) {
     app.activate_style(Command::Choose(id.into(), value))
         .unwrap();
 }
+
+#[test]
+fn reading_style_preset_controls_preserve_page_and_global_defaults() {
+    let f = Fixture::new();
+    let path = crate::test_fixture("harbour-cjk-width.epub");
+    fs::copy(path, &f.book).unwrap();
+    let mut app = open(&f);
+    app.open_path(&f.book).unwrap();
+    let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
+    let anchor = app.current_history_location();
+    let before = capture(&mut app);
+    app.activate_style(Command::Preset("cjk_tailored".into()))
+        .unwrap();
+    tap_contents_item(&mut app, "Use on all books");
+    assert!(
+        app.active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .user_styles
+            .layout_tweaks()
+            .cjk_tailored
+    );
+    capture_viewport(&app, &mut canvas, "reader-style-grid-controls.png", false);
+    assert!(capture(&mut app) != before);
+    assert_eq!(app.current_history_location(), anchor);
+    app.save().unwrap();
+    let mut reopened = open(&f);
+    reopened.open_path(&f.book).unwrap();
+    assert!(
+        reopened
+            .active
+            .as_ref()
+            .unwrap()
+            .reading
+            .config
+            .user_styles
+            .layout_tweaks()
+            .cjk_tailored
+    );
+    assert_eq!(reopened.current_history_location(), anchor);
+    choose(&mut reopened, "cjk_tailored", Some(false));
+    assert!(capture(&mut reopened) == before);
+}
 #[test]
 fn styles_live_defaults_and_book_overrides_survive_profiles_defaults_restart_and_source_selections()
 {

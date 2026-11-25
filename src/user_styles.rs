@@ -96,6 +96,13 @@ pub(crate) struct Snapshot {
     css: Arc<str>,
     pub digest: [u8; 16],
     notes: InPageNotes,
+    layout: LayoutTweaks,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LayoutTweaks {
+    pub(crate) cjk_tailored: bool,
+    pub(crate) monochrome: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -137,27 +144,40 @@ impl Default for Snapshot {
             css: Arc::from(""),
             digest: md5::compute(b"").0,
             notes: InPageNotes::default(),
+            layout: LayoutTweaks::default(),
         }
     }
 }
 impl Snapshot {
     pub(crate) fn new(css: String) -> crate::Result<Self> {
-        Self::with_footnotes(css, InPageNotes::default())
+        Self::with_layout(css, InPageNotes::default(), LayoutTweaks::default())
     }
-    fn with_footnotes(css: String, notes: InPageNotes) -> crate::Result<Self> {
+    fn with_layout(css: String, notes: InPageNotes, layout: LayoutTweaks) -> crate::Result<Self> {
         crate::book_style::validate_user_css(&css)?;
-        let digest = md5::compute(css.as_bytes()).0;
+        let mut digest = md5::Context::new();
+        digest.consume(css.as_bytes());
+        if layout != LayoutTweaks::default() {
+            digest.consume(b"\0layout-tweaks");
+            digest.consume([u8::from(layout.cjk_tailored), u8::from(layout.monochrome)]);
+        }
         Ok(Self {
             css: css.into(),
-            digest,
+            digest: digest.finalize().0,
             notes,
+            layout,
         })
     }
     pub(crate) fn css(&self) -> &str {
         &self.css
     }
     pub(crate) fn is_empty(&self) -> bool {
-        self.css.is_empty() && self.notes.epub_size.is_none() && !self.has_in_page_fb2_notes()
+        self.css.is_empty()
+            && self.layout == LayoutTweaks::default()
+            && self.notes.epub_size.is_none()
+            && !self.has_in_page_fb2_notes()
+    }
+    pub(crate) fn layout_tweaks(&self) -> LayoutTweaks {
+        self.layout
     }
     pub(crate) fn in_page_epub_footnotes(&self) -> bool {
         self.notes.epub_size.is_some()
@@ -232,6 +252,8 @@ impl Snapshot {
 #[derive(Clone, Copy)]
 pub(crate) enum Effect {
     Css(&'static str),
+    TailorCjk,
+    Monochrome,
     InPageEpubFootnotes,
     InPageClassicFootnotes,
     InPageWikipediaFootnotes,
@@ -384,6 +406,20 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("p:first-child {text-indent:0 !important;}"),
     },
     Preset {
+        id: "paragraph_following_no_indent",
+        title: "No indentation on following paragraphs",
+        group: "following-indent",
+        priority: 2,
+        effect: Effect::Css("p + p {text-indent:0 !important;}"),
+    },
+    Preset {
+        id: "cjk_tailored",
+        title: "Tailor widths and text-indent for CJK",
+        group: "cjk-tailored",
+        priority: 0,
+        effect: Effect::TailorCjk,
+    },
+    Preset {
         id: "paragraph-align-left",
         title: "Left-align paragraphs",
         group: "alignment",
@@ -484,6 +520,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("* {font-size:inherit !important;}"),
     },
     Preset {
+        id: "pure_black_and_white",
+        title: "Pure black and white",
+        group: "monochrome-css",
+        priority: 0,
+        effect: Effect::Monochrome,
+    },
+    Preset {
         id: "inherit-font-family",
         title: "Inherit the reading font",
         group: "font-family",
@@ -580,7 +623,10 @@ impl Data {
     }
     pub(crate) fn make_global(&mut self, book: u64, id: &str, enabled: bool) -> crate::Result<()> {
         let target = preset(id).ok_or("This style tweak is unavailable")?;
-        if !matches!(target.effect, Effect::Css(_)) {
+        if !matches!(
+            target.effect,
+            Effect::Css(_) | Effect::TailorCjk | Effect::Monochrome
+        ) {
             if enabled {
                 if matches!(target.effect, Effect::ExtendNote(_)) {
                     self.global
@@ -624,12 +670,15 @@ impl Data {
         selected.sort_by_key(|p| (p.priority, p.id));
         let mut css = String::new();
         let mut notes = InPageNotes::default();
+        let mut layout = LayoutTweaks::default();
         for preset in selected {
             match preset.effect {
                 Effect::Css(snippet) => {
                     css.push_str(snippet);
                     css.push('\n');
                 }
+                Effect::TailorCjk => layout.cjk_tailored = true,
+                Effect::Monochrome => layout.monochrome = true,
                 Effect::InPageEpubFootnotes => {
                     notes.epub_size = Some(b.footnote_size.unwrap_or(self.footnote_size));
                     notes.explicit_epub = true;
@@ -660,7 +709,7 @@ impl Data {
         {
             css.push_str(custom);
         }
-        Snapshot::with_footnotes(css, notes)
+        Snapshot::with_layout(css, notes, layout)
     }
     pub(crate) fn validate(&self) -> crate::Result<()> {
         let valid_id = |id: &str| {

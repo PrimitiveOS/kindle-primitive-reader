@@ -123,9 +123,26 @@ chapters = {
     "inline-fallback": """<p id="fallback-start">A separate schedule records the lantern count<a href="#fallback-note" epub:type="noteref"><sup>9</sup></a>.</p>
 <table><tbody><tr><td>Item</td><td>Quantity</td></tr><tr><td>Lantern</td><td>2</td></tr></tbody></table>
 <aside id="fallback-note" epub:type="footnote"><p>[9]</p><p>The count excludes the ferry light.</p></aside>""",
-    "inline-nested": """<p id="nested-start">The entry lists the compartments<a href="#nested-note" epub:type="noteref"><sup>10</sup></a>.</p>
+    "inline-nested": """<p id="nested-start">The entry lists the compartments<a id="nested-ref" href="#nested-note" epub:type="noteref"><sup>10</sup></a>.</p>
+<p style="page-break-before:always">The drawer notes follow on another leaf.</p>
 <aside id="nested-note" epub:type="footnote">
-<p>Compartment details.</p><ul><li>Upper drawer.<ol><li>Spare keys.</li></ol></li><li>Lower drawer.</li></ul>
+<p id="nested-intro">Drawer notes.</p>
+<ul>
+  <li>
+    <p id="nested-parent">Upper shelf.</p>
+    <p id="nested-detail">Oak lip.</p>
+    <ol><li id="nested-child"><a href="#nested-ref" role="doc-backlink">Tin key</a>.</li></ol>
+  </li>
+  <li id="nested-next">Low bin.</li>
+</ul>
+</aside>""",
+    "inline-image-fallback": """<p id="image-fallback-start">The carpenter read the pencilled instructions<a href="#image-fallback-note" epub:type="noteref"><sup>11</sup></a>.</p>
+<aside id="image-fallback-note" epub:type="footnote">
+<p>Cabinet diagram legend.</p>
+<ul>
+  <li>Shelf edge.<ol><li>Diagrams <img src="chart.png" width="56" height="36" alt="Shelf diagram"/> show the opening.</li></ol></li>
+  <li id="image-fallback-end">A hinge holds the door.</li>
+</ul>
 </aside>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'

@@ -418,37 +418,39 @@ impl Reader {
                                 )
                             }),
                         ));
-                        for (label, range) in [
-                            ("Repeated lines · 1–5", 1..=5),
-                            ("Repeated lines · 6–10", 6..=10),
-                        ] {
+                        if settings.page_overlap_enabled {
+                            for (label, range) in [
+                                ("Repeated lines · 1–5", 1..=5),
+                                ("Repeated lines · 6–10", 6..=10),
+                            ] {
+                                rows.push(ConfigRow::new(
+                                    label,
+                                    range.map(|lines| {
+                                        Choice::option(
+                                            lines.to_string(),
+                                            Action::Text(Settings {
+                                                page_overlap_lines: lines,
+                                                ..settings
+                                            }),
+                                            settings.page_overlap_lines == lines,
+                                        )
+                                    }),
+                                ));
+                            }
                             rows.push(ConfigRow::new(
-                                label,
-                                range.map(|lines| {
+                                "Overlap marker",
+                                crate::PageOverlapStyle::ALL.map(|style| {
                                     Choice::option(
-                                        lines.to_string(),
+                                        style.label(),
                                         Action::Text(Settings {
-                                            page_overlap_lines: lines,
+                                            page_overlap_style: style,
                                             ..settings
                                         }),
-                                        settings.page_overlap_lines == lines,
+                                        settings.page_overlap_style == style,
                                     )
                                 }),
                             ));
                         }
-                        rows.push(ConfigRow::new(
-                            "Overlap marker",
-                            crate::PageOverlapStyle::ALL.map(|style| {
-                                Choice::option(
-                                    style.label(),
-                                    Action::Text(Settings {
-                                        page_overlap_style: style,
-                                        ..settings
-                                    }),
-                                    settings.page_overlap_style == style,
-                                )
-                            }),
-                        ));
                     }
                     return rows;
                 }
@@ -1060,6 +1062,32 @@ impl Reader {
                                 )
                             }),
                         ));
+                    }
+                    if reading.allows_page_overlap() {
+                        let enabled = prefs.page_overlap_enabled;
+                        let style = prefs.page_overlap_style.unwrap_or_default();
+                        rows.push(ConfigRow::new(
+                            "Page overlap",
+                            [("Off", false), ("On", true)].map(|(label, active)| {
+                                Choice::option(
+                                    label,
+                                    Action::SetFixedPageOverlap(active, style),
+                                    active == enabled,
+                                )
+                            }),
+                        ));
+                        if enabled {
+                            rows.push(ConfigRow::new(
+                                "Overlap marker",
+                                crate::PageOverlapStyle::ALL.map(|option| {
+                                    Choice::option(
+                                        option.label(),
+                                        Action::SetFixedPageOverlap(true, option),
+                                        option == style,
+                                    )
+                                }),
+                            ));
+                        }
                     }
                     if reading.supports_rtl() {
                         let ltr = Choice::option(

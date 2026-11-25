@@ -5,7 +5,9 @@ use primitive_ui::{BLACK, HAIRLINE, Icon, PAPER, SECONDARY, chevron};
 
 use super::{
     Action, BODY, CAPTION, Canvas, Change, Input, Item, LIST_X, ROW_HEIGHT, Reader, Rect, Result,
-    Screen, library_book_item, navigation_layout::NavigationLayout, with_storage,
+    Screen, library_book_item,
+    navigation_layout::{NavigationLayout, pager_destination},
+    with_storage,
 };
 use crate::library::{
     BrowseEntry, BrowseKind, BrowseList, FolderDirection, FolderOrder, FolderProgress, FolderSort,
@@ -423,6 +425,11 @@ impl Reader {
         let layout = self.navigation_layout();
         let page = self.browser.page(layout);
         let page_size = file_rows(layout);
+        let count = self.library_item_count();
+        let last = count.saturating_sub(1) / page_size;
+        if let Some(page) = pager_destination(input, layout.previous(), layout.next(), page, last) {
+            return self.navigate_folder_page(page, page_size);
+        }
         let apply = |reader: &mut Reader, action| match reader.activate(action) {
             Ok(()) => Change::Partial,
             Err(error) => reader.report(error),
@@ -448,8 +455,6 @@ impl Reader {
                     -1
                 }
             }
-            Input::Tap(x, y) if layout.previous().contains(x, y) => -1,
-            Input::Tap(x, y) if layout.next().contains(x, y) => 1,
             Input::Tap(x, y) | Input::LongTap(x, y) => {
                 if matches!(input, Input::Tap(..))
                     && let Some((_, screen, _)) =
@@ -480,10 +485,14 @@ impl Reader {
         };
         let Some(page) = page
             .checked_add_signed(direction)
-            .filter(|page| page * page_size < self.library_item_count())
+            .filter(|page| page * page_size < count)
         else {
             return Change::None;
         };
+        self.navigate_folder_page(page, page_size)
+    }
+
+    fn navigate_folder_page(&mut self, page: usize, page_size: usize) -> Change {
         self.browser.first_item = page * page_size;
         self.notice = None;
         Change::Partial

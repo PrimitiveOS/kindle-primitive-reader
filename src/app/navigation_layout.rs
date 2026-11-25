@@ -1,8 +1,24 @@
 //! Geometry shared by the in-book destination editor and navigation lists.
 use super::{
-    Action, Canvas, HEIGHT, Item, LIST_X, Layout, NEXT, PREV, Reader, Rect, Screen, WIDTH,
+    Action, Canvas, HEIGHT, Input, Item, LIST_X, Layout, NEXT, PREV, Reader, Rect, Screen, WIDTH,
 };
 use primitive_app::App;
+
+pub(super) fn pager_destination(
+    input: Input,
+    previous: Rect,
+    next: Rect,
+    page: usize,
+    last: usize,
+) -> Option<usize> {
+    match input {
+        Input::Tap(x, y) if page > 0 && previous.contains(x, y) => Some(page - 1),
+        Input::Tap(x, y) if page < last && next.contains(x, y) => Some(page + 1),
+        Input::LongTap(x, y) if page > 0 && previous.contains(x, y) => Some(0),
+        Input::LongTap(x, y) if page < last && next.contains(x, y) => Some(last),
+        _ => None,
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct NavigationLayout {
@@ -374,3 +390,7 @@ mod reading_lists_tests;
 #[cfg(test)]
 #[path = "navigation_layout/lookup_tests.rs"]
 mod lookup_tests;
+
+#[cfg(test)]
+#[path = "navigation_layout/pager_tests.rs"]
+mod pager_tests;
