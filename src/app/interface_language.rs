@@ -345,6 +345,144 @@ const PAGE_ACTION_LABELS: &[(&str, &str)] = &[
     ("Matches", "Kết quả tìm kiếm"),
 ];
 
+// Fixed footer settings titles only; font names, custom text and dynamic details stay untouched.
+const FOOTER_SETTINGS_TITLES: &[(&str, &str)] = &[
+    ("Status bar presets", "Mẫu thanh trạng thái"),
+    ("Item font", "Phông chữ của mục"),
+    ("Status text", "Văn bản trạng thái"),
+    ("Item font size", "Cỡ chữ của mục"),
+    ("Container height", "Chiều cao vùng chứa"),
+    ("Container bottom margin", "Lề dưới vùng chứa"),
+    ("Bold text", "Chữ đậm"),
+    ("Progress bar", "Thanh tiến độ"),
+    ("Progress bar position", "Vị trí thanh tiến độ"),
+    ("Progress bar thickness", "Độ dày thanh tiến độ"),
+    (
+        "Progress bar minimum width",
+        "Độ rộng tối thiểu thanh tiến độ",
+    ),
+    (
+        "Lock progress bar width at minimum",
+        "Khóa độ rộng thanh tiến độ ở mức tối thiểu",
+    ),
+    ("Progress bar margins", "Lề thanh tiến độ"),
+    ("Show initial position marker", "Hiện dấu vị trí ban đầu"),
+    ("Status item separator", "Dấu phân cách mục trạng thái"),
+    ("Show footer separator", "Hiện đường phân cách chân trang"),
+    ("Status item symbols", "Ký hiệu mục trạng thái"),
+    (
+        "Pages left includes current page",
+        "Số trang còn lại tính cả trang hiện tại",
+    ),
+    ("Progress percentage digits", "Số chữ số phần trăm tiến độ"),
+    ("Footer alignment", "Căn chỉnh chân trang"),
+    ("Top status header", "Thanh trạng thái trên"),
+    (
+        "About the top status header",
+        "Giới thiệu thanh trạng thái trên",
+    ),
+    ("Refresh header automatically", "Tự làm mới thanh trên"),
+    ("Header book title", "Tên sách trên thanh trên"),
+    ("Header book author", "Tác giả trên thanh trên"),
+    ("Header current time", "Giờ hiện tại trên thanh trên"),
+    ("Header current page", "Trang hiện tại trên thanh trên"),
+    ("Header total pages", "Tổng số trang trên thanh trên"),
+    (
+        "Header progress percentage",
+        "Phần trăm tiến độ trên thanh trên",
+    ),
+    ("Header chapter marks", "Dấu chương trên thanh trên"),
+    ("Header battery status", "Trạng thái pin trên thanh trên"),
+    ("Header font size", "Cỡ chữ thanh trên"),
+    ("Cycle custom items", "Lần lượt hiện mục tùy chỉnh"),
+    ("Show items together", "Hiện các mục cùng nhau"),
+    ("Overlap status bar", "Chồng lên thanh trạng thái"),
+    ("Chapter markers", "Dấu chương"),
+    ("Chapter marker thickness", "Độ dày dấu chương"),
+    (
+        "Lock status bar taps",
+        "Khóa thao tác chạm thanh trạng thái",
+    ),
+    (
+        "Hold status bar to skim",
+        "Nhấn giữ thanh trạng thái để đọc lướt",
+    ),
+    ("Item maximum width", "Độ rộng tối đa của mục"),
+    ("Visible status items", "Các mục trạng thái hiển thị"),
+    ("Auto refresh items", "Tự làm mới các mục"),
+    ("Hide inactive items", "Ẩn mục không hoạt động"),
+    ("Hide battery when above", "Ẩn pin khi trên mức"),
+    ("Custom text", "Văn bản tùy chỉnh"),
+    ("Edit custom text", "Sửa văn bản tùy chỉnh"),
+    ("Number of repetitions", "Số lần lặp"),
+    ("Custom text tokens", "Ký hiệu văn bản tùy chỉnh"),
+    ("Status item order", "Thứ tự mục trạng thái"),
+    (
+        "Time estimate in combined status",
+        "Ước tính thời gian trong trạng thái kết hợp",
+    ),
+    ("12-hour clock", "Đồng hồ 12 giờ"),
+];
+
+// Fixed footer settings values; user font names, custom text and numeric values stay untouched.
+const FOOTER_SETTINGS_STATUSES: &[(&str, &str)] = &[
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    ("Combined", "Kết hợp"),
+    ("Page numbers", "Số trang"),
+    ("Book progress", "Tiến độ sách"),
+    ("Chapter and page", "Chương và trang"),
+    ("Chapter pages left", "Trang còn lại trong chương"),
+    ("Chapter time left", "Thời gian còn lại trong chương"),
+    ("Book time left", "Thời gian còn lại trong sách"),
+    ("Custom items", "Mục tùy chỉnh"),
+    ("Minimal", "Tối giản"),
+    ("Whole book", "Toàn bộ sách"),
+    ("Current chapter", "Chương hiện tại"),
+    ("Above status text", "Trên văn bản trạng thái"),
+    ("Alongside status text", "Bên cạnh văn bản trạng thái"),
+    ("Below status text", "Dưới văn bản trạng thái"),
+    ("Thin", "Mỏng"),
+    ("Medium", "Vừa"),
+    ("Thick", "Dày"),
+    ("Left", "Trái"),
+    ("Center", "Giữa"),
+    ("Right", "Phải"),
+    ("Hyphen (-)", "Gạch nối (-)"),
+    ("Vertical bar (|)", "Gạch đứng (|)"),
+    ("Bullet (•)", "Dấu đầu dòng (•)"),
+    ("Dot (·)", "Dấu chấm (·)"),
+    ("No separator", "Không có dấu phân cách"),
+    ("Icons", "Biểu tượng"),
+    ("Letters", "Chữ cái"),
+    ("Compact", "Gọn"),
+    ("0 decimal places", "0 chữ số thập phân"),
+    ("1 decimal place", "1 chữ số thập phân"),
+    ("2 decimal places", "2 chữ số thập phân"),
+    ("Chapter", "Chương"),
+    ("Book", "Sách"),
+    (
+        "Tap the status bar to show one selected item at a time",
+        "Chạm thanh trạng thái để lần lượt hiện từng mục đã chọn",
+    ),
+    (
+        "Book author, book title, and chapter title",
+        "Tác giả, tên sách và tên chương",
+    ),
+    (
+        "On · When items share one line with no alongside track",
+        "Bật · khi các mục chung một dòng và không có thanh bên cạnh",
+    ),
+    (
+        "Off · Fill the space between arranged items",
+        "Tắt · lấp khoảng trống giữa các mục",
+    ),
+    (
+        "Show supported book, page, time and battery values",
+        "Hiện giá trị sách, trang, thời gian và pin được hỗ trợ",
+    ),
+];
+
 // Fixed status-bar controls and token explanations; user names and literal tokens stay untouched.
 const STATUS_BAR_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Save current status bar", "Lưu thanh trạng thái hiện tại"),
@@ -2378,6 +2516,42 @@ impl InterfaceLanguage {
     }
 
     /// Translate only fixed end-of-document UI labels and status text.
+    pub(super) fn footer_settings_status<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = FOOTER_SETTINGS_STATUSES
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn footer_settings_title<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = FOOTER_SETTINGS_TITLES
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn footer_settings_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = FOOTER_SETTINGS_TITLES
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
     pub(super) fn status_bar_settings_text<'a>(self, english: &'a str) -> &'a str {
         if self == Self::Vietnamese {
             if let Some((_, vietnamese)) = STATUS_BAR_SETTINGS_LABELS

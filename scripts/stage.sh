@@ -49,6 +49,7 @@ install -m 644 assets/fonts/PrimitiveSymbols.ttf "$stage/reader/fonts/PrimitiveS
 awk -v icon="$icon" -v icon_dark="$icon_dark" '{ print } /^# Author:/ { print icon; print icon_dark }' deploy/Reader.sh > "$stage/documents/Reader.sh"
 chmod 755 "$stage/documents/Reader.sh"
 install -m 644 LICENSE LICENSE-DOCS "$stage/reader/licenses/"
+install -m 644 docs/licenses/UNICODE-DATA.txt docs/licenses/RTF-OEM.txt assets/rtf-codepages/CP437.TXT assets/rtf-codepages/CP850.TXT "$stage/reader/licenses/"
 install -m 644 docs/licenses/README.md docs/licenses/THIRD-PARTY.txt docs/licenses/ENGLISH-HYPHENATION.txt \
     docs/licenses/HYPHENATION-ES-IT-PT.txt docs/licenses/HYPHENATION-ET-FI.txt \
     docs/licenses/HYPHENATION-DA-NL.txt docs/licenses/HYPHENATION-FR-DE.txt \

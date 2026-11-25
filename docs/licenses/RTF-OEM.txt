@@ -1,0 +1,19 @@
+RTF DOS code-page mapping data
+
+Reader's RTF decoder uses tables generated from Unicode's published
+Microsoft CP437 and CP850 mapping files, dated 24 April 1996:
+https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP437.TXT
+https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP850.TXT
+
+SHA-256 of the unmodified original CP437.TXT:
+6bad4dabcdf5940227c7d81fab130dcb18a77850b5d79de28b5dc4e047b0aaac
+SHA-256 of the unmodified original CP850.TXT:
+ffdcc3c1c72f1aef600a63547100ef3dc452a09ad84923d382085519751c7479
+
+The source files and Unicode copyright and permission notice in
+UNICODE-DATA.txt accompany the generated tables in Reader packages.
+The original data and Unicode's notice are available at:
+https://www.unicode.org/license.txt
+
+This attribution is not a legal determination. Distribution review remains
+open, including confirmation of the terms applicable to these archived files.

@@ -163,10 +163,19 @@ struct Emphasis {
     italic: bool,
 }
 
+mod oem_tables;
+
+#[derive(Clone, Copy)]
+enum TextEncoding {
+    Standard(&'static enc::Encoding),
+    Cp437,
+    Cp850,
+}
+
 #[derive(Clone, Copy)]
 struct Group {
     style: Emphasis,
-    encoding: Option<&'static enc::Encoding>,
+    encoding: Option<TextEncoding>,
     fallback: usize,
     hidden: bool,
     hidden_text: bool,
@@ -188,7 +197,7 @@ impl Parser {
         Self {
             groups: vec![Group {
                 style: Emphasis::default(),
-                encoding: Some(enc::WINDOWS_1252),
+                encoding: Some(TextEncoding::Standard(enc::WINDOWS_1252)),
                 fallback: 1,
                 hidden: false,
                 hidden_text: false,
@@ -273,16 +282,36 @@ impl Parser {
             return Ok(());
         }
         let state = self.group();
-        let charset = if self.encoded.is_ascii() {
-            enc::UTF_8
+        let text = if self.encoded.is_ascii() {
+            std::borrow::Cow::Borrowed(std::str::from_utf8(&self.encoded)?)
         } else {
-            state
+            match state
                 .encoding
                 .ok_or("The RTF document uses an unsupported text code page")?
+            {
+                TextEncoding::Standard(charset) => charset
+                    .decode_without_bom_handling_and_without_replacement(&self.encoded)
+                    .ok_or("An RTF text run contains invalid bytes for its code page")?,
+                mode @ (TextEncoding::Cp437 | TextEncoding::Cp850) => {
+                    let table = match mode {
+                        TextEncoding::Cp437 => &oem_tables::CP437,
+                        _ => &oem_tables::CP850,
+                    };
+                    let mut decoded = String::with_capacity(self.encoded.len());
+                    for &byte in &self.encoded {
+                        decoded.push(if byte < 128 {
+                            char::from(byte)
+                        } else {
+                            table[usize::from(byte - 128)]
+                        });
+                        if decoded.len() > MAX_OUTPUT {
+                            return Err("The RTF text exceeds Reader's output limit".into());
+                        }
+                    }
+                    std::borrow::Cow::Owned(decoded)
+                }
+            }
         };
-        let text = charset
-            .decode_without_bom_handling_and_without_replacement(&self.encoded)
-            .ok_or("An RTF text run contains invalid bytes for its code page")?;
         self.output.text(&text, state.style)?;
         self.encoded.clear();
         Ok(())
@@ -383,8 +412,10 @@ impl Parser {
             b"ansi" | b"mac" | b"pc" | b"pca" | b"ansicpg" => {
                 self.boundary()?;
                 self.current().encoding = match word {
-                    b"ansi" => Some(enc::WINDOWS_1252),
-                    b"mac" => Some(enc::MACINTOSH),
+                    b"ansi" => Some(TextEncoding::Standard(enc::WINDOWS_1252)),
+                    b"mac" => Some(TextEncoding::Standard(enc::MACINTOSH)),
+                    b"pc" => Some(TextEncoding::Cp437),
+                    b"pca" => Some(TextEncoding::Cp850),
                     b"ansicpg" => code_page(number.ok_or("The RTF code page is missing")?),
                     _ => None,
                 };
@@ -473,8 +504,13 @@ fn hidden_destination(word: &[u8]) -> bool {
     )
 }
 
-fn code_page(number: i32) -> Option<&'static enc::Encoding> {
-    Some(match number {
+fn code_page(number: i32) -> Option<TextEncoding> {
+    match number {
+        437 => return Some(TextEncoding::Cp437),
+        850 => return Some(TextEncoding::Cp850),
+        _ => {}
+    }
+    Some(TextEncoding::Standard(match number {
         866 => enc::IBM866,
         874 => enc::WINDOWS_874,
         932 => enc::SHIFT_JIS,
@@ -494,7 +530,7 @@ fn code_page(number: i32) -> Option<&'static enc::Encoding> {
         10007 => enc::X_MAC_CYRILLIC,
         65001 => enc::UTF_8,
         _ => return None,
-    })
+    }))
 }
 
 struct Output {

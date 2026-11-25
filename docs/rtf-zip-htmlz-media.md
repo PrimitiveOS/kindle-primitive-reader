@@ -13,6 +13,16 @@ Reader's adapter deliberately accepts exactly one RTF document. Reader's import
 retains its current RTF subset; images, field instructions and other hidden
 destinations are still not rendered. [KOReader format registration](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L1617-L1618) · [CREngine archive selection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L4712-L4793)
 
+Plain and ZIP RTF now decode DOS CP437 (`\pc`, `\ansicpg437`) and CP850
+(`\pca`, `\ansicpg850`) text as well as their existing encodings. The mapping
+is scoped by RTF groups, and the existing decoded-output limits apply.
+Previously readable ASCII documents retain the same generated text and saved
+anchors. Unicode's original mapping files and permission notice are included
+in the package; [provenance and distribution review](licenses/RTF-OEM.txt)
+remain open. This is an RTF compatibility candidate: the pinned CREngine
+lists `\ansicpg`, but its `\pc` and `\pca` behavior has not been established.
+Real-document, simulation and Kindle comparisons are pending.
+
 HTMLZ archives now retain local GIF and SVG assets as well as the existing
 PNG, JPEG and CSS. GIF uses Reader's first-frame decoder and SVG uses its
 bounded offline vector renderer. The existing archive resource limits apply.

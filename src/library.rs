@@ -13,6 +13,7 @@ pub(crate) mod metadata_archive;
 mod nearby_custom_metadata;
 #[cfg(feature = "kindle")]
 mod odt_migration;
+mod raw_positions;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
@@ -2984,11 +2985,7 @@ fn valid_anchor(anchor: &Anchor) -> bool {
 }
 
 fn same_position(left: &ReadingPosition, right: &ReadingPosition) -> bool {
-    match (&left.anchor, &right.anchor) {
-        (Some(left), Some(right)) => left == right,
-        (None, None) => left.chapter == right.chapter && left.page == right.page,
-        _ => false,
-    }
+    raw_positions::same(left, None, right, None)
 }
 
 fn valid_highlight(mark: &Highlight) -> bool {

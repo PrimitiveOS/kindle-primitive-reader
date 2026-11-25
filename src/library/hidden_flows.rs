@@ -29,13 +29,8 @@ impl Default for HiddenFlows {
     }
 }
 
-fn source_order(position: &ReadingPosition) -> (usize, usize, usize) {
-    position
-        .anchor
-        .as_ref()
-        .map_or((position.chapter, position.page, 0), |anchor| {
-            (position.chapter, anchor.block, anchor.offset)
-        })
+fn source_order(position: &ReadingPosition) -> ((usize, usize, usize), (u8, usize, [u8; 32], u8)) {
+    super::raw_positions::flow_order(position, None)
 }
 
 impl HiddenFlows {

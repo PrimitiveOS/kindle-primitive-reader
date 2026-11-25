@@ -1854,8 +1854,10 @@ impl Reader {
 
     pub(super) fn footer_items(&self) -> Vec<Item> {
         let c = self.controls;
-        let setting = |name, value, controls| {
-            Item::new(name, Action::SetReadingControls(controls)).detail(value)
+        let language = c.interface_language;
+        let setting = |name, value: &str, controls| {
+            Item::new(name, Action::SetReadingControls(controls))
+                .detail(language.footer_settings_status(value))
         };
         let on_off = |on| if on { "On" } else { "Off" };
         let next = if c.footer_all_at_once
@@ -2121,7 +2123,7 @@ impl Reader {
                 "Header battery status",
                 Action::Show(Screen::HeaderBatterySettings),
             )
-            .detail(header.battery.label()),
+            .detail(language.status_bar_settings_text(header.battery.label())),
             Item::new("Header font size", Action::EditHeaderFontSize)
                 .detail(format!("{} px", header.font_size())),
             setting(
@@ -2146,7 +2148,9 @@ impl Reader {
                         ..c
                     }),
                 )
-                .detail("Tap the status bar to show one selected item at a time"),
+                .detail(language.footer_settings_status(
+                    "Tap the status bar to show one selected item at a time",
+                )),
             );
         }
         if c.status_bar != StatusBar::Custom {
@@ -2210,8 +2214,9 @@ impl Reader {
         ]);
         if c.status_bar == StatusBar::Custom {
             items.push(
-                Item::new("Item maximum width", Action::Show(Screen::FooterItemWidths))
-                    .detail("Book author, book title, and chapter title"),
+                Item::new("Item maximum width", Action::Show(Screen::FooterItemWidths)).detail(
+                    language.footer_settings_status("Book author, book title, and chapter title"),
+                ),
             );
             items.push(Item::new("Visible status items", Action::Heading));
             items.push(setting(
@@ -2257,9 +2262,12 @@ impl Reader {
                 );
                 if item == FooterItem::DynamicFiller {
                     row = row.detail(if enabled {
-                        "On · When items share one line with no alongside track"
+                        language.footer_settings_status(
+                            "On · When items share one line with no alongside track",
+                        )
                     } else {
-                        "Off · Fill the space between arranged items"
+                        language
+                            .footer_settings_status("Off · Fill the space between arranged items")
                     });
                 }
                 items.push(row);
@@ -2299,7 +2307,11 @@ impl Reader {
                     "Custom text tokens",
                     Action::Show(Screen::FooterCustomTextGuide),
                 )
-                .detail("Show supported book, page, time and battery values"),
+                .detail(
+                    language.footer_settings_status(
+                        "Show supported book, page, time and battery values",
+                    ),
+                ),
             );
             items.push(Item::new("Status item order", Action::Heading));
             let ordered = FooterItem::ordered(c.footer_order);
@@ -2352,6 +2364,9 @@ impl Reader {
                     ..c
                 },
             ));
+        }
+        for item in &mut items {
+            item.title = language.footer_settings_title(&item.title).to_owned();
         }
         items
     }

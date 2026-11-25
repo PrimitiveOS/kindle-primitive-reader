@@ -36,12 +36,8 @@ impl CustomContents {
         }) {
             return false;
         }
-        self.entries.sort_by_key(|entry| {
-            let p = &entry.position;
-            p.anchor.as_ref().map_or((p.chapter, 0, p.page, 0), |a| {
-                (p.chapter, 1, a.block, a.offset)
-            })
-        });
+        self.entries
+            .sort_by_key(|entry| super::raw_positions::contents_order(&entry.position, None));
         true
     }
 
@@ -69,11 +65,7 @@ impl CustomContents {
         if self.entries.len() >= ENTRY_LIMIT {
             return Err(invalid_state("This book already has 256 custom chapters"));
         }
-        let key = |p: &ReadingPosition| {
-            p.anchor.as_ref().map_or((p.chapter, 0, p.page, 0), |a| {
-                (p.chapter, 1, a.block, a.offset)
-            })
-        };
+        let key = |p: &ReadingPosition| super::raw_positions::contents_order(p, None);
         let index = self
             .entries
             .partition_point(|entry| key(&entry.position) <= key(&position));

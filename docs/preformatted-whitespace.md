@@ -65,7 +65,9 @@ quote before accepting bounded rectangles. Detached pagination can return a
 verified raw anchor for the first line intersecting a paragraph-local page
 range, including whitespace-only lines, and map an anchor back to a line using
 its explicit boundary affinity. These are not installed into Reader's page model
-or UI; durable state and the full integration remain open.
+or UI; durable state and the full integration remain open. A detached hit-test
+can also resolve a shaped cluster to a verified raw grapheme caret, including
+positions within restored whitespace. Empty areas without a cluster are rejected.
 
 This stage does **not** change rendering, copying, selection, source revisions,
 existing anchors or saved state. It does not yet implement preformatted EPUB

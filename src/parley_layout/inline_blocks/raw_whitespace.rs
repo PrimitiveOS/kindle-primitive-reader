@@ -16,7 +16,9 @@ use crate::{
     source::{Block, StyledText},
     user_hyphenation::Rules,
 };
-use parley::{Affinity, BoundingBox, Cursor, FontContext, Layout, LayoutContext, Selection};
+use parley::{
+    Affinity, BoundingBox, Cluster, Cursor, FontContext, Layout, LayoutContext, Selection,
+};
 use std::ops::Range;
 
 const MAX_RAW_LINES: usize = 4096;
@@ -242,6 +244,50 @@ impl Plan {
 }
 
 impl Prepared {
+    /// Resolve a point in paragraph-local layout coordinates without snapping
+    /// extra whitespace back to its collapsed canonical position. Empty space
+    /// without a shaped cluster does not produce a caret.
+    pub(in crate::parley_layout) fn anchor_at_point(
+        &self,
+        block: &Block,
+        context: &AnchorContext<'_>,
+        x: f32,
+        y: f32,
+    ) -> Option<RawAnchor> {
+        if !self.binding.matches(block)
+            || block.key != context.block
+            || !x.is_finite()
+            || !y.is_finite()
+            || !(0.0..self.layout.height()).contains(&y)
+        {
+            return None;
+        }
+        let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+        if self.text.text.as_str() != bound.raw() || self.layout.text_len() != bound.raw().len() {
+            return None;
+        }
+        Cluster::from_point_exact(&self.layout, x, y)?;
+        let cursor = Cursor::from_point(&self.layout, x, y);
+        let affinity = match cursor.affinity() {
+            Affinity::Upstream => CaretAffinity::Before,
+            Affinity::Downstream => CaretAffinity::After,
+        };
+        let caret = bound.caret_at(cursor.index(), affinity)?;
+        let anchor = RawAnchor {
+            canonical: crate::Anchor {
+                book: context.book,
+                chapter: context.chapter.to_owned(),
+                revision: context.revision,
+                block: context.block,
+                offset: caret.canonical_offset,
+                illustration: None,
+            },
+            caret,
+        };
+        bound.validate_raw_anchor(&anchor, context)?;
+        Some(anchor)
+    }
+
     /// Resolve the first intersecting line, including whitespace-only lines.
     /// `page` is in paragraph-local block coordinates. The caller supplies
     /// the identity of the verified, currently open publication.
