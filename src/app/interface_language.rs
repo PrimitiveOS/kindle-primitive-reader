@@ -513,6 +513,123 @@ const NUMBERING_LABELS: &[(&str, &str)] = &[
     ("Off", "Tắt"),
 ];
 
+// Fixed reading-guide UI only; never pass book text or chapter names.
+const READING_GUIDE_LABELS: &[(&str, &str)] = &[
+    ("Reading guides", "Đường hướng dẫn đọc"),
+    ("About reading guides", "Giới thiệu đường hướng dẫn đọc"),
+    ("Back", "Quay lại"),
+    ("Show reading guides", "Hiện đường hướng dẫn đọc"),
+    ("Line thickness", "Độ dày đường"),
+    ("Margin from the edges", "Khoảng cách từ mép"),
+    ("Line intensity", "Độ đậm đường"),
+    ("Move guides inward", "Di chuyển đường vào trong"),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    ("Two vertical lines", "Hai đường dọc"),
+    (
+        "Use them to mark the area to focus on while reading.",
+        "Dùng chúng để đánh dấu vùng cần tập trung khi đọc.",
+    ),
+    ("Moving guides", "Di chuyển đường hướng dẫn"),
+    (
+        "The lines can move inward as you turn pages. Set the interval to 0 to keep them still.",
+        "Các đường có thể dịch vào trong khi lật trang. Đặt khoảng cách lật trang là 0 để giữ nguyên.",
+    ),
+    ("Enter 1 to 20 pixels", "Nhập từ 1 đến 20 pixel"),
+    (
+        "Enter 1.0 to 45.0 percent",
+        "Nhập từ 1.0 đến 45.0 phần trăm",
+    ),
+    (
+        "Enter 1 to 10, from light to dark",
+        "Nhập từ 1 đến 10, từ nhạt đến đậm",
+    ),
+    (
+        "Enter 1 to 9,999 pages, or 0 to keep the guides still",
+        "Nhập từ 1 đến 9.999 trang, hoặc 0 để giữ đường cố định",
+    ),
+    ("Set", "Đặt"),
+];
+
+// Fixed link-settings controls only; link addresses and book text stay untouched.
+const LINK_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Tap to follow links", "Chạm để mở liên kết"),
+    (
+        "Allow larger tap area around links",
+        "Mở rộng vùng chạm quanh liên kết",
+    ),
+    (
+        "Ignore external links on tap",
+        "Bỏ qua liên kết ngoài khi chạm",
+    ),
+    ("Swipe to go back", "Vuốt để quay lại"),
+    (
+        "Swipe to follow nearest link",
+        "Vuốt để mở liên kết gần nhất",
+    ),
+    (
+        "Ignore external links on swipe",
+        "Bỏ qua liên kết ngoài khi vuốt",
+    ),
+    (
+        "Swipe to jump to latest bookmark",
+        "Vuốt đến dấu trang mới nhất",
+    ),
+    (
+        "Use book font in popups",
+        "Dùng phông chữ của sách trong cửa sổ nổi",
+    ),
+    ("Justify text in popups", "Căn đều chữ trong cửa sổ nổi"),
+    (
+        "Footnote popup font size",
+        "Cỡ chữ chú thích trong cửa sổ nổi",
+    ),
+    (
+        "Available when tap to follow links is on",
+        "Khả dụng khi bật chạm để mở liên kết",
+    ),
+    (
+        "Available when swipe to follow nearest link is on",
+        "Khả dụng khi bật vuốt để mở liên kết gần nhất",
+    ),
+    (
+        "Available when footnote previews are on",
+        "Khả dụng khi bật xem trước chú thích",
+    ),
+    (
+        "Available when tap or swipe to follow links is on",
+        "Khả dụng khi bật chạm hoặc vuốt để mở liên kết",
+    ),
+    (
+        "Swipe right to return to your previous location",
+        "Vuốt sang phải để về vị trí trước",
+    ),
+    (
+        "Swipe left from near a link to follow it",
+        "Vuốt sang trái gần liên kết để mở",
+    ),
+    (
+        "Swipe left when there is no link to follow",
+        "Vuốt sang trái khi không có liên kết để mở",
+    ),
+];
+
+// Notification-source controls only; notification messages are user-visible data.
+const NOTIFICATION_SETTINGS_LABELS: &[(&str, &str)] = &[
+    ("Bottom menu icons", "Biểu tượng trình đơn dưới"),
+    ("Bottom menu toggles", "Công tắc trình đơn dưới"),
+    ("Bottom menu ± buttons", "Nút ± trình đơn dưới"),
+    (
+        "Bottom menu custom values",
+        "Giá trị tùy chỉnh trình đơn dưới",
+    ),
+    ("Bottom menu progress bars", "Thanh tiến độ trình đơn dưới"),
+    ("Gestures and profiles", "Cử chỉ và hồ sơ"),
+    ("Other sources", "Nguồn khác"),
+    ("Show past notifications", "Hiện thông báo trước"),
+    ("No notifications yet", "Chưa có thông báo"),
+];
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum InterfaceLanguage {
@@ -1846,6 +1963,102 @@ impl InterfaceLanguage {
             (Self::Vietnamese, None) => format!("Chương {chapter}"),
             (_, Some(page)) => format!("Chapter {chapter} · Screen page {page}"),
             (_, None) => format!("Chapter {chapter}"),
+        }
+    }
+
+    pub(super) fn reading_guide_fixed<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                READING_GUIDE_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    /// Localize only generated guide-value units, preserving numeric values.
+    pub(super) fn reading_guide_text(self, english: &str) -> String {
+        if self == Self::Vietnamese {
+            let digits = |s: &str| !s.is_empty() && s.bytes().all(|byte| byte.is_ascii_digit());
+            if let Some(number) = english.strip_suffix(" of 10")
+                && digits(number)
+            {
+                return format!("{number} trên 10");
+            }
+            if let Some(number) = english.strip_suffix(" pages")
+                && digits(number)
+            {
+                return format!("{number} trang");
+            }
+        }
+        self.reading_guide_fixed(english).to_owned()
+    }
+
+    pub(super) fn reading_guide_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = READING_GUIDE_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    pub(super) fn link_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                LINK_SETTINGS_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn link_settings_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = LINK_SETTINGS_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    pub(super) fn notification_settings_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = NOTIFICATION_SETTINGS_LABELS
+                .iter()
+                .find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn notification_settings_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = NOTIFICATION_SETTINGS_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    pub(super) fn notification_source_count(self, enabled: usize, total: usize) -> String {
+        if self == Self::Vietnamese {
+            format!("Đã bật {enabled} trên {total} nguồn")
+        } else {
+            format!("{enabled} of {total} sources on")
         }
     }
 

@@ -69,12 +69,17 @@ impl Reader {
         let zulu = self.active.as_ref().is_some_and(|book| {
             crate::hyphenation::is_zulu_language(book.reading.probe.main_language)
         });
+        let serbian = self.active.as_ref().is_some_and(|book| {
+            crate::hyphenation::is_serbian_language(book.reading.probe.main_language)
+        });
         let defaults = if settings.algorithmic_hyphenation {
             ALGORITHMIC_LIMITS
         } else if armenian {
             crate::HyphenationLimits { left: 1, right: 2 }
         } else if zulu {
             crate::HyphenationLimits { left: 2, right: 1 }
+        } else if serbian {
+            crate::HyphenationLimits { left: 2, right: 2 }
         } else {
             dictionary.map_or(ENGLISH_LIMITS, Dictionary::limits)
         };
@@ -145,6 +150,8 @@ impl Reader {
                             "Zulu pattern file invalid"
                         }
                     }
+                } else if serbian {
+                    "Serbian: see pattern file status"
                 } else {
                     dictionary.map_or("No dictionary for the main language", Dictionary::label)
                 };
@@ -169,6 +176,25 @@ impl Reader {
             items.push(
                 Item::new("Zulu pattern file", Action::Heading)
                     .detail("Copy hyph-zu.dic to reader/data/hyphenation, then reopen Reader"),
+            );
+        }
+        if serbian {
+            let status = |patterns: &crate::user_hyphenation::OptionalPatterns| match patterns {
+                crate::user_hyphenation::OptionalPatterns::Loaded(_) => "Loaded",
+                crate::user_hyphenation::OptionalPatterns::Missing => "Missing",
+                crate::user_hyphenation::OptionalPatterns::Invalid => "Invalid",
+            };
+            items.push(
+                Item::new("Serbian Latin patterns", Action::Heading).detail(format!(
+                    "{} · reader/data/hyphenation/hyph-sr-latn.dic",
+                    status(&self.user_hyphenation.serbian_latin)
+                )),
+            );
+            items.push(
+                Item::new("Serbian Cyrillic patterns", Action::Heading).detail(format!(
+                    "{} · reader/data/hyphenation/hyph-sr-cyrl.dic",
+                    status(&self.user_hyphenation.serbian_cyrillic)
+                )),
             );
         }
         let defaults = self

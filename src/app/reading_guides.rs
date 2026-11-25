@@ -426,8 +426,11 @@ impl Reader {
     }
 
     pub(super) fn reading_guide_entry(&self) -> Item {
-        Item::new("Reading guides", Action::Show(Screen::ReadingGuides))
-            .detail(self.controls.reading_guides.status())
+        Item::new("Reading guides", Action::Show(Screen::ReadingGuides)).detail(
+            self.controls
+                .interface_language
+                .reading_guide_fixed(self.controls.reading_guides.status()),
+        )
     }
 
     pub(super) fn reading_guide_items(&self) -> Vec<Item> {
@@ -449,6 +452,13 @@ impl Reader {
             "About reading guides",
             Action::Show(Screen::ReadingGuidesAbout),
         ));
+        let language = self.controls.interface_language;
+        for item in &mut items {
+            item.title = language.reading_guide_text(&item.title);
+            if let Some(detail) = &mut item.detail {
+                *detail = language.reading_guide_text(detail);
+            }
+        }
         items
     }
 

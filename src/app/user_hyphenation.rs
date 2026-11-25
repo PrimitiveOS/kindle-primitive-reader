@@ -46,22 +46,39 @@ pub(super) struct Draft {
 }
 
 pub(super) fn load_armenian(data: &Path) -> crate::user_hyphenation::OptionalPatterns {
-    load_optional(data, false)
+    load_optional(data, PatternKind::Armenian)
 }
 
 pub(super) fn load_zulu(data: &Path) -> crate::user_hyphenation::OptionalPatterns {
-    load_optional(data, true)
+    load_optional(data, PatternKind::Zulu)
 }
 
-fn load_optional(data: &Path, zulu: bool) -> crate::user_hyphenation::OptionalPatterns {
+pub(super) fn load_serbian_latin(data: &Path) -> crate::user_hyphenation::OptionalPatterns {
+    load_optional(data, PatternKind::SerbianLatin)
+}
+
+pub(super) fn load_serbian_cyrillic(data: &Path) -> crate::user_hyphenation::OptionalPatterns {
+    load_optional(data, PatternKind::SerbianCyrillic)
+}
+
+#[derive(Clone, Copy)]
+enum PatternKind {
+    Armenian,
+    Zulu,
+    SerbianLatin,
+    SerbianCyrillic,
+}
+
+fn load_optional(data: &Path, kind: PatternKind) -> crate::user_hyphenation::OptionalPatterns {
     use crate::user_hyphenation::OptionalPatterns;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::fs::OpenOptionsExt;
     let directory = data.join("hyphenation");
-    let filename: &[u8] = if zulu {
-        b"hyph-zu.dic\0"
-    } else {
-        b"hyph-hy.tex\0"
+    let filename: &[u8] = match kind {
+        PatternKind::Armenian => b"hyph-hy.tex\0",
+        PatternKind::Zulu => b"hyph-zu.dic\0",
+        PatternKind::SerbianLatin => b"hyph-sr-latn.dic\0",
+        PatternKind::SerbianCyrillic => b"hyph-sr-cyrl.dic\0",
     };
     let bytes = with_storage(|| {
         // Anchor both lookups in opened descriptors: replacing the directory
@@ -113,10 +130,19 @@ fn load_optional(data: &Path, zulu: bool) -> crate::user_hyphenation::OptionalPa
         Err(error) if error.kind() == io::ErrorKind::NotFound => OptionalPatterns::Missing,
         Err(_) => OptionalPatterns::Invalid,
         Ok(bytes) => {
-            let patterns = if zulu {
-                crate::hyphenation::user_patterns::OwnedPatterns::parse_zulu(&bytes)
-            } else {
-                crate::hyphenation::user_patterns::OwnedPatterns::parse(&bytes)
+            let patterns = match kind {
+                PatternKind::Armenian => {
+                    crate::hyphenation::user_patterns::OwnedPatterns::parse(&bytes)
+                }
+                PatternKind::Zulu => {
+                    crate::hyphenation::user_patterns::OwnedPatterns::parse_zulu(&bytes)
+                }
+                PatternKind::SerbianLatin => {
+                    crate::hyphenation::user_patterns::OwnedPatterns::parse_serbian(&bytes, true)
+                }
+                PatternKind::SerbianCyrillic => {
+                    crate::hyphenation::user_patterns::OwnedPatterns::parse_serbian(&bytes, false)
+                }
             };
             patterns
                 .map(|patterns| OptionalPatterns::Loaded(std::sync::Arc::new(patterns)))
@@ -203,6 +229,8 @@ impl Reader {
     fn apply_rules(&mut self, mut rules: Rules) -> Result<()> {
         rules.armenian = self.user_hyphenation.armenian.clone();
         rules.zulu = self.user_hyphenation.zulu.clone();
+        rules.serbian_latin = self.user_hyphenation.serbian_latin.clone();
+        rules.serbian_cyrillic = self.user_hyphenation.serbian_cyrillic.clone();
         let encoded = serde_json::to_vec(&rules)?;
         if encoded.len() as u64 > MAX_FILE_BYTES {
             return Err("Custom hyphenation rules are full".into());
@@ -236,6 +264,8 @@ impl Reader {
         let mut rules = load(&self.user_hyphenation_path)?;
         rules.armenian = self.user_hyphenation.armenian.clone();
         rules.zulu = self.user_hyphenation.zulu.clone();
+        rules.serbian_latin = self.user_hyphenation.serbian_latin.clone();
+        rules.serbian_cyrillic = self.user_hyphenation.serbian_cyrillic.clone();
         if rules.enabled == enabled && rules == *self.user_hyphenation {
             return Ok(());
         }
@@ -251,6 +281,8 @@ impl Reader {
         let mut rules = load(&self.user_hyphenation_path)?;
         rules.armenian = self.user_hyphenation.armenian.clone();
         rules.zulu = self.user_hyphenation.zulu.clone();
+        rules.serbian_latin = self.user_hyphenation.serbian_latin.clone();
+        rules.serbian_cyrillic = self.user_hyphenation.serbian_cyrillic.clone();
         if remove {
             rules.remove(&draft.language, &draft.word);
         } else {

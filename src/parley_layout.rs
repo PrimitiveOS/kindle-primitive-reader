@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::book_style::{CssLength, ImageLength, Style, TextDecoration};
+use crate::book_style::{CssLength, ImageLength, Style, TextDecoration, VariantCaps};
 use crate::comic::ImagePage;
 use crate::epub::Book;
 use crate::flow_projection::OwnedProjection;
@@ -170,6 +170,25 @@ fn shaping_features(
         crate::FontKerningMode::Fast => &KERNING_FAST,
         crate::FontKerningMode::Good => &KERNING_GOOD,
     }
+}
+
+fn shaping_with_caps(
+    mode: crate::FontKerningMode,
+    common_ligatures: bool,
+    caps: VariantCaps,
+) -> Vec<FontFeature> {
+    let mut features = shaping_features(mode, common_ligatures).to_vec();
+    let tags: &[&[u8; 4]] = match caps {
+        VariantCaps::Normal => &[],
+        VariantCaps::Small => &[b"smcp"],
+        VariantCaps::AllSmall => &[b"smcp", b"c2sc"],
+        VariantCaps::Petite => &[b"pcap"],
+        VariantCaps::AllPetite => &[b"pcap", b"c2pc"],
+        VariantCaps::Unicase => &[b"unic"],
+        VariantCaps::Titling => &[b"titl"],
+    };
+    features.extend(tags.iter().map(|tag| FontFeature::new(Tag::new(*tag), 1)));
+    features
 }
 
 fn apply_kerning<B: parley::Brush>(
@@ -3101,10 +3120,13 @@ fn make_annotation(
         builder.set_cluster_spacing(Some(policy));
     }
     apply_kerning(&mut builder, settings.effective_font_kerning_mode());
-    if !style.common_ligatures {
-        builder.push_default(StyleProperty::FontFeatures(
-            shaping_features(settings.effective_font_kerning_mode(), false).into(),
-        ));
+    if !style.common_ligatures || style.variant_caps != VariantCaps::Normal {
+        let features = shaping_with_caps(
+            settings.effective_font_kerning_mode(),
+            style.common_ligatures,
+            style.variant_caps,
+        );
+        builder.push_default(StyleProperty::FontFeatures(features.as_slice().into()));
     }
     let family: FontFamily<'_> = if settings.override_fonts {
         GenericFamily::Serif.into()
@@ -3272,10 +3294,13 @@ fn shape_paragraph(
         builder.set_cluster_spacing(Some(policy));
     }
     apply_kerning(&mut builder, settings.effective_font_kerning_mode());
-    if !style.common_ligatures {
-        builder.push_default(StyleProperty::FontFeatures(
-            shaping_features(settings.effective_font_kerning_mode(), false).into(),
-        ));
+    if !style.common_ligatures || style.variant_caps != VariantCaps::Normal {
+        let features = shaping_with_caps(
+            settings.effective_font_kerning_mode(),
+            style.common_ligatures,
+            style.variant_caps,
+        );
+        builder.push_default(StyleProperty::FontFeatures(features.as_slice().into()));
     }
     let soft_hyphen = |offset| {
         let index = automatic
@@ -3510,12 +3535,14 @@ fn shape_paragraph(
         if run.font_style != base.font_style {
             builder.push(StyleProperty::FontStyle(run.font_style), bytes.clone());
         }
-        if run.common_ligatures != base.common_ligatures {
+        if run.common_ligatures != base.common_ligatures || run.variant_caps != base.variant_caps {
+            let features = shaping_with_caps(
+                settings.effective_font_kerning_mode(),
+                run.common_ligatures,
+                run.variant_caps,
+            );
             builder.push(
-                StyleProperty::FontFeatures(
-                    shaping_features(settings.effective_font_kerning_mode(), run.common_ligatures)
-                        .into(),
-                ),
+                StyleProperty::FontFeatures(features.as_slice().into()),
                 bytes.clone(),
             );
         }

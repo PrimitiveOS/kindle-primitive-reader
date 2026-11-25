@@ -426,3 +426,32 @@ The [upstream Zulu file](https://github.com/LibreOffice/dictionaries/blob/91c039
 identifies LGPL 2.1 terms. Obtaining or redistributing the optional file has
 separate licensing obligations; keeping it separate from Reader does not
 establish legal compliance. Distribution review remains open.
+
+
+### Optional Serbian patterns
+
+Reader does not include Serbian hyphenation pattern data. The original
+[Serbian pattern archive](https://devbase.net/dict-sr/hyphen-sr-20100818.zip)
+contains separate Latin `hyph_sh.dic` (ISO-8859-2) and Cyrillic `hyph_sr.dic`
+(ISO-8859-5) files. If you have permission to use them, create
+`reader/data/hyphenation/`, copy either or both there as `hyph-sr-latn.dic`
+and `hyph-sr-cyrl.dic`, then close and reopen Reader. In a Serbian book,
+Text › Hyphenation shows the loaded, missing or invalid status of each file.
+Reader reads the files locally as inert data; the book remains readable when
+a pattern file is absent.
+
+Each file is limited to 256 KiB, 4,096 rules and 8,192 trie nodes. The loader
+requires its correct encoding and 2 / 2 minima headers, rejects symlinks and
+malformed or mismatched-script patterns, and converts the upstream Cyrillic
+`д2р` rule to KOReader's pinned `д3р` variant. The two upstream files otherwise
+match the pinned KOReader pattern set. An explicit `sr-Latn` or `sr-Cyrl`
+language selects its respective file; for `sr` without a script, Reader
+selects by each candidate word's script and skips mixed-script words.
+Hyphenation emits only original UTF-8 grapheme boundaries. Real-book behavior,
+encoding and stock comparison remain unverified; reopen Reader after replacing
+a file.
+
+The upstream archive identifies LGPL 2.1-or-later terms. Obtaining or
+redistributing either optional file has separate licensing obligations;
+keeping files separate from Reader does not establish legal compliance.
+Distribution review remains open.

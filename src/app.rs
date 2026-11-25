@@ -1254,6 +1254,8 @@ impl Reader {
             user_hyphenation::load(&user_hyphenation_path).unwrap_or_default();
         user_hyphenation.armenian = user_hyphenation::load_armenian(data);
         user_hyphenation.zulu = user_hyphenation::load_zulu(data);
+        user_hyphenation.serbian_latin = user_hyphenation::load_serbian_latin(data);
+        user_hyphenation.serbian_cyrillic = user_hyphenation::load_serbian_cyrillic(data);
         let user_hyphenation = user_hyphenation.into();
         Ok(Self {
             user_hyphenation,
@@ -2775,11 +2777,12 @@ impl Reader {
             return self.reading_profile_items();
         }
         if screen == Screen::ReadingGuidesAbout {
+            let language = self.controls.interface_language;
             return vec![
-                Item::new("Two vertical lines", Action::Heading)
-                    .detail("Use them to mark the area to focus on while reading."),
-                Item::new("Moving guides", Action::Heading)
-                    .detail("The lines can move inward as you turn pages. Set the interval to 0 to keep them still."),
+                Item::new(language.reading_guide_fixed("Two vertical lines"), Action::Heading)
+                    .detail(language.reading_guide_fixed("Use them to mark the area to focus on while reading.")),
+                Item::new(language.reading_guide_fixed("Moving guides"), Action::Heading)
+                    .detail(language.reading_guide_fixed("The lines can move inward as you turn pages. Set the interval to 0 to keep them still.")),
             ];
         }
         if screen.is_contents() {
@@ -6435,6 +6438,11 @@ impl Reader {
             "Use width"
         } else if matches!(
             self.screen,
+            Screen::NumberingValue(NumberField::ReadingGuide(_))
+        ) {
+            self.controls.interface_language.reading_guide_fixed("Set")
+        } else if matches!(
+            self.screen,
             Screen::NumberingValue(_) | Screen::FootnoteFontSize(_)
         ) {
             "Set"
@@ -8713,6 +8721,18 @@ impl Reader {
                 .controls
                 .interface_language
                 .numbering_fixed("Page numbering defaults"),
+            (Screen::ReadingGuides, _) => self
+                .controls
+                .interface_language
+                .reading_guide_fixed("Reading guides"),
+            (Screen::ReadingGuidesAbout, _) => self
+                .controls
+                .interface_language
+                .reading_guide_fixed("About reading guides"),
+            (Screen::NumberingValue(NumberField::ReadingGuide(field)), _) => self
+                .controls
+                .interface_language
+                .reading_guide_fixed(field.title()),
             (Screen::BookMap, _) => self.controls.interface_language.book_map_text("Book map"),
             (Screen::PageOverview, _) => self.controls.interface_language.overview_text("Pages"),
             (Screen::BookmarkBrowser(page), _) => {
@@ -8816,6 +8836,13 @@ impl Reader {
             Screen::PageNumbering | Screen::NumberingDefaults
         ) {
             self.controls.interface_language.numbering_fixed("Back")
+        } else if matches!(
+            self.screen,
+            Screen::ReadingGuides
+                | Screen::ReadingGuidesAbout
+                | Screen::NumberingValue(NumberField::ReadingGuide(_))
+        ) {
+            self.controls.interface_language.reading_guide_fixed("Back")
         } else if self.screen == Screen::BookMap {
             self.controls.interface_language.book_map_text("Back")
         } else if self.screen == Screen::PageOverview {
@@ -9009,7 +9036,12 @@ impl Reader {
                 Screen::NumberingValue(NumberField::CropMargin) => {
                     ("Choose 0.00 to 1.50 inches", "Set")
                 }
-                Screen::NumberingValue(NumberField::ReadingGuide(field)) => (field.hint(), "Set"),
+                Screen::NumberingValue(NumberField::ReadingGuide(field)) => (
+                    self.controls
+                        .interface_language
+                        .reading_guide_fixed(field.hint()),
+                    self.controls.interface_language.reading_guide_fixed("Set"),
+                ),
                 Screen::NumberingValue(NumberField::FooterTrackMinimumWidth) => {
                     ("Minimum progress bar width: 5 to 90%, in 5% steps", "Set")
                 }

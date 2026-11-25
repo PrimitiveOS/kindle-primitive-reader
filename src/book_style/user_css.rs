@@ -44,6 +44,7 @@ impl Reset {
                         | COMMON_LIGATURES
                         | DIRECTION
                         | LETTER_SPACING
+                        | VARIANT_CAPS
                 )
     }
 }
@@ -72,9 +73,9 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "font-style" => vec![6],
         "direction" => vec![DIRECTION],
         "letter-spacing" => vec![LETTER_SPACING],
-        "font-variant" | "font-variant-ligatures" | "-webkit-font-variant-ligatures" => {
-            vec![COMMON_LIGATURES]
-        }
+        "font-variant" => vec![COMMON_LIGATURES, VARIANT_CAPS],
+        "font-variant-caps" => vec![VARIANT_CAPS],
+        "font-variant-ligatures" | "-webkit-font-variant-ligatures" => vec![COMMON_LIGATURES],
         "line-break" => vec![7],
         "word-break" => vec![8],
         "white-space" => vec![53],
@@ -130,6 +131,7 @@ pub(super) fn apply_reset(
         5 => style.font_weight = value.font_weight,
         6 => style.font_style = value.font_style,
         COMMON_LIGATURES => style.common_ligatures = value.common_ligatures,
+        VARIANT_CAPS => style.variant_caps = value.variant_caps,
         LETTER_SPACING => style.letter_spacing = value.letter_spacing,
         DIRECTION => {
             style.direction = if reset.parent(DIRECTION) {
@@ -337,6 +339,16 @@ impl<'i> AtRuleParser<'i> for StrictSheet {
 }
 fn expand(decl: Declaration, out: &mut Vec<Declaration>) {
     match decl.property {
+        Property::VariantShorthand(ligatures, caps) => {
+            out.push(Declaration {
+                property: Property::CommonLigatures(ligatures),
+                important: decl.important,
+            });
+            out.push(Declaration {
+                property: Property::VariantCaps(caps),
+                important: decl.important,
+            });
+        }
         Property::ResetMany(keys, reset) => out.extend(keys.into_iter().map(|key| Declaration {
             property: Property::Reset(key, reset),
             important: decl.important,

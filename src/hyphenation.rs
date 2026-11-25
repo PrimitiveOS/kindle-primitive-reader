@@ -523,6 +523,34 @@ pub(crate) fn suggestion(
             false,
             |at| breaks.push(at),
         );
+    } else if word.len() <= MAX_WORD * 5
+        && is_serbian_script(crate::TypographyLocale::parse(language), true)
+        && word_has_script(word, Script::Latin)
+        && let crate::user_hyphenation::OptionalPatterns::Loaded(patterns) = &rules.serbian_latin
+    {
+        pattern_breaks(
+            patterns.view(),
+            None,
+            word,
+            HyphenationLimits { left: 2, right: 2 },
+            false,
+            false,
+            |at| breaks.push(at),
+        );
+    } else if word.len() <= MAX_WORD * 5
+        && is_serbian_script(crate::TypographyLocale::parse(language), false)
+        && word_has_script(word, Script::Cyrillic)
+        && let crate::user_hyphenation::OptionalPatterns::Loaded(patterns) = &rules.serbian_cyrillic
+    {
+        pattern_breaks(
+            patterns.view(),
+            None,
+            word,
+            HyphenationLimits { left: 2, right: 2 },
+            false,
+            false,
+            |at| breaks.push(at),
+        );
     } else if let Some(locale) =
         dictionary(&Style::default(), crate::TypographyLocale::parse(language))
     {
@@ -544,6 +572,37 @@ pub(crate) fn is_zulu_language(locale: Option<crate::TypographyLocale>) -> bool 
         return false;
     };
     matches!(language.language(), "zu" | "zul") && matches!(language.script(), None | Some("Latn"))
+}
+
+pub(crate) fn is_serbian_language(locale: Option<crate::TypographyLocale>) -> bool {
+    let Some(crate::TypographyLocale::Language(language)) = locale else {
+        return false;
+    };
+    matches!(language.language(), "sr" | "srp")
+        && matches!(language.script(), None | Some("Latn") | Some("Cyrl"))
+}
+
+fn is_serbian_script(locale: Option<crate::TypographyLocale>, latin: bool) -> bool {
+    let Some(crate::TypographyLocale::Language(language)) = locale else {
+        return false;
+    };
+    matches!(language.language(), "sr" | "srp")
+        && (language.script().is_none()
+            || language.script() == Some(if latin { "Latn" } else { "Cyrl" }))
+}
+
+// Mixed-script words must not receive rules from only one Serbian table.
+fn word_has_script(word: &str, target: Script) -> bool {
+    let scripts = CodePointMapData::<Script>::new();
+    let mut found = false;
+    for ch in word.chars().filter(|ch| ch.is_alphabetic()) {
+        match scripts.get(ch) {
+            script if script == target => found = true,
+            Script::Common | Script::Inherited => {}
+            _ => return false,
+        }
+    }
+    found
 }
 
 pub(crate) fn allows_user_rules(style: &Style) -> bool {
@@ -582,25 +641,42 @@ pub(crate) fn with_user_rules_text(
         let sources: [(
             &crate::user_hyphenation::OptionalPatterns,
             LocaleCheck,
+            Option<Script>,
             HyphenationLimits,
-        ); 2] = [
+        ); 4] = [
             (
                 &rules.armenian,
                 is_armenian_language,
+                None,
                 HyphenationLimits { left: 1, right: 2 },
             ),
             (
                 &rules.zulu,
                 is_zulu_language,
+                None,
                 HyphenationLimits { left: 2, right: 1 },
             ),
+            (
+                &rules.serbian_latin,
+                |locale| is_serbian_script(locale, true),
+                Some(Script::Latin),
+                HyphenationLimits { left: 2, right: 2 },
+            ),
+            (
+                &rules.serbian_cyrillic,
+                |locale| is_serbian_script(locale, false),
+                Some(Script::Cyrillic),
+                HyphenationLimits { left: 2, right: 2 },
+            ),
         ];
-        for (state, matches_locale, defaults) in sources {
+        for (state, matches_locale, script, defaults) in sources {
             let crate::user_hyphenation::OptionalPatterns::Loaded(patterns) = state else {
                 continue;
             };
             for range in crate::selection::word_ranges(text) {
-                if range.len() > MAX_WORD * 5 {
+                if range.len() > MAX_WORD * 5
+                    || script.is_some_and(|target| !word_has_script(&text[range.clone()], target))
+                {
                     continue;
                 }
                 let first = styled.partition_point(|span| span.bytes.end <= range.start);

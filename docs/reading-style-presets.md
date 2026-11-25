@@ -100,6 +100,18 @@ vertical or Blitz rendering are not covered by this implementation. The
 source text and saved anchors are unchanged. This behavior has not yet been
 built or tested. [Pinned KOReader tweak](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L364-L371)
 
+Horizontal text and ruby accept CSS `font-variant-caps` and the corresponding
+single-keyword `font-variant` shorthand for small caps, all small caps, petite
+caps, all petite caps, unicase and titling caps. Normal inheritance, cascade
+and reset rules apply. Reader requests the matching OpenType features while
+retaining the selected kerning and common-ligature policy. A font without the
+requested feature uses its ordinary glyphs; Reader does not synthesize small
+caps. Multi-keyword shorthand combinations, pseudo-element-specific variant
+declarations, list markers, vertical text and Blitz rendering remain outside
+this subset. The original text, copying, selection and saved anchors are not
+rewritten. This behavior has not yet been built or tested.
+[Pinned CRE variant parsing](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L3957-L4015)
+
 The horizontal reader also accepts publisher and user CSS `letter-spacing`
 on ordinary styled runs. It supports `normal`, signed CSS lengths, inheritance
 and KOReader's percentage-of-declaring-font extension. The reader's own letter

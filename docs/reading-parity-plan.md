@@ -163,6 +163,11 @@ and bounded image loading for standalone and zipped Markdown. The Mac
 build-only check passes; pattern data is not bundled, and its license review,
 resource handling, pagination and device behavior remain to be verified.
 
+Optional Serbian pattern loading and horizontal CSS caps variants are also
+implemented and pass a Mac build-only check. Serbian data is not bundled;
+font-feature availability, malformed inputs, licensing and device behavior
+remain open.
+
 Georgian patterns, a bounded loose-line-break option and Vietnamese library
 Find/Sort controls have been implemented and pass a Mac build-only check.
 Full line-break parity, script behavior and visual/device checks remain open.

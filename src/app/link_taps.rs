@@ -93,6 +93,7 @@ impl ReflowLink {
 
 impl Reader {
     pub(super) fn link_settings_items(&self) -> Vec<Item> {
+        let language = self.controls.interface_language;
         let mut items: Vec<_> = [
             LinkPreference::Follow,
             LinkPreference::LargerArea,
@@ -112,19 +113,26 @@ impl Reader {
         })
         .map(|setting| {
             if let Some(reason) = setting.unavailable_reason(self.controls) {
-                return Item::new(setting.label(), Action::Heading).detail(reason);
+                return Item::new(
+                    language.link_settings_text(setting.label()),
+                    Action::Heading,
+                )
+                .detail(language.link_settings_text(reason));
             }
-            let item = Item::new(setting.label(), Action::ToggleLinkPreference(setting));
+            let item = Item::new(
+                language.link_settings_text(setting.label()),
+                Action::ToggleLinkPreference(setting),
+            );
             match setting {
-                LinkPreference::SwipeBack => {
-                    item.detail("Swipe right to return to your previous location")
-                }
-                LinkPreference::SwipeFollow => {
-                    item.detail("Swipe left from near a link to follow it")
-                }
-                LinkPreference::SwipeLatestBookmark => {
-                    item.detail("Swipe left when there is no link to follow")
-                }
+                LinkPreference::SwipeBack => item.detail(
+                    language.link_settings_text("Swipe right to return to your previous location"),
+                ),
+                LinkPreference::SwipeFollow => item.detail(
+                    language.link_settings_text("Swipe left from near a link to follow it"),
+                ),
+                LinkPreference::SwipeLatestBookmark => item.detail(
+                    language.link_settings_text("Swipe left when there is no link to follow"),
+                ),
                 _ => item,
             }
         })
@@ -134,10 +142,14 @@ impl Reader {
             let item = if let Some(reason) =
                 LinkPreference::FootnoteBookFont.unavailable_reason(self.controls)
             {
-                Item::new("Footnote popup font size", Action::Heading).detail(reason)
+                Item::new(
+                    language.link_settings_text("Footnote popup font size"),
+                    Action::Heading,
+                )
+                .detail(language.link_settings_text(reason))
             } else {
                 Item::new(
-                    "Footnote popup font size",
+                    language.link_settings_text("Footnote popup font size"),
                     Action::Show(Screen::FootnoteFontSize(footnote_font::Mode::current(size))),
                 )
                 .detail(size.description())
@@ -145,8 +157,15 @@ impl Reader {
             items.push(item);
             let justify = LinkPreference::FootnoteJustify;
             items.push(match justify.unavailable_reason(self.controls) {
-                Some(reason) => Item::new(justify.label(), Action::Heading).detail(reason),
-                None => Item::new(justify.label(), Action::ToggleLinkPreference(justify)),
+                Some(reason) => Item::new(
+                    language.link_settings_text(justify.label()),
+                    Action::Heading,
+                )
+                .detail(language.link_settings_text(reason)),
+                None => Item::new(
+                    language.link_settings_text(justify.label()),
+                    Action::ToggleLinkPreference(justify),
+                ),
             });
         }
         items

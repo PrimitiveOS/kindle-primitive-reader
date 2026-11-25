@@ -209,7 +209,7 @@ Install Reader from PrimitiveOS Store or follow the manual install guide.
   language changes. Search and selection keep the original word across lines.
   In Text › Style, turn on Custom rules to edit a selected word’s breaks for
   its language. Long-press the word and tap Hyphenate.
-  [Compare both page layouts](docs/english-hyphenation.md) · [Word break editor](docs/screenshots/custom-hyphenation.png) · [Optional Armenian and Zulu patterns](docs/multilingual-hyphenation.md#optional-armenian-patterns)
+  [Compare both page layouts](docs/english-hyphenation.md) · [Word break editor](docs/screenshots/custom-hyphenation.png) · [Optional Armenian, Zulu and Serbian patterns](docs/multilingual-hyphenation.md#optional-armenian-patterns)
 - Save a named preset in Text › Reading profiles and apply it to another book.
 - The optional top status header counts rendered pages across supported EPUBs.
   [Page numbering and supported layouts](docs/whole-book-screen-pages.md)

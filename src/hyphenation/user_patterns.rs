@@ -1,5 +1,6 @@
-//! Optional user-supplied Armenian and Zulu patterns, treated as inert data.
+//! Optional user-supplied hyphenation patterns, treated as inert data.
 use super::PatternView;
+use icu_properties::{CodePointMapData, props::Script};
 use std::collections::BTreeMap;
 
 pub(crate) const MAX_FILE_BYTES: u64 = 256 * 1024;
@@ -13,6 +14,14 @@ pub(crate) struct OwnedPatterns {
     nodes: Vec<(u16, u8, u16, u8)>,
     edges: Vec<(char, u16)>,
     weights: Vec<u8>,
+}
+
+#[derive(Clone, Copy)]
+enum Alphabet {
+    Armenian,
+    Zulu,
+    SerbianLatin,
+    SerbianCyrillic,
 }
 
 #[derive(Default)]
@@ -45,7 +54,7 @@ impl OwnedPatterns {
         if !prefix.trim().is_empty() || !suffix.trim().is_empty() {
             return None;
         }
-        Self::parse_rules(group.split_whitespace(), false)
+        Self::parse_rules(group.split_whitespace(), Alphabet::Armenian)
     }
 
     /// Accept the upstream ASCII-compatible ISO-8859-1 dictionary syntax.
@@ -62,10 +71,53 @@ impl OwnedPatterns {
         if lines.next()? != "ISO8859-1" {
             return None;
         }
-        Self::parse_rules(lines.filter(|line| *line != "'1"), true)
+        Self::parse_rules(lines.filter(|line| *line != "'1"), Alphabet::Zulu)
     }
 
-    fn parse_rules<'a>(rules: impl Iterator<Item = &'a str>, zulu: bool) -> Option<Self> {
+    /// Serbian sources are strict ISO-8859-2 (Latin) or ISO-8859-5 (Cyrillic).
+    /// KOReader changes the Cyrillic `д2р` pattern to `д3р`.
+    pub(crate) fn parse_serbian(bytes: &[u8], latin: bool) -> Option<Self> {
+        if bytes.len() as u64 > MAX_FILE_BYTES {
+            return None;
+        }
+        let encoding = if latin {
+            encoding_rs::ISO_8859_2
+        } else {
+            encoding_rs::ISO_8859_5
+        };
+        let (input, errors) = encoding.decode_without_bom_handling(bytes);
+        if errors {
+            return None;
+        }
+        let mut lines = input
+            .lines()
+            .map(|line| line.split('%').next().unwrap_or("").trim())
+            .filter(|line| !line.is_empty());
+        if lines.next()? != (if latin { "ISO8859-2" } else { "ISO8859-5" })
+            || lines.next()? != "LEFTHYPHENMIN 2"
+            || lines.next()? != "RIGHTHYPHENMIN 2"
+        {
+            return None;
+        }
+        let alphabet = if latin {
+            Alphabet::SerbianLatin
+        } else {
+            Alphabet::SerbianCyrillic
+        };
+        Self::parse_rules(
+            lines.map(|line| {
+                if !latin && line == "д2р" {
+                    "д3р"
+                } else {
+                    line
+                }
+            }),
+            alphabet,
+        )
+    }
+
+    fn parse_rules<'a>(rules: impl Iterator<Item = &'a str>, alphabet: Alphabet) -> Option<Self> {
+        let scripts = CodePointMapData::<Script>::new();
         let mut nodes = vec![Node::default()];
         let mut count = 0usize;
         for pattern in rules {
@@ -89,10 +141,15 @@ impl OwnedPatterns {
                     continue;
                 }
                 previous_digit = false;
-                let letter = if zulu {
-                    ch.is_ascii_lowercase()
-                } else {
-                    ('\u{0561}'..='\u{0587}').contains(&ch) && ch.is_lowercase()
+                let letter = match alphabet {
+                    Alphabet::Zulu => ch.is_ascii_lowercase(),
+                    Alphabet::Armenian => {
+                        ('\u{0561}'..='\u{0587}').contains(&ch) && ch.is_lowercase()
+                    }
+                    Alphabet::SerbianLatin => ch.is_lowercase() && scripts.get(ch) == Script::Latin,
+                    Alphabet::SerbianCyrillic => {
+                        ch.is_lowercase() && scripts.get(ch) == Script::Cyrillic
+                    }
                 };
                 if ch != '.' && !letter {
                     return None;

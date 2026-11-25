@@ -127,22 +127,34 @@ impl Reader {
             .iter()
             .filter(|(source, _)| source.enabled(self.controls.notification_sources))
             .count();
-        Item::new("Notifications", Action::Show(Screen::ReadingNotifications))
-            .detail(format!("{enabled} of {} sources on", Source::ALL.len()))
+        Item::new("Notifications", Action::Show(Screen::ReadingNotifications)).detail(
+            self.controls
+                .interface_language
+                .notification_source_count(enabled, Source::ALL.len()),
+        )
     }
 
     pub(super) fn notification_items(&self, screen: Screen) -> Option<Vec<Item>> {
+        let language = self.controls.interface_language;
         let items = match screen {
             Screen::ReadingNotifications => Source::ALL
                 .into_iter()
-                .map(|(source, label)| Item::new(label, Action::ToggleNotificationSource(source)))
+                .map(|(source, label)| {
+                    Item::new(
+                        language.notification_settings_text(label),
+                        Action::ToggleNotificationSource(source),
+                    )
+                })
                 .chain([Item::new(
-                    "Show past notifications",
+                    language.notification_settings_text("Show past notifications"),
                     Action::Show(Screen::PastNotifications),
                 )])
                 .collect(),
             Screen::PastNotifications if self.notifications.history.is_empty() => {
-                vec![Item::new("No notifications yet", Action::Heading)]
+                vec![Item::new(
+                    language.notification_settings_text("No notifications yet"),
+                    Action::Heading,
+                )]
             }
             Screen::PastNotifications => self
                 .notifications
