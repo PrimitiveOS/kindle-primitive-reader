@@ -40,7 +40,9 @@ arbitrary CSS image rendering, inline SVG data URLs, and links to separate
 HTML chapters remain unsupported. Imported CSS uses the existing selector and
 property subset; loading an asset does not imply every CSS property renders.
 As in the previous adapter, standalone HTML must be well-formed XML-compatible
-markup. KOReader's pinned CREngine resolves non-container HTML resources against
+markup. The loose-document decoder additionally accepts strictly valid
+BOM-marked UTF-32LE and UTF-32BE; BOM-less UTF-32 is not detected. KOReader's
+pinned CREngine resolves non-container HTML resources against
 the document directory; Reader applies the narrower boundaries above.
 [KOReader resource resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L995-L1011)
 

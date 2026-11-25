@@ -8,6 +8,7 @@ use std::ops::Range;
 
 use ring::digest::{SHA256, digest};
 use roxmltree::Node;
+use serde::{Deserialize, Serialize};
 
 use crate::flow_projection::Affinity;
 
@@ -62,6 +63,7 @@ pub(crate) struct Snapshot {
     text: Vec<TextSpan>,
     gaps: Vec<WhitespaceGap>,
     canonical_sha256: [u8; 32],
+    raw_sha256: [u8; 32],
 }
 
 /// An offset inside collapsed raw whitespace must remain explicit; choosing
@@ -74,6 +76,24 @@ pub(crate) enum RawBoundary {
         raw: Range<usize>,
         offset: usize,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CaretAffinity {
+    Before,
+    After,
+}
+
+/// Not yet attached to persisted anchors. Future consumers must also verify
+/// the enclosing book, chapter, revision and block identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RawCaret {
+    pub(crate) raw_offset: usize,
+    pub(crate) canonical_offset: usize,
+    pub(crate) raw_sha256: [u8; 32],
+    pub(crate) affinity: CaretAffinity,
 }
 
 pub(crate) struct Bound<'a> {
@@ -103,6 +123,39 @@ impl Bound<'_> {
 
     pub(crate) fn gaps(&self) -> &[WhitespaceGap] {
         &self.snapshot.gaps
+    }
+
+    /// Build an explicit raw caret without losing its position in a gap.
+    pub(crate) fn caret_at(&self, raw_offset: usize, affinity: CaretAffinity) -> Option<RawCaret> {
+        let canonical_offset = match self.raw_to_canonical(raw_offset)? {
+            RawBoundary::Exact(offset) => offset,
+            RawBoundary::Gap { canonical, .. } => match affinity {
+                CaretAffinity::Before => canonical.start,
+                CaretAffinity::After => canonical.end,
+            },
+        };
+        Some(RawCaret {
+            raw_offset,
+            canonical_offset,
+            raw_sha256: self.snapshot.raw_sha256,
+            affinity,
+        })
+    }
+
+    /// Verify the raw fingerprint and canonical relationship before use.
+    pub(crate) fn validate_caret(&self, caret: &RawCaret) -> Option<RawBoundary> {
+        if caret.raw_sha256 != self.snapshot.raw_sha256 {
+            return None;
+        }
+        let boundary = self.raw_to_canonical(caret.raw_offset)?;
+        let canonical = match &boundary {
+            RawBoundary::Exact(offset) => *offset,
+            RawBoundary::Gap { canonical, .. } => match caret.affinity {
+                CaretAffinity::Before => canonical.start,
+                CaretAffinity::After => canonical.end,
+            },
+        };
+        (caret.canonical_offset == canonical).then_some(boundary)
     }
 
     /// Project a canonical caret to an edge of any collapsed raw gap.
@@ -263,5 +316,6 @@ pub(super) fn capture(
             .as_ref()
             .try_into()
             .ok()?,
+        raw_sha256: digest(&SHA256, raw.as_bytes()).as_ref().try_into().ok()?,
     })
 }

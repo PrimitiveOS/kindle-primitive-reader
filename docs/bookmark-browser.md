@@ -80,4 +80,8 @@ The comparison uses the installed KOReader v2026.07.1 bookmark browser and its s
 
 The simulator tests drive the normal touch and physical-button inputs through sources, collection selection, property selection, search, previews, PDF authentication and location restoration. Four authorized original Documents files, two EPUBs and two PDFs, also restore saved marks and the previous page while retaining their source bytes. The full Mac suite passes 561 library tests, 14 integration tests and four system tests, with 31 opt-in tests skipped in the ordinary run. The separate original-source verification passes seven tests and preserves all 46 selected source SHA-256 values. Kindle verification for this increment is pending.
 
-Per-mark color filtering and additional provider metadata remain open in the full reading-workflow audit. The metadata coverage document identifies the fields that each provider currently exposes.
+The bookmark browser can filter saved highlights and notes by their named
+color; page bookmarks have no highlight color and are excluded when a color is
+selected. Additional provider metadata remains open in the full
+reading-workflow audit. The metadata coverage document identifies the fields
+that each provider currently exposes.

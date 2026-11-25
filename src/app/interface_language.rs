@@ -2497,6 +2497,8 @@ impl InterfaceLanguage {
             "Back" => "Quay lại",
             "Bookmark, highlighted text or note" => "Dấu trang, đoạn tô sáng hoặc ghi chú",
             "Match case" => "Phân biệt hoa thường",
+            "Bookmark" => "Dấu trang",
+            "Bookmark note" => "Ghi chú dấu trang",
             "Page bookmark" => "Dấu trang",
             "Highlight" => "Đoạn tô sáng",
             "Note" => "Ghi chú",
@@ -2592,6 +2594,23 @@ impl InterfaceLanguage {
             "Return to original page" => "Về trang ban đầu",
             "Done" => "Xong",
             "Search match" => "Kết quả tìm kiếm",
+            "Close search" => "Đóng tìm kiếm",
+            "Searching pages" => "Đang tìm trong các trang",
+            "Searching earlier text" => "Đang tìm phần văn bản trước",
+            "Searching later text" => "Đang tìm phần văn bản sau",
+            "No match found. Some pages could not be searched" => {
+                "Không tìm thấy kết quả. Một số trang không thể tìm kiếm"
+            }
+            "No earlier matching page" => "Không có trang khớp trước đó",
+            "No later matching page" => "Không có trang khớp tiếp theo",
+            "Showing the first 5,000 matches on this page" => {
+                "Đang hiện 5.000 kết quả đầu tiên trên trang này"
+            }
+            "Search result memory limit reached" => "Đã đạt giới hạn bộ nhớ kết quả tìm kiếm",
+            "Showing first 5,000 matches" => "Đang hiện 5.000 kết quả đầu tiên",
+            "Some chapters could not be searched" => "Một số chương không thể tìm kiếm",
+            "No earlier match" => "Không có kết quả trước đó",
+            "No later match" => "Không có kết quả tiếp theo",
             _ => english,
         }
     }

@@ -29,5 +29,11 @@ These changes are implementation candidates: no build, simulation, behavioral,
 performance or Kindle tests have yet been run. Very long inputs may still hit
 node, section, line, rendering or memory bounds and report an error. They do
 not yet match KOReader's broader encoding and paragraph-detection behavior.
+Standalone loose-document decoding recognizes BOM-marked UTF-32 little- and
+big-endian input as well as the previously supported encodings. It rejects
+incomplete code units, invalid Unicode scalars and NUL characters. BOM-less
+UTF-32 detection is not implemented. Previously readable encodings retain
+their conversion path and saved identities. UTF-32 behavior and real-book
+compatibility have not yet been tested in simulation or on Kindle.
 [KOReader text reader](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L1164-L1245) ·
 [KOReader text import modes](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L2398-L2412)

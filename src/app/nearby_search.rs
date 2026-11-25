@@ -535,7 +535,14 @@ impl Reader {
         // area. The status caption and Exit keep their normal positions.
         let rect = self.reading_viewport().bottom_right(SEARCH_FIT_CLOSE);
         canvas.fill(rect, 255);
-        canvas.button(rect, "Close search", false, false);
+        canvas.button(
+            rect,
+            self.controls
+                .interface_language
+                .document_search_text("Close search"),
+            false,
+            false,
+        );
     }
 
     fn current_reflow_context(&self) -> Option<ReflowContext> {
@@ -742,7 +749,12 @@ impl Reader {
                 continuing,
                 at: Instant::now(),
             });
-            self.notice = Some("Searching pages".into());
+            self.notice = Some(
+                self.controls
+                    .interface_language
+                    .document_search_text("Searching pages")
+                    .into(),
+            );
             return Ok(());
         }
         let active = self.active.as_ref().ok_or("Open a book first")?;
@@ -833,11 +845,13 @@ impl Reader {
             .unwrap()
             .submit(move || request.run());
         self.notice = Some(
-            match direction {
-                SearchDirection::Previous => "Searching earlier text",
-                SearchDirection::Next => "Searching later text",
-            }
-            .into(),
+            self.controls
+                .interface_language
+                .document_search_text(match direction {
+                    SearchDirection::Previous => "Searching earlier text",
+                    SearchDirection::Next => "Searching later text",
+                })
+                .into(),
         );
         Ok(())
     }
@@ -934,7 +948,12 @@ impl Reader {
                         SearchDirection::Next => "No later matching page",
                     }
                 };
-                self.notice = Some(message.into());
+                self.notice = Some(
+                    self.controls
+                        .interface_language
+                        .document_search_text(message)
+                        .into(),
+                );
                 return Ok(Change::Partial);
             };
             // Reuse the open provider and its cached OCR. Yield after every page so
@@ -982,7 +1001,12 @@ impl Reader {
                 .map(|bounds| (page, bounds))
                 .collect();
             if found.limited {
-                self.notice = Some("Showing the first 5,000 matches on this page".into());
+                self.notice = Some(
+                    self.controls
+                        .interface_language
+                        .document_search_text("Showing the first 5,000 matches on this page")
+                        .into(),
+                );
             }
             self.search_result = Some(0);
             self.nearby.current = Some(pending.query);
@@ -1015,11 +1039,26 @@ impl Reader {
                     self.nearby.all = None;
                     if self.screen == Screen::Matches {
                         self.notice = if memory_limited {
-                            Some("Search result memory limit reached".into())
+                            Some(
+                                self.controls
+                                    .interface_language
+                                    .document_search_text("Search result memory limit reached")
+                                    .into(),
+                            )
                         } else if limited {
-                            Some("Showing first 5,000 matches".into())
+                            Some(
+                                self.controls
+                                    .interface_language
+                                    .document_search_text("Showing first 5,000 matches")
+                                    .into(),
+                            )
                         } else if skipped {
-                            Some("Some chapters could not be searched".into())
+                            Some(
+                                self.controls
+                                    .interface_language
+                                    .document_search_text("Some chapters could not be searched")
+                                    .into(),
+                            )
                         } else {
                             None
                         };
@@ -1045,11 +1084,13 @@ impl Reader {
         let Some(hit) = outcome? else {
             self.nearby.end = Some(pending.direction);
             self.notice = Some(
-                match pending.direction {
-                    SearchDirection::Previous => "No earlier match",
-                    SearchDirection::Next => "No later match",
-                }
-                .into(),
+                self.controls
+                    .interface_language
+                    .document_search_text(match pending.direction {
+                        SearchDirection::Previous => "No earlier match",
+                        SearchDirection::Next => "No later match",
+                    })
+                    .into(),
             );
             return Ok(Change::Partial);
         };

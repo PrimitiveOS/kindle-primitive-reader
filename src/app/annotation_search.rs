@@ -105,23 +105,35 @@ impl AnnotationSearch {
             .is_none_or(|query| !query.matches(text, 1).is_empty())
     }
 
-    fn highlight(&self, text: &str, note: Option<&str>, action: Action) -> Option<Item> {
+    fn highlight(
+        &self,
+        text: &str,
+        note: Option<&str>,
+        action: Action,
+        language: super::interface_language::InterfaceLanguage,
+    ) -> Option<Item> {
         let note = note.filter(|s| !s.trim().is_empty());
         if let Some(note) = note {
             if !self.notes {
                 return None;
             }
             if self.contains(note) {
-                return Some(
-                    Item::new(excerpt(note), action).detail(format!("Note · {}", excerpt(text))),
-                );
+                return Some(Item::new(excerpt(note), action).detail(format!(
+                    "{} · {}",
+                    language.bookmark_text("Note"),
+                    excerpt(text)
+                )));
             }
             return self.contains(text).then(|| {
-                Item::new(excerpt(text), action).detail(format!("Note · {}", excerpt(note)))
+                Item::new(excerpt(text), action).detail(format!(
+                    "{} · {}",
+                    language.bookmark_text("Note"),
+                    excerpt(note)
+                ))
             });
         }
         (self.highlights && self.contains(text))
-            .then(|| Item::new(excerpt(text), action).detail("Highlight"))
+            .then(|| Item::new(excerpt(text), action).detail(language.bookmark_text("Highlight")))
     }
 }
 
@@ -137,6 +149,7 @@ impl Reader {
         let Some(state) = self.open_book_id().and_then(|id| self.library.state(id)) else {
             return Vec::new();
         };
+        let language = self.controls.interface_language;
         let query = &self.annotation_search;
         let mut rows = Vec::new();
         if query.bookmarks || query.notes {
@@ -172,11 +185,11 @@ impl Reader {
                         mark.note.as_deref().unwrap_or(&mark.label),
                         Action::Bookmark(index),
                     )
-                    .detail(if mark.note.is_some() {
+                    .detail(language.bookmark_text(if mark.note.is_some() {
                         "Bookmark note"
                     } else {
                         "Bookmark"
-                    }),
+                    })),
                 ));
             }
         }
@@ -186,6 +199,7 @@ impl Reader {
                     &mark.text,
                     mark.note.as_deref(),
                     Action::PdfHighlight(index),
+                    language,
                 ) {
                     let (y, x) = mark
                         .bounds
@@ -208,6 +222,7 @@ impl Reader {
                     &mark.selection.text,
                     mark.note.as_deref(),
                     Action::Highlight(index),
+                    language,
                 ) {
                     let anchor = &mark.selection.start;
                     let chapter = spine

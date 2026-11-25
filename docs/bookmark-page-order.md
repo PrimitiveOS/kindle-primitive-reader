@@ -12,10 +12,12 @@ Open **Settings → Bookmarks and notes** to choose page or date order, reverse
 the result, and choose how highlight rows display text and notes. Those choices
 are saved in Reader's controls file. The shared ordering includes EPUB and PDF
 bookmarks and highlights. Tapping a row jumps to its saved location; long
-pressing a highlight opens its read, edit, extend, and remove actions. Text
-display modes apply to highlight rows; page bookmarks continue to show their
-saved label, which remains a display-parity gap against KOReader's bookmark
-summary options.
+pressing a highlight opens its read, edit, extend, and remove actions. The
+current local implementation also applies the text mode to page bookmarks with
+notes: note-first shows the note as the title, highlighted-text mode keeps the
+bookmark label, and text-and-note mode shows the note in the detail. The latter
+uses Reader's separate detail row rather than KOReader's combined text. This
+addition has not yet been behaviorally tested or verified on Kindle.
 
 Regressions interleave page bookmarks and EPUB highlights in date order, follow
 their original actions, verify page jumps and chapter labels, and cover page

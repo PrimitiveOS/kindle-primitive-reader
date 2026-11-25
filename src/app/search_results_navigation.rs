@@ -259,11 +259,19 @@ impl Reader {
         } else if let Some((current, _)) = self.top_header_page_labels() {
             current
         } else if let Some(book) = &self.active {
-            format!(
-                "Chapter {} · Page {}",
-                book.reading.chapter + 1,
-                book.reading.page + 1
-            )
+            if self.controls.interface_language.is_english() {
+                format!(
+                    "Chapter {} · Page {}",
+                    book.reading.chapter + 1,
+                    book.reading.page + 1
+                )
+            } else {
+                format!(
+                    "Chương {} · Trang {}",
+                    book.reading.chapter + 1,
+                    book.reading.page + 1
+                )
+            }
         } else {
             String::new()
         }

@@ -25,6 +25,18 @@ than being silently snapped to a normalized position. Invalid UTF-8
 boundaries, mismatched canonical text or conflicting mappings fail closed.
 The mapper is not yet connected to layout, selection or saved anchors.
 
+An internal, serializable raw-caret value now records a raw offset, its
+canonical edge, explicit affinity and the raw text's SHA-256. The bound mapper
+can create and validate this value without snapping gap interiors. It is not
+yet attached to Reader's persisted `Anchor`, and callers will also have to
+verify book, chapter, revision and block identity. Before raw carets are
+persisted, the library and backup format must support version 2, preserve an
+atomic version-1 backup and reject unsupported raw data. The existing version-1
+loader rejects other library/backup versions, which prevents older builds
+from normally opening and rewriting a version-2 state. Startup also recovers
+any pending backup journal before this check, so the eventual migration must
+coordinate its transaction with that recovery and keep the independent backup.
+
 This stage does **not** change rendering, copying, selection, source revisions,
 existing anchors or saved state. It does not yet implement preformatted EPUB
 rendering. Later stages need a bounded style-aware layout projection and a

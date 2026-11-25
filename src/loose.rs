@@ -310,6 +310,39 @@ pub(crate) fn fallback_title(path: &Path) -> &str {
 }
 
 fn decode_document(bytes: &[u8], format: Format) -> Result<Cow<'_, str>> {
+    // Check four-byte BOMs before encoding_rs sees the UTF-16LE prefix.
+    // These documents previously failed the binary-character check.
+    let utf32_le = if bytes.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
+        Some(true)
+    } else if bytes.starts_with(&[0x00, 0x00, 0xfe, 0xff]) {
+        Some(false)
+    } else {
+        None
+    };
+    if let Some(little_endian) = utf32_le {
+        let encoded = &bytes[4..];
+        if encoded.len() % 4 != 0 {
+            return Err("The document has an incomplete UTF-32 character".into());
+        }
+        // UTF-8 never uses more bytes than UTF-32 for a Unicode scalar, so
+        // the decoded string remains bounded by the existing input limit.
+        let mut decoded = String::with_capacity(encoded.len());
+        for chunk in encoded.chunks_exact(4) {
+            let value = [chunk[0], chunk[1], chunk[2], chunk[3]];
+            let value = if little_endian {
+                u32::from_le_bytes(value)
+            } else {
+                u32::from_be_bytes(value)
+            };
+            let character =
+                char::from_u32(value).ok_or("The document contains an invalid UTF-32 character")?;
+            if character == '\0' {
+                return Err("The document contains binary characters".into());
+            }
+            decoded.push(character);
+        }
+        return Ok(Cow::Owned(decoded));
+    }
     let (encoding, offset) = if let Some(bom) = Encoding::for_bom(bytes) {
         bom
     } else if let Some(label) = declared_encoding(bytes, format) {
