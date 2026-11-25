@@ -73,11 +73,15 @@ impl Plan {
         }
         let originals = &*block.styled_text;
         if originals.is_empty()
-            || originals.first()?.bytes.start != 0
-            || originals.last()?.bytes.end != block.text.len()
+            || originals.iter().any(|run| {
+                run.bytes.start >= run.bytes.end
+                    || run.bytes.end > block.text.len()
+                    || !block.text.is_char_boundary(run.bytes.start)
+                    || !block.text.is_char_boundary(run.bytes.end)
+            })
             || originals
                 .windows(2)
-                .any(|pair| pair[0].bytes.end != pair[1].bytes.start)
+                .any(|pair| pair[0].bytes.end > pair[1].bytes.start)
         {
             return None;
         }
@@ -96,53 +100,52 @@ impl Plan {
         }
         let bound = block.raw_whitespace.as_ref()?.bind(block.text)?;
         let raw = bound.raw();
-        let whitespace = |ch: char| matches!(ch, ' ' | '\t' | '\r' | '\n' | '\u{c}');
-        if originals.first()?.element != block.element && raw.chars().next().is_some_and(whitespace)
-            || originals.last()?.element != block.element
-                && raw.chars().next_back().is_some_and(whitespace)
-        {
-            return None;
-        }
-        let mut runs = Vec::with_capacity(originals.len());
+        let mut runs = Vec::with_capacity(bound.style_runs().len());
         let mut previous_raw = 0;
-        for (index, original) in originals.iter().enumerate() {
-            let end = if index + 1 == originals.len() {
-                raw.len()
-            } else {
-                let before = bound.canonical_to_raw(
-                    original.bytes.end,
-                    crate::flow_projection::Affinity::Before,
-                )?;
-                let after = bound.canonical_to_raw(
-                    original.bytes.end,
-                    crate::flow_projection::Affinity::After,
-                )?;
-                if before != after
-                    || raw
-                        .get(..before)?
-                        .chars()
-                        .next_back()
-                        .is_some_and(whitespace)
-                    || raw.get(before..)?.chars().next().is_some_and(whitespace)
-                {
-                    return None;
-                }
-                before
-            };
-            if previous_raw >= end
-                || !raw.is_char_boundary(previous_raw)
-                || !raw.is_char_boundary(end)
+        for raw_run in bound.style_runs() {
+            if raw_run.raw.start != previous_raw
+                || raw_run.raw.start >= raw_run.raw.end
+                || !raw.is_char_boundary(raw_run.raw.start)
+                || !raw.is_char_boundary(raw_run.raw.end)
+                || raw_run.raw.end > raw.len()
+            {
+                return None;
+            }
+            let style = styles.get(raw_run.element)?;
+            if !style.preformatted_spaces
+                || style.white_space != owner_style.white_space
+                || style.text_transform != TextTransform::None
+                || style.generated.is_some()
+                || style.first_letter.is_some()
+                || style.first_line.is_some()
+            {
+                return None;
+            }
+            let existing = originals.iter().find(|run| run.element == raw_run.element);
+            // A whitespace-only node can have no canonical run; its font and
+            // language are harmless to shaping, but its owner style still
+            // controls decoration and whitespace painting.
+            if existing.is_none()
+                && !raw
+                    .get(raw_run.raw.clone())?
+                    .chars()
+                    .all(char::is_whitespace)
             {
                 return None;
             }
             runs.push(StyledText {
-                bytes: previous_raw..end,
-                element: original.element,
-                language: original.language,
-                hyphenation_language: original.hyphenation_language,
-                preserve_whitespace: original.preserve_whitespace,
+                bytes: raw_run.raw.clone(),
+                element: raw_run.element,
+                language: existing.and_then(|run| run.language).or(block.language),
+                hyphenation_language: existing
+                    .and_then(|run| run.hyphenation_language)
+                    .or(block.language.map(crate::TypographyLocale::publication)),
+                preserve_whitespace: existing.map_or(true, |run| run.preserve_whitespace),
             });
-            previous_raw = end;
+            previous_raw = raw_run.raw.end;
+        }
+        if previous_raw != raw.len() || runs.is_empty() {
+            return None;
         }
         let mut segments = Vec::new();
         for span in bound.text_spans() {
@@ -155,16 +158,19 @@ impl Plan {
             if gap.canonical.is_empty() {
                 continue;
             }
-            // An old normalized space needs an identical raw byte. If none is
-            // available, existing v1 anchors cannot be safely projected yet.
+            // The normalized space is a one-byte projection of this ASCII
+            // whitespace gap. It may represent a tab or newline rather than a
+            // literal space; exact locations still use the bound raw mapper.
             if block.text.get(gap.canonical.clone())? != " " {
                 return None;
             }
             let raw_gap = raw.get(gap.raw.clone())?;
-            let space = raw_gap.bytes().position(|byte| byte == b' ')?;
+            let whitespace = raw_gap
+                .bytes()
+                .position(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | 0x0c))?;
             segments.push(Segment {
                 source: gap.canonical.clone(),
-                offset: gap.raw.start.checked_add(space)?,
+                offset: gap.raw.start.checked_add(whitespace)?,
             });
         }
         segments.sort_by_key(|segment| segment.source.start);
@@ -173,9 +179,14 @@ impl Plan {
         for segment in &segments {
             let length = segment.source.len();
             let end = segment.offset.checked_add(length)?;
+            let projected = raw.get(segment.offset..end)?;
+            let canonical = block.text.get(segment.source.clone())?;
+            let whitespace_alias = canonical == " "
+                && projected.len() == 1
+                && matches!(projected.as_bytes()[0], b' ' | b'\t' | b'\r' | b'\n' | 0x0c);
             if segment.source.start != source_end
                 || segment.offset < raw_end
-                || raw.get(segment.offset..end)? != block.text.get(segment.source.clone())?
+                || (projected != canonical && !whitespace_alias)
             {
                 return None;
             }

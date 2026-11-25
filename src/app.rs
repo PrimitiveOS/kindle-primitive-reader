@@ -104,6 +104,7 @@ pub(crate) mod reading_guides;
 mod reading_orientation;
 mod reading_viewport_stage;
 mod reflow_book_map_exit;
+mod reflow_book_map_marks;
 mod result_context;
 mod saved_highlight_popup;
 mod search_chapter_scope;
@@ -4179,31 +4180,20 @@ impl Reader {
             return Vec::new();
         };
         let reading = &active.reading;
+        let counts = reflow_book_map_marks::collect(reading, state);
         reading
             .probe
             .chapter_entries()
             .iter()
             .enumerate()
             .map(|(index, chapter)| {
-                let marks = state.map_or(0, |state| {
-                    state
-                        .bookmarks
-                        .iter()
-                        .filter(|mark| mark.position.chapter == index)
-                        .count()
-                });
-                let highlights = state.map_or(0, |state| {
-                    state
-                        .highlights
-                        .iter()
-                        .filter(|mark| mark.selection.start.chapter == chapter.href)
-                        .count()
-                });
+                let count = counts.get(index).copied().unwrap_or_default();
                 Item::new(&chapter.label, Action::BookMapChapter(index)).detail({
                     let detail = map_detail(
                         index == reading.chapter,
-                        marks,
-                        highlights,
+                        count.bookmarks,
+                        count.highlights,
+                        count.notes,
                         self.controls.interface_language,
                     );
                     let detail = if self.ribbon_map_target()
@@ -11668,13 +11658,17 @@ fn map_detail(
     current: bool,
     bookmarks: usize,
     highlights: usize,
+    notes: usize,
     language: interface_language::InterfaceLanguage,
 ) -> String {
-    let markers = format!(
+    let mut markers = format!(
         "{} {bookmarks} · {} {highlights}",
         language.book_map_text("Bookmarks"),
         language.book_map_text("Highlights")
     );
+    if notes > 0 {
+        markers.push_str(&format!(" · {} {notes}", language.book_map_text("Notes")));
+    }
     if current {
         format!("{} · {markers}", language.book_map_text("Current position"))
     } else {

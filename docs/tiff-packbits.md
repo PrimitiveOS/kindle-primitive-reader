@@ -15,6 +15,14 @@ horizontal differencing for 8-bit grayscale samples, reversing it independently
 for each row. Other unsupported bit depths and predictor modes retain the
 existing unsupported-format fallback.
 
+When the standard LZW decoder reports a strip-format failure and the strip
+matches MuPDF's old-TIFF signature, Reader can retry LSB-first codes with late
+code-width transitions. The retry uses the same bounded dictionary and exact
+output length, and still requires an initial Clear and end code. Legacy files
+without Clear or with output overruns remain unsupported. Successful standard
+LZW decoding is unchanged. This fallback has not yet been behaviorally
+compared with KOReader or tested on the simulator or Kindle. [Pinned MuPDF old-TIFF selection](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L397-L401)
+
 KOReader registers TIFF with its MuPDF document provider. Its pinned MuPDF
 decoder selects the run-length filter for compression 32773. Reader implements
 the TIFF 6.0 row-oriented PackBits format directly, without copying MuPDF code.
@@ -179,8 +187,11 @@ fill order, Reader reverses each compressed input byte before decompression and
 then reads unpacked samples in normal bit order, following the pinned MuPDF
 approach. The temporary reversed compressed strip is limited to 4 MiB, in
 addition to the separately bounded input, decoded strip and output buffers.
-Existing stored/PackBits handling is unchanged. These new paths have not been
-behaviorally compared with KOReader or tested in the simulator or on Kindle.
+For reverse-fill PackBits, Reader first keeps the existing successful decoding
+and retries a reversed compressed strip only after a strip-format failure.
+Thus legacy streams that already decode but produce incorrect pixels are not
+corrected by this fallback. Stored handling remains unchanged. These paths have
+not been behaviorally compared with KOReader or tested in the simulator or on Kindle.
 [Pinned MuPDF bit reversal](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L340-L353)
 
 Contiguous 8-bit palette images can also include one explicitly unassociated

@@ -258,8 +258,24 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
             None
         };
         let compressed = reversed.as_deref().unwrap_or(strip);
+        let mut normalized_compressed = reverse_compressed;
         let mut unpacked = match compression {
-            32773 => Some(unpack_packbits(compressed, row_bytes, rows)?),
+            32773 => Some(match unpack_packbits(compressed, row_bytes, rows) {
+                Ok(decoded) => decoded,
+                Err(TiffError::Strips) if fill_order == 2 => {
+                    // Preserve every successful legacy strip. Some writers
+                    // reverse the compressed PackBits bytes instead; retry
+                    // that representation only after the old path fails.
+                    if strip.len() > MAX_REVERSED_COMPRESSED_STRIP {
+                        return Err(TiffError::Limit);
+                    }
+                    let reversed: Vec<_> = strip.iter().map(|byte| byte.reverse_bits()).collect();
+                    let decoded = unpack_packbits(&reversed, row_bytes, rows)?;
+                    normalized_compressed = true;
+                    decoded
+                }
+                Err(error) => return Err(error),
+            }),
             2 | 3 | 4 => Some(unpack_fax(
                 compressed,
                 width,
@@ -268,7 +284,16 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
                 compression,
                 fax_options,
             )?),
-            5 => Some(unpack_lzw(compressed, row_bytes, rows)?),
+            5 => Some(match unpack_lzw(compressed, row_bytes, rows) {
+                Ok(decoded) => decoded,
+                Err(TiffError::Strips)
+                    if compressed.first() == Some(&0)
+                        && compressed.get(1).is_some_and(|&byte| byte & 1 != 0) =>
+                {
+                    unpack_lzw_variant(compressed, row_bytes, rows, true)?
+                }
+                Err(error) => return Err(error),
+            }),
             8 | 32946 => Some(unpack_deflate(compressed, row_bytes, rows)?),
             _ => None,
         };
@@ -319,8 +344,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         }
         let strip = unpacked.as_deref().unwrap_or(strip);
         // Reversing the compressed stream already normalized its packed
-        // samples. Existing stored and PackBits fill-order handling is kept.
-        let sample_fill_order = if reverse_compressed || matches!(compression, 2 | 3 | 4) {
+        // samples. Stored and successful legacy PackBits handling is kept.
+        let sample_fill_order = if normalized_compressed || matches!(compression, 2 | 3 | 4) {
             1
         } else {
             fill_order
@@ -578,6 +603,15 @@ fn unpack_fax(
 /// TIFF LZW uses MSB-first codes, an initial Clear, and the TIFF early-change
 /// 9-to-12-bit transitions. Each strip resets its own fixed-size dictionary.
 fn unpack_lzw(input: &[u8], row_bytes: usize, rows: usize) -> Result<Vec<u8>, TiffError> {
+    unpack_lzw_variant(input, row_bytes, rows, false)
+}
+
+fn unpack_lzw_variant(
+    input: &[u8],
+    row_bytes: usize,
+    rows: usize,
+    old_tiff: bool,
+) -> Result<Vec<u8>, TiffError> {
     const CLEAR: usize = 256;
     const END: usize = 257;
     const FIRST: usize = 258;
@@ -595,13 +629,25 @@ fn unpack_lzw(input: &[u8], row_bytes: usize, rows: usize) -> Result<Vec<u8>, Ti
 
     loop {
         while buffered < width {
-            bits = (bits << 8) | u32::from(*input.get(position).ok_or(TiffError::Strips)?);
+            let byte = u32::from(*input.get(position).ok_or(TiffError::Strips)?);
+            if old_tiff {
+                bits |= byte << buffered;
+            } else {
+                bits = (bits << 8) | byte;
+            }
             position += 1;
             buffered += 8;
         }
         buffered -= width;
-        let code = ((bits >> buffered) & ((1 << width) - 1)) as usize;
-        bits &= (1 << buffered) - 1;
+        let code = if old_tiff {
+            let code = (bits & ((1 << width) - 1)) as usize;
+            bits >>= width;
+            code
+        } else {
+            let code = ((bits >> buffered) & ((1 << width) - 1)) as usize;
+            bits &= (1 << buffered) - 1;
+            code
+        };
         if code == CLEAR {
             clears += 1;
             if clears > 8192 {
@@ -660,8 +706,10 @@ fn unpack_lzw(input: &[u8], row_bytes: usize, rows: usize) -> Result<Vec<u8>, Ti
             prefix[next] = old as u16;
             suffix[next] = first;
             next += 1;
-            // TIFF decoders switch after writing entries 510, 1022 and 2046.
-            if width < 12 && next == (1usize << width) - 1 {
+            // Standard TIFF switches one entry earlier; old-style TIFF
+            // follows the original, late-change width transition.
+            let threshold = (1usize << width) - usize::from(!old_tiff);
+            if width < 12 && next == threshold {
                 width += 1;
             }
         }

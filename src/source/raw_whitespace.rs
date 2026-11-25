@@ -1,10 +1,10 @@
-//! Bounded, source-verified raw text for a future preformatted layout view.
+//! Bounded, source-verified raw text for preformatted layout.
 //!
 //! This metadata does not change canonical text or anchors. Whitespace gaps
 //! deliberately remain one-to-many; callers must not guess an interior anchor.
 #![allow(dead_code)] // Projection and raw-position consumers are staged separately.
 
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
 use ring::digest::{SHA256, digest};
 use roxmltree::Node;
@@ -58,9 +58,15 @@ pub(crate) struct WhitespaceGap {
     pub(crate) raw: Range<usize>,
 }
 
+pub(crate) struct RawStyleRun {
+    pub(crate) raw: Range<usize>,
+    pub(crate) element: usize,
+}
+
 pub(crate) struct Snapshot {
     block_key: usize,
     raw: String,
+    style_runs: Vec<RawStyleRun>,
     text: Vec<TextSpan>,
     gaps: Vec<WhitespaceGap>,
     canonical_sha256: [u8; 32],
@@ -86,8 +92,8 @@ pub(crate) enum CaretAffinity {
     After,
 }
 
-/// Not yet attached to persisted anchors. Future consumers must also verify
-/// the enclosing book, chapter, revision and block identity.
+/// Raw position metadata. Consumers also verify the enclosing book, chapter,
+/// revision and block identity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawCaret {
@@ -133,6 +139,10 @@ impl Snapshot {
 impl Bound<'_> {
     pub(crate) fn raw(&self) -> &str {
         &self.snapshot.raw
+    }
+
+    pub(crate) fn style_runs(&self) -> &[RawStyleRun] {
+        &self.snapshot.style_runs
     }
 
     pub(crate) fn text_spans(&self) -> &[TextSpan] {
@@ -366,11 +376,14 @@ pub(super) fn capture(
     node: Node<'_, '_>,
     canonical: &str,
     budget: &mut Budget,
+    element_ids: &HashMap<roxmltree::NodeId, usize>,
 ) -> Option<Snapshot> {
     if canonical.is_empty() {
         return None;
     }
     let mut raw = String::new();
+    let mut style_runs: Vec<RawStyleRun> = Vec::new();
+    let mut hard_breaks = Vec::new();
     for (index, child) in node.descendants().skip(1).enumerate() {
         if index >= MAX_RECORDS {
             return None;
@@ -380,8 +393,51 @@ pub(super) fn capture(
             if raw.len().checked_add(text.len())? > MAX_BLOCK_BYTES {
                 return None;
             }
+            if text.is_empty() {
+                continue;
+            }
+            let element = *element_ids.get(&child.parent()?.id())?;
+            let start = raw.len();
             raw.push_str(text);
+            if let Some(last) = style_runs.last_mut()
+                && last.element == element
+                && last.raw.end == start
+            {
+                last.raw.end = raw.len();
+            } else {
+                style_runs.push(RawStyleRun {
+                    raw: start..raw.len(),
+                    element,
+                });
+                if style_runs.len() > MAX_RECORDS {
+                    return None;
+                }
+            }
         } else if child.is_element() {
+            if child.has_tag_name("br") {
+                if child.children().next().is_some() || raw.len() >= MAX_BLOCK_BYTES {
+                    return None;
+                }
+                let element = *element_ids.get(&child.parent()?.id())?;
+                let start = raw.len();
+                hard_breaks.push(start);
+                raw.push('\n');
+                if let Some(last) = style_runs.last_mut()
+                    && last.element == element
+                    && last.raw.end == start
+                {
+                    last.raw.end = raw.len();
+                } else {
+                    style_runs.push(RawStyleRun {
+                        raw: start..raw.len(),
+                        element,
+                    });
+                    if style_runs.len() > MAX_RECORDS {
+                        return None;
+                    }
+                }
+                continue;
+            }
             if !matches!(
                 child.tag_name().name(),
                 "span"
@@ -420,6 +476,25 @@ pub(super) fn capture(
     let mut text: Vec<TextSpan> = Vec::new();
     let mut gaps: Vec<WhitespaceGap> = Vec::new();
     for (at, ch) in raw.char_indices() {
+        if hard_breaks.binary_search(&at).is_ok() {
+            if let Some(start) = gap_start.take() {
+                gaps.push(WhitespaceGap {
+                    canonical: normalized.len()..normalized.len(),
+                    raw: start..at,
+                });
+            }
+            let start = normalized.len();
+            normalized.push('\n');
+            pending = false;
+            text.push(TextSpan {
+                canonical: start..normalized.len(),
+                raw: at..at + 1,
+            });
+            if text.len().saturating_add(gaps.len()) > MAX_RECORDS {
+                return None;
+            }
+            continue;
+        }
         if matches!(ch, ' ' | '\t' | '\r' | '\n' | '\u{c}') {
             gap_start.get_or_insert(at);
             super::emit(&mut normalized, &mut pending, ch);
@@ -464,6 +539,11 @@ pub(super) fn capture(
     let bytes = std::mem::size_of::<Snapshot>()
         .checked_add(raw.len())?
         .checked_add(
+            style_runs
+                .capacity()
+                .checked_mul(std::mem::size_of::<RawStyleRun>())?,
+        )?
+        .checked_add(
             text.capacity()
                 .checked_mul(std::mem::size_of::<TextSpan>())?,
         )?
@@ -477,6 +557,7 @@ pub(super) fn capture(
     Some(Snapshot {
         block_key: node.range().start,
         raw: raw.to_owned(),
+        style_runs,
         text,
         gaps,
         canonical_sha256: digest(&SHA256, canonical.as_bytes())

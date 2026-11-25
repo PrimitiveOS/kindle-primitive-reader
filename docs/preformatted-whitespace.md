@@ -8,14 +8,19 @@ simulator or on Kindle and must not be treated as validated or released.
 
 A snapshot is captured for direct text and a bounded set of inline elements
 when the concatenated text normalizes to the canonical block exactly. Inline
-style boundaries must map uniquely and cannot touch whitespace; each run keeps
-its computed style and language. Comments and processing instructions are ignored. Each block is limited to
+style runs retain each source text node’s owner, including whitespace at
+inline boundaries; each run keeps its computed style and language. Explicit
+`<br>` elements map to verified canonical newlines. Comments and processing instructions are ignored. Each block is limited to
 64 KiB and 4,096 mapping records; chapter metadata budgets are 768 KiB for
 preferred `<pre>` content and 256 KiB for other content. The ordinary layout
 is used for content outside these bounds, unsupported projections, images,
-ruby, generated content, ambiguous inline style boundaries, transforms, bidi controls, joined
+ruby, generated content, unsupported inline styles, transforms, bidi controls, joined
 notes and in-page footnotes. A layout whose source or ordered font stack cannot
 be stamped also uses the canonical path. Folder books retain canonical search.
+
+The layout-only source map may represent one normalized space with one byte of
+its original ASCII whitespace gap, including a tab or newline. The raw mapper,
+not that alias, supplies precise selection and saved-caret positions.
 
 Raw carets carry the canonical anchor, exact raw byte position, affinity and
 source fingerprint. Mappings are checked against the open source and grapheme

@@ -3744,6 +3744,7 @@ impl InterfaceLanguage {
             "Current position" => "Vị trí hiện tại",
             "Bookmarks" => "Dấu trang",
             "Highlights" => "Đoạn tô sáng",
+            "Notes" => "Ghi chú",
             "No entries" => "Không có mục",
             "Previous" => "Trước",
             "Next" => "Tiếp",

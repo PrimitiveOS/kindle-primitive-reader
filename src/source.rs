@@ -1115,7 +1115,8 @@ impl Source {
             insertions.push((key + tag_end, key));
             ruby_exclusions.extend(exclusions);
             let pseudo_edges = pseudo_edges.finish(text.len(), &mut pseudo_edges_remaining);
-            let raw_whitespace = raw_whitespace::capture(node, &text, &mut raw_whitespace_budget);
+            let raw_whitespace =
+                raw_whitespace::capture(node, &text, &mut raw_whitespace_budget, &element_ids);
             blocks.push(Block {
                 table_cell: tables.containing(node),
                 key,
