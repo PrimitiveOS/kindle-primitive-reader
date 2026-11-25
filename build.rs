@@ -168,6 +168,8 @@ fn main() {
         ("tr", "TURKISH"),
         ("hr", "CROATIAN"),
         ("no", "NORWEGIAN"),
+        ("lt", "LITHUANIAN"),
+        ("is", "ICELANDIC"),
         ("sk", "SLOVAK"),
         ("sl", "SLOVENIAN"),
     ] {

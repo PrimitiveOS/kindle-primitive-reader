@@ -1,0 +1,11 @@
+Icelandic hyphenation patterns
+Copyright (C) 1988, 2004 Jörgen Pind
+
+Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-is.tex
+Source SHA-256: 2707969ebe34a9ddfd861aaef40619e75ac78453718a56401aed91c5cbdcfcec
+
+The upstream source is licensed under the LaTeX Project Public License 1.2
+or later. Reader uses version 1.3c, included in LPPL-1.3c.txt. The unmodified
+upstream TeX file is included in hyph-is.tex; Reader compiles its supported
+single-word patterns into its own native lookup tables. Reader's compiled
+tables are a derived form, not the original TeX file.

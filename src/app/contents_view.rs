@@ -614,7 +614,8 @@ impl Reader {
             return Change::None;
         };
         let layout = navigation.keyboard();
-        let Some(key) = keyboard_key(&layout, &self.editor, "Find", x, y) else {
+        let action = self.controls.interface_language.contents_text("Find");
+        let Some(key) = keyboard_key(&layout, &self.editor, action, x, y) else {
             return Change::None;
         };
         if matches!(self.editor.press(key), Press::Go) {
@@ -642,7 +643,12 @@ impl Reader {
             }
         }
         if result == Some(SearchOutcome::NoMatches) {
-            self.notice = Some("No matching headings".into());
+            self.notice = Some(
+                self.controls
+                    .interface_language
+                    .contents_text("No matching headings")
+                    .into(),
+            );
         }
     }
 

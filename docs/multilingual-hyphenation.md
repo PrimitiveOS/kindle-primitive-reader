@@ -29,6 +29,8 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Turkish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Croatian | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Norwegian | 2 / 2 | Upstream single-word patterns and exceptions; stock comparison pending |
+| Lithuanian | 2 / 2 | Upstream single-word patterns; stock comparison pending |
+| Icelandic | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
 | Russian + English (US) | 2 / 2 | Combined existing Russian and US English tries; stock comparison pending |
 | Slovak | 2 / 3 | 2,467 upstream word patterns and four active exceptions; stock comparison pending |
@@ -204,3 +206,16 @@ English for unknown tags. Reader leaves those tags without a dictionary rather
 than applying Norwegian rules without supporting source evidence. Its compiled rules, word breaks and memory footprint have
 not been compared with the pinned KOReader dictionary, built, or tested on the
 computer or Kindle. [Norwegian terms](licenses/HYPHENATION-NO.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+Lithuanian (`lt`) uses the upstream TeX patterns with KOReader's 2 / 2 minima.
+The original source and MIT terms are included in release packages. The
+existing grapheme normalization preserves original source offsets; Lithuanian-
+specific casing, exact rule equivalence and real-document behavior remain
+unverified. The change has not been built or tested on the computer or Kindle.
+[Lithuanian terms](licenses/HYPHENATION-LT.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+Icelandic (`is`) uses Jörgen Pind's upstream TeX patterns with KOReader's
+2 / 2 minima. The unmodified source, LPPL 1.3c and provenance are included in
+release packages. The compiled rules and word breaks have not been compared
+with the pinned KOReader dictionary, built, or tested on the computer or Kindle.
+[Icelandic terms](licenses/HYPHENATION-IS.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)

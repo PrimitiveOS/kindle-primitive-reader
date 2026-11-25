@@ -1276,6 +1276,7 @@ impl Reader {
 
     pub(super) fn draw_bookmark_browser_controls(&self, canvas: &mut Canvas, page: Page) -> bool {
         let layout = BrowserLayout(self.navigation_layout());
+        let language = self.controls.interface_language;
         match page {
             Page::Colors => {
                 super::highlight_palette::draw(
@@ -1292,40 +1293,49 @@ impl Reader {
             Page::Results => {
                 let browser = &self.bookmark_browser;
                 let books = browser.books.iter().filter(|book| book.count > 0).count();
-                let suffix = if browser.marks.len() == 1 {
-                    "mark"
-                } else {
-                    "marks"
-                };
-                let book_suffix = if books == 1 { "book" } else { "books" };
                 canvas.text(
                     layout.0.footer_text(40, 246, 40),
                     &format!(
-                        "{} · {} {suffix} in {books} {book_suffix}",
+                        "{} · {}",
                         browser.source_label,
-                        browser.marks.len()
+                        language.bookmark_counts(browser.marks.len(), books)
                     ),
                     CAPTION,
                 );
-                canvas.button(layout.control(0, 198, 72), "Sources", false, false);
-                canvas.button(layout.control(1, 198, 72), "Filters", false, false);
-                canvas.button(layout.control(2, 198, 72), "Find", false, false);
+                canvas.button(
+                    layout.control(0, 198, 72),
+                    language.bookmark_text("Sources"),
+                    false,
+                    false,
+                );
+                canvas.button(
+                    layout.control(1, 198, 72),
+                    language.bookmark_text("Filters"),
+                    false,
+                    false,
+                );
+                canvas.button(
+                    layout.control(2, 198, 72),
+                    language.bookmark_text("Find"),
+                    false,
+                    false,
+                );
                 false
             }
             Page::Search => {
                 canvas.single_line_field(
                     layout.body(154, 130),
                     &self.editor,
-                    "Bookmark, highlighted text or note",
+                    language.bookmark_text("Bookmark, highlighted text or note"),
                     false,
                 );
                 canvas.button(
                     CASE,
-                    "Match case",
+                    language.bookmark_text("Match case"),
                     self.bookmark_browser.case_sensitive,
                     false,
                 );
-                canvas.keyboard(self.editor.layer, "Find", None);
+                canvas.keyboard(self.editor.layer, language.bookmark_text("Find"), None);
                 true
             }
             Page::Detail => {
@@ -1342,6 +1352,7 @@ impl Reader {
 
     fn draw_bookmark_detail(&self, canvas: &mut Canvas) {
         let layout = BrowserLayout(self.navigation_layout());
+        let language = self.controls.interface_language;
         let browser = &self.bookmark_browser;
         let Some(key) = browser.focus else {
             return;
@@ -1358,7 +1369,7 @@ impl Reader {
         let mut title = format!(
             "{} · {} · {}",
             book.title,
-            mark.kind().label(),
+            language.bookmark_text(mark.kind().label()),
             mark.location_label
         );
         if let Some(date) = mark.created_at.and_then(crate::mark_time::local_date) {
@@ -1371,19 +1382,39 @@ impl Reader {
             CAPTION.center().lines(2),
         );
         if index > 0 {
-            canvas.button(FIRST_MARK, "First", false, false);
-            canvas.button(layout.control(0, 115, 84), "Previous mark", false, false);
+            canvas.button(FIRST_MARK, language.bookmark_text("First"), false, false);
+            canvas.button(
+                layout.control(0, 115, 84),
+                language.bookmark_text("Previous mark"),
+                false,
+                false,
+            );
         }
         if index + 1 < browser.marks.len() {
-            canvas.button(layout.last_mark(), "Last", false, false);
-            canvas.button(layout.control(2, 115, 84), "Next mark", false, false);
+            canvas.button(
+                layout.last_mark(),
+                language.bookmark_text("Last"),
+                false,
+                false,
+            );
+            canvas.button(
+                layout.control(2, 115, 84),
+                language.bookmark_text("Next mark"),
+                false,
+                false,
+            );
         }
         if self.bookmark_book_available(book.id) {
-            canvas.button(layout.control(1, 115, 84), "View in book", true, false);
+            canvas.button(
+                layout.control(1, 115, 84),
+                language.bookmark_text("View in book"),
+                true,
+                false,
+            );
         } else {
             canvas.text(
                 layout.control(1, 115, 84),
-                "Archived mark",
+                language.bookmark_text("Archived mark"),
                 CAPTION.center(),
             );
         }
@@ -1394,14 +1425,24 @@ impl Reader {
         let (text_page, count) = self.draw_bookmark_text(canvas, layout.text(), &text);
         if count > 1 {
             if text_page > 0 {
-                canvas.button(layout.control(0, 214, 72), "Previous text", false, false);
+                canvas.button(
+                    layout.control(0, 214, 72),
+                    language.bookmark_text("Previous text"),
+                    false,
+                    false,
+                );
             }
             if text_page + 1 < count {
-                canvas.button(layout.control(2, 214, 72), "Next text", false, false);
+                canvas.button(
+                    layout.control(2, 214, 72),
+                    language.bookmark_text("Next text"),
+                    false,
+                    false,
+                );
             }
             canvas.text(
                 layout.centered_caption(199),
-                &format!("{} of {count}", text_page + 1),
+                &language.bookmark_page(text_page + 1, count),
                 CAPTION.center(),
             );
         }
@@ -1495,7 +1536,8 @@ impl Reader {
             return Change::Partial;
         }
         let layout = self.navigation_layout().keyboard();
-        let Some(key) = keyboard_key(&layout, &self.editor, "Find", x, y) else {
+        let action = self.controls.interface_language.bookmark_text("Find");
+        let Some(key) = keyboard_key(&layout, &self.editor, action, x, y) else {
             return Change::None;
         };
         if matches!(self.editor.press(key), Press::Go) {

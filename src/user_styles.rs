@@ -746,6 +746,27 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("* {orphans:2 !important;widows:2 !important;}"),
     },
     Preset {
+        id: "widows_orphans_avoid",
+        title: "Avoid widows and orphans",
+        group: "lines",
+        priority: 2,
+        effect: Effect::Css("body {orphans:2;widows:2;}"),
+    },
+    Preset {
+        id: "widows_avoid_orphans_allow",
+        title: "Avoid widows but allow orphans",
+        group: "lines",
+        priority: 2,
+        effect: Effect::Css("body {orphans:1;widows:2;}"),
+    },
+    Preset {
+        id: "widows_orphans_all_inherit",
+        title: "Ignore publisher orphan and widow rules",
+        group: "publisher-widow-orphan-rules",
+        priority: 0,
+        effect: Effect::Css("* {orphans:inherit !important;widows:inherit !important;}"),
+    },
+    Preset {
         id: "link-black",
         title: "Links always black",
         group: "link-ink",
@@ -1213,6 +1234,18 @@ impl Data {
                 Effect::InlineAllFootnoteContent => notes.formatting.inline_all = true,
                 Effect::RegularizeNoteText => notes.formatting.regularize = true,
                 Effect::CombineNonlinearNotes => notes.combine_nonlinear = true,
+            }
+        }
+        // CREngine's EPUB tree has a DocFragment element for the selected
+        // defaults; Reader has one body per chapter. Restore those defaults on
+        // the body when the independent publisher-rule override is also on.
+        if self.enabled(book, "widows_orphans_all_inherit") {
+            if self.enabled(book, "widows_orphans_avoid") {
+                css.push_str("body {orphans:2 !important;widows:2 !important;}\n");
+            } else if self.enabled(book, "widows_avoid_orphans_allow") {
+                css.push_str("body {orphans:1 !important;widows:2 !important;}\n");
+            } else if self.enabled(book, "protect-lines") {
+                css.push_str("* {orphans:2 !important;widows:2 !important;}\n");
             }
         }
         if b.custom_enabled

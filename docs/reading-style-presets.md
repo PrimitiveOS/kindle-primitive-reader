@@ -95,6 +95,23 @@ saved anchors stay unchanged. Horizontal Parley pagination supports these
 rules; other rendering modes and the interaction of multiple settings need
 simulator and Kindle verification. [Pinned KOReader rules](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L130-L175)
 
+## Widows and orphans
+
+**Avoid widows and orphans** requests two lines at both ends of a paragraph.
+**Avoid widows but allow orphans** requests two lines at the top of the next
+page but allows one line at the bottom of the previous page. These choices
+are mutually exclusive with the earlier **Protect widows and orphans**
+setting. **Ignore publisher orphan and widow rules** is independent and can
+be combined with either choice. Reader applies the selected defaults to each
+chapter body when both options are active; KOReader uses a `DocFragment`
+element for that role in its EPUB tree. The earlier Protect setting retains
+its stronger all-element behavior when combined with the publisher override.
+
+The choices affect pagination without changing document text or saved source
+anchors. Horizontal Parley pagination supports the relevant line-keeping
+rules; other rendering modes and actual Kindle appearance remain unverified.
+[Pinned KOReader controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L199-L241)
+
 ## Paragraph spacing and browser defaults
 
 **Spacing between paragraphs** contains three mutually exclusive choices.

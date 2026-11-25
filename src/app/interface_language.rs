@@ -923,6 +923,13 @@ impl InterfaceLanguage {
             return english;
         }
         match english {
+            "Contents" => "Mục lục",
+            "Alternative contents" => "Mục lục thay thế",
+            "Search contents" => "Tìm mục lục",
+            "Heading text, or * to show all" => "Nhập tiêu đề, hoặc * để hiện tất cả",
+            "Find" => "Tìm",
+            "Back" => "Quay lại",
+            "No matching headings" => "Không tìm thấy tiêu đề phù hợp",
             "Building contents…" => "Đang tạo mục lục…",
             "Showing publisher contents" => "Đang hiện mục lục nhà xuất bản",
             "The alternative contents could not be built" => "Không thể tạo mục lục thay thế",
@@ -939,6 +946,50 @@ impl InterfaceLanguage {
             "Clear" => "Xóa",
             "Query:" => "Từ tìm:",
             _ => english,
+        }
+    }
+
+    /// Fixed bookmark-browser controls and mark-kind labels only.
+    pub(super) fn bookmark_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Sources" => "Nguồn",
+            "Filters" => "Bộ lọc",
+            "Find" => "Tìm",
+            "Bookmark, highlighted text or note" => "Dấu trang, đoạn tô sáng hoặc ghi chú",
+            "Match case" => "Phân biệt hoa thường",
+            "Page bookmark" => "Dấu trang",
+            "Highlight" => "Đoạn tô sáng",
+            "Note" => "Ghi chú",
+            "First" => "Đầu",
+            "Previous mark" => "Dấu trước",
+            "Last" => "Cuối",
+            "Next mark" => "Dấu tiếp",
+            "View in book" => "Xem trong sách",
+            "Archived mark" => "Dấu đã lưu trữ",
+            "Previous text" => "Đoạn trước",
+            "Next text" => "Đoạn tiếp",
+            _ => english,
+        }
+    }
+
+    pub(super) fn bookmark_counts(self, marks: usize, books: usize) -> String {
+        if self == Self::Vietnamese {
+            format!("{marks} dấu trong {books} sách")
+        } else {
+            let mark = if marks == 1 { "mark" } else { "marks" };
+            let book = if books == 1 { "book" } else { "books" };
+            format!("{marks} {mark} in {books} {book}")
+        }
+    }
+
+    pub(super) fn bookmark_page(self, page: usize, total: usize) -> String {
+        if self == Self::Vietnamese {
+            format!("{page} trên {total}")
+        } else {
+            format!("{page} of {total}")
         }
     }
 

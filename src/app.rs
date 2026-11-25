@@ -8611,7 +8611,17 @@ impl Reader {
             return;
         }
         let title = match (self.screen, self.book_list.as_ref()) {
-            (Screen::Contents, _) if self.uses_alternative_contents() => "Alternative contents",
+            (Screen::Contents, _) if self.uses_alternative_contents() => self
+                .controls
+                .interface_language
+                .contents_text("Alternative contents"),
+            (Screen::Contents | Screen::FixedContents, _) => {
+                self.controls.interface_language.contents_text("Contents")
+            }
+            (Screen::ContentsSearch, _) => self
+                .controls
+                .interface_language
+                .contents_text("Search contents"),
             (Screen::BookList, Some(BookList::Favorites)) => "Favorites",
             (Screen::BookList, Some(BookList::Recent)) => "Recently read",
             (Screen::BookList, Some(BookList::Authors)) => "Authors",
@@ -8640,17 +8650,22 @@ impl Reader {
             self.draw_selection_html(canvas);
             return;
         }
+        let back = if self.screen.is_contents() || self.screen == Screen::ContentsSearch {
+            self.controls.interface_language.contents_text("Back")
+        } else {
+            "Back"
+        };
         let navigation = if self.screen.uses_navigation_viewport() {
             let layout = self.navigation_layout();
             let action = if matches!(self.screen, Screen::ReadingProfileFields(_)) {
                 "Save"
             } else {
-                "Back"
+                back
             };
             layout.header_action(canvas, title, action);
             layout
         } else {
-            header(canvas, title, "Back");
+            header(canvas, title, back);
             navigation_layout::NavigationLayout::PORTRAIT
         };
         if let Screen::ExportSettings(_, export_settings::Page::Template(scope)) = self.screen {
@@ -8721,7 +8736,12 @@ impl Reader {
             let (hint, action) = match self.screen {
                 Screen::Note | Screen::EditNote => ("Note text", "Save"),
                 Screen::LibraryFind => ("Title, author or filename", "Find"),
-                Screen::ContentsSearch => ("Heading text, or * to show all", "Find"),
+                Screen::ContentsSearch => (
+                    self.controls
+                        .interface_language
+                        .contents_text("Heading text, or * to show all"),
+                    self.controls.interface_language.contents_text("Find"),
+                ),
                 Screen::MenuSearch => ("Menu name", "Search"),
                 Screen::VocabularySearch => ("Saved word", "Find"),
                 Screen::DictionaryEntry => ("Word or phrase", "Look up"),

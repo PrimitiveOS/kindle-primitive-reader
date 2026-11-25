@@ -127,6 +127,10 @@ Contents controls are implemented in the current candidate. The combined Mac
 build-only check passes; the Norwegian memory footprint and behavior, style
 rendering and user-interface fit still need the deferred validation pass.
 
+Lithuanian and Icelandic patterns, separate widow/orphan controls and
+Vietnamese bookmark-browser labels are now implemented and pass a Mac
+build-only check. Their behavior, layout and device comparisons remain open.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or
