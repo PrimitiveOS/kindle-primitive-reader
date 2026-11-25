@@ -135,7 +135,10 @@ pub(super) fn apply_reset(
                 parley::BaseDirection::Ltr
             };
         }
-        7 => style.line_break = value.line_break,
+        7 => {
+            style.line_break = value.line_break;
+            style.loose_nonbreaking = value.loose_nonbreaking;
+        }
         8 => style.word_break = value.word_break,
         53 => style.inline_nowrap = value.inline_nowrap,
         9 => style.hyphens = value.hyphens,

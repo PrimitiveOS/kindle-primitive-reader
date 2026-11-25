@@ -26,6 +26,7 @@ For the compiled Romansh patterns, see HYPHENATION-RM.txt and hyph-rm.tex.
 For the compiled Basque patterns, see HYPHENATION-EU.txt and hyph-eu.tex.
 For the compiled Friulian patterns, see HYPHENATION-FUR.txt and hyph-fur.tex.
 For the compiled Esperanto patterns, see HYPHENATION-EO.txt and LPPL-1.3c.txt.
+For the compiled Georgian patterns, see HYPHENATION-KA.txt and hyph-ka.tex.
 For the compiled Slovak and Slovenian patterns, see HYPHENATION-SK-SL.txt.
 
 ab_glyph_rasterizer 0.1.10 (Apache-2.0)

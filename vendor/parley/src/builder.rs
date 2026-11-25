@@ -41,6 +41,7 @@ pub(crate) struct BuilderOptions<'a> {
     quantize: bool,
     base_direction: BaseDirection,
     bidi_controls: &'a [(usize, char)],
+    relaxed_nonbreaking: &'a [usize],
     line_break_override: Option<&'a LineBreakOverrideFn>,
     automatic_hyphens: &'a [usize],
     trusted_soft_hyphen_words: &'a [Range<usize>],
@@ -57,6 +58,7 @@ impl BuilderOptions<'_> {
             quantize,
             base_direction: BaseDirection::Auto,
             bidi_controls: &[],
+            relaxed_nonbreaking: &[],
             line_break_override: None,
             soft_hyphen_policy: None,
             automatic_hyphens: &[],
@@ -117,6 +119,12 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
     /// Add virtual bidi controls without inserting bytes into the layout text.
     pub fn set_bidi_controls(&mut self, controls: &'b [(usize, char)]) {
         self.options.bidi_controls = controls;
+    }
+
+    /// Mark source byte boundaries for conservative non-breaking character
+    /// relaxation without altering the text or its selection offsets.
+    pub fn set_relaxed_nonbreaking(&mut self, boundaries: &'b [usize]) {
+        self.options.relaxed_nonbreaking = boundaries;
     }
 
     /// Set the callback which will be called as a first provider of line breaking decisions.
@@ -440,6 +448,7 @@ fn build_into_layout<B: Brush>(
         options.base_direction,
         options.line_break_override,
         options.bidi_controls,
+        options.relaxed_nonbreaking,
     );
 
     layout.data.clear();

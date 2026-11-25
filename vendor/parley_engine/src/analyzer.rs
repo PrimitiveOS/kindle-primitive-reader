@@ -66,6 +66,10 @@ pub struct AnalysisOptions<'a> {
     /// Invalid, unbalanced, unsorted or oversized input is ignored.
     pub bidi_controls: &'a [(usize, char)],
 
+    /// Sorted source byte boundaries where selected non-breaking characters
+    /// may acquire a soft wrap opportunity. Invalid lists are ignored.
+    pub relaxed_nonbreaking: &'a [usize],
+
     /// Line breaking configuration for ranges of the source text.
     ///
     /// Ranges must be sorted and non-overlapping, and must start and end on character boundaries of

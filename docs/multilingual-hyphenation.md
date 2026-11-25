@@ -38,6 +38,7 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Basque | 2 / 2 | Upstream alphabetic subset; stock comparison pending |
 | Friulian | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
 | Esperanto | 2 / 2 | Upstream 2020 pattern set matches pinned stock entries; behavior comparison pending |
+| Georgian | 1 / 2 | Upstream version 0.3 single-word patterns; stock comparison pending |
 | Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
 | Russian + English (US) | 2 / 2 | Combined existing Russian and US English tries; stock comparison pending |
 | Slovak | 2 / 3 | 2,467 upstream word patterns and four active exceptions; stock comparison pending |
@@ -305,3 +306,13 @@ indicate a hyphenation point. Edge spaces become word-boundary markers during
 compilation, preserving source-text UTF-8 offsets. Build and real-document
 behavior comparison remain pending on the computer and Kindle.
 [Esperanto terms](licenses/HYPHENATION-EO.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+
+Georgian (`ka`, optionally `ka-Geor`) uses Levan Shoshiashvili's upstream
+version 0.3 patterns and KOReader's 1 / 2 minima. Reader rejects explicitly
+incompatible scripts and compiles the supported single-word alphabetic rules,
+preserving original UTF-8 source offsets. The unmodified upstream source and
+MIT terms are included in release packages. Exact stock comparison and
+real-document behavior remain open; this change has not been built or tested
+on the computer or Kindle.
+[Georgian terms](licenses/HYPHENATION-KA.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)

@@ -629,6 +629,17 @@ pub(crate) fn analyze_text(
     // Whether the preceding character is a break-space, i.e. a space, tab or ideographic space in
     // a `break_spaces` range.
     let mut prev_is_break_space = false;
+    let relaxed = options.relaxed_nonbreaking;
+    let relaxed = if relaxed.len() <= 4096
+        && relaxed.windows(2).all(|pair| pair[0] < pair[1])
+        && relaxed
+            .iter()
+            .all(|&offset| offset > 0 && offset < text.len() && text.is_char_boundary(offset))
+    {
+        relaxed
+    } else {
+        &[]
+    };
     let mut break_spaces_iter = options.break_spaces.iter().peekable();
     let mut break_anywhere_iter = options
         .line_break
@@ -735,6 +746,17 @@ pub(crate) fn analyze_text(
             } else {
                 is_icu_line || after_break_space
             };
+            // Conservative CRE -cr-loose subset: only ordinary word-to-word
+            // boundaries after NBSP or a non-breaking hyphen. Never split a
+            // grapheme or override mandatory breaks or adjacent joiners.
+            if is_grapheme_start
+                && relaxed.binary_search(&byte_pos).is_ok()
+                && matches!(prev_char, Some('\u{00a0}' | '\u{2011}'))
+                && prev_prev_char.is_some_and(char::is_alphanumeric)
+                && ch.is_alphanumeric()
+            {
+                opportunity = true;
+            }
             // Consumers can override soft wrap opportunities, except around a mandatory
             // break.
             if let (Some(prev), Some(lb_override)) = (prev_char, options.line_break_override) {

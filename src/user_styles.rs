@@ -959,6 +959,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         ),
     },
     Preset {
+        id: "line_break_cre_loose",
+        title: "Ignore publisher line-break restrictions",
+        group: "publisher-line-break",
+        priority: 0,
+        effect: Effect::Css("* {line-break:-cr-loose;}"),
+    },
+    Preset {
         id: "ligature_all_no_common_ligature",
         title: "Disable common ligatures",
         group: "common-ligatures",

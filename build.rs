@@ -224,6 +224,7 @@ fn main() {
         ("rm", "ROMANSH"),
         ("eu", "BASQUE"),
         ("fur", "FRIULIAN"),
+        ("ka", "GEORGIAN"),
         ("sk", "SLOVAK"),
         ("sl", "SLOVENIAN"),
     ] {

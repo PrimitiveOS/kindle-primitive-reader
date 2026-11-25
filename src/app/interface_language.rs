@@ -1270,6 +1270,54 @@ impl InterfaceLanguage {
         }
     }
 
+    /// Reader-owned library controls and prefixes, never filenames or queries.
+    pub(super) fn library_view_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Find a document" => "Tìm tài liệu",
+            "Folder order" => "Thứ tự thư mục",
+            "Back" => "Quay lại",
+            "Title, author or filename" => "Tên sách, tác giả hoặc tên tệp",
+            "Natural name" => "Tên theo số",
+            "Compare numbers by value" => "So sánh số theo giá trị",
+            "File name" => "Tên tệp",
+            "Compare names alphabetically" => "So sánh tên theo bảng chữ cái",
+            "File type" => "Loại tệp",
+            "Group files by extension" => "Nhóm tệp theo phần mở rộng",
+            "Last read" => "Lần đọc cuối",
+            "Unopened, then oldest reads · Browse only" => "Chưa mở, rồi cũ nhất · Chỉ khi duyệt",
+            "Newest first · Browse only" => "Mới nhất trước · Chỉ khi duyệt",
+            "Reading progress" => "Tiến độ đọc",
+            "Finished first · Lowest active progress first" => {
+                "Đã đọc xong trước · Tiến độ thấp trước"
+            }
+            "Highest progress first · Finished last" => "Tiến độ cao trước · Đã đọc xong cuối",
+            "Selected" => "Đã chọn",
+            "Reverse order" => "Đảo thứ tự",
+            "On" => "Bật",
+            "Off" => "Tắt",
+            "Exit" => "Thoát",
+            "Documents" => "Tài liệu",
+            "Search results" => "Kết quả tìm kiếm",
+            "Clear" => "Xóa",
+            "Up" => "Lên",
+            "Find" => "Tìm",
+            "Organize" => "Sắp xếp",
+            "Controls" => "Điều khiển",
+            "Reading data" => "Dữ liệu đọc",
+            "Sort" => "Thứ tự",
+            "Continue reading" => "Đọc tiếp",
+            "This folder is empty." => "Thư mục này trống.",
+            "No documents match your search." => "Không tìm thấy tài liệu phù hợp.",
+            "Previous" => "Trước",
+            "Next" => "Tiếp",
+            "Showing part of this folder" => "Chỉ hiện một phần thư mục này",
+            _ => english,
+        }
+    }
+
     /// Return the canonical English search alias for a known Screen-panel row.
     /// This deliberately excludes user-supplied names and other menu surfaces.
     pub(super) fn screen_row_english<'a>(self, label: &'a str) -> &'a str {

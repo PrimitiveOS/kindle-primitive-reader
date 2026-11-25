@@ -147,6 +147,10 @@ for supported native tables are implemented in the latest candidate, alongside
 more Vietnamese reading controls. The Mac build-only check passes; functional,
 visual and device comparisons remain deferred.
 
+Georgian patterns, a bounded loose-line-break option and Vietnamese library
+Find/Sort controls have been implemented and pass a Mac build-only check.
+Full line-break parity, script behavior and visual/device checks remain open.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or

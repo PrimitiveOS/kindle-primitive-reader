@@ -11,3 +11,9 @@ analysis. The resolver filters the controls' levels before returning levels
 for the original text. Invalid, unsorted, unbalanced or oversized control
 sequences fall back to the upstream source-only analysis. The patch does not
 insert control bytes into the original text or its byte-offset coordinates.
+
+Reader also accepts bounded, sorted source-byte boundaries for a conservative
+subset of CRE's `line-break: -cr-loose`. At valid grapheme boundaries between
+alphanumeric characters, an eligible non-breaking space or hyphen may become
+a soft wrap opportunity. Other Unicode rules and mandatory breaks remain in
+place. This changes layout metadata only; it does not rewrite source text.

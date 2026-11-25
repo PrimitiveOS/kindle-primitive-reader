@@ -388,6 +388,8 @@ pub(crate) struct Style {
     pub(crate) image_full_line: bool,
     pub alignment: Option<Alignment>,
     pub line_break: Option<LineBreak>,
+    /// CRE's private line-break mode, retained separately from standard CSS.
+    pub(crate) loose_nonbreaking: bool,
     pub word_break: WordBreak,
     pub(crate) inline_nowrap: bool,
     pub hyphens: Hyphens,
@@ -453,6 +455,7 @@ impl Default for Style {
             image_full_line: false,
             alignment: None,
             line_break: None,
+            loose_nonbreaking: false,
             word_break: WordBreak::Normal,
             inline_nowrap: false,
             hyphens: Hyphens::Auto,
@@ -1095,7 +1098,10 @@ impl BookStyle {
                     Property::Slant(slant) => style.font_style = *slant,
                     Property::CommonLigatures(enabled) => style.common_ligatures = *enabled,
                     Property::Direction(direction) => style.direction = *direction,
-                    Property::LineBreak(breaking) => style.line_break = *breaking,
+                    Property::LineBreak(breaking, loose) => {
+                        style.line_break = *breaking;
+                        style.loose_nonbreaking = *loose;
+                    }
                     Property::WordBreak(breaking) => style.word_break = *breaking,
                     Property::NoWrap(nowrap) => style.inline_nowrap = *nowrap,
                     Property::Border(side, value)
@@ -1953,7 +1959,7 @@ fn choose<'a>(
             Property::Slant(_) => 6,
             Property::CommonLigatures(_) => COMMON_LIGATURES,
             Property::Direction(_) => DIRECTION,
-            Property::LineBreak(_) => 7,
+            Property::LineBreak(_, _) => 7,
             Property::WordBreak(_) => 8,
             Property::NoWrap(_) => 53,
             Property::Hyphens(_) => 9,
@@ -2067,7 +2073,7 @@ enum Property {
     Slant(FontStyle),
     CommonLigatures(bool),
     Direction(parley::BaseDirection),
-    LineBreak(Option<LineBreak>),
+    LineBreak(Option<LineBreak>, bool),
     WordBreak(WordBreak),
     NoWrap(bool),
     CaptionBottom(bool),
@@ -2456,14 +2462,17 @@ impl<'i> DeclarationParser<'i> for Properties {
                     })
                 }
                 "line-break" => {
-                    Property::LineBreak(match input.expect_ident()?.to_ascii_lowercase().as_str() {
-                        "auto" => None,
-                        "loose" => Some(LineBreak::Loose),
-                        "normal" => Some(LineBreak::Normal),
-                        "strict" => Some(LineBreak::Strict),
-                        "anywhere" => Some(LineBreak::Anywhere),
-                        _ => return Err(ParseError::unexpected_token()),
-                    })
+                    let (breaking, loose) =
+                        match input.expect_ident()?.to_ascii_lowercase().as_str() {
+                            "auto" => (None, false),
+                            "loose" => (Some(LineBreak::Loose), false),
+                            "normal" => (Some(LineBreak::Normal), false),
+                            "strict" => (Some(LineBreak::Strict), false),
+                            "anywhere" => (Some(LineBreak::Anywhere), false),
+                            "-cr-loose" => (None, true),
+                            _ => return Err(ParseError::unexpected_token()),
+                        };
+                    Property::LineBreak(breaking, loose)
                 }
                 "caption-side" => Property::CaptionBottom(
                     match input.expect_ident()?.to_ascii_lowercase().as_str() {

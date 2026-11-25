@@ -73,6 +73,7 @@ pub(crate) enum Dictionary {
     Basque,
     Friulian,
     Esperanto,
+    Georgian,
     Slovak,
     Slovenian,
 }
@@ -80,6 +81,9 @@ pub(crate) enum Dictionary {
 impl Dictionary {
     pub(crate) fn for_language(lang: Option<Language>) -> Option<Self> {
         let lang = lang?;
+        if lang.language() == "ka" {
+            return matches!(lang.script(), None | Some("Geor")).then_some(Self::Georgian);
+        }
         if matches!(lang.language(), "bg" | "uk" | "ru") {
             if !matches!(lang.script(), None | Some("Cyrl")) {
                 return None;
@@ -171,6 +175,7 @@ impl Dictionary {
             Self::Basque => "Basque",
             Self::Friulian => "Friulian",
             Self::Esperanto => "Esperanto",
+            Self::Georgian => "Georgian",
             Self::Slovak => "Slovak",
             Self::Slovenian => "Slovenian",
         }
@@ -206,6 +211,7 @@ impl Dictionary {
             | Self::Esperanto
             | Self::Slovenian => HyphenationLimits { left: 2, right: 2 },
             Self::French => HyphenationLimits { left: 2, right: 1 },
+            Self::Georgian => HyphenationLimits { left: 1, right: 2 },
             Self::American
             | Self::British
             | Self::Portuguese
@@ -250,6 +256,7 @@ impl Dictionary {
             Self::Romansh => &ROMANSH,
             Self::Friulian => &FRIULIAN,
             Self::Esperanto => &ESPERANTO,
+            Self::Georgian => &GEORGIAN,
             Self::Basque => {
                 // Retain the full upstream notice and modification statement
                 // alongside the compiled-in, modified Basque pattern data.

@@ -177,6 +177,7 @@ impl Reader {
 
     pub(super) fn folder_order_items(&self) -> Vec<Item> {
         let order = self.controls.folder_order;
+        let language = self.controls.interface_language;
         let mut items = [
             (
                 FolderSort::NaturalName,
@@ -214,23 +215,34 @@ impl Reader {
         ]
         .into_iter()
         .map(|(sort, label, description)| {
-            let item = Item::new(label, Action::SetFolderOrder(FolderOrder { sort, ..order }));
+            let item = Item::new(
+                language.library_view_text(label),
+                Action::SetFolderOrder(FolderOrder { sort, ..order }),
+            );
             if sort == order.sort {
-                item.detail(format!("Selected · {description}"))
+                item.detail(format!(
+                    "{} · {}",
+                    language.library_view_text("Selected"),
+                    language.library_view_text(description)
+                ))
             } else {
-                item.detail(description)
+                item.detail(language.library_view_text(description))
             }
         })
         .collect::<Vec<_>>();
         items.push(
             Item::new(
-                "Reverse order",
+                language.library_view_text("Reverse order"),
                 Action::SetFolderOrder(FolderOrder {
                     reverse: !order.reverse,
                     ..order
                 }),
             )
-            .detail(if order.reverse { "On" } else { "Off" }),
+            .detail(language.library_view_text(if order.reverse {
+                "On"
+            } else {
+                "Off"
+            })),
         );
         items
     }
@@ -287,7 +299,13 @@ impl Reader {
             .show_continue()
             .then(|| {
                 self.library.recently_read().next().map(|book| {
-                    Item::new("Continue reading", Action::Continue).detail(format!(
+                    Item::new(
+                        self.controls
+                            .interface_language
+                            .library_view_text("Continue reading"),
+                        Action::Continue,
+                    )
+                    .detail(format!(
                         "{} · {}",
                         book.title,
                         file_type(&book.path)
@@ -341,11 +359,16 @@ impl Reader {
 
     pub(super) fn draw_library(&self, canvas: &mut Canvas) {
         let layout = self.navigation_layout();
-        layout.header_action(canvas, "Reader", "Exit");
+        let language = self.controls.interface_language;
+        layout.header_action(canvas, "Reader", language.library_view_text("Exit"));
         let path = if !self.library_query.is_empty() {
-            format!("Search results · {}", self.library_query)
+            format!(
+                "{} · {}",
+                language.library_view_text("Search results"),
+                self.library_query
+            )
         } else {
-            let mut title = String::from("Documents");
+            let mut title = String::from(language.library_view_text("Documents"));
             for part in &self.browser.directory {
                 title.push_str(" / ");
                 title.push_str(&crate::library::display_filename(&part.to_string_lossy()));
@@ -354,7 +377,7 @@ impl Reader {
         };
         let mut path_x = LIST_X;
         if let Some((_, label)) = self.up_action() {
-            canvas.button(UP, label, false, false);
+            canvas.button(UP, language.library_view_text(label), false, false);
             path_x = UP.right() + 22;
         }
         canvas.text(
@@ -363,7 +386,7 @@ impl Reader {
             BODY.bold(),
         );
         for (label, _, rect) in toolbar_controls(layout) {
-            canvas.button(rect, label, false, false);
+            canvas.button(rect, language.library_view_text(label), false, false);
         }
 
         let page = self.browser.page(layout);
@@ -373,11 +396,11 @@ impl Reader {
         if rows.is_empty() {
             canvas.text(
                 layout.body(LIBRARY_LIST_Y + 38, 82),
-                if self.library_query.is_empty() {
+                language.library_view_text(if self.library_query.is_empty() {
                     "This folder is empty."
                 } else {
                     "No documents match your search."
-                },
+                }),
                 CAPTION.center(),
             );
         } else {
@@ -398,15 +421,25 @@ impl Reader {
 
         let count = self.library_item_count();
         if page > 0 {
-            canvas.button(layout.previous(), "Previous", false, false);
+            canvas.button(
+                layout.previous(),
+                language.library_view_text("Previous"),
+                false,
+                false,
+            );
         }
         if first + rows.len() < count {
-            canvas.button(layout.next(), "Next", false, false);
+            canvas.button(
+                layout.next(),
+                language.library_view_text("Next"),
+                false,
+                false,
+            );
         }
         let page_label =
             (count > page_size).then(|| format!("{} / {}", page + 1, count.div_ceil(page_size)));
         let limit_notice = (self.library_query.is_empty() && self.browser.listing.truncated)
-            .then_some("Showing part of this folder");
+            .then_some(language.library_view_text("Showing part of this folder"));
         if let Some(text) = self
             .notice
             .as_deref()

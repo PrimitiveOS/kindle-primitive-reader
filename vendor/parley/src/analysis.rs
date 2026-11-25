@@ -15,6 +15,7 @@ pub(crate) fn analyze_text<B: Brush>(
     base_direction: BaseDirection,
     line_break_override: Option<&LineBreakOverrideFn>,
     bidi_controls: &[(usize, char)],
+    relaxed_nonbreaking: &[usize],
 ) {
     let text = if text.is_empty() { " " } else { text };
 
@@ -54,6 +55,7 @@ pub(crate) fn analyze_text<B: Brush>(
     let options = AnalysisOptions {
         base_direction,
         bidi_controls,
+        relaxed_nonbreaking,
         line_break: &lcx.line_break,
         break_spaces: &lcx.break_spaces,
         line_break_override,

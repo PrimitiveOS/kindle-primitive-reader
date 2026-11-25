@@ -6201,6 +6201,7 @@ impl Reader {
                 .interface_language
                 .dictionary_popup_text("Look up"),
             Screen::MenuSearch => "Search",
+            Screen::LibraryFind => self.controls.interface_language.library_view_text("Find"),
             Screen::BookmarkFind => self.controls.interface_language.bookmark_text("Find"),
             _ if note => "Save",
             Screen::Find => self
@@ -8673,6 +8674,14 @@ impl Reader {
                 .controls
                 .interface_language
                 .bookmark_text("Bookmark search results"),
+            (Screen::LibraryFind, _) => self
+                .controls
+                .interface_language
+                .library_view_text("Find a document"),
+            (Screen::FolderOrder, _) => self
+                .controls
+                .interface_language
+                .library_view_text("Folder order"),
             (Screen::DictionaryEntry, _) => self
                 .controls
                 .interface_language
@@ -8731,6 +8740,8 @@ impl Reader {
             Screen::BookmarkFind | Screen::BookmarkMatches | Screen::BookmarkBrowser(_)
         ) {
             self.controls.interface_language.bookmark_text("Back")
+        } else if matches!(self.screen, Screen::LibraryFind | Screen::FolderOrder) {
+            self.controls.interface_language.library_view_text("Back")
         } else if self.screen == Screen::DictionaryEntry {
             self.controls
                 .interface_language
@@ -8825,7 +8836,12 @@ impl Reader {
         ) {
             let (hint, action) = match self.screen {
                 Screen::Note | Screen::EditNote => ("Note text", "Save"),
-                Screen::LibraryFind => ("Title, author or filename", "Find"),
+                Screen::LibraryFind => (
+                    self.controls
+                        .interface_language
+                        .library_view_text("Title, author or filename"),
+                    self.controls.interface_language.library_view_text("Find"),
+                ),
                 Screen::ContentsSearch => (
                     self.controls
                         .interface_language

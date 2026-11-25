@@ -3135,8 +3135,37 @@ fn shape_paragraph(
     } else {
         Vec::new()
     };
+    // Build only visual break boundaries; never replace source characters.
+    // Runs that cannot be mapped exactly are left on the normal line rules.
+    let mut relaxed_nonbreaking = Vec::new();
+    'runs: for run in block.styled_text.iter() {
+        let Some(run_style) = styles.get(run.element) else {
+            continue;
+        };
+        if !run_style.loose_nonbreaking || run_style.inline_nowrap {
+            continue;
+        }
+        let Some(text) = block.text.get(run.bytes.clone()) else {
+            continue;
+        };
+        for (offset, ch) in text.char_indices() {
+            if matches!(ch, '\u{00a0}' | '\u{2011}') {
+                let boundary = run.bytes.start + offset + ch.len_utf8();
+                if boundary < block.text.len() {
+                    relaxed_nonbreaking.push(boundary);
+                    if relaxed_nonbreaking.len() > 4096 {
+                        relaxed_nonbreaking.clear();
+                        break 'runs;
+                    }
+                }
+            }
+        }
+    }
+    relaxed_nonbreaking.sort_unstable();
+    relaxed_nonbreaking.dedup();
     let mut builder = context.ranged_builder(fonts, &block.text, 1.0, true);
     builder.set_bidi_controls(&block.bidi_controls);
+    builder.set_relaxed_nonbreaking(&relaxed_nonbreaking);
     let font_weights = style.font_weights.clone();
     let weight_spacing = move |font: &parley::FontData, requested: f32, size: f32| {
         crate::font_synthesis::strength(font, requested, size, &font_weights)

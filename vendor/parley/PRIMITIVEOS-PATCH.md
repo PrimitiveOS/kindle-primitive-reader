@@ -87,3 +87,7 @@ positions are preserved.
 Reader exposes a bounded virtual-control slice on the ranged builder. Its
 patched `parley_engine` resolves those controls without adding bytes to the
 layout text. See `../parley_engine/PRIMITIVEOS-PATCH.md`.
+
+The ranged builder also forwards bounded source-byte boundaries for opt-in,
+conservative relaxation of selected non-breaking characters. No source text
+or text-selection coordinate is changed.
