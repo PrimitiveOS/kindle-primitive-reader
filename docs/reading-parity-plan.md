@@ -101,6 +101,11 @@ four additional typography presets, RGB-alpha TIFF decoding and Vietnamese
 selection-popup labels. Their build-only check passes; the feature comparisons,
 visual fit and behavioral tests remain open.
 
+Additional implementation covers Swedish hyphenation, common-ligature CSS
+controls and the end-of-document Vietnamese dialog. TIFF alpha support now also
+includes white-is-black grayscale. These changes have passed a build-only
+check; their behavioral and device validation remains deferred.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or

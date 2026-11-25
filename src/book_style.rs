@@ -353,6 +353,7 @@ pub(crate) struct Style {
     pub widows: u8,
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
+    pub(crate) common_ligatures: bool,
     pub line_height: Option<f32>,
     pub text_indent: TextIndent,
     pub padding: [CssLength; 2],
@@ -414,6 +415,7 @@ impl Default for Style {
             widows: 1,
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
+            common_ligatures: true,
             line_height: None,
             text_indent: TextIndent::default(),
             padding: Default::default(),
@@ -1078,6 +1080,7 @@ impl BookStyle {
                         style.font_weight = weight.resolve(parent.font_weight)
                     }
                     Property::Slant(slant) => style.font_style = *slant,
+                    Property::CommonLigatures(enabled) => style.common_ligatures = *enabled,
                     Property::LineBreak(breaking) => style.line_break = *breaking,
                     Property::WordBreak(breaking) => style.word_break = *breaking,
                     Property::NoWrap(nowrap) => style.inline_nowrap = *nowrap,
@@ -1872,7 +1875,8 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
 
 type Priority = (u8, bool, Specificity);
 const CAPTION_SIDE: usize = 54;
-const CASCADE_PROPERTY_COUNT: usize = 55;
+const COMMON_LIGATURES: usize = 55;
+const CASCADE_PROPERTY_COUNT: usize = 56;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -1932,6 +1936,7 @@ fn choose<'a>(
             Property::Alignment(_) => 4,
             Property::Weight(_) => 5,
             Property::Slant(_) => 6,
+            Property::CommonLigatures(_) => COMMON_LIGATURES,
             Property::LineBreak(_) => 7,
             Property::WordBreak(_) => 8,
             Property::NoWrap(_) => 53,
@@ -2044,6 +2049,7 @@ enum Property {
     Alignment(Alignment),
     Weight(Weight),
     Slant(FontStyle),
+    CommonLigatures(bool),
     LineBreak(Option<LineBreak>),
     WordBreak(WordBreak),
     NoWrap(bool),
@@ -2375,6 +2381,15 @@ impl<'i> DeclarationParser<'i> for Properties {
                         _ => return Err(ParseError::unexpected_token()),
                     };
                     Property::Slant(style)
+                }
+                "font-variant" | "font-variant-ligatures" | "-webkit-font-variant-ligatures" => {
+                    let value = input.expect_ident()?.to_ascii_lowercase();
+                    let enabled = match value.as_str() {
+                        "normal" | "common-ligatures" => true,
+                        "no-common-ligatures" => false,
+                        _ => return Err(ParseError::unexpected_token()),
+                    };
+                    Property::CommonLigatures(enabled)
                 }
                 "line-height" => {
                     if input

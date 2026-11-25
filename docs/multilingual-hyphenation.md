@@ -24,6 +24,7 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Ukrainian | 2 / 2 | 1,989 upstream word and apostrophe rules; stock comparison pending |
 | Polish | 2 / 2 | 4,053 upstream word rules and 20 exceptions; stock comparison pending |
 | Russian | 2 / 2 | Upstream single-word rules and exceptions; stock comparison pending |
+| Swedish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
 | Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
 | Russian + English (US) | 2 / 2 | Combined existing Russian and US English tries; stock comparison pending |
 | Slovak | 2 / 3 | 2,467 upstream word patterns and four active exceptions; stock comparison pending |
@@ -154,3 +155,9 @@ The combined Russian/English candidate reuses the existing licensed tables;
 it has not been built or compared against KOReader's combined dictionaries,
 and neither the simulator nor Kindle has verified its behavior. The existing
 Russian and English rule-source and punctuation limitations continue to apply.
+
+Swedish uses Jan Michael Rynning's upstream TeX patterns and KOReader's
+2 / 2 minima. The unmodified source, LPPL 1.3c and provenance are included in
+release packages. The compiled rules and their word breaks have not been
+compared with the pinned KOReader dictionary, built, or tested on the computer
+or Kindle. [Swedish terms](licenses/HYPHENATION-SV.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)

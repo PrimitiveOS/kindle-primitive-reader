@@ -86,6 +86,16 @@ const KERNING_OFF: [FontFeature; 2] = [
     FontFeature::new(Tag::new(b"kern"), 0),
     FontFeature::new(Tag::new(b"vkrn"), 0),
 ];
+const NO_COMMON_LIGATURES: [FontFeature; 2] = [
+    FontFeature::new(Tag::new(b"liga"), 0),
+    FontFeature::new(Tag::new(b"clig"), 0),
+];
+const KERNING_OFF_NO_COMMON_LIGATURES: [FontFeature; 4] = [
+    FontFeature::new(Tag::new(b"kern"), 0),
+    FontFeature::new(Tag::new(b"vkrn"), 0),
+    FontFeature::new(Tag::new(b"liga"), 0),
+    FontFeature::new(Tag::new(b"clig"), 0),
+];
 const KERNING_FAST: [FontFeature; 23] = [
     FontFeature::new(Tag::new(b"kern"), 0),
     FontFeature::new(Tag::new(b"vkrn"), 0),
@@ -142,6 +152,23 @@ fn kerning_features(mode: crate::FontKerningMode) -> Option<&'static [FontFeatur
         crate::FontKerningMode::Fast => Some(&KERNING_FAST),
         crate::FontKerningMode::Good => Some(&KERNING_GOOD),
         crate::FontKerningMode::Best => None,
+    }
+}
+
+fn shaping_features(
+    mode: crate::FontKerningMode,
+    common_ligatures: bool,
+) -> &'static [FontFeature] {
+    if common_ligatures {
+        return kerning_features(mode).unwrap_or(&[]);
+    }
+    match mode {
+        crate::FontKerningMode::Best => &NO_COMMON_LIGATURES,
+        crate::FontKerningMode::Off => &KERNING_OFF_NO_COMMON_LIGATURES,
+        // These modes already disable common ligatures; do not reenable any
+        // of the other features their kerning policy has deliberately disabled.
+        crate::FontKerningMode::Fast => &KERNING_FAST,
+        crate::FontKerningMode::Good => &KERNING_GOOD,
     }
 }
 
@@ -2972,6 +2999,11 @@ fn make_annotation(
         builder.set_cluster_spacing(Some(policy));
     }
     apply_kerning(&mut builder, settings.effective_font_kerning_mode());
+    if !style.common_ligatures {
+        builder.push_default(StyleProperty::FontFeatures(
+            shaping_features(settings.effective_font_kerning_mode(), false).into(),
+        ));
+    }
     let family: FontFamily<'_> = if settings.override_fonts {
         GenericFamily::Serif.into()
     } else {
@@ -3098,6 +3130,11 @@ fn shape_paragraph(
         builder.set_cluster_spacing(Some(policy));
     }
     apply_kerning(&mut builder, settings.effective_font_kerning_mode());
+    if !style.common_ligatures {
+        builder.push_default(StyleProperty::FontFeatures(
+            shaping_features(settings.effective_font_kerning_mode(), false).into(),
+        ));
+    }
     let soft_hyphen = |offset| {
         let index = automatic
             .custom_words
@@ -3317,6 +3354,15 @@ fn shape_paragraph(
         }
         if run.font_style != base.font_style {
             builder.push(StyleProperty::FontStyle(run.font_style), bytes.clone());
+        }
+        if run.common_ligatures != base.common_ligatures {
+            builder.push(
+                StyleProperty::FontFeatures(
+                    shaping_features(settings.effective_font_kerning_mode(), run.common_ligatures)
+                        .into(),
+                ),
+                bytes.clone(),
+            );
         }
     };
     let first_end = pass.styled_end(block.text);

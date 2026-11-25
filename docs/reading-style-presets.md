@@ -42,6 +42,17 @@ saved anchors. They use Reader's existing CSS and layout subset; exact
 KOReader typography, simulator behavior and Kindle appearance have not yet
 been verified. [Pinned KOReader definitions](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L402-L483)
 
+**Disable common ligatures** uses KOReader's non-important user rule, so a
+supported explicit publisher declaration can override it. Reader accepts
+`normal`, `common-ligatures` and `no-common-ligatures` on `font-variant`,
+`font-variant-ligatures` and its WebKit alias. In horizontal Parley text,
+the setting changes the OpenType `liga` and `clig` features without disabling
+required ligatures. Existing Fast and Good kerning policies remain in force.
+Other font-variant combinations, pseudo-element-specific overrides, and
+vertical or Blitz rendering are not covered by this implementation. The
+source text and saved anchors are unchanged. This behavior has not yet been
+built or tested. [Pinned KOReader tweak](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L364-L371)
+
 ## Paragraph spacing and browser defaults
 
 **Spacing between paragraphs** contains three mutually exclusive choices.

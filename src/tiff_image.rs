@@ -58,21 +58,24 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
 
     let photometric = image.required(262, SHORT_ONLY)?;
     let samples = image.scalar(277, SHORT_ONLY, 1)?;
-    if !matches!((photometric, samples), (0 | 1 | 3, 1) | (2, 3 | 4)) {
+    if !matches!((photometric, samples), (0 | 1 | 3, 1) | (1, 2) | (2, 3 | 4)) {
         return Err(TiffError::Unsupported);
     }
-    // Four-sample RGB must explicitly describe the alpha channel. Bound the
-    // decoded strip and grayscale output together to the existing 32 MiB cap.
-    let alpha = if samples == 4 {
+    // Alpha-bearing grayscale and RGB must explicitly describe the extra
+    // channel. Bound decoded strips and output together to the existing cap.
+    let alpha = if samples == 2 || samples == 4 {
         let kind = image.scalar(338, SHORT_ONLY, 0)?;
         if !matches!(kind, 1 | 2) {
             return Err(TiffError::Unsupported);
         }
-        if u64::from(pixel_count) * 5 > 32 * 1024 * 1024 {
+        if u64::from(pixel_count) * (u64::from(samples) + 1) > 32 * 1024 * 1024 {
             return Err(TiffError::Limit);
         }
         Some(kind)
     } else {
+        if image.numbers(338, SHORT_ONLY, 1)?.is_some() {
+            return Err(TiffError::Unsupported);
+        }
         None
     };
     let bits_values = image.numbers(258, SHORT_ONLY, samples as usize)?;
@@ -84,7 +87,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let orientation = image.scalar(274, SHORT_ONLY, 1)?;
     if !matches!(bits, 1 | 2 | 4 | 8)
         || (photometric != 3 && !matches!(bits, 1 | 8))
-        || (samples >= 3 && bits != 8)
+        || (samples >= 2 && bits != 8)
         || bits_values.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != bits))
         || formats.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != 1))
         || !(fill_order == 1 || (bits < 8 && fill_order == 2))
@@ -230,12 +233,16 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         } else if let Some(alpha_kind) = alpha {
             // Composite associated or unassociated alpha over the same white
             // page used by Reader's other transparent-image paths.
-            pixels.extend(strip.chunks_exact(4).map(|rgba| {
-                let gray = (u32::from(rgba[0]) * 2126
-                    + u32::from(rgba[1]) * 7152
-                    + u32::from(rgba[2]) * 722)
-                    / 10000;
-                let a = u32::from(rgba[3]);
+            pixels.extend(strip.chunks_exact(samples as usize).map(|pixel| {
+                let gray = if samples == 2 {
+                    u32::from(pixel[0])
+                } else {
+                    (u32::from(pixel[0]) * 2126
+                        + u32::from(pixel[1]) * 7152
+                        + u32::from(pixel[2]) * 722)
+                        / 10000
+                };
+                let a = u32::from(pixel[samples as usize - 1]);
                 if alpha_kind == 1 {
                     (gray + 255 - a).min(255) as u8
                 } else {
@@ -522,8 +529,8 @@ impl<'a> Directory<'a> {
             if tag <= previous {
                 return Err(TiffError::Directory);
             }
-            if matches!(tag, 322..=325 | 330 | 338) {
-                return Err(TiffError::Unsupported); // Tiles, SubIFDs, or extra samples.
+            if matches!(tag, 322..=325 | 330) {
+                return Err(TiffError::Unsupported); // Tiles or SubIFDs.
             }
             previous = tag;
         }

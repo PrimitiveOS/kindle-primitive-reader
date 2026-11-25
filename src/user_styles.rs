@@ -831,6 +831,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("* {font-size:inherit !important;}"),
     },
     Preset {
+        id: "ligature_all_no_common_ligature",
+        title: "Disable common ligatures",
+        group: "common-ligatures",
+        priority: 0,
+        effect: Effect::Css("* {font-variant:no-common-ligatures;}"),
+    },
+    Preset {
         id: "font_size_most_reset",
         title: "Reset main text font size",
         group: "font-size",

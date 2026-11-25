@@ -95,6 +95,13 @@ impl Reader {
                 row
             }
         }));
+        let language = self.controls.interface_language;
+        for row in &mut rows {
+            row.title = language.end_document_text(&row.title).to_owned();
+            if let Some(detail) = &mut row.detail {
+                *detail = language.end_document_text(detail).to_owned();
+            }
+        }
         rows
     }
 
@@ -275,10 +282,11 @@ impl Reader {
             return;
         }
         let panel = self.navigation_layout().centered(PORTRAIT_PANEL);
+        let language = self.controls.interface_language;
         canvas.popup(panel);
         canvas.text(
             Rect::new(panel.x + 40, panel.y + 38, panel.w - 80, 70),
-            "End of document",
+            language.end_document_text("End of document"),
             TextStyle::new(50).bold().center(),
         );
         for (index, action) in BUTTONS.into_iter().enumerate() {
@@ -318,11 +326,16 @@ impl Reader {
             canvas.icon(Rect::new(rect.x + 20, rect.y + 28, 44, 44), icon, ink);
             canvas.text(
                 Rect::new(rect.x + 78, rect.y + 25, rect.w - 92, 56),
-                label,
+                language.end_document_text(label),
                 BODY.ink(ink),
             );
         }
-        canvas.button(dismiss(panel), "Close", false, false);
+        canvas.button(
+            dismiss(panel),
+            language.end_document_text("Close"),
+            false,
+            false,
+        );
     }
 
     pub(super) fn end_dialog_input(&mut self, input: Input) -> Change {

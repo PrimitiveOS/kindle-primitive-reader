@@ -345,6 +345,37 @@ const PAGE_ACTION_LABELS: &[(&str, &str)] = &[
     ("Matches", "Kết quả tìm kiếm"),
 ];
 
+// Fixed end-of-document action and preference labels only. The destructive
+// confirmation uses its separate shared Sheet and is not localized here.
+const END_DOCUMENT_LABELS: &[(&str, &str)] = &[
+    ("End of document", "Hết tài liệu"),
+    ("Mark as reading", "Đánh dấu đang đọc"),
+    ("Mark as finished", "Đánh dấu đã đọc"),
+    ("Book status", "Trạng thái sách"),
+    ("Go to beginning", "Về đầu sách"),
+    ("Open next file", "Mở tệp tiếp"),
+    ("Delete file", "Xóa tệp"),
+    ("Library", "Thư viện"),
+    ("Close", "Đóng"),
+    ("Always mark as finished", "Luôn đánh dấu đã đọc"),
+    ("Show actions", "Hiện tùy chọn"),
+    ("Stay on the last page", "Ở lại trang cuối"),
+    ("Show book status", "Hiện trạng thái sách"),
+    ("Return to Library", "Về thư viện"),
+    (
+        "Show book status, then Library",
+        "Hiện trạng thái, rồi về thư viện",
+    ),
+    ("Ask to delete the file", "Hỏi trước khi xóa tệp"),
+    ("On", "Bật"),
+    ("Off", "Tắt"),
+    ("Selected", "Đã chọn"),
+    (
+        "Selected · Prompts with this folder order",
+        "Đã chọn · Sẽ hỏi với cách sắp xếp này",
+    ),
+];
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum InterfaceLanguage {
@@ -751,6 +782,31 @@ impl InterfaceLanguage {
             "Tap another word to extend" => "Chạm từ khác để mở rộng",
             _ => english,
         }
+    }
+
+    /// Translate only fixed end-of-document UI labels and status text.
+    pub(super) fn end_document_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) =
+                END_DOCUMENT_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    /// Preserve English searches for end-of-document preference rows.
+    pub(super) fn end_document_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = END_DOCUMENT_LABELS
+                .iter()
+                .find(|(_, value)| *value == label)
+            {
+                return english;
+            }
+        }
+        label
     }
 
     /// Return the canonical English search alias for a known Screen-panel row.
