@@ -1,6 +1,8 @@
 use super::*;
+use crate::app::selection_viewport_tests::canvas;
 use crate::app::tests::{Fixture, capture_test_screen, tap_contents_item, tap_reading_control};
 use crate::fixed::tests::pdf_objects;
+use crate::session::ReadingViewport;
 use std::io::Write;
 
 const ADDRESS: &str = "https://example.org/harbor/tide-chart?edition=2#table";
@@ -96,11 +98,22 @@ fn enlarged_link_taps_follow_external_preference_and_keep_zero_radius_internal_h
     open_preferences(&mut app);
     tap_contents_item(&mut app, "Allow larger tap area around links");
     app.show(Screen::Book);
+    let mut canvas = canvas(&app, ReadingViewport::PORTRAIT);
+    let page = primitive_app::frame(&app, &mut canvas, false);
     assert_eq!(app.input(Input::Tap(nearby.0, nearby.1)), Change::Partial);
     assert!(app.link_popup.is_some());
     assert_eq!(app.current_history_location(), origin);
+    assert!(
+        primitive_app::frame(&app, &mut canvas, false) != page,
+        "the EPUB address popup must change the visible frame"
+    );
     capture_test_screen(&app, &fonts, "READER_LARGER_LINK_CAPTURE", false);
-    app.input(Input::PageBack);
+    assert_eq!(app.input(Input::Tap(100.0, 400.0)), Change::Partial);
+    assert!(app.link_popup.is_none());
+    assert!(
+        primitive_app::frame(&app, &mut canvas, false) == page,
+        "dismissing the address must restore the reading frame"
+    );
     open_preferences(&mut app);
     tap_contents_item(&mut app, "Ignore external links on tap");
     app.show(Screen::Book);

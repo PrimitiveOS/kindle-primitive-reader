@@ -8151,6 +8151,9 @@ impl Reader {
             if let Some(note) = &self.footnote {
                 note.draw(canvas, self.uses_night_pages());
             }
+            if let Some(popup) = &self.link_popup {
+                popup.draw(canvas);
+            }
             if self.screen == Screen::OnlineLookup {
                 self.draw_online(canvas);
             }

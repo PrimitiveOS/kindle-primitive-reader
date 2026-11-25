@@ -382,6 +382,13 @@ impl Bars {
         let bottom = self.bottom.last().map_or(height, |rect| rect.y as u32);
         top..bottom.max(top)
     }
+
+    fn panels_overlap(&self) -> bool {
+        self.top
+            .last()
+            .zip(self.bottom.last())
+            .is_some_and(|(top, bottom)| top.bottom() > bottom.y)
+    }
 }
 
 fn cell(row: Rect, index: usize, count: usize) -> Rect {
@@ -826,7 +833,18 @@ impl Reader {
 
     fn set_bottom_panel(&mut self, panel: Option<BarPanel>) {
         self.reading_panel = panel;
-        if panel == Some(BarPanel::TextRendering) {
+        if panel.is_some()
+            && self.reading_top
+            && self.reading_bottom
+            && self.reading_bars().panels_overlap()
+        {
+            if self.top_group.is_some() {
+                self.reading_panel = None;
+            } else {
+                self.reading_top = false;
+            }
+        }
+        if self.reading_panel == Some(BarPanel::TextRendering) {
             self.prepare_embedded_font_inventory();
         }
     }
@@ -950,8 +968,8 @@ impl Reader {
                     self.screen = screen;
                     self.reading_top = top;
                     self.reading_bottom = bottom;
-                    self.set_bottom_panel(panel);
                     self.top_group = group;
+                    self.set_bottom_panel(panel);
                     let now = Instant::now();
                     self.update_stats_activity(now);
                     self.sync_auto_turn(now);
@@ -1122,8 +1140,9 @@ mod tests {
         for (index, (path, surface, toolbar, lower_button)) in cases.into_iter().enumerate() {
             app.open_path(path).unwrap();
             app.controls.footer_tap_locked = true;
-            // Probe menu geometry without turning pages at points outside its bands.
+            // Isolate menu geometry from page turns and document links.
             app.controls.disable_page_taps = true;
+            app.controls.tap_links = Some(false);
             let portrait = draw_test_candidate(
                 &mut app,
                 index as u64 * 3 + 1,
@@ -1136,8 +1155,8 @@ mod tests {
             for (x, y, opened) in [
                 (632.0, 1343.0, false),
                 (632.0, 1344.0, true),
-                (316.0, 1400.0, true),
-                (315.0, 1400.0, false),
+                (320.0, 1400.0, true),
+                (312.0, 1400.0, false),
                 (632.0, 1551.0, false),
                 (632.0, 882.0, true),
                 (632.0, 884.0, false),

@@ -17,6 +17,7 @@ fn reader(fixture: &Fixture) -> Reader {
 #[test]
 fn menu_activation_switches_preserve_one_trigger_and_save_auto_show() {
     let fixture = Fixture::new();
+    std::fs::copy(crate::test_fixture("many-chapters.epub"), &fixture.book).unwrap();
     let mut app = reader(&fixture);
     app.open_path(&fixture.book).unwrap();
     let mut canvas = adopt(&mut app, ReadingViewport::PORTRAIT, 1);
@@ -78,13 +79,17 @@ fn menu_activation_edges_and_direct_bottom_bar_work_in_landscape_pdf() {
     );
     assert_eq!(app.top_group, Some(TopGroup::Navigation));
     assert!(app.reading_top && app.reading_bottom);
-    assert_eq!(app.reading_panel, Some(BarPanel::View));
+    assert_eq!(app.reading_panel, None);
+    assert!(!app.reading_bars().panels_overlap());
     capture(
         &app,
         &mut canvas,
         "reader-menu-auto-bottom-landscape.png",
         false,
     );
+    assert_eq!(tap_reading_control(&mut app, "View"), Change::Partial);
+    assert_eq!(app.reading_panel, Some(BarPanel::View));
+    assert!(!app.reading_bars().panels_overlap());
 
     app.show(Screen::Fixed);
     app.change_menu_activation(ActivationOption::AutoBottom)

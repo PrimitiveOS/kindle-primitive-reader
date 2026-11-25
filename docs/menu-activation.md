@@ -5,6 +5,8 @@ Open **Settings › Menu activation** in Reader. **With a tap** and
 turn off the last enabled gesture, Reader enables the other one.
 **Auto-show bottom menu** opens the bottom controls when the top menu opens.
 The bottom controls can still be opened directly when auto-show is off.
+When the expanded menus would overlap, the top controls and bottom shortcut
+bar open together. Tap a bottom shortcut to expand its controls.
 [Reader controls](screenshots/reader-menu-activation.png) ·
 [Top menu only](screenshots/reader-menu-top-only.png) ·
 [Both menus in a landscape PDF](screenshots/reader-menu-auto-bottom-landscape.png)
