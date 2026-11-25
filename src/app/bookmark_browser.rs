@@ -215,6 +215,7 @@ pub(super) enum Command {
     Use(Source),
     UseCurrentBook,
     FocusCurrentPage,
+    FocusLatestMark,
     PreviewRemoveCurrentNotes,
     AskRemoveCurrentNotes,
     ConfirmRemoveCurrentNotes,
@@ -960,6 +961,59 @@ impl Reader {
                             } else {
                                 "No matching marks in the current book"
                             })
+                            .to_owned(),
+                    );
+                }
+            }
+            Command::FocusLatestMark => {
+                let target = (|| {
+                    let book_id = match self.bookmark_browser.origin {
+                        Screen::Fixed => self.fixed.as_ref()?.id,
+                        Screen::Book => self.active.as_ref()?.id,
+                        _ => return None,
+                    };
+                    let state = self.library.state(book_id)?;
+                    self.bookmark_browser
+                        .rows
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(ordinal, row)| {
+                            let RowKey::Mark(key) = row else {
+                                return None;
+                            };
+                            if key.book != book_id {
+                                return None;
+                            }
+                            let (created, kind, index) = match key.locator {
+                                Locator::Bookmark(index) => {
+                                    (state.bookmarks.get(index)?.created_at, 0, index)
+                                }
+                                Locator::Reflow(index)
+                                    if self.bookmark_browser.origin == Screen::Book =>
+                                {
+                                    (state.highlights.get(index)?.created_at, 1, index)
+                                }
+                                Locator::Fixed(index)
+                                    if self.bookmark_browser.origin == Screen::Fixed =>
+                                {
+                                    (state.pdf_highlights.get(index)?.created_at, 2, index)
+                                }
+                                _ => return None,
+                            };
+                            Some(((created, kind, index), ordinal))
+                        })
+                        .max_by_key(|(key, _)| *key)
+                        .map(|(_, ordinal)| ordinal)
+                })();
+                self.show(Screen::BookmarkBrowser(Page::Results));
+                if let Some(ordinal) = target {
+                    let page = ordinal / self.list_geometry().rows;
+                    self.set_bookmark_list_anchor(page, ordinal);
+                } else {
+                    self.notice = Some(
+                        self.controls
+                            .interface_language
+                            .bookmark_text("No matching marks in the current book")
                             .to_owned(),
                     );
                 }
@@ -1785,6 +1839,7 @@ impl Reader {
                     || (browser.origin == Screen::Book && self.active.is_some())
                 {
                     rows.insert(0, item("Show current page in results", C::FocusCurrentPage));
+                    rows.insert(1, item("Show latest mark in results", C::FocusLatestMark));
                 }
                 rows.extend(
                     [Kind::Bookmark, Kind::Highlight, Kind::Note]

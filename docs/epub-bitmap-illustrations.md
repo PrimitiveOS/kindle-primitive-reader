@@ -19,3 +19,14 @@ decoder instead. [KOReader EPUB provider](https://github.com/koreader/koreader/b
 This change has not yet been built or tested. Pixel fidelity, malformed-image
 limits, transparency and appearance in both reflow and fixed-layout views
 need simulator and device verification before a compatibility claim.
+
+Book Information can also attempt a publisher-declared BMP (`image/bmp` or
+`image/x-ms-bmp`) or WebP (`image/webp`) cover when no previously supported
+cover choice is available. This does not change the book's chapter content or
+saved positions. BMP covers use the existing raster signature and decoded-size
+checks. WebP covers use the existing bounded simple VP8/VP8L decoder and are
+converted to grayscale PNG for inspection, with a 4 MiB input and output
+limit. Animated, extended and otherwise unsupported WebP variants are not
+accepted. The decoder's internal memory behavior, malformed inputs, real-book
+appearance, and exact KOReader cover behavior remain unverified; this candidate
+has not yet been behaviorally tested in simulation or on Kindle.

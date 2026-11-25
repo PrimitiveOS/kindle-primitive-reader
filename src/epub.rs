@@ -66,6 +66,8 @@ pub struct BookSeries {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoverKind {
+    Bmp,
+    Webp,
     Gif,
     Jpeg,
     Png,
@@ -995,7 +997,7 @@ impl Book {
                 CoverKind::Jpeg => "jpg",
                 CoverKind::Png => "png",
                 CoverKind::Gif => "gif",
-                CoverKind::Svg => return None,
+                CoverKind::Bmp | CoverKind::Webp | CoverKind::Svg => return None,
             };
             let path = format!("assets/primitiveos-mobi-cover.{extension}");
             if publication.resources.contains_key(&path) {
@@ -1227,10 +1229,27 @@ impl Book {
             return Ok(None);
         };
         let cap = match cover.kind {
-            CoverKind::Gif | CoverKind::Jpeg | CoverKind::Png => MAX_RASTER_COVER,
+            CoverKind::Bmp
+            | CoverKind::Webp
+            | CoverKind::Gif
+            | CoverKind::Jpeg
+            | CoverKind::Png => MAX_RASTER_COVER,
             CoverKind::Svg => crate::svg_image::MAX_SVG_BYTES,
         };
         let bytes = self.resource_limited(&cover.path, cap)?;
+        if cover.kind == CoverKind::Webp {
+            let converted = crate::comic::ImagePage::webp_as_png(&bytes)?;
+            if converted.len() > MAX_RASTER_COVER {
+                return Err("The converted EPUB cover exceeds Reader's size limit".into());
+            }
+            return Ok(Some((CoverKind::Png, converted)));
+        }
+        if cover.kind == CoverKind::Bmp {
+            if !bytes.starts_with(b"BM") {
+                return Err("The declared EPUB BMP cover has an invalid signature".into());
+            }
+            crate::epub_raster_dimensions(&bytes)?;
+        }
         Ok(Some((cover.kind, bytes)))
     }
 
@@ -1541,12 +1560,22 @@ fn child<'a, 'input>(node: Node<'a, 'input>, name: &str) -> Result<Node<'a, 'inp
 
 // EPUB 3.3 §D.6.1 and the EPUB 2 cover meta convention described in §5.9.3.
 fn package_cover(metadata: Node<'_, '_>, manifest: &BTreeMap<&str, Item>) -> Option<BookCover> {
+    // Keep previously supported EPUB 3 / EPUB 2 cover selection first.
+    package_cover_with_extra(metadata, manifest, false)
+        .or_else(|| package_cover_with_extra(metadata, manifest, true))
+}
+
+fn package_cover_with_extra(
+    metadata: Node<'_, '_>,
+    manifest: &BTreeMap<&str, Item>,
+    allow_extra: bool,
+) -> Option<BookCover> {
     let mut marked = manifest.values().filter(|item| item.cover_image);
     if let Some(item) = marked.next() {
         if marked.next().is_some() {
             return None;
         }
-        if let Some(cover) = cover_item(item) {
+        if let Some(cover) = cover_item(item, allow_extra) {
             return Some(cover);
         }
     }
@@ -1555,14 +1584,16 @@ fn package_cover(metadata: Node<'_, '_>, manifest: &BTreeMap<&str, Item>) -> Opt
     if legacy_ids.any(|candidate| candidate != id) {
         return None;
     }
-    cover_item(manifest.get(id)?)
+    cover_item(manifest.get(id)?, allow_extra)
 }
 
-fn cover_item(item: &Item) -> Option<BookCover> {
+fn cover_item(item: &Item, allow_extra: bool) -> Option<BookCover> {
     if item.path.len() > MAX_COVER_PATH || !is_archive_path(&item.path) {
         return None;
     }
     let kind = match item.media.as_str() {
+        "image/bmp" | "image/x-ms-bmp" if allow_extra => CoverKind::Bmp,
+        "image/webp" if allow_extra => CoverKind::Webp,
         "image/gif" => CoverKind::Gif,
         "image/jpeg" => CoverKind::Jpeg,
         "image/png" => CoverKind::Png,

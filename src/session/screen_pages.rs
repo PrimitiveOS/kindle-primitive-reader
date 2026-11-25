@@ -2,6 +2,7 @@
 pub(crate) mod background;
 pub(crate) mod eager;
 pub(crate) mod embedded_fonts;
+pub(super) mod folder_sources;
 
 use std::cell::{Cell, RefCell};
 use std::fs;
