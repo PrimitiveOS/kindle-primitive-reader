@@ -108,7 +108,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let compression = image.scalar(259, SHORT_ONLY, 1)?;
     let predictor = image.scalar(317, SHORT_ONLY, 1)?;
     let orientation = image.scalar(274, SHORT_ONLY, 1)?;
-    if !matches!(bits, 1 | 2 | 4 | 8)
+    if !matches!(bits, 1 | 2 | 4 | 8 | 16)
+        || (bits == 16 && !matches!((photometric, samples), (0 | 1, 1)))
         || (!matches!(photometric, 0 | 1 | 3) && !matches!(bits, 1 | 8))
         || (samples >= 2 && bits != 8)
         || bits_values.as_ref().is_some_and(|values| (0..samples as usize).any(|index| values.value(index) != bits))
@@ -120,7 +121,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         || (fill_order == 2 && matches!(compression, 5 | 8 | 32946))
         || !matches!(orientation, 1..=8)
         || image.scalar(284, SHORT_ONLY, 1)? != 1 // PlanarConfiguration
-        || !(predictor == 1 || (predictor == 2 && bits == 8 && matches!(compression, 5 | 8 | 32946)))
+        || !(predictor == 1 || (predictor == 2 && matches!(bits, 8 | 16) && matches!(compression, 5 | 8 | 32946)))
         || image.scalar(254, LONG_ONLY, 0)? != 0 // NewSubfileType
         || image.scalar(255, SHORT_ONLY, 1)? != 1
     // SubfileType
@@ -231,10 +232,31 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         };
         if predictor == 2 {
             let decoded = unpacked.as_mut().ok_or(TiffError::Unsupported)?;
-            let channels = samples as usize;
-            for row in decoded.chunks_exact_mut(row_bytes) {
-                for index in channels..row.len() {
-                    row[index] = row[index].wrapping_add(row[index - channels]);
+            if bits == 16 {
+                // The 16-bit path is limited to one grayscale channel. The
+                // horizontal difference operates on samples, not bytes, and
+                // its state resets at each row.
+                for row in decoded.chunks_exact_mut(row_bytes) {
+                    let mut previous = 0u16;
+                    for sample in row.chunks_exact_mut(2) {
+                        let value = image
+                            .order
+                            .short([sample[0], sample[1]])
+                            .wrapping_add(previous);
+                        let bytes = match image.order {
+                            ByteOrder::Little => value.to_le_bytes(),
+                            ByteOrder::Big => value.to_be_bytes(),
+                        };
+                        sample.copy_from_slice(&bytes);
+                        previous = value;
+                    }
+                }
+            } else {
+                let channels = samples as usize;
+                for row in decoded.chunks_exact_mut(row_bytes) {
+                    for index in channels..row.len() {
+                        row[index] = row[index].wrapping_add(row[index - channels]);
+                    }
                 }
             }
         }
@@ -296,6 +318,14 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
                 ((u32::from(rgb[0]) * 2126 + u32::from(rgb[1]) * 7152 + u32::from(rgb[2]) * 722)
                     / 10000) as u8
             }));
+        } else if bits == 16 {
+            // Reader displays 8-bit grayscale. Preserve the most significant
+            // byte after interpreting each 16-bit sample in TIFF byte order.
+            pixels.extend(
+                strip.chunks_exact(2).map(|sample| {
+                    ((image.order.short([sample[0], sample[1]]) >> 8) as u8) ^ invert
+                }),
+            );
         } else if bits == 8 {
             pixels.extend(strip.iter().map(|&gray| gray ^ invert));
         } else if matches!(bits, 2 | 4) {

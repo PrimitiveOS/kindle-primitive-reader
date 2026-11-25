@@ -3092,6 +3092,15 @@ impl InterfaceLanguage {
             }
             "Delete marks" => "Xóa dấu",
             "Marks removed" => "Đã xóa dấu",
+            "Edit note" => "Sửa ghi chú",
+            "Remove note" => "Xóa ghi chú",
+            "Save note" => "Lưu ghi chú",
+            "New line" => "Dòng mới",
+            "Keep editing" => "Tiếp tục sửa",
+            "Note saved" => "Đã lưu ghi chú",
+            "Remove this note? The saved mark will remain." => {
+                "Xóa ghi chú này? Dấu đã lưu vẫn được giữ."
+            }
             "Page" => "Trang",
             "Chapter" => "Chương",
             "Choose notes" => "Chọn ghi chú",

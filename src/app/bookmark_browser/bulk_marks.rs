@@ -12,7 +12,7 @@ pub(super) enum Snapshot {
 }
 
 impl Snapshot {
-    fn capture(book: &BookState, locator: Locator) -> Result<Self> {
+    pub(super) fn capture(book: &BookState, locator: Locator) -> Result<Self> {
         Ok(match locator {
             Locator::Bookmark(index) => {
                 let mark = book
@@ -51,11 +51,123 @@ impl Snapshot {
         })
     }
 
-    fn matches(&self, book: &BookState) -> bool {
+    pub(super) fn matches(&self, book: &BookState) -> bool {
         match self {
             Self::Bookmark(index, mark) => book.bookmarks.get(*index) == Some(mark),
             Self::Reflow(index, mark) => book.highlights.get(*index) == Some(mark),
             Self::Fixed(index, mark) => book.pdf_highlights.get(*index) == Some(mark),
+        }
+    }
+
+    pub(super) fn note(&self) -> Option<&str> {
+        match self {
+            Self::Bookmark(_, mark) => mark.note.as_deref(),
+            Self::Reflow(_, mark) => mark.note.as_deref(),
+            Self::Fixed(_, mark) => mark.note.as_deref(),
+        }
+    }
+
+    pub(super) fn set_note(&self, book: &mut BookState, note: Option<String>, now: Option<i64>) {
+        match self {
+            Self::Bookmark(index, _) => {
+                book.bookmarks[*index].note = note;
+                book.bookmarks[*index].updated_at = now;
+            }
+            Self::Reflow(index, _) => {
+                book.highlights[*index].note = note;
+                book.highlights[*index].updated_at = now;
+            }
+            Self::Fixed(index, _) => {
+                book.pdf_highlights[*index].note = note;
+                book.pdf_highlights[*index].updated_at = now;
+            }
+        }
+    }
+
+    /// Verify against the open fixed document or a freshly opened reflow
+    /// chapter before an editor is exposed or a reviewed change is saved.
+    pub(super) fn verify_source(&self, reader: &Reader) -> Result<()> {
+        if let Some(fixed) = &reader.fixed {
+            match self {
+                Self::Bookmark(_, mark)
+                    if mark.position.chapter == 0
+                        && mark.position.anchor.is_none()
+                        && mark.position.page < fixed.reading.count() =>
+                {
+                    return Ok(());
+                }
+                Self::Fixed(_, mark)
+                    if mark.is_valid()
+                        && mark.page < fixed.reading.count()
+                        && mark
+                            .continuation
+                            .iter()
+                            .all(|part| part.page < fixed.reading.count()) =>
+                {
+                    return Ok(());
+                }
+                _ => return Err("This mark is unavailable in the open document".into()),
+            }
+        }
+        let active = reader.active.as_ref().ok_or("Open a book first")?;
+        match self {
+            Self::Bookmark(_, mark) => {
+                let (chapter, anchor) = match &mark.position.anchor {
+                    Some(anchor)
+                        if anchor.raw_caret.is_none()
+                            && anchor.book == active.reading.probe.book =>
+                    {
+                        (
+                            active
+                                .reading
+                                .probe
+                                .chapter_index(&anchor.chapter)
+                                .ok_or("That chapter is unavailable")?,
+                            Some(anchor),
+                        )
+                    }
+                    Some(_) => return Err("This mark is unavailable in the open document".into()),
+                    None => (mark.position.chapter, None),
+                };
+                if chapter >= active.reading.probe.chapter_count() {
+                    return Err("That chapter is unavailable".into());
+                }
+                let probe = active.reading.config.chapter(chapter)?;
+                if anchor.map_or(mark.position.page < probe.page_count(), |anchor| {
+                    probe.page_for(anchor).is_some()
+                }) {
+                    Ok(())
+                } else {
+                    Err("This mark is unavailable in the open document".into())
+                }
+            }
+            Self::Reflow(_, mark) => {
+                let start = &mark.selection.start;
+                let end = &mark.selection.end;
+                if start.raw_caret.is_some()
+                    || end.raw_caret.is_some()
+                    || start.book != active.reading.probe.book
+                    || end.book != active.reading.probe.book
+                    || start.chapter != end.chapter
+                {
+                    return Err("This mark is unavailable in the open document".into());
+                }
+                let chapter = active
+                    .reading
+                    .probe
+                    .chapter_index(&start.chapter)
+                    .ok_or("That chapter is unavailable")?;
+                let probe = active.reading.config.chapter(chapter)?;
+                if probe.page_for(start).is_some()
+                    && probe.page_for(end).is_some()
+                    && probe.select_source_range(start, end).is_some()
+                {
+                    Ok(())
+                } else {
+                    Err("This mark is unavailable in the open document".into())
+                }
+            }
+            Self::Fixed(_, _) => Err("This mark is unavailable in the open document".into()),
         }
     }
 

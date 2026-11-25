@@ -1,5 +1,6 @@
 //! Browse saved marks across the library without changing an open document.
 mod bulk_marks;
+mod edit_note;
 mod metadata;
 mod metadata_view;
 use super::{
@@ -72,6 +73,8 @@ pub(super) enum Page {
     SelectNotes,
     SelectMarks,
     RemoveMarksConfirm,
+    EditNote,
+    ConfirmClearNote,
     Colors,
     Search,
     Detail,
@@ -89,7 +92,7 @@ impl Page {
     fn is_list(self) -> bool {
         !matches!(
             self,
-            Self::Colors | Self::Search | Self::Detail | Self::Description
+            Self::Colors | Self::Search | Self::Detail | Self::Description | Self::EditNote
         )
     }
 
@@ -102,6 +105,8 @@ impl Page {
             Self::SelectNotes => "Choose notes",
             Self::SelectMarks => "Choose marks",
             Self::RemoveMarksConfirm => "Remove marks",
+            Self::EditNote => "Edit note",
+            Self::ConfirmClearNote => "Remove note",
             Self::Colors => "Highlight color filter",
             Self::Search => "Find saved marks",
             Self::Detail => "Saved mark",
@@ -219,6 +224,10 @@ pub(super) enum Command {
     ToggleReviewedMark(usize),
     SetAllReviewedMarks(bool),
     SelectReviewedMarkPage,
+    EditCurrentNote,
+    ConfirmClearCurrentNote,
+    ResumeCurrentNoteEdit,
+    CancelCurrentNoteEdit,
     ToggleDefault(Source),
     OpenFolder(PathBuf, bool),
     ToggleBook(u64),
@@ -454,6 +463,7 @@ pub(super) struct Browser {
     list_anchor: Option<(usize, usize)>,
     pending_note_removal: Option<PendingNoteRemoval>,
     pending_mark_removal: Option<bulk_marks::Pending>,
+    pending_note_edit: Option<edit_note::Pending>,
     pub(super) after_password: Option<MarkKey>,
 }
 
@@ -513,6 +523,7 @@ impl Default for Browser {
             list_anchor: None,
             pending_note_removal: None,
             pending_mark_removal: None,
+            pending_note_edit: None,
             after_password: None,
         }
     }
@@ -716,6 +727,7 @@ impl Reader {
                 let browser = &mut self.bookmark_browser;
                 browser.pending_note_removal = None;
                 browser.pending_mark_removal = None;
+                browser.pending_note_edit = None;
                 browser.origin = match self.screen {
                     Screen::BookTools => Screen::Book,
                     Screen::FixedTools => Screen::Fixed,
@@ -738,6 +750,9 @@ impl Reader {
                 }
                 if !matches!(page, Page::RemoveMarksConfirm | Page::SelectMarks) {
                     self.bookmark_browser.pending_mark_removal = None;
+                }
+                if !matches!(page, Page::EditNote | Page::ConfirmClearNote) {
+                    self.bookmark_browser.pending_note_edit = None;
                 }
                 if page == Page::Sources {
                     self.bookmark_browser.sources_from_results = true;
@@ -1073,6 +1088,10 @@ impl Reader {
             }
             Command::PreviewRemoveCurrentMarks => bulk_marks::preview(self)?,
             Command::ConfirmRemoveCurrentMarks => bulk_marks::confirm(self)?,
+            Command::EditCurrentNote => edit_note::open(self)?,
+            Command::ConfirmClearCurrentNote => edit_note::commit(self)?,
+            Command::ResumeCurrentNoteEdit => edit_note::resume(self)?,
+            Command::CancelCurrentNoteEdit => edit_note::cancel(self),
             Command::ToggleReviewedMark(index) => {
                 if self.screen != Screen::BookmarkBrowser(Page::SelectMarks) {
                     return Err("Review the marks before selecting them".into());
@@ -1831,6 +1850,29 @@ impl Reader {
                 rows.push(item(language.bookmark_text("Cancel"), C::Go(Page::Filters)));
                 rows
             }
+            Page::ConfirmClearNote => {
+                let mut rows = Vec::new();
+                if let Some(pending) = &browser.pending_note_edit {
+                    rows.push(Item::new(
+                        language.bookmark_text("Remove this note? The saved mark will remain."),
+                        Action::Heading,
+                    ));
+                    rows.push(Item::new(pending.title.clone(), Action::Heading));
+                    rows.push(item(
+                        language.bookmark_text("Remove note"),
+                        C::ConfirmClearCurrentNote,
+                    ));
+                    rows.push(item(
+                        language.bookmark_text("Keep editing"),
+                        C::ResumeCurrentNoteEdit,
+                    ));
+                }
+                rows.push(item(
+                    language.bookmark_text("Cancel"),
+                    C::CancelCurrentNoteEdit,
+                ));
+                rows
+            }
             Page::SelectMarks => {
                 let mut rows = vec![
                     item(
@@ -2017,7 +2059,9 @@ impl Reader {
                 rows
             }
             Page::Book => self.bookmark_metadata_rows(),
-            Page::Detail | Page::Search | Page::Results | Page::Description => Vec::new(),
+            Page::Detail | Page::Search | Page::Results | Page::Description | Page::EditNote => {
+                Vec::new()
+            }
         }
     }
 
@@ -2097,6 +2141,18 @@ impl Reader {
             }
             Page::Detail => {
                 self.draw_bookmark_detail(canvas);
+                if edit_note::can_edit(self) {
+                    canvas.button(
+                        layout.select_note_page(),
+                        language.bookmark_text("Edit note"),
+                        false,
+                        false,
+                    );
+                }
+                true
+            }
+            Page::EditNote => {
+                edit_note::draw(self, canvas, layout);
                 true
             }
             Page::Description => {
@@ -2222,6 +2278,15 @@ impl Reader {
         if matches!(input, Input::Tap(x, y) if layout.0.back().contains(x, y)) {
             self.back_from_bookmark_browser(page);
             return Some(Change::Partial);
+        }
+        if page == Page::Detail
+            && edit_note::can_edit(self)
+            && matches!(input, Input::Tap(x, y) if layout.select_note_page().contains(x, y))
+        {
+            return Some(self.bookmark_change(Command::EditCurrentNote));
+        }
+        if page == Page::EditNote {
+            return edit_note::input(self, input, layout);
         }
         if matches!(page, Page::SelectNotes | Page::SelectMarks)
             && matches!(input, Input::Tap(x, y) if layout.select_note_page().contains(x, y))
@@ -2362,6 +2427,12 @@ impl Reader {
                 self.show(Screen::BookmarkBrowser(Page::Filters));
             }
             Page::SelectMarks => self.show(Screen::BookmarkBrowser(Page::RemoveMarksConfirm)),
+            Page::EditNote => edit_note::cancel(self),
+            Page::ConfirmClearNote => {
+                if let Err(error) = edit_note::resume(self) {
+                    self.report(error);
+                }
+            }
             _ => self.show(Screen::BookmarkBrowser(Page::Results)),
         }
     }

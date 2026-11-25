@@ -35,6 +35,21 @@ remains unavailable with LZW/Deflate, and packed predictors and alpha are not
 supported. This candidate has not been compared with KOReader or behaviorally
 checked on the simulator or Kindle. [Pinned MuPDF grayscale handling](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L1370-L1381)
 
+## 16-bit grayscale strips
+
+Unsigned, single-sample 16-bit WhiteIsZero and BlackIsZero strips can also use
+the existing stored, PackBits, LZW and Deflate paths. Reader interprets TIFF
+byte order and maps the most significant sample byte to its 8-bit grayscale
+display, applying WhiteIsZero inversion afterward. At the existing pixel cap,
+decoded strip plus grayscale output uses at most 24 MiB, separate from bounded
+compressed input and the Deflate overflow sentinel. LZW and Deflate strips can
+also use horizontal predictor 2; reconstruction adds unsigned 16-bit samples
+in TIFF byte order and resets at each row. Sixteen-bit alpha, palette and color
+modes remain unsupported. Pinned MuPDF has a 16-bit predictor path, but its
+sample handling differs and exact pixel parity is unverified. This conversion has not
+been compared with KOReader or behaviorally validated on the simulator or
+Kindle. [Pinned MuPDF byte-order handling](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L1639-L1641)
+
 ## Image orientation
 
 Reader applies the TIFF orientation tag after reconstructing the grayscale or

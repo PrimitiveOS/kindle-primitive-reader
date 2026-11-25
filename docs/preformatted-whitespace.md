@@ -53,9 +53,7 @@ the transition; it is not silently replaced. Promotion also rejects duplicate
 keys, legacy shapes, fields that would not round-trip, and states that v1
 sanitization would change. The original file remains in place on rejection.
 Filesystems that cannot sync
-directories do not provide a guaranteed power-loss durability claim. Promotion
-is triggered only by a raw-bearing save; raw layouts remain disabled and this
-path has not been behaviorally tested.
+directories do not provide a guaranteed power-loss durability claim. Promotion is triggered only by a raw-bearing save; raw layouts remain disabled and this path has not been behaviorally tested.
 A v2 decoder rejects duplicate JSON keys and raw fields
 outside the known resume, bookmark, highlight, custom-contents and hidden-flow
 anchors. It bounds file size and raw-caret count, checks each caret's structural
@@ -66,18 +64,17 @@ encoder clones the state, detaches and validates raw carets, serializes
 the canonical part, reinserts them at the approved paths and runs the decoder on
 the result. A separate check can validate a raw caret against an open book's
 source fingerprint and grapheme mapping. Reader can load a validated v2 library
-without legacy sanitization and save it through the checked encoder and Kindle
-recovery journal. V2 libraries can preview and apply a conservative additive
+without legacy sanitization and save it through the checked encoder and Kindle recovery journal. V2 libraries can preview and apply a conservative additive
 merge from verified v1 or v2 backups; conflicting positions, marks, metadata,
 contents or flow settings reject the entire merge instead of silently choosing
 one. The multi-component restore verifies the captured disk baseline before
-commit. Restoring a v2 backup into a v1 library remains unsupported. Raw resumes and history
+commit. Restoring a v2 backup into a v1 library uses the same strict conflict checks; it first retains the exact verified v1 state, journals any required pre-restore save against the loaded baseline, and rechecks both the journal capture and retained backup before commit. These checks coordinate Reader writes; they cannot provide an atomic compare-and-swap against an unrelated process writing the same file concurrently. An absent baseline or a v1 state that cannot be represented without loss is rejected. Raw resumes and history
 locations are rejected before fixed or reflow page fallback. Operations using
 an unjournaled generic save are rejected for v2, and a pending journal requires
 Reader to reopen before saving its in-memory state. While raw rendering is
 disabled, Reader refuses to open books containing any raw positions or marks
 instead of exposing incomplete legacy editing paths. Raw rendering, app-level
-raw restoration and v1-to-v2 backup restore remain incomplete.
+raw restoration remains incomplete.
 Archive moves of a v2 or raw-bearing library use the journaled save. If a save
 fails and recovery is pending or cannot be inspected, Reader retains both the
 source and staged archive copy; cleanup is deferred until recovery determines

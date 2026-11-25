@@ -1617,6 +1617,7 @@ pub struct BackupImport {
     books: Vec<BookState>,
     collections: Vec<Collection>,
     page_browser_grid: Option<PageBrowserGrid>,
+    requires_v2: bool,
     summary: BackupSummary,
 }
 
@@ -1653,6 +1654,8 @@ pub struct Library {
     /// Exact bytes last loaded or successfully saved, used to prevent v2
     /// promotion and journal saves from overwriting a changed file.
     state_digest: std::cell::Cell<Option<[u8; 32]>>,
+    #[cfg(feature = "kindle")]
+    checked_v1_save: std::cell::Cell<bool>,
     books: Vec<LibraryBook>,
     recent: Vec<BookState>,
     collections: Vec<Collection>,
@@ -1674,6 +1677,45 @@ impl Library {
             Ok(None)
         }
     }
+    /// Prepare an independently retained v1 backup before a v2 restore.
+    /// Caller must hold the storage guard until the restore transaction ends.
+    #[cfg(feature = "kindle")]
+    pub(crate) fn prepare_v2_restore(
+        &self,
+        candidate: &[u8],
+    ) -> io::Result<Option<(PathBuf, [u8; 32])>> {
+        let header: serde_json::Value =
+            serde_json::from_slice(candidate).map_err(io::Error::other)?;
+        if self.state_version.get() != 1
+            || header.get("version").and_then(serde_json::Value::as_u64) != Some(2)
+        {
+            return Ok(None);
+        }
+        raw_v2::decode(candidate)?;
+        let expected = self
+            .state_digest
+            .get()
+            .ok_or_else(|| invalid_state("The reader state has no verified v1 disk baseline"))?;
+        crate::reading_backup::require_no_pending(&self.state_path)?;
+        let prior = crate::reading_backup::read_state_strict(&self.state_path)?;
+        if state_hash(&prior) != expected {
+            return Err(invalid_state(
+                "The reader state changed since it was loaded",
+            ));
+        }
+        let backup = crate::reading_backup::retain_v1_state_backup(
+            &self.state_path,
+            &prior,
+            validate_v1_state_bytes,
+        )?;
+        Ok(Some((backup, expected)))
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn require_checked_v1_save(&self, enabled: bool) {
+        self.checked_v1_save.set(enabled);
+    }
+
     fn v2_snapshot(&self) -> SavedLibrary {
         SavedLibrary {
             version: 2,
@@ -1728,6 +1770,8 @@ impl Library {
             state_path: state_path.to_owned(),
             state_version: std::cell::Cell::new(saved.version),
             state_digest: std::cell::Cell::new(state_digest),
+            #[cfg(feature = "kindle")]
+            checked_v1_save: std::cell::Cell::new(false),
             recent: saved.books,
             collections: saved.collections,
             page_browser_grid: saved.page_browser_grid,
@@ -2496,7 +2540,7 @@ impl Library {
     /// Validate and project the existing additive restore without mutating live state.
     pub(crate) fn merged_backup_bytes(&self, bytes: &[u8]) -> io::Result<(Vec<u8>, BackupSummary)> {
         let import = self.preview_backup(bytes)?;
-        if self.state_version.get() == 2 {
+        if self.state_version.get() == 2 || import.requires_v2 {
             let (merged, summary) = self.merge_v2_import(&import)?;
             return Ok((raw_v2::encode(&merged)?, summary));
         }
@@ -2520,19 +2564,22 @@ impl Library {
 
     /// Calculate the effect of an import without touching the library, books, or state file.
     pub fn preview_backup(&self, bytes: &[u8]) -> io::Result<BackupImport> {
-        if self.state_version.get() == 2 {
+        if bytes.len() as u64 > MAX_BACKUP_BYTES {
+            return Err(invalid_state("Reader backup exceeds its size limit"));
+        }
+        let header: serde_json::Value = serde_json::from_slice(bytes).map_err(io::Error::other)?;
+        let is_v2 = header.get("version").and_then(serde_json::Value::as_u64) == Some(2);
+        if self.state_version.get() == 2 || is_v2 {
             let backup = raw_v2::decode_backup(bytes)?;
             let import = BackupImport {
                 books: backup.books,
                 collections: backup.collections,
                 page_browser_grid: backup.page_browser_grid,
+                requires_v2: is_v2,
                 summary: BackupSummary::default(),
             };
             let (_, summary) = self.merge_v2_import(&import)?;
             return Ok(BackupImport { summary, ..import });
-        }
-        if bytes.len() as u64 > MAX_BACKUP_BYTES {
-            return Err(invalid_state("Reader backup exceeds its size limit"));
         }
         let backup: SavedLibrary = serde_json::from_slice(bytes).map_err(io::Error::other)?;
         if backup.version != BACKUP_VERSION || backup.books.len() > MAX_BACKUP_BOOKS {
@@ -2557,13 +2604,14 @@ impl Library {
             books: backup.books,
             collections: backup.collections,
             page_browser_grid: backup.page_browser_grid,
+            requires_v2: false,
             summary,
         })
     }
 
     /// Revalidate the proposed merge against current state, then apply it in memory.
     pub fn merge_backup(&mut self, import: BackupImport) -> io::Result<BackupSummary> {
-        if self.state_version.get() == 2 {
+        if self.state_version.get() == 2 || import.requires_v2 {
             let (merged, summary) = self.merge_v2_import(&import)?;
             self.recent = merged.books;
             self.collections = merged.collections;
@@ -2749,6 +2797,25 @@ impl Library {
                             return Err(invalid_state("Reader state changed during publication"));
                         }
                         raw_v2::decode(&written)?;
+                        Ok(())
+                    },
+                )?;
+                self.state_digest.set(Some(state_hash(&bytes)));
+            } else if self.checked_v1_save.get() {
+                crate::reading_backup::require_no_pending(&self.state_path)?;
+                let expected = self.state_digest.get().ok_or_else(|| {
+                    invalid_state("The reader state has no verified v1 disk baseline")
+                })?;
+                let bytes = self.bytes()?;
+                validate_v1_state_bytes(&bytes)?;
+                crate::reading_backup::transaction(
+                    &self.state_path,
+                    &[(crate::reading_backup::Key::Library, bytes.clone())],
+                    || {
+                        crate::reading_backup::verify_captured_state(&self.state_path, &expected)?;
+                        if crate::reading_backup::read_state_strict(&self.state_path)? != bytes {
+                            return Err(invalid_state("Reader state changed during publication"));
+                        }
                         Ok(())
                     },
                 )?;

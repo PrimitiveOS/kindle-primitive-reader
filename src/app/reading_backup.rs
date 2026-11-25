@@ -425,7 +425,13 @@ impl Reader {
             .backup_import
             .take()
             .ok_or_else(|| archive::invalid("Preview the backup again"))?;
-        self.save()?;
+        // Preserve and validate the exact loaded v1 state before save() can
+        // rewrite it; prepare again after save for the transaction baseline.
+        let transition = with_storage(|| self.library.prepare_v2_restore(&preview.library))?;
+        self.library.require_checked_v1_save(transition.is_some());
+        let save_result = self.save();
+        self.library.require_checked_v1_save(false);
+        save_result?;
         let (library, _) = self.library.merged_backup_bytes(&preview.library)?;
         let state = self.library.state_path().to_owned();
         let baseline = self.library.v2_disk_baseline()?;
@@ -462,12 +468,17 @@ impl Reader {
             count += 1;
         }
         let mut restored = with_storage(|| {
-            if baseline.is_some() {
+            let transition = self.library.prepare_v2_restore(&updates[0].1)?;
+            if baseline.is_some() || transition.is_some() {
                 archive::require_no_pending(&state)?;
             }
             archive::transaction(&state, &updates, || {
                 if let Some(expected) = baseline {
                     archive::verify_captured_state(&state, &expected)?;
+                }
+                if let Some((backup, expected)) = &transition {
+                    archive::verify_captured_state(&state, expected)?;
+                    archive::verify_retained_v1(backup, expected)?;
                 }
                 Self::open_data(&documents, &state, fonts)
             })
