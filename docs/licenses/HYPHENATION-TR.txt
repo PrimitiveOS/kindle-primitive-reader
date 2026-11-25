@@ -1,0 +1,11 @@
+Turkish hyphenation patterns
+Copyright (C) 1987 Pierre A. MacKay; 2008, 2011 TUG
+
+Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-tr.tex
+Source SHA-256: 9243b6fc1426b07dae71c6136bd7d4a907e01a36ab6326f349ee6c310e6bb2b5
+
+The upstream source is licensed under the LaTeX Project Public License 1
+or later. Reader uses version 1.3c, included in LPPL-1.3c.txt. The unmodified
+upstream TeX file is included in hyph-tr.tex; Reader compiles its supported
+single-word patterns into its own native lookup tables. Reader's compiled
+tables are a derived form, not the original TeX file.

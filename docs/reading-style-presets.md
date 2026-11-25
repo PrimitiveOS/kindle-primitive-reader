@@ -53,6 +53,16 @@ vertical or Blitz rendering are not covered by this implementation. The
 source text and saved anchors are unchanged. This behavior has not yet been
 built or tested. [Pinned KOReader tweak](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L364-L371)
 
+**Sans-serif font for ruby** requests Noto Sans CJK SC, falling back to a
+sans-serif family when unavailable, and applies regular weight. **Larger ruby
+text size** sets ruby annotations to 50% of their parent size. Horizontal
+Parley ruby now uses the annotation element's computed font, weight, slant
+and explicitly declared size. Without an annotation size declaration, the
+existing 48% fallback remains. Reader's font override and bold-text settings
+still apply, and complex ruby or other renderers are not covered. The
+annotation styling leaves source text and saved anchors unchanged. Simulator
+and Kindle behavior have not yet been verified. [Pinned ruby tweaks](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L384-L400)
+
 **Allow hyphenation on all text** overrides publisher hyphenation restrictions
 and excludes heading elements, using KOReader's selectors. Automatic
 hyphenation still depends on the reading setting and an available language

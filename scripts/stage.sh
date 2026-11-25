@@ -53,11 +53,11 @@ install -m 644 docs/licenses/README.md docs/licenses/THIRD-PARTY.txt docs/licens
     docs/licenses/HYPHENATION-ES-IT-PT.txt docs/licenses/HYPHENATION-ET-FI.txt \
     docs/licenses/HYPHENATION-DA-NL.txt docs/licenses/HYPHENATION-FR-DE.txt \
     docs/licenses/HYPHENATION-BG-GL-GA.txt docs/licenses/HYPHENATION-PL.txt \
-    docs/licenses/HYPHENATION-RU.txt docs/licenses/HYPHENATION-SV.txt docs/licenses/HYPHENATION-CA.txt docs/licenses/HYPHENATION-SK-SL.txt docs/licenses/LPPL-1.3c.txt docs/licenses/WUFF.txt \
+    docs/licenses/HYPHENATION-RU.txt docs/licenses/HYPHENATION-SV.txt docs/licenses/HYPHENATION-CA.txt docs/licenses/HYPHENATION-TR.txt docs/licenses/HYPHENATION-SK-SL.txt docs/licenses/LPPL-1.3c.txt docs/licenses/WUFF.txt \
     docs/licenses/SRELL.txt docs/licenses/NERDFONTS.txt "$stage/reader/licenses/"
 cp -R docs/licenses/pdf docs/licenses/runtime "$stage/reader/licenses/"
 # Preserve the original LPPL-covered pattern source with the compiled tables.
-install -m 644 assets/hyphenation/hyph-ru.tex assets/hyphenation/hyph-sv.tex assets/hyphenation/hyph-ca.tex "$stage/reader/licenses/"
+install -m 644 assets/hyphenation/hyph-ru.tex assets/hyphenation/hyph-sv.tex assets/hyphenation/hyph-ca.tex assets/hyphenation/hyph-tr.tex "$stage/reader/licenses/"
 install -d "$stage/reader/ocr/tessdata" "$stage/reader/licenses/ocr"
 install -m 755 "$ocr_engine" "$stage/reader/ocr/tesseract"
 install -m 644 "$ocr_model" "$stage/reader/ocr/tessdata/eng.traineddata"

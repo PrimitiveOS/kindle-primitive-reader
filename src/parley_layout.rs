@@ -2710,11 +2710,9 @@ fn layout_with_images(
         let Some((base, line, _)) = base_geometry(&layout, &ruby.bytes) else {
             continue;
         };
-        let style = block
-            .styled_text
-            .iter()
-            .find(|run| run.bytes.contains(&ruby.bytes.start))
-            .map_or(&styles[block.element], |run| &styles[run.element]);
+        // The rt element owns its own font declarations; its ID was retained
+        // in the source projection without adding anything to canonical text.
+        let style = &styles[ruby.element];
         let annotation = make_annotation(
             context,
             fonts,
@@ -3011,6 +3009,7 @@ fn make_annotation(
     };
     builder.push_default(StyleProperty::FontFamily(family));
     builder.push_default(StyleProperty::Locale(language));
+    builder.push_default(StyleProperty::FontStyle(style.font_style));
     builder.push_default(StyleProperty::FontWeight(FontWeight::new(
         crate::font_render::font_weight(
             if settings.bold_text {
@@ -3021,11 +3020,16 @@ fn make_annotation(
             settings.font_weight_delta,
         ),
     )));
+    let scale = if style.ruby_size_explicit {
+        style.size_scale
+    } else {
+        style.size_scale * 0.48
+    };
     builder.push_default(StyleProperty::FontSize(
         if settings.logical_font_size.is_some() {
-            settings.styled_font(style.size_scale * 0.48)
+            settings.styled_font(scale)
         } else {
-            (settings.font_size * style.size_scale * 0.48).clamp(8.0, 84.0)
+            (settings.font_size * scale).clamp(8.0, 84.0)
         },
     ));
     let mut layout = builder.build(text);

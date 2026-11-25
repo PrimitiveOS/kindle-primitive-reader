@@ -882,6 +882,22 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("p,li {line-height:2 !important;}"),
     },
     Preset {
+        id: "ruby_font_sans_serif",
+        title: "Sans-serif font for ruby",
+        group: "ruby-font-family",
+        priority: 0,
+        effect: Effect::Css(
+            "rt {font-family:'Noto Sans CJK SC',sans-serif !important;font-weight:400 !important;}",
+        ),
+    },
+    Preset {
+        id: "ruby_font_size_larger",
+        title: "Larger ruby text size",
+        group: "ruby-font-size",
+        priority: 0,
+        effect: Effect::Css("rt {font-size:50% !important;}"),
+    },
+    Preset {
         id: "sub_sup_smaller",
         title: "Smaller sub- and superscript",
         group: "sub-sup-size",

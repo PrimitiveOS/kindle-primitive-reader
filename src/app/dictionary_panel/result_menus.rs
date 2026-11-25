@@ -152,6 +152,7 @@ impl Reader {
 
     pub(super) fn draw_definition_results(&self, canvas: &mut Canvas, popup: Rect, menu: Menu) {
         let menus = &self.dictionary_navigation.view.results;
+        let language = self.controls.interface_language;
         let page = menus.page(menu).unwrap_or(0);
         let first = page * PER_PAGE;
         let rows = rows(&self.definitions, menu);
@@ -207,7 +208,7 @@ impl Reader {
                             .text
                             .lines()
                             .next()
-                            .unwrap_or(HEADWORD_ONLY)
+                            .unwrap_or_else(|| language.dictionary_popup_text(HEADWORD_ONLY))
                             .chars()
                             .take(120)
                             .collect();
@@ -217,7 +218,12 @@ impl Reader {
                             CAPTION.ink(if filled { 255 } else { 85 }),
                         );
                     }
-                    canvas.button(action, "Look up", false, false);
+                    canvas.button(
+                        action,
+                        language.dictionary_popup_text("Look up"),
+                        false,
+                        false,
+                    );
                 }
                 Row::Source { count, .. } => {
                     let shares_title = rows.iter().any(|other| {
@@ -240,7 +246,7 @@ impl Reader {
                     let label = if count == 1 {
                         result.word.clone()
                     } else {
-                        format!("{count} results")
+                        language.dictionary_results_count(count)
                     };
                     canvas.button(action, &label, selected, false);
                 }
@@ -248,17 +254,22 @@ impl Reader {
         }
         let [previous, switch, next] = definition_actions(popup);
         if page > 0 {
-            canvas.button(previous, "Previous", false, false);
+            canvas.button(
+                previous,
+                language.dictionary_popup_text("Previous"),
+                false,
+                false,
+            );
         }
         if first + PER_PAGE < rows.len() {
-            canvas.button(next, "Next", false, false);
+            canvas.button(next, language.dictionary_popup_text("Next"), false, false);
         }
         let label = if menu == Menu::Sources {
             "All Results"
         } else {
             "Sources"
         };
-        canvas.button(switch, label, false, false);
+        canvas.button(switch, language.dictionary_popup_text(label), false, false);
         if let Some(notice) = &self.notice {
             canvas.text(
                 Rect::new(popup.x + 30, popup.bottom() - 118, popup.w - 60, 32),

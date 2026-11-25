@@ -354,6 +354,8 @@ pub(crate) struct Style {
     pub font_weight: FontWeight,
     pub font_style: FontStyle,
     pub(crate) common_ligatures: bool,
+    /// Whether a ruby annotation has its own computed font-size declaration.
+    pub(crate) ruby_size_explicit: bool,
     pub line_height: Option<f32>,
     pub text_indent: TextIndent,
     pub padding: [CssLength; 2],
@@ -416,6 +418,7 @@ impl Default for Style {
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             common_ligatures: true,
+            ruby_size_explicit: false,
             line_height: None,
             text_indent: TextIndent::default(),
             padding: Default::default(),
@@ -822,6 +825,7 @@ impl BookStyle {
                 continue;
             }
             let mut style = parent.clone();
+            style.ruby_size_explicit = false;
             style.generated = None;
             style.first_letter = None;
             style.first_line = None;
@@ -948,6 +952,7 @@ impl BookStyle {
                 CascadeOrigin::Author,
                 accept_fit,
             );
+            style.ruby_size_explicit = element.tag == "rt" && winners[1].is_some();
             let display = match winners[40].map(|(_, property)| property) {
                 Some(Property::Display(display)) => *display,
                 Some(Property::Reset(40, _)) => Display::Inline,

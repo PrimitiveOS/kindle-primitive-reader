@@ -833,6 +833,9 @@ impl InterfaceLanguage {
             "Back" => "Quay lại",
             "Done" => "Xong",
             "Results" => "Kết quả",
+            "Look up" => "Tra cứu",
+            "Sources" => "Nguồn",
+            "All Results" => "Mọi kết quả",
             "Dictionary Results" => "Kết quả từ điển",
             "Dictionary Sources" => "Nguồn từ điển",
             "Headword only" => "Chỉ có từ mục",
@@ -841,6 +844,15 @@ impl InterfaceLanguage {
             "No dictionaries enabled for this book" => "Chưa bật từ điển cho sách này",
             "No matches in installed dictionaries" => "Không tìm thấy trong từ điển đã cài",
             _ => english,
+        }
+    }
+
+    /// Format a generated dictionary source count without changing its value.
+    pub(super) fn dictionary_results_count(self, count: usize) -> String {
+        if self == Self::Vietnamese {
+            format!("{count} kết quả")
+        } else {
+            format!("{count} results")
         }
     }
 
@@ -864,7 +876,34 @@ impl InterfaceLanguage {
             "Looking up the text…" => "Đang tra cứu…",
             "Search" => "Tìm",
             "Translate" => "Dịch",
+            "Wikipedia topic" => "Chủ đề Wikipedia",
+            "Source language" => "Ngôn ngữ nguồn",
+            "Lookup language" => "Ngôn ngữ tra cứu",
+            "Apply" => "Áp dụng",
+            "Enter a word or a short phrase." => "Nhập một từ hoặc cụm từ ngắn.",
+            "Enter auto to detect the language, or a language code such as en, vi, fr or zh-CN." => {
+                "Nhập auto để nhận diện ngôn ngữ, hoặc mã như en, vi, fr hay zh-CN."
+            }
+            "Enter a language code such as en, vi, fr or zh-CN." => {
+                "Nhập mã ngôn ngữ như en, vi, fr hay zh-CN."
+            }
             _ => english,
+        }
+    }
+
+    /// Describe where the pending lookup sends data without changing its target.
+    pub(super) fn online_disclosure(self, wikipedia: bool, target: &str) -> String {
+        match (self, wikipedia) {
+            (Self::Vietnamese, true) => {
+                format!("Tìm kiếm gửi chủ đề này đến {target}.wikipedia.org.")
+            }
+            (Self::Vietnamese, false) => {
+                format!("Dịch gửi văn bản này đến {target}. Mở Ngôn ngữ để thay đổi ngôn ngữ dịch.")
+            }
+            (_, true) => format!("Search sends this topic to {target}.wikipedia.org."),
+            (_, false) => format!(
+                "Translate sends this text to {target}. Open Language to change the translation language."
+            ),
         }
     }
 

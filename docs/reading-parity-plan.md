@@ -111,6 +111,12 @@ presets, and Vietnamese dictionary and online-lookup controls. A Mac build-only
 check passes; Catalan punctuation behavior, visual fit, and the full feature
 and device comparisons remain open.
 
+Ruby annotation styles and Turkish hyphenation are also implemented, along
+with further Vietnamese lookup controls and within-word Catalan segmentation.
+These changes pass a Mac build-only check. Exact Catalan middle-dot line breaks,
+complex ruby, complete interface translation and behavioral validation remain
+open.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or

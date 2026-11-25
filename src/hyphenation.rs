@@ -61,6 +61,7 @@ pub(crate) enum Dictionary {
     RussianEnglishAmerican,
     Swedish,
     Catalan,
+    Turkish,
     Slovak,
     Slovenian,
 }
@@ -104,6 +105,7 @@ impl Dictionary {
             ("pl", _) => Some(Self::Polish),
             ("sv", _) => Some(Self::Swedish),
             ("ca", _) => Some(Self::Catalan),
+            ("tr", _) => Some(Self::Turkish),
             ("sk", _) => Some(Self::Slovak),
             ("sl", _) => Some(Self::Slovenian),
             _ => None,
@@ -135,6 +137,7 @@ impl Dictionary {
             Self::RussianEnglishAmerican => "Russian + English (US)",
             Self::Swedish => "Swedish",
             Self::Catalan => "Catalan",
+            Self::Turkish => "Turkish",
             Self::Slovak => "Slovak",
             Self::Slovenian => "Slovenian",
         }
@@ -157,6 +160,7 @@ impl Dictionary {
             | Self::RussianEnglishAmerican
             | Self::Swedish
             | Self::Catalan
+            | Self::Turkish
             | Self::Slovenian => HyphenationLimits { left: 2, right: 2 },
             Self::French => HyphenationLimits { left: 2, right: 1 },
             Self::American
@@ -191,6 +195,7 @@ impl Dictionary {
             Self::Russian | Self::RussianEnglishBritish | Self::RussianEnglishAmerican => &RUSSIAN,
             Self::Swedish => &SWEDISH,
             Self::Catalan => &CATALAN,
+            Self::Turkish => &TURKISH,
             Self::Slovak => &SLOVAK,
             Self::Slovenian => &SLOVENIAN,
         }
@@ -400,24 +405,36 @@ fn word_breaks_with_limits(
             .chars()
             .all(|ch| ch.is_ascii_alphabetic() || ch == '\u{ad}')
         {
-            pattern_breaks(patterns, additional, word, limits, false, emit);
+            pattern_breaks(patterns, additional, word, limits, false, false, emit);
         }
         return;
     }
     // Ukrainian patterns include the apostrophe as an internal letter-like
     // character; normalize the typographic spelling without changing offsets.
     if locale == Dictionary::Ukrainian {
-        pattern_breaks(patterns, additional, word, limits, true, emit);
+        pattern_breaks(patterns, additional, word, limits, true, false, emit);
         return;
     }
-    // CRE treats apostrophes as word boundaries for the remaining pattern files.
-    // ICU can keep the two sides together for selection and search.
+    // CRE's dictionary lookup uses alphabetic runs, while ICU may keep
+    // apostrophes and Catalan's middle dot inside a single selected word.
+    // Split only the lookup input and retain the original UTF-8 offsets.
+    let separators: &[char] = if locale == Dictionary::Catalan {
+        &['\'', '\u{2019}', '\u{00b7}']
+    } else {
+        &['\'', '\u{2019}']
+    };
     let mut offset = 0;
-    for part in word.split_inclusive(['\'', '\u{2019}']) {
-        let text = part.trim_end_matches(['\'', '\u{2019}']);
-        pattern_breaks(patterns, additional, text, limits, false, |at| {
-            emit(offset + at)
-        });
+    for part in word.split_inclusive(separators) {
+        let text = part.trim_end_matches(separators);
+        pattern_breaks(
+            patterns,
+            additional,
+            text,
+            limits,
+            false,
+            locale == Dictionary::Turkish,
+            |at| emit(offset + at),
+        );
         offset += part.len();
     }
 }
@@ -428,6 +445,7 @@ fn pattern_breaks(
     word: &str,
     limits: HyphenationLimits,
     apostrophes: bool,
+    turkish: bool,
     mut emit: impl FnMut(usize),
 ) {
     let mut letters = ['.'; MAX_WORD + 2];
@@ -443,7 +461,11 @@ fn pattern_breaks(
         }
         for (at, byte) in word.bytes().enumerate() {
             n += 1;
-            letters[n] = char::from(byte.to_ascii_lowercase());
+            letters[n] = if turkish && byte == b'I' {
+                'ı'
+            } else {
+                char::from(byte.to_ascii_lowercase())
+            };
             offsets[n] = at + 1;
         }
     } else {
@@ -462,12 +484,16 @@ fn pattern_breaks(
             }) else {
                 return;
             };
-            let mut lower = if character == '\u{2019}' {
+            let character = if character == '\u{2019}' {
                 '\''
+            } else if turkish && character == 'I' {
+                'ı'
+            } else if turkish && character == 'İ' {
+                'i'
             } else {
                 character
-            }
-            .to_lowercase();
+            };
+            let mut lower = character.to_lowercase();
             let letter = lower.next().expect("a lowercase mapping");
             if n == MAX_WORD || chars.next().is_some() || lower.next().is_some() {
                 return;

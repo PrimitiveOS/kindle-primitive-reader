@@ -165,6 +165,7 @@ fn main() {
         ("ru", "RUSSIAN"),
         ("sv", "SWEDISH"),
         ("ca", "CATALAN"),
+        ("tr", "TURKISH"),
         ("sk", "SLOVAK"),
         ("sl", "SLOVENIAN"),
     ] {

@@ -630,12 +630,14 @@ impl Reader {
 
     pub(super) fn draw_online_editor(&self, canvas: &mut Canvas) {
         let Some(p) = &self.online else { return };
-        self.navigation_layout().header(canvas, p.field.title());
+        let language = self.controls.interface_language;
+        self.navigation_layout()
+            .header(canvas, language.online_popup_text(p.field.title()));
         let width = canvas.bounds().w;
         canvas.single_line_field(
             Rect::new(40, 160, width - 80, 124),
             &self.editor,
-            p.field.title(),
+            language.online_popup_text(p.field.title()),
             false,
         );
         let help = match p.field {
@@ -647,10 +649,12 @@ impl Reader {
         };
         canvas.text(
             Rect::new(46, 324, width - 92, 180),
-            self.notice.as_deref().unwrap_or(help),
+            self.notice
+                .as_deref()
+                .unwrap_or_else(|| language.online_popup_text(help)),
             CAPTION.lines(3),
         );
-        canvas.keyboard(self.editor.layer, "Apply", None);
+        canvas.keyboard(self.editor.layer, language.online_popup_text("Apply"), None);
     }
 
     pub(super) fn online_editor_input(&mut self, input: Input) -> Change {
@@ -673,7 +677,8 @@ impl Reader {
         };
         let (width, height) = self.reading_viewport().dimensions();
         let layout = Layout::new(width, height, 4, 5);
-        let Some(key) = keyboard_key(&layout, &self.editor, "Apply", x, y) else {
+        let apply = self.controls.interface_language.online_popup_text("Apply");
+        let Some(key) = keyboard_key(&layout, &self.editor, apply, x, y) else {
             return Change::None;
         };
         if !matches!(self.editor.press(key), Press::Go) {
@@ -909,12 +914,9 @@ impl Reader {
             false,
         );
         let hint = if r.service == Service::Wikipedia {
-            format!("Search sends this topic to {}.wikipedia.org.", r.to)
+            language.online_disclosure(true, &r.to)
         } else {
-            format!(
-                "Translate sends this text to {}. Open Language to change the translation language.",
-                r.service.name()
-            )
+            language.online_disclosure(false, r.service.name())
         };
         canvas.text(
             position.rect(Rect::new(108, 733, 1040, 138)),
