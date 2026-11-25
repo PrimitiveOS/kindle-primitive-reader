@@ -535,6 +535,9 @@ impl Reading {
         anchor: Option<&Anchor>,
         scroll_history_top: Option<f32>,
     ) -> Result<Self> {
+        if anchor.is_some_and(|anchor| anchor.raw_caret.is_some()) {
+            return Err("Raw whitespace positions cannot yet be restored safely".into());
+        }
         let start = Instant::now();
         let ChapterLayout {
             mut probe,

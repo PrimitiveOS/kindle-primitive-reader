@@ -30,7 +30,7 @@ impl Default for HiddenFlows {
 }
 
 fn source_order(position: &ReadingPosition) -> ((usize, usize, usize), (u8, usize, [u8; 32], u8)) {
-    super::raw_positions::flow_order(position, None)
+    super::raw_positions::flow_order(position)
 }
 
 impl HiddenFlows {

@@ -618,6 +618,67 @@ const STATUS_BAR_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Cancel", "Hủy"),
 ];
 
+// Fixed automatic page-turn settings; numeric values and reading behavior stay untouched.
+const AUTO_TURN_LABELS: &[(&str, &str)] = &[
+    ("Off", "Tắt"),
+    ("Selected", "Đã chọn"),
+    ("Custom interval", "Khoảng thời gian tùy chỉnh"),
+    ("Enter 1 to 86,400 seconds", "Nhập từ 1 đến 86.400 giây"),
+    ("Scroll distance", "Khoảng cách cuộn"),
+    ("Fixed-page pan", "Dịch trang cố định"),
+    ("Decrease by 50%", "Giảm 50%"),
+    ("Decrease by 10%", "Giảm 10%"),
+    ("Reset to 100%", "Đặt lại 100%"),
+    ("Increase by 10%", "Tăng 10%"),
+    ("Increase by 50%", "Tăng 50%"),
+    ("Move 50 percentage points back", "Lùi 50 điểm phần trăm"),
+    ("Move 10 percentage points back", "Lùi 10 điểm phần trăm"),
+    ("One visible page at a time", "Mỗi lần một trang hiển thị"),
+    (
+        "Move 10 percentage points forward",
+        "Tiến 10 điểm phần trăm",
+    ),
+    (
+        "Move 50 percentage points forward",
+        "Tiến 50 điểm phần trăm",
+    ),
+    ("Current distance", "Khoảng cách hiện tại"),
+    (
+        "Open a fixed-page document to change pan behavior",
+        "Mở tài liệu trang cố định để đổi cách dịch trang",
+    ),
+    ("Horizontal overlap", "Chồng lấn ngang"),
+    ("Vertical overlap", "Chồng lấn dọc"),
+    ("Pan order", "Thứ tự dịch trang"),
+    (
+        "Vertical first · horizontal at the edge · tap to change",
+        "Dọc trước · ngang ở mép · chạm để đổi",
+    ),
+    (
+        "Horizontal first · vertical at the edge · tap to change",
+        "Ngang trước · dọc ở mép · chạm để đổi",
+    ),
+    ("Vertical direction", "Hướng dọc"),
+    (
+        "Bottom to top · tap to reverse",
+        "Dưới lên trên · chạm để đảo",
+    ),
+    (
+        "Top to bottom · tap to reverse",
+        "Trên xuống dưới · chạm để đảo",
+    ),
+    ("Horizontal reading direction", "Hướng đọc ngang"),
+    (
+        "Right to left · change in View settings",
+        "Phải sang trái · đổi trong cài đặt Xem",
+    ),
+    (
+        "Left to right · change in View settings",
+        "Trái sang phải · đổi trong cài đặt Xem",
+    ),
+    ("Use document defaults", "Dùng mặc định của tài liệu"),
+];
+
 // Fixed selection settings labels; selected text and settings values stay untouched.
 const SELECTION_SETTINGS_LABELS: &[(&str, &str)] = &[
     ("Top", "Trên"),
@@ -2656,6 +2717,28 @@ impl InterfaceLanguage {
     pub(super) fn status_bar_settings_english<'a>(self, label: &'a str) -> &'a str {
         if self == Self::Vietnamese {
             if let Some((english, _)) = STATUS_BAR_SETTINGS_LABELS
+                .iter()
+                .find(|(_, translated)| *translated == label)
+            {
+                return english;
+            }
+        }
+        label
+    }
+
+    pub(super) fn auto_turn_text<'a>(self, english: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((_, vietnamese)) = AUTO_TURN_LABELS.iter().find(|(key, _)| *key == english)
+            {
+                return vietnamese;
+            }
+        }
+        english
+    }
+
+    pub(super) fn auto_turn_english<'a>(self, label: &'a str) -> &'a str {
+        if self == Self::Vietnamese {
+            if let Some((english, _)) = AUTO_TURN_LABELS
                 .iter()
                 .find(|(_, translated)| *translated == label)
             {

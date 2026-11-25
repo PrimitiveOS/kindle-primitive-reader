@@ -2926,9 +2926,11 @@ pub(crate) fn merge_text_marks(
     for mark in highlights {
         if !valid_highlight(mark) {
             summary.skipped += 1;
-        } else if let Some(existing) = target.highlights.iter_mut().find(|existing| {
-            raw_positions::same_selection(&existing.selection, None, &mark.selection, None)
-        }) {
+        } else if let Some(existing) = target
+            .highlights
+            .iter_mut()
+            .find(|existing| raw_positions::same_selection(&existing.selection, &mark.selection))
+        {
             merge_created_at(&mut existing.created_at, mark.created_at, summary);
             merge_chapter_title(&mut existing.chapter_title, mark.chapter_title.as_deref());
             merge_note(&mut existing.note, &mark.note, summary);
@@ -2978,13 +2980,14 @@ fn valid_position(position: &ReadingPosition) -> bool {
 }
 
 fn valid_anchor(anchor: &Anchor) -> bool {
-    !anchor.chapter.is_empty()
+    anchor.raw_caret.is_none()
+        && !anchor.chapter.is_empty()
         && anchor.chapter.len() <= MAX_ANCHOR_PATH_BYTES
         && !anchor.chapter.chars().any(char::is_control)
 }
 
 fn same_position(left: &ReadingPosition, right: &ReadingPosition) -> bool {
-    raw_positions::same(left, None, right, None)
+    raw_positions::same(left, right)
 }
 
 fn valid_highlight(mark: &Highlight) -> bool {

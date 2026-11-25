@@ -788,6 +788,9 @@ impl Book {
         anchor: &crate::Anchor,
         end: bool,
     ) -> Result<Option<(usize, crate::Anchor)>> {
+        if anchor.raw_caret.is_some() {
+            return Err("Raw whitespace locations cannot yet be migrated safely".into());
+        }
         match &self.content {
             Content::Loose {
                 odt_history: Some(history),

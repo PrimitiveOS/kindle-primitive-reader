@@ -512,7 +512,11 @@ impl Probe {
     }
 
     fn selection_spans(&self, start: &Anchor, end: &Anchor) -> Option<Spans> {
-        if start.illustration.is_some() || end.illustration.is_some() {
+        if start.illustration.is_some()
+            || end.illustration.is_some()
+            || start.raw_caret.is_some()
+            || end.raw_caret.is_some()
+        {
             return None;
         }
         let (a, b) = if start.chapter == end.chapter {

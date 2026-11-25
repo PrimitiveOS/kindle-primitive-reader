@@ -48,6 +48,10 @@ loader rejects other library/backup versions, which prevents older builds
 from normally opening and rewriting a version-2 state. Startup also recovers
 any pending backup journal before this check, so the eventual migration must
 coordinate its transaction with that recovery and keep the independent backup.
+Resume, canonical selection, saved-mark validation and old ODT anchor migration
+also reject transient raw carets instead of silently using their collapsed
+canonical positions. Mark comparisons and custom-contents/flow ordering account
+for transient raw endpoints, but durable state still cannot contain them.
 
 A preformatted horizontal layout plan can now build a separate raw text view
 for a verified simple block with an explicit `pre`, `pre-wrap` or

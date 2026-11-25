@@ -172,8 +172,21 @@ enum MemberLocation {
         header: u64,
         length: u64,
         modified: Option<SystemTime>,
-        long_name_header: Option<u64>,
+        extension: Option<TarExtension>,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TarExtensionKind {
+    GnuLongName,
+    Pax,
+}
+
+#[derive(Clone, Copy)]
+struct TarExtension {
+    header: u64,
+    kind: TarExtensionKind,
+    has_path: bool,
 }
 
 impl Comic {
@@ -236,8 +249,8 @@ impl Comic {
                 header,
                 length,
                 modified,
-                long_name_header,
-            } => tar_image(path, member, header, length, modified, long_name_header)?,
+                extension,
+            } => tar_image(path, member, header, length, modified, extension)?,
         };
         ImagePage::decode(&bytes)
     }
@@ -308,7 +321,7 @@ struct TarHeader {
     name: String,
     size: u64,
     directory: bool,
-    long_name: bool,
+    extension: Option<TarExtensionKind>,
 }
 
 fn tar_pages(path: &Path) -> Result<Vec<Member>> {
@@ -322,13 +335,13 @@ fn tar_pages(path: &Path) -> Result<Vec<Member>> {
     let mut offset = 0;
     let mut names = HashSet::new();
     let mut pages = Vec::new();
-    let mut pending_name: Option<(String, u64)> = None;
+    let mut pending_name: Option<(Option<String>, TarExtension)> = None;
     let mut block = [0; TAR_BLOCK_BYTES];
     for count in 0..=MAX_COMIC_MEMBERS {
         input.read_exact(&mut block)?;
         if block.iter().all(|&byte| byte == 0) {
             if pending_name.is_some() {
-                return Err("The CBT ends after a GNU long-name header".into());
+                return Err("The CBT ends after an extended header".into());
             }
             check_tar_trailer(&mut input, length - offset - block_bytes)?;
             return Ok(pages);
@@ -336,20 +349,36 @@ fn tar_pages(path: &Path) -> Result<Vec<Member>> {
         if count == MAX_COMIC_MEMBERS {
             return Err("The CBT has too many entries".into());
         }
-        let header = parse_tar_header(&block, pending_name.is_some())?;
+        let header = parse_tar_header(
+            &block,
+            pending_name
+                .as_ref()
+                .is_some_and(|(name, _)| name.is_some()),
+        )?;
         let next = tar_next_header(offset, header.size, length)?;
-        if header.long_name {
+        if let Some(kind) = header.extension {
             if pending_name.is_some() {
-                return Err("The CBT has consecutive GNU long-name headers".into());
+                return Err("The CBT has consecutive extended headers".into());
             }
-            let name = tar_long_name(&mut input, header.size)?;
-            pending_name = Some((name, offset));
+            let name = match kind {
+                TarExtensionKind::GnuLongName => Some(tar_long_name(&mut input, header.size)?),
+                TarExtensionKind::Pax => tar_pax_name(&mut input, header.size)?,
+            };
+            let extension = TarExtension {
+                header: offset,
+                kind,
+                has_path: name.is_some(),
+            };
+            pending_name = Some((name, extension));
             input.seek_relative(i64::try_from(next - offset - block_bytes - header.size)?)?;
             offset = next;
             continue;
         }
-        let (name, long_name_header) = match pending_name.take() {
-            Some((name, at)) => (tar_checked_name(&name, header.directory)?, Some(at)),
+        let (name, extension) = match pending_name.take() {
+            Some((Some(name), extension)) => {
+                (tar_checked_name(&name, header.directory)?, Some(extension))
+            }
+            Some((None, extension)) => (header.name, Some(extension)),
             None => (header.name, None),
         };
         if !names.insert(name.clone()) {
@@ -366,7 +395,7 @@ fn tar_pages(path: &Path) -> Result<Vec<Member>> {
                     header: offset,
                     length,
                     modified,
-                    long_name_header,
+                    extension,
                 },
             });
         }
@@ -382,7 +411,7 @@ fn tar_image(
     offset: u64,
     archive_length: u64,
     modified: Option<SystemTime>,
-    long_name_header: Option<u64>,
+    extension: Option<TarExtension>,
 ) -> Result<Vec<u8>> {
     let (mut file, length) = open_regular(path, MAX_COMIC_BYTES)?;
     if length != archive_length
@@ -392,26 +421,33 @@ fn tar_image(
     }
     tar_next_header(offset, member.size, length)?;
     let mut block = [0; TAR_BLOCK_BYTES];
-    if let Some(long_offset) = long_name_header {
-        file.seek(SeekFrom::Start(long_offset))?;
+    if let Some(extension) = extension {
+        file.seek(SeekFrom::Start(extension.header))?;
         file.read_exact(&mut block)?;
-        let long_header = parse_tar_header(&block, false)?;
-        if !long_header.long_name
-            || tar_next_header(long_offset, long_header.size, length)? != offset
+        let extended_header = parse_tar_header(&block, false)?;
+        if extended_header.extension != Some(extension.kind)
+            || tar_next_header(extension.header, extended_header.size, length)? != offset
         {
             return Err("This CBT changed after it was opened".into());
         }
-        let name = tar_long_name(&mut file, long_header.size)?;
-        if tar_checked_name(&name, false)? != member.name {
+        let name = match extension.kind {
+            TarExtensionKind::GnuLongName => Some(tar_long_name(&mut file, extended_header.size)?),
+            TarExtensionKind::Pax => tar_pax_name(&mut file, extended_header.size)?,
+        };
+        if name.is_some() != extension.has_path
+            || name.as_ref().is_some_and(|name| {
+                tar_checked_name(name, false).ok().as_deref() != Some(member.name.as_str())
+            })
+        {
             return Err("This CBT changed after it was opened".into());
         }
     }
     file.seek(SeekFrom::Start(offset))?;
     file.read_exact(&mut block)?;
-    let header = parse_tar_header(&block, long_name_header.is_some())?;
+    let header = parse_tar_header(&block, extension.is_some_and(|ext| ext.has_path))?;
     if header.directory
-        || header.long_name
-        || long_name_header.is_none() && header.name != member.name
+        || header.extension.is_some()
+        || !extension.is_some_and(|ext| ext.has_path) && header.name != member.name
         || header.size != member.size
     {
         return Err("This CBT changed after it was opened".into());
@@ -469,7 +505,18 @@ fn parse_tar_header(block: &[u8; TAR_BLOCK_BYTES], overridden: bool) -> Result<T
                 name: String::new(),
                 size,
                 directory: false,
-                long_name: true,
+                extension: Some(TarExtensionKind::GnuLongName),
+            });
+        }
+        b'x' if !overridden => {
+            if !(1..=16 * 1024).contains(&size) || block[157..257].iter().any(|&byte| byte != 0) {
+                return Err("The CBT has an invalid PAX header".into());
+            }
+            return Ok(TarHeader {
+                name: String::new(),
+                size,
+                directory: false,
+                extension: Some(TarExtensionKind::Pax),
             });
         }
         _ => return Err("The CBT has a link, special file, or unsupported TAR extension".into()),
@@ -483,7 +530,7 @@ fn parse_tar_header(block: &[u8; TAR_BLOCK_BYTES], overridden: bool) -> Result<T
             name: String::new(),
             size,
             directory,
-            long_name: false,
+            extension: None,
         });
     }
     let prefix = if gnu {
@@ -504,7 +551,7 @@ fn parse_tar_header(block: &[u8; TAR_BLOCK_BYTES], overridden: bool) -> Result<T
         name: tar_checked_name(&joined, directory)?,
         size,
         directory,
-        long_name: false,
+        extension: None,
     })
 }
 
@@ -534,6 +581,77 @@ fn tar_long_name(input: &mut impl Read, size: u64) -> Result<String> {
         return Err("The CBT has an invalid GNU long-name record".into());
     }
     Ok(String::from_utf8(bytes)?)
+}
+
+/// Read only local PAX path and timestamp records. Values that could change
+/// file size, link targets, sparse layout or other semantics are rejected.
+fn tar_pax_name(input: &mut impl Read, size: u64) -> Result<Option<String>> {
+    const MAX_PAX_BYTES: u64 = 16 * 1024;
+    const MAX_RECORDS: usize = 64;
+    if !(1..=MAX_PAX_BYTES).contains(&size) {
+        return Err("The CBT has an invalid PAX record size".into());
+    }
+    let mut bytes = vec![0; size as usize];
+    input.read_exact(&mut bytes)?;
+    let mut at = 0usize;
+    let mut keys = HashSet::new();
+    let mut path = None;
+    let mut count = 0usize;
+    while at < bytes.len() {
+        count += 1;
+        if count > MAX_RECORDS {
+            return Err("The CBT has too many PAX records".into());
+        }
+        let rest = &bytes[at..];
+        let space = rest
+            .iter()
+            .position(|&byte| byte == b' ')
+            .ok_or("The CBT has a malformed PAX record")?;
+        if space == 0 || space > 5 || !rest[..space].iter().all(u8::is_ascii_digit) {
+            return Err("The CBT has a malformed PAX record length".into());
+        }
+        let length: usize = std::str::from_utf8(&rest[..space])?.parse()?;
+        let end = at
+            .checked_add(length)
+            .filter(|&end| end <= bytes.len())
+            .ok_or("The CBT PAX record exceeds its header")?;
+        if length <= space + 2 || bytes[end - 1] != b'\n' {
+            return Err("The CBT has a malformed PAX record".into());
+        }
+        let record = std::str::from_utf8(&bytes[at + space + 1..end - 1])?;
+        let (key, value) = record
+            .split_once('=')
+            .ok_or("The CBT has a malformed PAX field")?;
+        if !keys.insert(key) {
+            return Err("The CBT has duplicate PAX fields".into());
+        }
+        match key {
+            "path" if !value.is_empty() && value.len() <= MAX_MEMBER_NAME => {
+                path = Some(value.to_owned())
+            }
+            "mtime" | "atime" | "ctime" if valid_pax_timestamp(value) => (),
+            _ => return Err("The CBT uses an unsupported PAX field".into()),
+        }
+        at = end;
+    }
+    Ok(path)
+}
+
+fn valid_pax_timestamp(value: &str) -> bool {
+    if value.len() > 64 {
+        return false;
+    }
+    let value = value.strip_prefix('-').unwrap_or(value);
+    let mut parts = value.split('.');
+    let Some(seconds) = parts.next() else {
+        return false;
+    };
+    !seconds.is_empty()
+        && seconds.bytes().all(|byte| byte.is_ascii_digit())
+        && parts.next().is_none_or(|fraction| {
+            !fraction.is_empty() && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        })
+        && parts.next().is_none()
 }
 
 fn tar_string(field: &[u8]) -> Result<&str> {

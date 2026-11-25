@@ -3296,10 +3296,17 @@ impl Reader {
                         ),
                     );
                 }
+                let language = self.controls.interface_language;
+                for item in &mut items {
+                    item.title = language.auto_turn_text(&item.title).to_owned();
+                    if let Some(detail) = &mut item.detail {
+                        *detail = language.auto_turn_text(detail).to_owned();
+                    }
+                }
                 return items;
             }
             Screen::AutoTurnDistance => {
-                return vec![
+                let mut items = vec![
                     Item::new("Decrease by 50%", Action::AdjustAutoTurnDistance(-5))
                         .detail("Move 50 percentage points back"),
                     Item::new("Decrease by 10%", Action::AdjustAutoTurnDistance(-1))
@@ -3315,16 +3322,26 @@ impl Reader {
                         i32::from(self.controls.auto_turn_distance_tenths()) * 10
                     )),
                 ];
+                let language = self.controls.interface_language;
+                for item in &mut items {
+                    item.title = language.auto_turn_text(&item.title).to_owned();
+                    if let Some(detail) = &mut item.detail {
+                        *detail = language.auto_turn_text(detail).to_owned();
+                    }
+                }
+                return items;
             }
             Screen::AutoTurnPan => {
                 let Some(fixed) = &self.fixed else {
                     return vec![Item::new(
-                        "Open a fixed-page document to change pan behavior",
+                        self.controls
+                            .interface_language
+                            .auto_turn_text("Open a fixed-page document to change pan behavior"),
                         Action::Heading,
                     )];
                 };
                 let preferences = fixed.reading.preferences();
-                return vec![
+                let mut items = vec![
                     Item::new(
                         "Horizontal overlap",
                         Action::Show(Screen::NumberingValue(
@@ -3367,6 +3384,14 @@ impl Reader {
                         Action::AutoTurnPan(AutoTurnPanChange::Reset),
                     ),
                 ];
+                let language = self.controls.interface_language;
+                for item in &mut items {
+                    item.title = language.auto_turn_text(&item.title).to_owned();
+                    if let Some(detail) = &mut item.detail {
+                        *detail = language.auto_turn_text(detail).to_owned();
+                    }
+                }
+                return items;
             }
             Screen::OnlineHistory | Screen::ClearOnlineHistory => {
                 return self.online_history_items();
