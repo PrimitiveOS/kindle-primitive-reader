@@ -12,17 +12,21 @@ label supplied by that edition. It can differ from the number of labels and
 from the number of screen pages. A finished character-count map supplies its
 own first-to-last numbers independently of screen layout.
 
-Reader retains the original chapter-local screen numbers if the map is still
-being built, the relevant publisher option is off, or an open-chapter boundary
-is unresolved or out of order. Reader checks the source list’s spine order and
-resolves boundaries in the current layout. The last published label comes from
-the EPUB metadata. Displaying the header opens no additional chapters and does
-no whole-book layout.
+With stable labels disabled or unavailable, Reader shows whole-book screen
+numbers once it has measured the supported layout. While that measurement is
+pending, or for a layout without a whole-book count, it uses the current
+section. Reader resolves publisher boundaries in source order in the current
+layout and reads the last published label from EPUB metadata. Painting the
+header uses available measurements without opening other sections.
 
-KOReader’s alternate header uses the current and last stable labels whenever
-its page-map option is active. With that option off, CRE supplies its exact
-whole-document screen page count. Reader's reflow renderer uses the current
-chapter’s exact screen page count in that case. [KOReader alternate header](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readercoptlistener.lua#L90-L156) · [Current and last page-map labels](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerpagemap.lua#L330-L357)
+In a section with hidden flows, the regular page count uses `x // y` and a
+supplemental flow uses `[x / y]flow`. A supplemental progress percentage appears
+in brackets. Publisher and character-count labels take precedence for the
+page fields. The Rust renderer counts the active section’s flows. KOReader’s
+CRE tracks whole-document flows. Facing-page and vertical layouts can still
+use a local screen count in Reader.
+[KOReader alternate header](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readercoptlistener.lua#L90-L156)
+· [Current and last page-map labels](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerpagemap.lua#L330-L357)
 
 Desktop workflows cover Roman and alphanumeric labels, the independent fields,
 malformed boundaries, a pending and completed character map, and reopening.

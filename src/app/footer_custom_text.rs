@@ -41,6 +41,15 @@ impl ClockTokens {
         let hour = (hour + 11) % 12 + 1;
         format!("{hour}:{minute:02} {period}")
     }
+
+    pub(super) fn header_time(&self, twelve_hour_clock: bool) -> String {
+        let time = self.reading_time(twelve_hour_clock);
+        if twelve_hour_clock && time.as_bytes().get(1) == Some(&b':') {
+            format!("0{time}")
+        } else {
+            time
+        }
+    }
 }
 
 pub(crate) fn local_clock() -> Option<ClockTokens> {
@@ -235,6 +244,8 @@ mod tests {
         assert_eq!(clock.time_with_seconds, "01-09-04");
         assert_eq!(clock.reading_time(false), "01:09");
         assert_eq!(clock.reading_time(true), "1:09 AM");
+        assert_eq!(clock.header_time(false), "01:09");
+        assert_eq!(clock.header_time(true), "01:09 AM");
         for (hour, display) in [(0, "12:09 AM"), (12, "12:09 PM"), (23, "11:09 PM")] {
             let time = primitive_device::LocalTime {
                 hour,

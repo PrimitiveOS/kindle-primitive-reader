@@ -248,6 +248,7 @@ enum Screen {
     HighlightPromptSettings,
     FooterSettings,
     FooterItemWidths,
+    HeaderBatterySettings,
     FooterFontFaces,
     FooterCustomText,
     FooterCustomTextGuide,
@@ -432,6 +433,7 @@ impl Screen {
             Self::HighlightPromptSettings => "Highlight prompt",
             Self::FooterSettings => "Reading status bar",
             Self::FooterItemWidths => "Item maximum width",
+            Self::HeaderBatterySettings => "Header battery status",
             Self::FooterFontFaces => "Status bar font",
             Self::FooterCustomText => "Custom footer text",
             Self::FooterCustomTextGuide => "Custom text tokens",
@@ -885,6 +887,7 @@ struct ActiveBook {
     reading: Reading,
     numbering: Option<crate::synthetic_pages::CharacterPages>,
     embedded_font_inventory: Option<embedded_fonts::Availability>,
+    header_metadata: Option<top_header::Metadata>,
 }
 
 struct SavedMarkRow {
@@ -1859,12 +1862,15 @@ impl Reader {
         self.saved_popup = None;
         self.pending_orientation = None;
         self.install_opening_profile_plan(opening);
+        let header_metadata =
+            top_status_header.then(|| self.load_header_metadata(entry.library_path()));
         self.active = Some(ActiveBook {
             entry,
             id,
             reading,
             numbering: None,
             embedded_font_inventory: None,
+            header_metadata,
         });
         self.style_view = Default::default();
         let active = self.active.as_ref().unwrap();
@@ -2702,6 +2708,7 @@ impl Reader {
         match screen {
             Screen::FooterSettings => return self.footer_items(),
             Screen::FooterItemWidths => return self.footer_item_widths(),
+            Screen::HeaderBatterySettings => return self.header_battery_items(),
             Screen::FooterPresets => {
                 let mut items = vec![
                     Item::new(
@@ -9970,6 +9977,7 @@ impl App for Reader {
                     | Screen::LongPressSettings => self.show(Screen::ReadingControls),
                     Screen::FooterFontFaces => self.show(Screen::FooterSettings),
                     Screen::FooterItemWidths => self.show(Screen::FooterSettings),
+                    Screen::HeaderBatterySettings => self.show(Screen::FooterSettings),
                     Screen::FooterPresets => self.show(Screen::FooterSettings),
                     Screen::FooterPreset(_) => self.show(Screen::FooterPresets),
                     Screen::FooterPresetDelete(index) => self.show(Screen::FooterPreset(index)),
@@ -10307,7 +10315,7 @@ impl App for Reader {
         {
             let clock_visible = self.clock_refresh_visible();
             let battery_changed = self.refresh_status_battery_changed();
-            self.update_footer_clock(now);
+            self.schedule_footer_clock(now);
             return if clock_visible || battery_changed {
                 Change::Partial
             } else {
@@ -17429,7 +17437,7 @@ mod tests {
         assert!(
             app.top_header_caption()
                 .unwrap()
-                .contains(&format!("1/{first}"))
+                .contains(&format!("1 / {first}"))
         );
         let original_footer = app.status_caption().unwrap();
         assert_eq!(
@@ -17459,13 +17467,13 @@ mod tests {
         assert!(
             app.top_header_caption()
                 .unwrap()
-                .contains(&format!("{next}/{total}", next = first + 1))
+                .contains(&format!("{next} / {total}", next = first + 1))
         );
         app.activate(jump(&hrefs[0])).unwrap();
         assert!(
             app.top_header_caption()
                 .unwrap()
-                .contains(&format!("1/{total}"))
+                .contains(&format!("1 / {total}"))
         );
         assert_eq!(
             app.status_caption().as_deref(),
@@ -17532,7 +17540,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(shown(&app), Some((1, 48)));
-        assert!(app.top_header_caption().unwrap().contains("1/48"));
+        assert!(app.top_header_caption().unwrap().contains("1 / 48"));
         assert_eq!(
             position(&app.active.as_ref().unwrap().reading),
             initial_position

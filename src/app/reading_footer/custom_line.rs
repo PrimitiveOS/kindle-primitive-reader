@@ -9,7 +9,11 @@ use super::{
 };
 use primitive_ui::{Canvas, Icon, Rect, TextStyle};
 
-fn fit_item(value: &str, max_width: i32, mut measure: impl FnMut(&str) -> i32) -> Cow<'_, str> {
+pub(super) fn fit_item(
+    value: &str,
+    max_width: i32,
+    mut measure: impl FnMut(&str) -> i32,
+) -> Cow<'_, str> {
     if measure(value) <= max_width {
         return Cow::Borrowed(value);
     }

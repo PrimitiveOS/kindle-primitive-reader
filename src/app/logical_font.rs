@@ -283,12 +283,15 @@ impl Reader {
         self.fixed = None;
         self.footnote = None;
         self.selection = None;
+        let header_metadata =
+            top_status_header.then(|| self.load_header_metadata(recovery.entry.library_path()));
         self.active = Some(ActiveBook {
             entry: recovery.entry,
             id: recovery.id,
             reading: candidate,
             numbering: None,
             embedded_font_inventory: None,
+            header_metadata,
         });
         self.logical_recovery = None;
         self.pages_since_refresh = 0;

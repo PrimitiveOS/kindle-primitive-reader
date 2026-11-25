@@ -427,14 +427,6 @@ impl HeaderBattery {
             Self::Percentage => "Battery percentage",
         }
     }
-
-    pub(crate) fn next(self) -> Self {
-        match self {
-            Self::Off => Self::Icon,
-            Self::Icon => Self::Percentage,
-            Self::Percentage => Self::Off,
-        }
-    }
 }
 
 /// Where the selected-text action panel appears over the reading page.
@@ -1998,16 +1990,13 @@ mod tests {
     }
 
     #[test]
-    fn top_header_font_clamps_legacy_values_and_battery_options_cycle() {
+    fn top_header_font_clamps_legacy_values() {
         let mut header = TopHeader::default();
         assert_eq!(header.font_size(), 20);
         header.font_size = 0;
         assert_eq!(header.font_size(), 8);
         header.font_size = 255;
         assert_eq!(header.font_size(), 36);
-        assert_eq!(HeaderBattery::Off.next(), HeaderBattery::Icon);
-        assert_eq!(HeaderBattery::Icon.next(), HeaderBattery::Percentage);
-        assert_eq!(HeaderBattery::Percentage.next(), HeaderBattery::Off);
     }
 
     #[test]

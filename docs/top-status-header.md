@@ -1,48 +1,72 @@
 # Optional top status header
 
-KOReader's CRE reader can draw a configurable status line at the top of a
-reflowable document in page-turn mode. Reader now has the same reading
-information in a separate, optional header. It is off by default. Enable it
-for the current book from the lower **Screen** panel.
-[Per-book controls and new-book default](per-book-top-status-header.md)
-The upper **Controls → Reading status bar** configures the shared presentation. The pinned implementation
-disables the header in continuous-scroll mode and refreshes it when the clock or
-battery can change. [KOReader source](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readercoptlistener.lua#L246-L319) · [Header options](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readercoptlistener.lua#L372-L552)
+The optional status header shows reading information above a reflowable book
+in page-turn mode. It is off by default. Enable it for the current book from
+the lower **Screen** panel. The upper **Controls → Reading status bar** changes
+what it shows. [Per-book controls and new-book default](per-book-top-status-header.md)
 
-Reader reserves a 48 px strip for the header, keeps the current source anchor
-when it is enabled or disabled, and clips the page bitmap so its white margin
-does not cover the status text. The header disappears in continuous scroll and
-returns in page-turn mode. Chapter marks share the same progress boundaries as
-the reading footer.
+Reader reserves a 48 px strip, keeps the source position when the header is
+enabled or disabled, and clips the page so the bitmap leaves the header
+visible. The header hides during continuous scroll and returns in page-turn
+mode. The bottom footer keeps its default chapter and page caption, marked
+progress track, and Exit button.
 
-When enabled, Reader shows the title, author, local time, current and total page
-numbers, chapter marks, and a battery icon by default. The progress percentage
-is optional. Battery status cycles through Off, Icon, and Percentage; the icon
-shows charging. Header text size ranges from 8 to 36 px, one step at a time,
-with 20 px as the default. Automatic refresh runs at the minute boundary when
-the clock or battery is visible, pauses during sleep and continuous scroll, and
-only requests a battery redraw after its level or charging state changes.
+When enabled, the header shows the author and title at left and the time,
+current page, total pages, and battery icon at right by default. When author
+and title compete for space, odd pages show the author and even pages show the
+title. Reader truncates long text at a grapheme boundary. A readable KOReader
+custom metadata sidecar supplies its title and author when Reader opens the
+book or enables its header. KOReader also responds to metadata edits while
+a book is open.
+
+The current page, total pages, and progress percentage can each be displayed
+independently. The progress track distinguishes the read and unread portions
+by line weight. The **Header chapter marks** control toggles boundary notches
+independently of the track. Marker positions use the active contents and depth
+settings. [Page labels and screen counts](top-header-page-labels.md)
+
+**Header battery status** offers **Battery icon** and **Battery percentage**.
+Tap the active choice to turn it off. Both displays indicate charging.
+**Header font size** ranges from 8 to 36 px with 20 px as the normal size and
+14 px as the Reset value. **Refresh header automatically** refreshes changing
+fields at the minute boundary. It pauses through sleep or continuous scroll
+and skips a battery-only redraw when the reading is unchanged. The clock uses
+the local time zone and the shared 12- or 24-hour preference.
+[Font picker](top-header-font-picker.md) · [Clock details](device-local-time.md)
 
 ## Desktop evidence
 
-The simulator screenshots use the authored Field Notes EPUB and show the
-header with the reading page and footer visible. Both light and night-page
-rendering were checked.
+The native KOReader replay uses pin
+`9192014d8bd82a91dc1012473be0f238dedfdb54`. Its real alternate-header Lua
+module and CRE renderer verify independently selectable page fields, publisher
+labels, chapter-mark painting, battery menu choices, a charging-triggered
+redraw, refresh scheduling,
+and scroll suppression. Run the script from the pinned native runtime. Pass
+the authored `many-chapters.epub` fixture, a temporary CRE cache directory,
+`NotoSans-Regular.ttf`, the output PNG path, and the authored
+`nonlinear-note-flows.epub` fixture in that order. The reference frame uses the authored 48-page EPUB
+and a controlled 37% battery reading. The publisher labels and charge state
+are provided to the stock module by the replay.
+[Stock header source](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readercoptlistener.lua)
+· [Stock replay](../scripts/koreader-engine-header-check.lua)
 
-![Top status header in light reading mode](screenshots/top-status-header.png)
+![Pinned KOReader native replay](screenshots/top-status-header-stock.png)
 
-![Top status header in night-page mode](screenshots/top-status-header-night.png)
+Reader’s native tests use bundled test fonts for the fixture and exercise
+menu taps, custom metadata, the formatting of
+regular and supplemental page values, track marks and weights, battery
+painting, preserving the source position, and exact framebuffer equality
+after restoring the default footer-only view.
 
-Focused tests cover the default settings and persistence, bounded font and
-battery choices, reflow from the current anchor, visible header pixels in the
-simulator, continuous-scroll suppression and restoration in page mode, the
-charging icon, and minute-boundary clock scheduling across sleep and wake.
-Kindle visual and battery acceptance remain open.
+![Reader settings for the battery display](screenshots/top-status-header-battery-settings.png)
 
-Current and total page values use [stable labels](top-header-page-labels.md)
-when enabled and resolved. The fallback is the current reflow section.
-The [font picker](top-header-font-picker.md) includes a 14 px Reset choice.
-Reader's 24-hour clock uses the Kindle time zone. [Clock details](device-local-time.md)
+![Reader's opt-in header and original footer](screenshots/top-status-header-composed.png)
+
+Reader uses the Kindle kit’s main battery reading and detects charging
+transitions at the scheduled refresh. An immediate charge-event hook and
+auxiliary-battery data are pending. The tested framebuffer uses Reader’s
+typography and dimensions. Kindle refresh and battery behavior still need
+hardware verification.
 
 **About the top status header** explains when the header appears and how to
 set it for the book or by default. [About panel](top-header-about.md)

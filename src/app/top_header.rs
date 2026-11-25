@@ -1,11 +1,12 @@
 //! Keep reflow header activation with the book and its presentation in Reader settings.
-use std::time::Instant;
+use std::{path::Path, time::Instant};
 
 use primitive_app::{Change, HEIGHT, WIDTH};
 use primitive_ui::{BODY, Canvas, Input, Rect, Sheet, SheetAction, TextStyle};
 
-use super::{Action, Reader, Result};
-use crate::reading_controls::{ReadingControls, TopHeader};
+use super::{Action, Item, Reader, Result};
+use crate::koreader_sidecar::custom_metadata;
+use crate::reading_controls::{HeaderBattery, ReadingControls, TopHeader};
 
 const ABOUT_WIDTH: i32 = 940;
 const ABOUT_HEIGHT: i32 = 650;
@@ -22,7 +23,45 @@ const ABOUT_DONE: Rect = Rect::new(ABOUT.x + ABOUT.w - 328, ABOUT.y + 502, 280, 
 const ABOUT_BEHAVIOR_TEXT: &str = "For reflowable books, the header can appear above the footer in page-turn mode. It hides in continuous scroll.";
 const ABOUT_SETUP_TEXT: &str = "Swipe up from the bottom and open Screen. Turn on Top status header for this book or set Default for new books. Choose what it shows here.";
 
+pub(super) struct Metadata {
+    pub(super) title: Option<String>,
+    pub(super) author: Option<String>,
+}
+
 impl Reader {
+    pub(super) fn load_header_metadata(&self, path: &Path) -> Metadata {
+        let custom = primitive_app::with_storage(|| self.library.koreader_custom_metadata(path))
+            .ok()
+            .flatten()
+            .and_then(|bytes| custom_metadata::parse(&bytes).ok())
+            .unwrap_or_default();
+        Metadata {
+            title: custom.title.map(|value| value.replace(['\n', '\r'], " ")),
+            author: custom.authors.map(|value| value.replace(['\n', '\r'], " ")),
+        }
+    }
+
+    pub(super) fn header_battery_items(&self) -> Vec<Item> {
+        let header = self.controls.top_header;
+        [HeaderBattery::Icon, HeaderBattery::Percentage]
+            .into_iter()
+            .map(|choice| {
+                let selected = header.battery == choice;
+                Item::new(
+                    choice.label(),
+                    Action::SetReadingControls(ReadingControls {
+                        top_header: TopHeader {
+                            battery: if selected { HeaderBattery::Off } else { choice },
+                            ..header
+                        },
+                        ..self.controls
+                    }),
+                )
+                .detail(if selected { "On" } else { "Off" })
+            })
+            .collect()
+    }
+
     pub(super) fn top_header_for_book(&self, id: u64) -> bool {
         let header = self.controls.top_header;
         if let Some(state) = self.library.state(id) {
@@ -37,6 +76,8 @@ impl Reader {
     }
 
     pub(super) fn set_book_top_header(&mut self, enabled: bool) -> Result<()> {
+        let current = self.active.as_ref().ok_or("Open a reflowable book first")?;
+        let metadata = enabled.then(|| self.load_header_metadata(current.entry.library_path()));
         let book = self.active.as_mut().ok_or("Open a reflowable book first")?;
         let state = self
             .library
@@ -44,6 +85,7 @@ impl Reader {
             .ok_or("Reading state unavailable")?;
         book.reading
             .set_status_header_height(TopHeader::height(enabled, book.reading.is_continuous()))?;
+        book.header_metadata = metadata;
         state.top_status_header = Some(enabled);
         self.record_position();
         self.update_footer_clock(Instant::now());

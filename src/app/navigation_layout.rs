@@ -131,6 +131,7 @@ impl Screen {
                 | Self::ReadingNotifications
                 | Self::PastNotifications
                 | Self::FooterItemWidths
+                | Self::HeaderBatterySettings
                 | Self::Gestures
                 | Self::MenuActivationSettings
                 | Self::Scrolling

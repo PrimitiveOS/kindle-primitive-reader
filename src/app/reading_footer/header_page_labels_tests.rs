@@ -25,12 +25,12 @@ fn fonts() -> Vec<PathBuf> {
 }
 
 fn header(app: &Reader) -> String {
-    app.top_header_parts().unwrap().1
+    app.header_status_caption().unwrap()
 }
 
 fn screen_numbers(app: &Reader) -> String {
     let reading = &app.active.as_ref().unwrap().reading;
-    format!("{}/{}", reading.page + 1, reading.probe.page_count())
+    format!("{} / {}", reading.page + 1, reading.probe.page_count())
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn top_header_labels_follow_enabled_publisher_boundaries_and_keep_footer_pixels(
     assert_eq!(
         header(&app),
         format!(
-            "{}/{}",
+            "{} / {}",
             first_chapter_pages + 1,
             first_chapter_pages + last_chapter_pages
         )
@@ -186,13 +186,10 @@ fn top_header_uses_exact_screen_progress_with_publisher_labels_or_percentage_alo
         ..app.controls
     }))
     .unwrap();
-    assert_eq!(
-        header(&app),
-        format!("iii / A-19  ·  {expected_percent:.1}%")
-    );
+    assert_eq!(header(&app), format!("iii / A-19  {expected_percent:.1}%"));
     let ending = app.publisher_page_window(1, 1).1.remove(0);
     app.activate(ending.action).unwrap();
-    assert_eq!(header(&app), "A-19 / A-19  ·  100.0%");
+    assert_eq!(header(&app), "A-19 / A-19  100.0%");
 }
 
 #[test]

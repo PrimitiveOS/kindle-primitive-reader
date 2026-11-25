@@ -1,5 +1,6 @@
 //! Reading status shares the existing compact page footer with document controls.
 mod custom_line;
+mod header;
 
 use super::character_page_settings::NumberField;
 use super::progress_markers::MarkerPages;
@@ -17,7 +18,7 @@ use crate::session::ReadingViewport;
 use primitive_app::Change;
 #[cfg(test)]
 use primitive_app::{HEIGHT, WIDTH};
-use primitive_ui::{Canvas, HAIRLINE, Icon, Rect, SECONDARY, TextStyle};
+use primitive_ui::{Canvas, Icon, Rect, SECONDARY, TextStyle};
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -91,23 +92,6 @@ pub(super) fn fixed_chapters(reading: &FixedReading) -> Vec<(usize, String)> {
         .collect();
     sort_chapters(&mut chapters);
     chapters
-}
-
-fn draw_header_ticks(
-    canvas: &mut Canvas,
-    width: u32,
-    pages: impl ExactSizeIterator<Item = usize>,
-    count: usize,
-    ink: u8,
-) {
-    let width = (width - 24) as usize;
-    if pages.len() >= width / 5 {
-        return;
-    }
-    for page in pages {
-        let x = 12 + (width as f64 * page as f64 / count.max(1) as f64).round() as i32;
-        canvas.fill(Rect::new(x, TopHeader::HEIGHT as i32 - 5, 2, 4), ink);
-    }
 }
 
 fn sort_chapters(chapters: &mut Vec<(usize, String)>) {
@@ -411,21 +395,6 @@ fn draw_initial_marker(canvas: &mut Canvas, bar: Rect, fraction: f64) {
     canvas.fill(Rect::new(marker, bar.y - 1, 1, bar.h + 1), 0);
 }
 
-fn ellipsis_to_fit(canvas: &mut Canvas, text: &str, max_width: u32, font_size: i32) -> String {
-    let mut value = text.replace(['\n', '\r'], " ");
-    if canvas.measure(&value, font_size) <= max_width as i32 {
-        return value;
-    }
-    while !value.is_empty() {
-        value.pop();
-        let candidate = format!("{value}…");
-        if canvas.measure(&candidate, font_size) <= max_width as i32 {
-            return candidate;
-        }
-    }
-    String::new()
-}
-
 fn draw_battery_icon(
     canvas: &mut Canvas,
     x: i32,
@@ -666,7 +635,8 @@ impl Reader {
         if !self.top_header_battery_visible() && !self.footer_battery_visible() {
             return None;
         }
-        primitive_device::battery().map(|percent| (percent.min(100), primitive_device::charging()))
+        let battery = primitive_device::battery_status();
+        battery.percent.map(|percent| (percent, battery.charging))
     }
 
     pub(super) fn refresh_status_battery_changed(&mut self) -> bool {
@@ -676,7 +646,7 @@ impl Reader {
         changed
     }
 
-    pub(super) fn update_footer_clock(&mut self, now: Instant) {
+    pub(super) fn schedule_footer_clock(&mut self, now: Instant) {
         self.footer_refresh_at = if self.footer_clock_active() {
             current_unix_seconds().and_then(|seconds| {
                 let delay = 61 - seconds.rem_euclid(60) as u64;
@@ -685,6 +655,10 @@ impl Reader {
         } else {
             None
         };
+    }
+
+    pub(super) fn update_footer_clock(&mut self, now: Instant) {
+        self.schedule_footer_clock(now);
         self.status_battery_last = self.status_battery_reading();
     }
 
@@ -1035,176 +1009,6 @@ impl Reader {
             Some(label) => format!("{label}{separator}Timer {remaining}"),
             None => format!("Timer {remaining}"),
         })
-    }
-
-    fn top_header_parts(&self) -> Option<(String, String)> {
-        let header = self.controls.top_header;
-        if !self.top_header_visible() {
-            return None;
-        }
-        let active = self.active.as_ref()?;
-        let screen_pages = active.reading.whole_book_screen_pages();
-        let mut identity = Vec::new();
-        if header.title {
-            let title = active.reading.probe.title.trim();
-            if !title.is_empty() {
-                identity.push(title.to_owned());
-            }
-        }
-        if header.author {
-            if let Some(author) = active
-                .reading
-                .probe
-                .author
-                .as_deref()
-                .map(str::trim)
-                .filter(|author| !author.is_empty())
-            {
-                identity.push(author.to_owned());
-            }
-        }
-
-        let mut status = Vec::new();
-        if header.clock {
-            if let Some(clock) = super::footer_custom_text::local_clock() {
-                status.push(format!(
-                    "Time {}",
-                    clock.reading_time(self.controls.twelve_hour_clock)
-                ));
-            }
-        }
-        if header.page_number || header.page_count {
-            if let Some((current, last)) = self.top_header_page_labels() {
-                status.push(match (header.page_number, header.page_count) {
-                    (true, true) => format!("{current} / {last}"),
-                    (true, false) => current,
-                    (false, _) => last,
-                });
-            } else {
-                let (page, count) = screen_pages.unwrap_or_else(|| {
-                    (active.reading.page + 1, active.reading.probe.page_count())
-                });
-                status.push(match (header.page_number, header.page_count) {
-                    (true, true) => format!("{page}/{count}"),
-                    (true, false) => page.to_string(),
-                    (false, _) => format!("of {count}"),
-                });
-            }
-        }
-        if header.reading_percent {
-            let digits = self.controls.footer_percentage_digits;
-            if let Some((page, count)) = screen_pages {
-                let percent = page as f64 / count as f64 * 100.0;
-                let precision = usize::from(digits.min(2));
-                status.push(format!("{percent:.precision$}%"));
-            } else if let Some(progress) = self.footer_progress() {
-                status.push(progress.percentage_with_digits(digits));
-            }
-        }
-        if header.battery == HeaderBattery::Percentage
-            && let Some(level) = primitive_device::battery()
-        {
-            status.push(format!("{level}%"));
-        }
-        Some((identity.join("  ·  "), status.join("  ·  ")))
-    }
-
-    pub(super) fn top_header_caption(&self) -> Option<String> {
-        let (identity, status) = self.top_header_parts()?;
-        Some(match (identity.is_empty(), status.is_empty()) {
-            (true, true) => String::new(),
-            (false, true) => identity,
-            (true, false) => status,
-            (false, false) => format!("{identity}  ·  {status}"),
-        })
-    }
-
-    pub(super) fn draw_top_header(&self, canvas: &mut Canvas) {
-        let header = self.controls.top_header;
-        let Some((identity, status)) = self.top_header_parts() else {
-            return;
-        };
-        let width = self.reading_viewport().dimensions().0;
-        let night = self.uses_night_pages();
-        let background = if night { 0 } else { 255 };
-        let ink = if night { 255 } else { 0 };
-        canvas.fill(
-            Rect::new(0, 0, width as i32, TopHeader::HEIGHT as i32),
-            background,
-        );
-        let font_size = i32::from(header.font_size());
-        let baseline = Rect::new(20, 4, width as i32 - 40, 38);
-        let battery_width = if header.battery == HeaderBattery::Icon {
-            42
-        } else {
-            0
-        };
-        let right_width = canvas.measure(&status, font_size).min(540) as i32;
-        let right_edge = baseline.right() - battery_width;
-        let right_x = (right_edge - right_width).max(baseline.x + 180);
-        let left_width = (right_x - baseline.x - 20).max(80);
-        let left = ellipsis_to_fit(canvas, &identity, left_width as u32, font_size);
-        let right = ellipsis_to_fit(canvas, &status, (right_edge - right_x) as u32, font_size);
-        let text_style = TextStyle::new(font_size).ink(ink);
-        canvas.text(
-            Rect::new(baseline.x, baseline.y, left_width, baseline.h),
-            &left,
-            text_style,
-        );
-        canvas.text(
-            Rect::new(right_x, baseline.y, right_edge - right_x, baseline.h),
-            &right,
-            text_style,
-        );
-        if header.battery == HeaderBattery::Icon
-            && let Some(level) = primitive_device::battery()
-        {
-            draw_battery_icon(
-                canvas,
-                baseline.right() - 34,
-                11,
-                level,
-                primitive_device::charging(),
-                ink,
-                background,
-            );
-        }
-        if header.chapter_marks {
-            canvas.fill(
-                Rect::new(12, TopHeader::HEIGHT as i32 - 2, width as i32 - 24, 1),
-                HAIRLINE,
-            );
-            if let Some(book) = &self.active {
-                let local_count = book.reading.probe.page_count();
-                if let Some(published) = self
-                    .alternative_header_marker_pages(book)
-                    .or_else(|| self.publisher_header_marker_pages(book))
-                {
-                    draw_header_ticks(
-                        canvas,
-                        width,
-                        published.starts.into_iter(),
-                        published.count,
-                        ink,
-                    );
-                } else if let Some(selected) = self.customized_header_marker_pages(book) {
-                    draw_header_ticks(canvas, width, selected.into_iter(), local_count, ink);
-                } else {
-                    let pages = book
-                        .reading
-                        .probe
-                        .footer_sections()
-                        .iter()
-                        .map(|(page, _)| *page);
-                    draw_header_ticks(canvas, width, pages, local_count, ink);
-                }
-            }
-        } else {
-            canvas.fill(
-                Rect::new(0, TopHeader::HEIGHT as i32 - 1, width as i32, 1),
-                HAIRLINE,
-            );
-        }
     }
 
     pub(super) fn alarm_progress(&self, token: char) -> Option<String> {
@@ -2213,7 +2017,7 @@ impl Reader {
             Item::new("Top status header", Action::Heading),
             Item::new("About the top status header", Action::AboutTopHeader),
             setting(
-                "Refresh header clock automatically",
+                "Refresh header automatically",
                 on_off(header.auto_refresh),
                 ReadingControls {
                     top_header: TopHeader {
@@ -2300,17 +2104,11 @@ impl Reader {
                     ..c
                 },
             ),
-            setting(
+            Item::new(
                 "Header battery status",
-                header.battery.label(),
-                ReadingControls {
-                    top_header: TopHeader {
-                        battery: header.battery.next(),
-                        ..header
-                    },
-                    ..c
-                },
-            ),
+                Action::Show(Screen::HeaderBatterySettings),
+            )
+            .detail(header.battery.label()),
             Item::new("Header font size", Action::EditHeaderFontSize)
                 .detail(format!("{} px", header.font_size())),
             setting(

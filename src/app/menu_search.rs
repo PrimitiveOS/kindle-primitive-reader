@@ -154,6 +154,7 @@ fn child_menu(action: &Action) -> Option<Screen> {
             | Screen::HighlightPromptSettings
             | Screen::FooterSettings
             | Screen::FooterItemWidths
+            | Screen::HeaderBatterySettings
             | Screen::FooterPresets
             | Screen::EndActionSettings
             | Screen::MetadataSaveSettings
