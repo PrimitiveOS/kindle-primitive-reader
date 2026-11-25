@@ -323,3 +323,56 @@ fn true_type_collection_can_be_previewed_selected_and_restored() {
         reopened.fonts_directory.join(name)
     );
 }
+
+#[test]
+fn nested_font_is_discovered_previewed_selected_and_restored() {
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let font_paths: Vec<_> = fonts.iter().map(|p| p.display().to_string()).collect();
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    let original = app.current_position().unwrap().anchor;
+    app.open_font_chooser().unwrap();
+    fs::create_dir_all(app.fonts_directory.join("Serif/Family")).unwrap();
+    let name = "Serif/Family/Selected.ttf";
+    fs::copy(
+        crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+        app.fonts_directory.join(name),
+    )
+    .unwrap();
+    app.open_font_chooser().unwrap();
+    assert!(app.available_fonts.iter().any(|file| file == name));
+    assert!(
+        app.typeface_preview(name, &font_paths, false, false)
+            .is_some()
+    );
+    crate::app::tests::capture_test_screen(&app, &fonts, "READER_NESTED_FONT_CHOOSER_FRAME", false);
+    app.activate(Action::SetFont(Some(name.into()))).unwrap();
+    assert_eq!(app.current_position().unwrap().anchor, original);
+    let id = app.open_book_id().unwrap();
+    let preferences = &app.library.state(id).unwrap().preferences;
+    assert_eq!(preferences.font_file.as_deref(), Some(name));
+    crate::document_defaults::validate_preferences(preferences).unwrap();
+    assert!(
+        app.activate(Action::SetFont(Some("../outside.ttf".into())))
+            .is_err()
+    );
+    app.save().unwrap();
+    drop(app);
+    let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    reopened.open_path(&fixture.book).unwrap();
+    assert_eq!(
+        reopened
+            .library
+            .state(id)
+            .unwrap()
+            .preferences
+            .font_file
+            .as_deref(),
+        Some(name)
+    );
+    assert_eq!(
+        reopened.active.as_ref().unwrap().reading.config.fonts[0],
+        reopened.fonts_directory.join(name)
+    );
+}

@@ -71,6 +71,7 @@ pub enum DocumentFormat {
     Html,
     Htmlz,
     Docx,
+    Odt,
     Chm,
     Markdown,
     Fb2,
@@ -102,6 +103,7 @@ impl DocumentFormat {
                 Format::Html => Self::Html,
                 Format::Htmlz => Self::Htmlz,
                 Format::Docx => Self::Docx,
+                Format::Odt => Self::Odt,
                 Format::Chm => Self::Chm,
                 Format::Markdown => Self::Markdown,
                 Format::Fb2 => Self::Fb2,
@@ -116,7 +118,7 @@ impl DocumentFormat {
         }
         let extension = path.extension()?.to_str()?;
         match extension.to_ascii_lowercase().as_str() {
-            "epub" => Some(Self::Epub),
+            "epub" | "epub3" => Some(Self::Epub),
             "pdf" => Some(Self::Pdf),
             "djvu" | "djv" => Some(Self::Djvu),
             "cbz" => Some(Self::Cbz),
@@ -166,6 +168,7 @@ impl DocumentFormat {
             Self::Text | Self::Html | Self::Markdown => MAX_INPUT as u64,
             Self::Htmlz => MAX_HTMLZ_INPUT as u64,
             Self::Docx => crate::docx::MAX_INPUT as u64,
+            Self::Odt => crate::odt::MAX_INPUT as u64,
             Self::Chm => crate::chm::MAX_CHM_BYTES,
             Self::Fb2 => MAX_FB2_INPUT as u64,
             Self::Fb3 => crate::fb3::MAX_INPUT as u64,
@@ -192,6 +195,7 @@ impl DocumentFormat {
             Self::Html => b"reader-html\0",
             Self::Htmlz => b"reader-htmlz\0",
             Self::Docx => b"reader-docx\0",
+            Self::Odt => b"reader-odt\0",
             Self::Chm => b"reader-chm\0",
             Self::Markdown => b"reader-markdown\0",
             Self::Fb2 => b"reader-fb2\0",
@@ -1981,6 +1985,7 @@ impl Library {
                 | DocumentFormat::Html
                 | DocumentFormat::Htmlz
                 | DocumentFormat::Docx
+                | DocumentFormat::Odt
                 | DocumentFormat::Chm
                 | DocumentFormat::Markdown
                 | DocumentFormat::Fb2
@@ -2033,7 +2038,7 @@ impl Library {
             .path
             .ancestors()
             .skip(1)
-            .find(|p| has_extension(p, "epub"))?;
+            .find(|p| crate::epub_members::is_epub_path(p))?;
         let name = entry.path.strip_prefix(folder).ok()?.to_str()?;
         let marker = self.resolve(&folder.join("mimetype")).ok()?;
         let book = Book::open(&self.absolute_path(&marker.path).ok()?).ok()?;
@@ -3271,6 +3276,19 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn epub3_alias_uses_the_existing_book_provider() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("Novel.EPUB3");
+        fs::write(&path, EPUB3).unwrap();
+        assert_eq!(DocumentFormat::for_path(&path), Some(DocumentFormat::Epub));
+        let book = Book::open(&path).unwrap();
+        assert!(!book.chapters.is_empty());
+        assert!(crate::epub_members::is_folder_book(Path::new(
+            "Novel.epub3/mimetype"
+        )));
     }
 
     #[test]

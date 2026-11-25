@@ -23,8 +23,10 @@ const ENGINE: &str = "tesseract";
 const TESSDATA: &str = "tessdata";
 const MODEL_SUFFIX: &str = ".traineddata";
 const DEFAULT_LANGUAGE: &str = "eng";
-const MAX_LANGUAGES: usize = 32;
-const MAX_DISCOVERY_ENTRIES: usize = 256;
+// The upstream language set contains over a hundred models. Keep discovery
+// bounded while allowing that full set and locally added models to coexist.
+const MAX_LANGUAGES: usize = 160;
+const MAX_DISCOVERY_ENTRIES: usize = 512;
 const MAX_ENGINE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_MODEL_BYTES: u64 = 16 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);

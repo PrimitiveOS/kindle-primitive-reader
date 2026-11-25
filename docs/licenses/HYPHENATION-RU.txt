@@ -1,0 +1,11 @@
+Russian hyphenation patterns, version 10 March 2003
+Copyright (C) 1999–2003 Alexander I. Lebedev
+
+Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-ru.tex
+Source SHA-256: ce988fcc66e5e29d7474df5ab5b489d3f52a50ebccf570997f992d84221b922a
+
+The upstream source is licensed under the LaTeX Project Public License 1.2
+or later. Reader uses version 1.3c, included in LPPL-1.3c.txt. The unmodified
+upstream TeX file is included in hyph-ru.tex; Reader compiles its supported
+single-word patterns and exceptions into its own native lookup tables.
+Reader's compiled tables are a derived form, not the original TeX file.

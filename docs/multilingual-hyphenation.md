@@ -23,6 +23,18 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Irish | 2 / 3 | 6,033 upstream word rules and 46 exceptions; stock comparison pending |
 | Ukrainian | 2 / 2 | 1,989 upstream word and apostrophe rules; stock comparison pending |
 | Polish | 2 / 2 | 4,053 upstream word rules and 20 exceptions; stock comparison pending |
+| Russian | 2 / 2 | Upstream single-word rules and exceptions; stock comparison pending |
+| Slovak | 2 / 3 | 2,467 upstream word patterns and four active exceptions; stock comparison pending |
+| Slovenian | 2 / 2 | 1,068 upstream word patterns; stock comparison pending |
+
+Slovak and Slovenian follow the pinned CREngine language minima and use
+MIT-licensed upstream sources also identified by its pattern files. The
+Slovak source's unhyphenated `dosť` exception is excluded because the pinned
+CREngine table explicitly leaves it disabled; four hyphenated exceptions are
+included. Regional language tags retain the selected language and explicit
+non-Latin scripts do not use these Latin dictionaries. Existing automatic,
+soft-hyphen and user-limit switches continue to apply. Neither language has
+yet been built or behaviorally compared on Mac or Kindle. [Language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp#L99-L100) · [Slovak stock exceptions](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/Slovak.pattern) · [Slovenian stock patterns](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/hyph/Slovenian.pattern)
 
 Reader compiles upstream TeX patterns into immutable tables. The build
 normalizes word-edge markers, removes patterns for punctuation outside the
@@ -48,6 +60,15 @@ patterns containing literal hyphens are not supported by the current word
 matcher. Their normalized rule sets and Irish exceptions have not yet been
 compared exhaustively with the pinned KOReader dictionaries, and simulator and
 device checks remain pending. [Pattern provenance and notices](licenses/HYPHENATION-BG-GL-GA.txt)
+Russian uses Alexander Lebedev's upstream TeX patterns and exceptions, also
+identified as the origin of KOReader's pinned Russian dictionary. Reader
+filters patterns that require punctuation outside its single-word matcher,
+including hyphen/dash rules, and uses 2 / 2 minima. KOReader also offers
+Russian/English combined dictionaries; Reader currently applies Russian-only
+rules for those language tags. This is not a claim of
+exact KOReader parity: the compiled candidate, whole-document behavior and
+computer/Kindle comparison remain unverified. The original source, LPPL 1.3c
+and provenance are included in release packages. [Russian terms](licenses/HYPHENATION-RU.txt)
 Polish uses the 1995 MIT-licensed upstream rules and exceptions with 2 / 2
 minima. The compiled rules have not yet been compared exhaustively with
 KOReader or tested on the computer or Kindle. [Polish source and notice](licenses/HYPHENATION-PL.txt) · [KOReader Polish selection](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypography.lua#L83)

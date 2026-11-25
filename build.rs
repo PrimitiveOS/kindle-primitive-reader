@@ -162,6 +162,9 @@ fn main() {
         ("ga", "IRISH"),
         ("uk", "UKRAINIAN"),
         ("pl", "POLISH"),
+        ("ru", "RUSSIAN"),
+        ("sk", "SLOVAK"),
+        ("sl", "SLOVENIAN"),
     ] {
         let tex = tex_source(&format!("assets/hyphenation/hyph-{tag}.tex"));
         let mut rules = stock_word_rules(&tex, tag == "uk");
@@ -169,6 +172,11 @@ fn main() {
             // CRE converted this two-entry TeX line into one pattern with an
             // internal word-edge marker, unreachable when matching one word.
             rules.retain(|rule| !matches!(rule.as_str(), "r2as" | "l2as"));
+        }
+        if tag == "sk" {
+            // The pinned CREngine Slovak table explicitly comments out this
+            // unhyphenated TeX exception; retain its stock behavior.
+            rules.retain(|rule| rule != ".d8o8s8ť.");
         }
         output.push_str(&compile(
             rules,

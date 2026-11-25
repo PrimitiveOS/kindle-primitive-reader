@@ -13,6 +13,7 @@ use html5ever::tokenizer::states::RawKind;
 use html5ever::tokenizer::{
     BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer,
 };
+pub(crate) mod cover;
 mod huff;
 pub(crate) use huff::COMPRESSION as HUFF_CDIC;
 mod markup;

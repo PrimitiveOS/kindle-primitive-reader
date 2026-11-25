@@ -84,7 +84,7 @@ impl Reader {
         );
         items.push(
             Item::new("Add more fonts", Action::Heading)
-                .detail("Copy TTF, OTF or TTC files to reader/data/fonts"),
+                .detail("Copy fonts to reader/data/fonts or a subfolder"),
         );
         items
     }

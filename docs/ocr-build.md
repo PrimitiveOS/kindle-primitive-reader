@@ -30,7 +30,7 @@ KOReader direction options](https://github.com/koreader/koreader/blob/9192014d8b
 | --- | --- |
 | Tesseract | 5.5.4 at [the pinned commit](https://github.com/tesseract-ocr/tesseract/tree/7e548e6eff172f38f97664afe7f7ce40db36c8d6) |
 | Leptonica | 1.87.0 at [the pinned commit](https://github.com/DanBloomberg/leptonica/tree/13275a278eb55b5746e33f95fbf5a2c8f604b3ab) |
-| English model | tessdata_fast 4.1.0 at [the pinned commit](https://github.com/tesseract-ocr/tessdata_fast/tree/65727574dfcd264acbb0c3e07860e4e9e9b22185) |
+| English and Vietnamese models | tessdata_fast 4.1.0 at [the pinned commit](https://github.com/tesseract-ocr/tessdata_fast/tree/65727574dfcd264acbb0c3e07860e4e9e9b22185) |
 | Cross toolchain | Zig 0.17.1, Cortex-A7, Linux 4.1.15 and ARM hard-float musl |
 
 The build script checks the source and model hashes. It requires Zig, CMake,
@@ -41,18 +41,29 @@ sh scripts/build-ocr-armhf.sh build/ocr-armhf
 READER_OCR_BUILD_DIR=build/ocr-armhf sh scripts/stage.sh armhf build/stage-with-ocr
 ```
 
-The OCR stage contains the static executable, English model and separate
+The OCR stage contains the static executable, English and Vietnamese models and separate
 [upstream notices](licenses/ocr). Release staging builds these pinned inputs by default. For a local build,
-`READER_OCR_BUILD_DIR` can point at an existing build of the same runtime.
+`READER_OCR_BUILD_DIR` can point at an existing build of the same runtime with
+both models present. The pinned Vietnamese model is 531,275 bytes with
+SHA-256 `79df64caf7bcfb2a27df5042ecb6121e196eada34da774956995747636d5bfa1`.
+Both models carry the packaged [tessdata_fast Apache 2.0 notice](licenses/ocr/tessdata_fast-LICENSE).
+The new packaging path has not yet been built or tested.
 
 Install additional compatible Tesseract `.traineddata` files in
-`reader/ocr/tessdata/` alongside the English model. Names use lowercase
+`reader/ocr/tessdata/` alongside the included models. Names use lowercase
 language codes such as `vie.traineddata` or `chi_sim.traineddata`. Each model
 must be a regular file of up to 16 MiB. Open OCR from the reading bar to pick
 among the installed languages, or combine a model with English for bilingual
 pages when both are installed. Reader stages only the selected one or two
 models and keeps the ordered language codes with the recognized page text. Additional models are
 provided separately under their original terms.
+
+The language picker gives recognizable names to official Tesseract language
+codes and shows unknown custom model names as supplied. It uses the existing
+paged list and physical page controls. Discovery considers at most 512
+directory entries and shows at most 160 valid models, with English first when
+installed; directories larger than those bounds can have omitted models. This
+expanded picker awaits integrated testing. [Tesseract language codes](https://tesseract-ocr.github.io/tessdoc/Data-Files-in-different-versions.html) · [KOReader document-language control](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L623-L635)
 
 The desktop OCR worker recognized 316 words from a public-domain scan with the
 pinned English model. On macOS with Tesseract 5.5.2 it also recognized all 28

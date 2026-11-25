@@ -22,6 +22,22 @@ The latter also supports other compression and color modes, so this is a subset
 of KOReader's TIFF support, not complete TIFF parity. [KOReader TIFF provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L410-L415) · [Pinned MuPDF TIFF decoder](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L360-L369) · [PackBits filter](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L408-L418) · [TIFF 6.0 specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
 These additions have not yet been compared against KOReader or exercised on
-the simulator or Kindle. Color, multi-page and tiled TIFFs, non-default
-orientation and CCITT remain outside this decoder's support. [TIFF 6.0 LZW
+the simulator or Kindle. Color, multi-page and tiled TIFFs and CCITT remain outside this decoder's support. [TIFF 6.0 LZW
 and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
+
+## Image orientation
+
+Reader applies the TIFF orientation tag after reconstructing the grayscale or
+bilevel strips. It supports all eight standard orientation values, including
+mirrors and the four transposed orientations that exchange page width and
+height. An absent tag means top-left orientation; values outside 1–8 are
+rejected. The existing compressed-size, side-length and total-pixel limits
+remain in force. Applying an orientation other than 1 briefly needs a second
+buffer bounded by the same eight-million-pixel ceiling.
+
+KOReader registers TIFF through its MuPDF provider. The pinned MuPDF TIFF
+loader does not appear to interpret the orientation tag; this is a
+standard-oriented improvement rather than a claim of identical stock output.
+The implementation and authored endian, orientation, malformed-tag and
+compressed-bilevel checks have not yet been built or run on the simulator or
+Kindle.

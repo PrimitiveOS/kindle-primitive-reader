@@ -52,6 +52,7 @@ pub(crate) enum Format {
     Html,
     Htmlz,
     Docx,
+    Odt,
     Chm,
     Markdown,
     Mobi,
@@ -65,10 +66,11 @@ impl Format {
     pub(crate) fn for_path(path: &Path) -> Option<Self> {
         let extension = path.extension()?.to_str()?.to_ascii_lowercase();
         match extension.as_str() {
-            "txt" => Some(Self::Text),
-            "htm" | "html" | "xht" | "xhtml" => Some(Self::Html),
+            "txt" | "log" => Some(Self::Text),
+            "htm" | "html" | "xht" | "xhtml" | "xml" => Some(Self::Html),
             "htmlz" => Some(Self::Htmlz),
             "docx" => Some(Self::Docx),
+            "odt" => Some(Self::Odt),
             "chm" => Some(Self::Chm),
             "md" | "markdown" => Some(Self::Markdown),
             "mobi" | "prc" | "azw" | "azw3" | "pdb" => Some(Self::Mobi),
@@ -89,6 +91,18 @@ impl Format {
                     .is_some_and(|name| has_extension(Path::new(name), "rtf")) =>
             {
                 Some(Self::Rtf)
+            }
+            "zip" => {
+                let stem = Path::new(path.file_stem()?);
+                if has_extension(stem, "txt") || has_extension(stem, "log") {
+                    Some(Self::Text)
+                } else if has_extension(stem, "md") {
+                    Some(Self::Markdown)
+                } else if has_extension(stem, "html") || has_extension(stem, "htm") {
+                    Some(Self::Htmlz)
+                } else {
+                    None
+                }
             }
             _ => None,
         }
@@ -133,6 +147,7 @@ impl Document {
             Format::Fb2 => MAX_FB2_INPUT,
             Format::Htmlz => MAX_HTMLZ_INPUT,
             Format::Docx => crate::docx::MAX_INPUT,
+            Format::Odt => crate::odt::MAX_INPUT,
             Format::Rtf => crate::rtf::MAX_INPUT,
             Format::Tcr => crate::tcr::MAX_INPUT,
             _ => MAX_INPUT,
@@ -152,10 +167,20 @@ impl Document {
         if format == Format::Docx {
             return crate::docx::open(BufReader::new(file), metadata.len(), fallback_title);
         }
+        if format == Format::Odt {
+            return crate::odt::open(BufReader::new(file), metadata.len(), fallback_title);
+        }
         let bytes = if has_extension(path, "gz") {
             read_bounded(MultiGzDecoder::new(file), limit)?
         } else if has_extension(path, "zip") && format == Format::Rtf {
             read_rtf_zip(file, metadata.len())?
+        } else if has_extension(path, "zip") && matches!(format, Format::Text | Format::Markdown) {
+            let stem = Path::new(path.file_stem().ok_or("The text ZIP has no name")?);
+            let extension = stem
+                .extension()
+                .and_then(|name| name.to_str())
+                .ok_or("The text ZIP has no document extension")?;
+            read_text_zip(file, metadata.len(), extension)?
         } else if has_extension(path, "zip") || has_extension(path, "fbz") {
             read_fb2_zip(file, metadata.len())?
         } else {
@@ -173,11 +198,35 @@ impl Document {
         let input = input.trim_start_matches('\u{feff}');
         match format {
             Format::Text => text_document(input, fallback_title),
-            Format::Html => html_document(input, fallback_title),
+            Format::Html => {
+                if has_extension(path, "xml") {
+                    let root = Xml::parse_with_options(
+                        input,
+                        ParsingOptions {
+                            nodes_limit: 80_000,
+                            ..ParsingOptions::default()
+                        },
+                    )
+                    .ok()
+                    .map(|xml| xml.root_element().tag_name().name().to_owned());
+                    if root.as_deref() == Some("FictionBook") {
+                        return fb2_document(input, fallback_title);
+                    }
+                    if root.as_deref() != Some("html") {
+                        // Generic XML has no universal document stylesheet. Preserve
+                        // its original markup visibly instead of discarding content.
+                        return text_document(input, fallback_title);
+                    }
+                }
+                let mut document = html_document(input, fallback_title)?;
+                load_local_html_resources(path, &mut document);
+                Ok(document)
+            }
             Format::Markdown => markdown_document(input, fallback_title),
             Format::Fb2 => fb2_document(input, fallback_title),
             Format::Htmlz
             | Format::Docx
+            | Format::Odt
             | Format::Fb3
             | Format::Chm
             | Format::Mobi
@@ -194,7 +243,13 @@ pub(crate) fn fallback_title(path: &Path) -> &str {
         .map(|name| {
             let stem = Path::new(name);
             if (has_extension(path, "zip") || has_extension(path, "gz"))
-                && (has_extension(stem, "fb2") || has_extension(stem, "rtf"))
+                && (has_extension(stem, "fb2")
+                    || has_extension(stem, "rtf")
+                    || has_extension(stem, "txt")
+                    || has_extension(stem, "log")
+                    || has_extension(stem, "md")
+                    || has_extension(stem, "html")
+                    || has_extension(stem, "htm"))
             {
                 stem.file_stem().unwrap_or(name)
             } else {
@@ -358,6 +413,44 @@ fn read_rtf_zip(file: File, length: u64) -> Result<Vec<u8>> {
         return Err("The RTF ZIP's document exceeds Reader's input limit".into());
     }
     read_bounded(entry, crate::rtf::MAX_INPUT)
+}
+
+fn read_text_zip(file: File, length: u64, extension: &str) -> Result<Vec<u8>> {
+    let mut input = BufReader::new(file);
+    let count = check_zip_directory(&mut input, length)
+        .map_err(|_| "The text ZIP directory is invalid or exceeds Reader's limits")?;
+    if count > MAX_FB2_ZIP_ENTRIES {
+        return Err("The text ZIP has too many entries".into());
+    }
+    let mut archive = ZipArchive::new(input)?;
+    if archive.len() != count {
+        return Err("The text ZIP has ambiguous or duplicate entries".into());
+    }
+    let mut document = None;
+    for index in 0..archive.len() {
+        let entry = archive.by_index_raw(index)?;
+        let path = entry
+            .enclosed_name()
+            .ok_or("The text ZIP has an unsafe entry path")?;
+        if entry.is_symlink()
+            || entry.encrypted()
+            || !matches!(
+                entry.compression(),
+                CompressionMethod::Stored | CompressionMethod::Deflated
+            )
+        {
+            return Err("The text ZIP contains an encrypted, linked or unsupported entry".into());
+        }
+        if entry.is_file() && has_extension(&path, extension) && document.replace(index).is_some() {
+            return Err("The text ZIP contains more than one matching document".into());
+        }
+    }
+    let entry =
+        archive.by_index(document.ok_or("The text ZIP contains no matching readable document")?)?;
+    if entry.size() > MAX_INPUT as u64 {
+        return Err("The text ZIP's document exceeds Reader's input limit".into());
+    }
+    read_bounded(entry, MAX_INPUT)
 }
 
 fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
@@ -777,6 +870,142 @@ fn html_document(input: &str, fallback_title: &str) -> Result<Document> {
         resources: BTreeMap::new(),
         fb2_note_sections: BTreeMap::new(),
     })
+}
+
+/// Snapshot only directly referenced local assets, without changing XHTML or
+/// its source revision. Failure to load an optional asset leaves text readable.
+fn load_local_html_resources(path: &Path, document: &mut Document) {
+    const MAX_REFERENCES: usize = 64;
+    let references = {
+        let Ok(xml) = Xml::parse_with_options(
+            &document.xhtml,
+            ParsingOptions {
+                nodes_limit: 80_000,
+                ..ParsingOptions::default()
+            },
+        ) else {
+            return;
+        };
+        let mut found = BTreeSet::new();
+        for node in xml.descendants().filter(Node::is_element) {
+            let tag = node.tag_name().name();
+            let value = if tag == "img" {
+                node.attribute("src")
+            } else if tag == "image"
+                && node.tag_name().namespace() == Some("http://www.w3.org/2000/svg")
+            {
+                node.attribute("href")
+                    .or_else(|| node.attribute(("http://www.w3.org/1999/xlink", "href")))
+            } else if tag == "link"
+                && node.attribute("rel").is_some_and(|rel| {
+                    rel.split_ascii_whitespace()
+                        .any(|token| token.eq_ignore_ascii_case("stylesheet"))
+                })
+            {
+                node.attribute("href")
+            } else {
+                None
+            };
+            if let Some(value) = value
+                && let Ok(relative) = Book::resolve(CHAPTER_PATH, value)
+                && local_html_resource_limit(&relative).is_some()
+            {
+                found.insert(relative);
+                if found.len() == MAX_REFERENCES {
+                    break;
+                }
+            }
+        }
+        found
+    };
+    let Some(parent) = path.parent() else { return };
+    let Ok(root) = parent.canonicalize() else {
+        return;
+    };
+    let Some(root) = open_local_html_root(&root) else {
+        return;
+    };
+    let mut remaining = MAX_HTMLZ_RESOURCES;
+    for relative in references {
+        let Some(limit) = local_html_resource_limit(&relative) else {
+            continue;
+        };
+        let Some(file) = open_local_html_resource(&root, &relative) else {
+            continue;
+        };
+        let Ok(meta) = file.metadata() else { continue };
+        let limit = limit.min(remaining);
+        if !meta.is_file() || meta.len() > limit as u64 {
+            continue;
+        }
+        let Ok(bytes) = read_bounded(file, limit) else {
+            continue;
+        };
+        remaining -= bytes.len();
+        document.resources.insert(relative, bytes);
+    }
+}
+
+fn local_html_resource_limit(path: &str) -> Option<usize> {
+    let extension = path.rsplit_once('.')?.1.to_ascii_lowercase();
+    match extension.as_str() {
+        "css" => Some(MAX_HTMLZ_CSS),
+        "png" | "jpg" | "jpeg" | "gif" | "svg" | "bmp" | "pnm" | "pbm" | "pgm" | "ppm" | "pam" => {
+            Some(MAX_HTMLZ_IMAGE)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(unix)]
+fn open_local_html_root(path: &Path) -> Option<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+        .ok()
+}
+
+#[cfg(unix)]
+fn open_local_html_resource(root: &File, relative: &str) -> Option<File> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    if !is_archive_path(relative)
+        || relative.len() > MAX_HTMLZ_PATH
+        || relative.split('/').count() > 32
+    {
+        return None;
+    }
+    let mut current = root.try_clone().ok()?;
+    let mut components = relative.split('/').peekable();
+    while let Some(component) = components.next() {
+        let name = CString::new(component).ok()?;
+        let mut flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK;
+        if components.peek().is_some() {
+            flags |= libc::O_DIRECTORY;
+        }
+        // Each component is opened relative to the already-open directory, so
+        // replacing an ancestor with a symlink cannot escape the selected root.
+        // SAFETY: current owns a live directory descriptor and name is NUL-terminated.
+        let fd = unsafe { libc::openat(current.as_raw_fd(), name.as_ptr(), flags) };
+        if fd < 0 {
+            return None;
+        }
+        // SAFETY: openat returned a new owned file descriptor.
+        current = unsafe { File::from_raw_fd(fd) };
+    }
+    Some(current)
+}
+
+#[cfg(not(unix))]
+fn open_local_html_root(_path: &Path) -> Option<File> {
+    None
+}
+
+#[cfg(not(unix))]
+fn open_local_html_resource(_root: &File, _relative: &str) -> Option<File> {
+    None
 }
 
 fn markdown_document(input: &str, fallback_title: &str) -> Result<Document> {
@@ -1702,5 +1931,126 @@ mod exported_text_tests {
         assert!(book.xhtml.contains("id=\"primitiveos-fb2-section-1\""));
         assert!(!book.xhtml.contains("NoTeS"));
         assert!(!book.xhtml.contains("COMMENTS"));
+    }
+}
+
+#[cfg(test)]
+mod format_alias_tests {
+    use super::*;
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use zip::{ZipWriter, write::SimpleFileOptions};
+
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "reader-aliases-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn zip(&self, filename: &str, members: &[(&str, &[u8])]) -> PathBuf {
+            let path = self.0.join(filename);
+            let mut archive = ZipWriter::new(File::create(&path).unwrap());
+            for &(name, data) in members {
+                archive
+                    .start_file(
+                        name,
+                        SimpleFileOptions::default()
+                            .compression_method(CompressionMethod::Deflated),
+                    )
+                    .unwrap();
+                archive.write_all(data).unwrap();
+            }
+            archive.finish().unwrap();
+            path
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn archives_route_matching_entries_and_reject_ambiguity() {
+        let scratch = Scratch::new();
+        for (archive_name, member, bytes, format) in [
+            (
+                "notes.LOG.ZIP",
+                "inside.log",
+                b"A plain log".as_slice(),
+                Format::Text,
+            ),
+            (
+                "notes.MD.ZIP",
+                "inside.md",
+                b"# A heading".as_slice(),
+                Format::Markdown,
+            ),
+            (
+                "notes.HTML.ZIP",
+                "index.html",
+                b"<html><body><p>HTML document</p></body></html>".as_slice(),
+                Format::Htmlz,
+            ),
+            (
+                "notes.HTM.ZIP",
+                "index.htm",
+                b"<html><body><p>HTML document</p></body></html>".as_slice(),
+                Format::Htmlz,
+            ),
+        ] {
+            let path = scratch.zip(archive_name, &[(member, bytes)]);
+            assert_eq!(Format::for_path(&path), Some(format));
+            let document = Document::open(&path, format).unwrap();
+            assert!(!document.xhtml.is_empty());
+            assert_eq!(document.title, "notes");
+        }
+        let ambiguous = scratch.zip(
+            "ambiguous.md.zip",
+            &[("one.md", b"one"), ("two.md", b"two")],
+        );
+        assert!(Document::open(&ambiguous, Format::Markdown).is_err());
+        let wrong = scratch.zip("wrong.log.zip", &[("inside.txt", b"text")]);
+        assert!(Document::open(&wrong, Format::Text).is_err());
+        let unsafe_zip = scratch.zip("unsafe.log.zip", &[("../inside.log", b"text")]);
+        assert!(Document::open(&unsafe_zip, Format::Text).is_err());
+    }
+
+    #[test]
+    fn xml_alias_renders_xhtml_and_preserves_generic_markup() {
+        let scratch = Scratch::new();
+        let xhtml = scratch.0.join("book.XML");
+        fs::write(&xhtml, b"<html><body><p>Readable passage</p></body></html>").unwrap();
+        assert_eq!(Format::for_path(&xhtml), Some(Format::Html));
+        assert!(
+            Document::open(&xhtml, Format::Html)
+                .unwrap()
+                .xhtml
+                .contains("Readable passage")
+        );
+        let generic = scratch.0.join("generic.xml");
+        fs::write(&generic, b"<catalog><item>Readable value</item></catalog>").unwrap();
+        assert!(
+            Document::open(&generic, Format::Html)
+                .unwrap()
+                .xhtml
+                .contains("&lt;catalog&gt;")
+        );
+        let fb2 = scratch.0.join("fiction.xml");
+        fs::write(&fb2, br#"<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"><body><section><p>Fiction passage</p></section></body></FictionBook>"#).unwrap();
+        assert!(
+            Document::open(&fb2, Format::Html)
+                .unwrap()
+                .xhtml
+                .contains("Fiction passage")
+        );
+        assert_eq!(Format::for_path(Path::new("trace.LOG")), Some(Format::Text));
     }
 }

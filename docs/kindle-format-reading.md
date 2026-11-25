@@ -13,6 +13,13 @@ Reader imports DRM-free legacy MOBI with publisher contents, illustrations and i
 
 A hybrid opens its legacy edition when Reader can read it. If that edition uses an unsupported encoding or compression, Reader can open a reflowable KF8 edition identified by its EXTH 121 record and the corresponding boundary. It resolves illustrations against the shared primary resource records. When a previous Reader release could only read the KF8 half of a hybrid, the same edition and its saved locations remain available. Fixed-layout KF8 is still unsupported. Reader reports protected books at opening.
 
+Book information can preview a PNG, JPEG or GIF declared by EXTH 201 in the
+primary MOBI header, when the record and image dimensions meet Reader's
+existing limits. It reuses an identical loaded resource when available; the
+source file, reconstructed XHTML and saved positions do not change. Covers
+declared only in a secondary hybrid header remain unsupported. This addition
+awaits integrated testing. [KOReader cover extraction](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/credocument.lua#L556-L561) · [libmobi EXTH cover offset](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/tools/mobitool.c#L340-L356)
+
 ## Legacy illustrations, links and reading positions
 
 ![Reader displaying an elevation profile and a linked section in a MOBI field guide](screenshots/legacy-mobi-field-notes.png)

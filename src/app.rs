@@ -81,6 +81,7 @@ mod nearby_search;
 #[cfg(test)]
 mod nonlinear_tests;
 mod numeric_editor;
+mod ocr_language_names;
 mod online_panel;
 mod overview_bookmarks;
 mod page_overview;
@@ -873,7 +874,7 @@ struct OutlineScan {
 
 struct ScanReading {
     original: FixedPreferences,
-    columns: [PdfTextRect; 2],
+    columns: Vec<PdfTextRect>,
     index: usize,
     turns: PageTurns,
 }
@@ -6850,10 +6851,16 @@ impl Reader {
             .as_mut()
             .ok_or("Open a supported document first")?;
         let raster = fixed.reading.ocr_raster(fixed.reading.page())?;
-        let columns =
-            crate::scan_columns::detect_columns(&raster.pixels, raster.width, raster.height)
-                .ok_or("No clear two-column layout on this page")?;
+        let mut columns = crate::scan_columns::detect_reading_columns(
+            &raster.pixels,
+            raster.width,
+            raster.height,
+        )
+        .ok_or("No clear two- or three-column layout on this page")?;
         let original = fixed.reading.preferences();
+        if original.right_to_left {
+            columns.reverse();
+        }
         fixed
             .reading
             .restore_view(column_view(original, columns[0]))?;
@@ -6913,7 +6920,9 @@ impl Reader {
             .take_due(now)
             .into_iter()
             .fold(scan.index, |index, step| {
-                index.saturating_add_signed(step).min(1)
+                index
+                    .saturating_add_signed(step)
+                    .min(scan.columns.len().saturating_sub(1))
             });
         if index == scan.index {
             return Change::None;
@@ -7951,8 +7960,9 @@ impl Reader {
         }
         if let (Some(scan), Some(fixed)) = (&self.scan_columns, &self.fixed) {
             let status = format!(
-                "Column {} of 2 · Page {}",
+                "Column {} of {} · Page {}",
                 scan.index + 1,
+                scan.columns.len(),
                 fixed.reading.page() + 1
             );
             fixed.reading.draw(
@@ -11063,17 +11073,7 @@ fn reading_time(seconds: u64) -> String {
 }
 
 fn ocr_language_name(code: &str) -> &str {
-    match code {
-        "eng" => "English",
-        "vie" => "Vietnamese",
-        "fra" => "French",
-        "deu" => "German",
-        "spa" => "Spanish",
-        "jpn" => "Japanese",
-        "chi_sim" => "Chinese (Simplified)",
-        "chi_tra" => "Chinese (Traditional)",
-        _ => code,
-    }
+    ocr_language_names::label(code)
 }
 
 fn ocr_language_display(spec: &str) -> String {

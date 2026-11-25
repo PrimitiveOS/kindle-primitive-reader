@@ -264,17 +264,9 @@ pub(crate) fn validate_preferences(p: &BookPreferences) -> io::Result<()> {
     Ok(())
 }
 fn valid_font_name(name: &str) -> bool {
-    let path = Path::new(name);
-    !name.is_empty()
-        && name.len() <= 255
-        && !name.chars().any(|c| c.is_control() || c == '\\')
-        && path.file_name() == Some(std::ffi::OsStr::new(name))
-        && path.extension().and_then(|s| s.to_str()).is_some_and(|s| {
-            s.eq_ignore_ascii_case("ttf")
-                || s.eq_ignore_ascii_case("otf")
-                || s.eq_ignore_ascii_case("ttc")
-        })
+    crate::reading_fonts::valid_name(name)
 }
+
 fn invalid() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,

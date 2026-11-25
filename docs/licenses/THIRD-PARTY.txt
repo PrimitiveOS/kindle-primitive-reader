@@ -10,6 +10,9 @@ For the compiled Estonian and Finnish patterns, see HYPHENATION-ET-FI.txt.
 For the compiled Danish and Dutch patterns, see HYPHENATION-DA-NL.txt.
 For the compiled French and German patterns, see HYPHENATION-FR-DE.txt.
 For the compiled Bulgarian, Galician, Irish and Ukrainian patterns, see HYPHENATION-BG-GL-GA.txt.
+For the compiled Polish patterns, see HYPHENATION-PL.txt.
+For the compiled Russian patterns, see HYPHENATION-RU.txt and LPPL-1.3c.txt.
+For the compiled Slovak and Slovenian patterns, see HYPHENATION-SK-SL.txt.
 
 ab_glyph_rasterizer 0.1.10 (Apache-2.0)
 https://static.crates.io/crates/ab_glyph_rasterizer/ab_glyph_rasterizer-0.1.10.crate

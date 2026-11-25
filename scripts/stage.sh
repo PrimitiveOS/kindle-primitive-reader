@@ -24,7 +24,8 @@ if [ -z "${READER_OCR_BUILD_DIR:-}" ]; then
 fi
 ocr_engine=$ocr/build-tesseract-linux41/bin/tesseract
 ocr_model=$ocr/tessdata/eng.traineddata
-[ -x "$ocr_engine" ] && [ -r "$ocr_model" ] || { echo "Build the OCR engine and model before staging." >&2; exit 1; }
+ocr_vietnamese_model=$ocr/tessdata/vie.traineddata
+[ -x "$ocr_engine" ] && [ -r "$ocr_model" ] && [ -r "$ocr_vietnamese_model" ] || { echo "Build the OCR engine and English and Vietnamese models before staging." >&2; exit 1; }
 set -- "$@" "$ocr_engine"
 python3 - "$@" <<'PY'
 import sys
@@ -51,10 +52,14 @@ install -m 644 LICENSE LICENSE-DOCS "$stage/reader/licenses/"
 install -m 644 docs/licenses/README.md docs/licenses/THIRD-PARTY.txt docs/licenses/ENGLISH-HYPHENATION.txt \
     docs/licenses/HYPHENATION-ES-IT-PT.txt docs/licenses/HYPHENATION-ET-FI.txt \
     docs/licenses/HYPHENATION-DA-NL.txt docs/licenses/HYPHENATION-FR-DE.txt \
-    docs/licenses/HYPHENATION-BG-GL-GA.txt docs/licenses/HYPHENATION-PL.txt docs/licenses/WUFF.txt \
+    docs/licenses/HYPHENATION-BG-GL-GA.txt docs/licenses/HYPHENATION-PL.txt \
+    docs/licenses/HYPHENATION-RU.txt docs/licenses/HYPHENATION-SK-SL.txt docs/licenses/LPPL-1.3c.txt docs/licenses/WUFF.txt \
     docs/licenses/SRELL.txt docs/licenses/NERDFONTS.txt "$stage/reader/licenses/"
 cp -R docs/licenses/pdf docs/licenses/runtime "$stage/reader/licenses/"
+# Preserve the original LPPL-covered pattern source with the compiled tables.
+install -m 644 assets/hyphenation/hyph-ru.tex "$stage/reader/licenses/hyph-ru.tex"
 install -d "$stage/reader/ocr/tessdata" "$stage/reader/licenses/ocr"
 install -m 755 "$ocr_engine" "$stage/reader/ocr/tesseract"
 install -m 644 "$ocr_model" "$stage/reader/ocr/tessdata/eng.traineddata"
+install -m 644 "$ocr_vietnamese_model" "$stage/reader/ocr/tessdata/vie.traineddata"
 install -m 644 docs/licenses/ocr/* "$stage/reader/licenses/ocr/"

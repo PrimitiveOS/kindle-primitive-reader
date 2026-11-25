@@ -40,6 +40,9 @@ fetch downloads/tesseract-5.5.4.tar.gz \
 fetch tessdata/eng.traineddata \
     https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/65727574dfcd264acbb0c3e07860e4e9e9b22185/eng.traineddata \
     7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2
+fetch tessdata/vie.traineddata \
+    https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/65727574dfcd264acbb0c3e07860e4e9e9b22185/vie.traineddata \
+    79df64caf7bcfb2a27df5042ecb6121e196eada34da774956995747636d5bfa1
 
 for component in leptonica tesseract; do
     if [ ! -f "source/$component/CMakeLists.txt" ]; then

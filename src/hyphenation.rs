@@ -56,20 +56,24 @@ pub(crate) enum Dictionary {
     Irish,
     Ukrainian,
     Polish,
+    Russian,
+    Slovak,
+    Slovenian,
 }
 
 impl Dictionary {
     pub(crate) fn for_language(lang: Option<Language>) -> Option<Self> {
         let lang = lang?;
-        if matches!(lang.language(), "bg" | "uk") {
+        if matches!(lang.language(), "bg" | "uk" | "ru") {
             if !matches!(lang.script(), None | Some("Cyrl")) {
                 return None;
             }
-            return Some(if lang.language() == "bg" {
-                Self::Bulgarian
-            } else {
-                Self::Ukrainian
-            });
+            return match lang.language() {
+                "bg" => Some(Self::Bulgarian),
+                "uk" => Some(Self::Ukrainian),
+                "ru" => Some(Self::Russian),
+                _ => unreachable!(),
+            };
         }
         if !matches!(lang.script(), None | Some("Latn")) {
             return None;
@@ -90,6 +94,8 @@ impl Dictionary {
             ("gl", _) => Some(Self::Galician),
             ("ga", _) => Some(Self::Irish),
             ("pl", _) => Some(Self::Polish),
+            ("sk", _) => Some(Self::Slovak),
+            ("sl", _) => Some(Self::Slovenian),
             _ => None,
         }
     }
@@ -114,6 +120,9 @@ impl Dictionary {
             Self::Irish => "Irish",
             Self::Ukrainian => "Ukrainian",
             Self::Polish => "Polish",
+            Self::Russian => "Russian",
+            Self::Slovak => "Slovak",
+            Self::Slovenian => "Slovenian",
         }
     }
 
@@ -128,14 +137,17 @@ impl Dictionary {
             | Self::Bulgarian
             | Self::Galician
             | Self::Ukrainian
-            | Self::Polish => HyphenationLimits { left: 2, right: 2 },
+            | Self::Polish
+            | Self::Russian
+            | Self::Slovenian => HyphenationLimits { left: 2, right: 2 },
             Self::French => HyphenationLimits { left: 2, right: 1 },
             Self::American
             | Self::British
             | Self::Portuguese
             | Self::PortugueseBrazil
             | Self::Estonian
-            | Self::Irish => ENGLISH_LIMITS,
+            | Self::Irish
+            | Self::Slovak => ENGLISH_LIMITS,
         }
     }
 
@@ -158,6 +170,9 @@ impl Dictionary {
             Self::Irish => &IRISH,
             Self::Ukrainian => &UKRAINIAN,
             Self::Polish => &POLISH,
+            Self::Russian => &RUSSIAN,
+            Self::Slovak => &SLOVAK,
+            Self::Slovenian => &SLOVENIAN,
         }
     }
 }
@@ -479,6 +494,7 @@ mod tests {
             ("gl-ES", Dictionary::Galician, 2, 2),
             ("ga-IE", Dictionary::Irish, 2, 3),
             ("uk-Cyrl-UA", Dictionary::Ukrainian, 2, 2),
+            ("ru-Cyrl-RU", Dictionary::Russian, 2, 2),
         ] {
             let actual = Dictionary::for_language(Language::parse(tag).ok());
             assert_eq!(actual, Some(dictionary), "{tag}");
@@ -488,13 +504,35 @@ mod tests {
                 "{tag}"
             );
         }
-        for tag in ["bg-Latn", "uk-Latn", "gl-Cyrl", "ga-Cyrl"] {
+        for tag in ["bg-Latn", "uk-Latn", "ru-Latn", "gl-Cyrl", "ga-Cyrl"] {
             assert_eq!(
                 Dictionary::for_language(Language::parse(tag).ok()),
                 None,
                 "{tag}"
             );
         }
+    }
+
+    #[test]
+    fn russian_exception_supplies_source_safe_breaks() {
+        let word = "сегодня";
+        let mut offsets = Vec::new();
+        word_breaks(Dictionary::Russian, word, |offset| offsets.push(offset));
+        assert!(offsets.contains(&"се".len()));
+        assert!(offsets.contains(&"сего".len()));
+        assert!(offsets.iter().all(|&offset| word.is_char_boundary(offset)));
+        let mut limited = Vec::new();
+        word_breaks_with_limits(
+            Dictionary::Russian,
+            word,
+            HyphenationLimits { left: 4, right: 2 },
+            |offset| limited.push(offset),
+        );
+        assert!(
+            limited
+                .iter()
+                .all(|&offset| word[..offset].chars().count() >= 4)
+        );
     }
 
     #[test]

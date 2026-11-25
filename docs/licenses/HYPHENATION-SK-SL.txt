@@ -1,0 +1,34 @@
+Slovak and Slovenian hyphenation patterns
+
+Reader compiles the following upstream TeX patterns into the reflow engine.
+
+Slovak, version 2.0 (1992-04-24).
+Copyright (C) 1992 Jana Chlebíková. The source credits Karel Horák for the
+original exception list.
+Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-sk.tex
+Source SHA-256: 55b51962da5ad3f48ff62007006ecb7768bf2665e407c920e968d08b10b40369
+
+Slovenian, version 2.3.
+Copyright (C) 1990 Matjaž Vrečko.
+Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-sl.tex
+Source SHA-256: 27da982d03b881fe84f1c4fb42ba0948f33e01a3a44eaa5ebd07e01d20c72691
+
+Both sources offer the MIT license, selected here.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

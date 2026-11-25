@@ -760,7 +760,7 @@ impl Book {
         let mut revision = crate::revision_bytes(bytes);
         let mut small_legacy = false;
         let mut publisher_contents = crate::kf8::legacy_contents::Contents::default();
-        let publication = match kf8::open_edition(bytes)? {
+        let mut publication = match kf8::open_edition(bytes)? {
             kf8::Edition::Legacy(mut document) => {
                 publisher_contents = document.contents;
                 let label = document
@@ -841,6 +841,37 @@ impl Book {
                 edition
             }
         };
+        let cover = mobi::cover::extract(bytes).and_then(|(kind, image)| {
+            if let Some((path, _)) = publication
+                .resources
+                .iter()
+                .find(|(_, bytes)| bytes.as_slice() == image)
+            {
+                return Some(BookCover {
+                    path: path.clone(),
+                    kind,
+                });
+            }
+            let used = publication
+                .resources
+                .values()
+                .try_fold(0usize, |total, value| total.checked_add(value.len()))?;
+            if publication.resources.len() >= 128 || used.checked_add(image.len())? > MAX_RESOURCE {
+                return None;
+            }
+            let extension = match kind {
+                CoverKind::Jpeg => "jpg",
+                CoverKind::Png => "png",
+                CoverKind::Gif => "gif",
+                CoverKind::Svg => return None,
+            };
+            let path = format!("assets/primitiveos-mobi-cover.{extension}");
+            if publication.resources.contains_key(&path) {
+                return None;
+            }
+            publication.resources.insert(path.clone(), image.to_vec());
+            Some(BookCover { path, kind })
+        });
         let mut chapters = Vec::with_capacity(publication.chapters.len());
         let mut toc = Vec::with_capacity(publication.chapters.len());
         let mut xhtml = BTreeMap::new();
@@ -905,7 +936,7 @@ impl Book {
             spine_rtl: false,
             fixed_placements: None,
             series: Vec::new(),
-            cover: None,
+            cover,
             quote_prefixes: None,
             content: Content::Loose {
                 metadata: publication.metadata,

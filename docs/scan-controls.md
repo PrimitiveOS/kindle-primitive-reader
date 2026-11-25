@@ -2,6 +2,19 @@
 
 Open a PDF, DjVu, or comic archive, open the bottom reading controls, and choose **Scan**. Reader saves the scan controls for that book. Source pages, OCR word rectangles, bookmarks and exported annotation coordinates retain their original coordinate system.
 
+## Reading scan columns
+
+**Tools › Columns** now tries a clear three-column layout before the existing
+two-column detector. Page controls move between the detected columns, and the
+document's saved reading direction chooses their order. **Done** restores the
+original view without saving the temporary crops. Detection requires two
+clear gutters and repeated text in all three columns; complex magazine
+layouts, uneven or interrupted columns, and pages with ambiguous gutters can
+still be rejected. This new path awaits desktop and Kindle testing.
+KOReader exposes a separate maximum-column setting for its scan-reflow
+engine; this automatic column-view extension does not claim full reflow parity.
+[KOReader column setting](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L703-L717)
+
 ## Contrast
 
 PDF and CBZ, CBT and CBR comic archives offer **Contrast** presets of

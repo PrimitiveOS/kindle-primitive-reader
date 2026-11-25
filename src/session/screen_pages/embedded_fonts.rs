@@ -101,10 +101,7 @@ struct Request {
 
 impl Request {
     fn eligible(&self, sources: &ScreenPageSources) -> bool {
-        let supported_format = self
-            .path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("epub"))
+        let supported_format = crate::epub_members::is_epub_path(&self.path)
             || loose::Format::for_path(&self.path) == Some(loose::Format::Mobi);
         self.engine == Engine::Parley
             && !self.facing

@@ -66,9 +66,10 @@ mod mark_time;
 pub mod mobi;
 #[cfg(feature = "kindle")]
 mod note_marker;
-pub mod ocr;
+mod ocr;
 #[cfg(feature = "kindle")]
 mod ocr_job;
+pub mod odt;
 #[cfg(feature = "kindle")]
 pub mod online_lookup;
 mod parley_layout;
@@ -2921,7 +2922,12 @@ fn image_reader(bytes: &[u8]) -> Result<image::ImageReader<std::io::Cursor<&[u8]
     reader.limits(limits);
     if !matches!(
         reader.format(),
-        Some(image::ImageFormat::Png | image::ImageFormat::Jpeg)
+        Some(
+            image::ImageFormat::Png
+                | image::ImageFormat::Jpeg
+                | image::ImageFormat::Bmp
+                | image::ImageFormat::Pnm
+        )
     ) {
         return Err("The EPUB image format is outside the probe subset".into());
     }

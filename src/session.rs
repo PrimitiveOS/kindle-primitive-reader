@@ -265,10 +265,7 @@ impl BookConfig {
             && !self.scroll
             && !self.facing_pages
             && !self.hidden_flows.enabled
-            && self
-                .book
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("epub"));
+            && crate::epub_members::is_epub_path(&self.book);
         self.screen_pages = previous.screen_pages.for_relayout(typography, eligible);
     }
 

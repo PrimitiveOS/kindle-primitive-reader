@@ -8,12 +8,13 @@ use crate::epub::{MAX_ARCHIVE, MAX_ENTRIES, is_archive_path};
 use crate::epub_zip;
 use crate::library::fingerprint;
 
+pub(crate) fn is_epub_path(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("epub") || ext.eq_ignore_ascii_case("epub3"))
+}
+
 pub(crate) fn is_folder_book(path: &Path) -> bool {
-    path.file_name().is_some_and(|n| n == "mimetype")
-        && path
-            .parent()
-            .and_then(Path::extension)
-            .is_some_and(|e| e.eq_ignore_ascii_case("epub"))
+    path.file_name().is_some_and(|n| n == "mimetype") && path.parent().is_some_and(is_epub_path)
 }
 
 pub(crate) enum Members {

@@ -121,10 +121,7 @@ impl Job {
 pub(crate) fn supported(reading: &Reading) -> bool {
     let config = &reading.config;
     config.engine == Engine::Parley
-        && config
-            .book
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("epub"))
+        && crate::epub_members::is_epub_path(&config.book)
         && reading.has_exact_local_screen_pages()
         && !reading.hides_nonlinear()
         && (2..=MAX_CHAPTERS).contains(&reading.probe.chapter_count())

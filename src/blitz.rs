@@ -61,7 +61,20 @@ impl ArchiveResources {
         let extension = path.rsplit_once('.')?.1.to_ascii_lowercase();
         if !matches!(
             extension.as_str(),
-            "css" | "png" | "jpg" | "jpeg" | "gif" | "svg" | "ttf" | "otf"
+            "css"
+                | "png"
+                | "jpg"
+                | "jpeg"
+                | "gif"
+                | "svg"
+                | "bmp"
+                | "pnm"
+                | "pbm"
+                | "pgm"
+                | "ppm"
+                | "pam"
+                | "ttf"
+                | "otf"
         ) {
             return None;
         }
@@ -85,7 +98,10 @@ impl ArchiveResources {
             self.pixels += pixels;
             return Some(data);
         }
-        if matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "gif") {
+        if matches!(
+            extension.as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "pnm" | "pbm" | "pgm" | "ppm" | "pam"
+        ) {
             let (w, h) = crate::epub_raster_dimensions(&bytes).ok()?;
             self.pixels += w as usize * h as usize;
             if self.pixels > MAX_IMAGE_PIXELS {

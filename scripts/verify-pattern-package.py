@@ -29,6 +29,9 @@ with ZipFile(args.package) as package:
     assets = {
         'fonts/PrimitiveSymbols.ttf': root / 'assets/fonts/PrimitiveSymbols.ttf',
         'licenses/NERDFONTS.txt': root / 'docs/licenses/NERDFONTS.txt',
+        'licenses/HYPHENATION-RU.txt': root / 'docs/licenses/HYPHENATION-RU.txt',
+        'licenses/LPPL-1.3c.txt': root / 'docs/licenses/LPPL-1.3c.txt',
+        'licenses/hyph-ru.tex': root / 'assets/hyphenation/hyph-ru.tex',
     }
     for file, source in assets.items():
         data = package.read(roots[0] + 'reader/' + file)

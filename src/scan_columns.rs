@@ -1,4 +1,4 @@
-//! Find two text columns in an upright, uncropped scan raster.
+//! Find clearly separated text columns in an upright, uncropped scan raster.
 
 use std::ops::Range;
 
@@ -12,6 +12,7 @@ const VERTICAL_BANDS: usize = 10;
 
 /// Return conservative body-text regions in physical left-to-right order.
 /// All coordinates refer to the original raster's top-left-origin unit square.
+#[cfg(test)]
 pub(crate) fn detect_columns(pixels: &[u8], width: u32, height: u32) -> Option<[PdfTextRect; 2]> {
     if width.min(height) < MIN_RASTER_SIDE
         || width.max(height) > MAX_OCR_SIDE
@@ -22,6 +23,26 @@ pub(crate) fn detect_columns(pixels: &[u8], width: u32, height: u32) -> Option<[
     }
     let grid = ScanGrid::sample(pixels, width as usize, height as usize)?;
     grid.columns()
+}
+
+/// Prefer a clearly separated three-column page, then the existing two-column
+/// detector. Returned rectangles are in physical left-to-right order.
+pub(crate) fn detect_reading_columns(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+) -> Option<Vec<PdfTextRect>> {
+    if width.min(height) < MIN_RASTER_SIDE
+        || width.max(height) > MAX_OCR_SIDE
+        || width.checked_mul(height)? > MAX_OCR_PIXELS
+        || pixels.len() != (width * height) as usize
+    {
+        return None;
+    }
+    let grid = ScanGrid::sample(pixels, width as usize, height as usize)?;
+    grid.three_columns()
+        .map(Vec::from)
+        .or_else(|| grid.columns().map(Vec::from))
 }
 
 struct ScanGrid {
@@ -121,6 +142,83 @@ impl ScanGrid {
             start = x + 1;
         }
         found
+    }
+
+    fn three_columns(&self) -> Option<[PdfTextRect; 3]> {
+        let vertical = interior(self.height);
+        let mut projection = [0; SAMPLE_WIDTH];
+        for y in vertical.clone() {
+            for (count, &ink) in projection.iter_mut().zip(self.row(y)) {
+                *count += usize::from(ink);
+            }
+        }
+        let low_ink = vertical.len().div_ceil(20);
+        let min_width = (self.width * 3).div_ceil(100);
+        let max_width = self.width / 5;
+        let search = self.width / 5..self.width * 4 / 5;
+        let mut gutters = Vec::with_capacity(2);
+        let mut start = search.start;
+        for x in projection[search.clone()]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, &ink)| (ink > low_ink).then_some(search.start + offset))
+            .chain(std::iter::once(search.end))
+        {
+            if (min_width..=max_width).contains(&(x - start)) {
+                gutters.push(start..x);
+                if gutters.len() > 2 {
+                    return None;
+                }
+            }
+            start = x + 1;
+        }
+        let [left_gutter, right_gutter] = gutters.as_slice() else {
+            return None;
+        };
+        let horizontal = interior(self.width);
+        let columns = [
+            horizontal.start..left_gutter.start,
+            left_gutter.end..right_gutter.start,
+            right_gutter.end..horizontal.end,
+        ];
+        if columns.iter().any(|column| column.len() < self.width / 5) {
+            return None;
+        }
+        let minimum_ink = (self.width / 100).max(2);
+        let mut bodies = [Body::default(), Body::default(), Body::default()];
+        let mut dirty_rows = 0;
+        let mut active_rows = 0;
+        for y in vertical {
+            let row = self.row(y);
+            let active = columns
+                .each_ref()
+                .map(|column| ink_count(&row[(*column).clone()]) >= minimum_ink);
+            let any = active.iter().any(|&value| value);
+            let dirty = any
+                && gutters
+                    .iter()
+                    .any(|gutter| ink_count(&row[(*gutter).clone()]) >= (gutter.len() / 9).max(2));
+            active_rows += usize::from(any);
+            dirty_rows += usize::from(dirty);
+            let band = y * VERTICAL_BANDS / self.height;
+            for ((body, column), is_active) in bodies.iter_mut().zip(&columns).zip(active) {
+                body.observe(y, band, &row[(*column).clone()], is_active && !dirty);
+            }
+        }
+        if dirty_rows * 8 > active_rows
+            || (bodies[0].bands & bodies[1].bands & bodies[2].bands).count_ones() < 3
+        {
+            return None;
+        }
+        Some([
+            bodies[0].rectangle(self, columns[0].clone(), 0..left_gutter.start)?,
+            bodies[1].rectangle(
+                self,
+                columns[1].clone(),
+                left_gutter.end..right_gutter.start,
+            )?,
+            bodies[2].rectangle(self, columns[2].clone(), right_gutter.end..self.width)?,
+        ])
     }
 
     fn evaluate(&self, gutter: Range<usize>, vertical: Range<usize>) -> Option<[PdfTextRect; 2]> {

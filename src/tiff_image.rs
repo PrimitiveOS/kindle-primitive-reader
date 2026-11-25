@@ -36,7 +36,7 @@ impl fmt::Display for TiffError {
             Self::Directory => "This TIFF has an invalid image directory",
             Self::Strips => "This TIFF has invalid or overlapping image strips",
             Self::Limit => "This TIFF exceeds Reader's image limits",
-            Self::Unsupported => "Reader supports single-page grayscale TIFF stored in uncompressed, PackBits, LZW or Deflate strips with top-left orientation (1-bit or 8-bit)",
+            Self::Unsupported => "Reader supports single-page grayscale TIFF stored in uncompressed, PackBits, LZW or Deflate strips (1-bit or 8-bit, orientations 1–8)",
         })
     }
 }
@@ -61,6 +61,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let fill_order = image.scalar(266, SHORT_ONLY, 1)?;
     let compression = image.scalar(259, SHORT_ONLY, 1)?;
     let predictor = image.scalar(317, SHORT_ONLY, 1)?;
+    let orientation = image.scalar(274, SHORT_ONLY, 1)?;
     if !matches!(bits, 1 | 8)
         || photometric > 1
         || !(fill_order == 1 || (bits == 1 && fill_order == 2))
@@ -68,7 +69,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         // TIFF reserves reverse fill order for special-purpose bilevel data;
         // the bit ordering of LZW streams is ambiguous in that combination.
         || (fill_order == 2 && matches!(compression, 5 | 8 | 32946))
-        || image.scalar(274, SHORT_ONLY, 1)? != 1 // Orientation
+        || !matches!(orientation, 1..=8)
         || image.scalar(277, SHORT_ONLY, 1)? != 1 // SamplesPerPixel
         || image.scalar(284, SHORT_ONLY, 1)? != 1 // PlanarConfiguration
         || !(predictor == 1 || (predictor == 2 && bits == 8 && matches!(compression, 5 | 8 | 32946)))
@@ -164,7 +165,33 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
             }
         }
     }
-    GrayImage::from_raw(width, height, pixels).ok_or(TiffError::Strips)
+    if orientation == 1 {
+        return GrayImage::from_raw(width, height, pixels).ok_or(TiffError::Strips);
+    }
+    // TIFF orientation maps stored samples to visual coordinates. A transpose
+    // swaps dimensions but never changes the checked pixel count.
+    let (out_width, out_height) = if orientation >= 5 {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    let mut visual = vec![0; pixel_count as usize];
+    for y in 0..height {
+        for x in 0..width {
+            let (target_x, target_y) = match orientation {
+                2 => (width - 1 - x, y),
+                3 => (width - 1 - x, height - 1 - y),
+                4 => (x, height - 1 - y),
+                5 => (y, x),
+                6 => (height - 1 - y, x),
+                7 => (height - 1 - y, width - 1 - x),
+                8 => (y, width - 1 - x),
+                _ => unreachable!(),
+            };
+            visual[(target_y * out_width + target_x) as usize] = pixels[(y * width + x) as usize];
+        }
+    }
+    GrayImage::from_raw(out_width, out_height, visual).ok_or(TiffError::Strips)
 }
 
 /// TIFF LZW uses MSB-first codes, an initial Clear, and the TIFF early-change
@@ -733,6 +760,67 @@ mod tests {
     }
 
     #[test]
+    fn tiff_orientations_transform_non_square_pages_in_both_byte_orders() {
+        let expected: [&[u8]; 8] = [
+            &[1, 2, 3, 4, 5, 6],
+            &[3, 2, 1, 6, 5, 4],
+            &[6, 5, 4, 3, 2, 1],
+            &[4, 5, 6, 1, 2, 3],
+            &[1, 4, 2, 5, 3, 6],
+            &[4, 1, 5, 2, 6, 3],
+            &[6, 3, 5, 2, 4, 1],
+            &[3, 6, 2, 5, 1, 4],
+        ];
+        for order in [ByteOrder::Little, ByteOrder::Big] {
+            for (index, &pixels) in expected.iter().enumerate() {
+                let mut bytes = fixture(
+                    order,
+                    Geometry {
+                        width: 3,
+                        height: 2,
+                        rows_per_strip: 2,
+                        bits: 8,
+                        photometric: 1,
+                        fill_order: 1,
+                    },
+                    &[&[1, 2, 3, 4, 5, 6]],
+                );
+                let tag = field(&bytes, 274, order);
+                put(&mut bytes, tag + 8, SHORT, index as u32 + 1, order);
+                let image = decode(&bytes).unwrap();
+                assert_eq!(image.dimensions(), if index < 4 { (3, 2) } else { (2, 3) });
+                assert_eq!(image.into_raw(), pixels, "orientation {}", index + 1);
+            }
+        }
+    }
+
+    #[test]
+    fn tiff_orientation_applies_after_packbits_and_bilevel_expansion() {
+        let order = ByteOrder::Little;
+        // Two rows of three one-bit pixels: 100 / 011.
+        let packed = [0, 0b1000_0000, 0, 0b0110_0000];
+        let mut bytes = fixture(
+            order,
+            Geometry {
+                width: 3,
+                height: 2,
+                rows_per_strip: 2,
+                bits: 1,
+                photometric: 1,
+                fill_order: 1,
+            },
+            &[&packed],
+        );
+        let compression = field(&bytes, 259, order);
+        put(&mut bytes, compression + 8, SHORT, 32773, order);
+        let orientation = field(&bytes, 274, order);
+        put(&mut bytes, orientation + 8, SHORT, 6, order);
+        let image = decode(&bytes).unwrap();
+        assert_eq!(image.dimensions(), (2, 3));
+        assert_eq!(image.into_raw(), [0, 255, 255, 0, 255, 0]);
+    }
+
+    #[test]
     fn rejects_short_overlapping_out_of_file_and_metadata_aliasing_strips() {
         let order = ByteOrder::Little;
         let bytes = fixture(order, GRAY, &STRIPS);
@@ -771,7 +859,8 @@ mod tests {
             (259, 6),
             (262, 2),
             (266, 2),
-            (274, 6),
+            (274, 0),
+            (274, 9),
             (277, 3),
             (284, 2),
             (339, 2),
