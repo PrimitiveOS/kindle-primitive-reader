@@ -557,6 +557,20 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("p, li {text-align:justify !important;}"),
     },
     Preset {
+        id: "text_align_all_left",
+        title: "Left align all elements",
+        group: "alignment",
+        priority: 2,
+        effect: Effect::Css("* {text-align:left !important;}"),
+    },
+    Preset {
+        id: "text_align_all_justify",
+        title: "Justify all elements",
+        group: "alignment",
+        priority: 0,
+        effect: Effect::Css("* {text-align:justify !important;}"),
+    },
+    Preset {
         id: "headings-centered",
         title: "Center headings",
         group: "headings",
@@ -829,6 +843,15 @@ pub(crate) const PRESETS: &[Preset] = &[
         group: "font-size",
         priority: 0,
         effect: Effect::Css("* {font-size:inherit !important;}"),
+    },
+    Preset {
+        id: "hyphenate_all_auto",
+        title: "Allow hyphenation on all text",
+        group: "hyphenate-publisher-text",
+        priority: 0,
+        effect: Effect::Css(
+            "* {hyphens:auto !important;} h1,h2,h3,h4,h5,h6 {hyphens:none !important;}",
+        ),
     },
     Preset {
         id: "ligature_all_no_common_ligature",

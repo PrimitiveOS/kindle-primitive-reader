@@ -106,6 +106,11 @@ controls and the end-of-document Vietnamese dialog. TIFF alpha support now also
 includes white-is-black grayscale. These changes have passed a build-only
 check; their behavioral and device validation remains deferred.
 
+The next candidate adds Catalan patterns, text-wide alignment and hyphenation
+presets, and Vietnamese dictionary and online-lookup controls. A Mac build-only
+check passes; Catalan punctuation behavior, visual fit, and the full feature
+and device comparisons remain open.
+
 ### Execution checklist
 
 **Milestone status:** 72 of the 78 checklist items have desktop, scope, or

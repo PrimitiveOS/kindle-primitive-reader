@@ -13,6 +13,7 @@ For the compiled Bulgarian, Galician, Irish and Ukrainian patterns, see HYPHENAT
 For the compiled Polish patterns, see HYPHENATION-PL.txt.
 For the compiled Russian patterns, see HYPHENATION-RU.txt and LPPL-1.3c.txt.
 For the compiled Swedish patterns, see HYPHENATION-SV.txt and LPPL-1.3c.txt.
+For the compiled Catalan patterns, see HYPHENATION-CA.txt and LPPL-1.3c.txt.
 For the compiled Slovak and Slovenian patterns, see HYPHENATION-SK-SL.txt.
 
 ab_glyph_rasterizer 0.1.10 (Apache-2.0)

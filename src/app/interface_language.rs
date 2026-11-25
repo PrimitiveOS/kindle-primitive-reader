@@ -809,6 +809,65 @@ impl InterfaceLanguage {
         label
     }
 
+    /// Fixed dictionary popup chrome only; never pass headwords, source names,
+    /// definitions, lookup results, or dynamic notices through this function.
+    pub(super) fn dictionary_popup_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Save word" => "Lưu từ",
+            "Remove word" => "Xóa từ",
+            "Find" => "Tìm",
+            "End find" => "Kết thúc tìm",
+            "Wikipedia" => "Wikipedia",
+            "Search book" => "Tìm trong sách",
+            "Highlight" => "Tô sáng",
+            "Unhighlight" => "Bỏ tô sáng",
+            "Previous" => "Trước",
+            "Next" => "Tiếp",
+            "Expand" => "Mở rộng",
+            "Collapse" => "Thu gọn",
+            "Translate" => "Dịch",
+            "Close" => "Đóng",
+            "Back" => "Quay lại",
+            "Done" => "Xong",
+            "Results" => "Kết quả",
+            "Dictionary Results" => "Kết quả từ điển",
+            "Dictionary Sources" => "Nguồn từ điển",
+            "Headword only" => "Chỉ có từ mục",
+            "Searching for similar words" => "Đang tìm từ tương tự",
+            "No matches from this preset" => "Không có kết quả từ bộ này",
+            "No dictionaries enabled for this book" => "Chưa bật từ điển cho sách này",
+            "No matches in installed dictionaries" => "Không tìm thấy trong từ điển đã cài",
+            _ => english,
+        }
+    }
+
+    /// Fixed online lookup controls only; never pass article, query or provider text.
+    pub(super) fn online_popup_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Cancel" => "Hủy",
+            "Back" => "Quay lại",
+            "Done" => "Xong",
+            "Previous" => "Trước",
+            "Next" => "Tiếp",
+            "Next result" => "Kết quả tiếp",
+            "Full article" => "Toàn bài",
+            "Open image" => "Mở hình",
+            "Edit topic" => "Sửa chủ đề",
+            "From" => "Từ",
+            "Language" => "Ngôn ngữ",
+            "Looking up the text…" => "Đang tra cứu…",
+            "Search" => "Tìm",
+            "Translate" => "Dịch",
+            _ => english,
+        }
+    }
+
     /// Return the canonical English search alias for a known Screen-panel row.
     /// This deliberately excludes user-supplied names and other menu surfaces.
     pub(super) fn screen_row_english<'a>(self, label: &'a str) -> &'a str {

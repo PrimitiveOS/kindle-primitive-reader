@@ -758,6 +758,7 @@ impl Reader {
     pub(super) fn draw_online(&self, canvas: &mut Canvas) {
         let Some(p) = &self.online else { return };
         let r = &p.request;
+        let language = self.controls.interface_language;
         let position = SheetPosition::new(self.reading_viewport());
         canvas.popup(position.rect(p.sheet()));
         canvas.text(
@@ -767,13 +768,13 @@ impl Reader {
         );
         canvas.button(
             position.rect(CLOSE),
-            if p.job.is_some() {
+            language.online_popup_text(if p.job.is_some() {
                 "Cancel"
             } else if p.introductions.is_some() || p.media.current.is_some() {
                 "Back"
             } else {
                 "Done"
-            },
+            }),
             false,
             false,
         );
@@ -836,40 +837,74 @@ impl Reader {
                 CAPTION,
             );
             if index > 0 {
-                canvas.button(position.rect(PREV), "Previous", false, false);
+                canvas.button(
+                    position.rect(PREV),
+                    language.online_popup_text("Previous"),
+                    false,
+                    false,
+                );
             }
             if index + 1 < p.page_count() {
-                canvas.button(position.rect(NEXT), "Next", false, false);
+                canvas.button(
+                    position.rect(NEXT),
+                    language.online_popup_text("Next"),
+                    false,
+                    false,
+                );
             }
             if p.articles.len() > 1 {
-                canvas.button(position.rect(ALTERNATE), "Next result", false, false);
+                canvas.button(
+                    position.rect(ALTERNATE),
+                    language.online_popup_text("Next result"),
+                    false,
+                    false,
+                );
             }
             if r.service == Service::Wikipedia && !r.full_article {
-                canvas.button(position.rect(SUBMIT), "Full article", false, false);
+                canvas.button(
+                    position.rect(SUBMIT),
+                    language.online_popup_text("Full article"),
+                    false,
+                    false,
+                );
             } else if current.is_some_and(|page| page.figure.is_some()) {
-                canvas.button(position.rect(SUBMIT), "Open image", false, false);
+                canvas.button(
+                    position.rect(SUBMIT),
+                    language.online_popup_text("Open image"),
+                    false,
+                    false,
+                );
             }
             return;
         }
         canvas.text(position.rect(TOPIC), &r.text, BODY.lines(2));
         if p.job.is_some() {
-            canvas.text(position.rect(BODY_RECT), "Looking up the text…", BODY);
+            canvas.text(
+                position.rect(BODY_RECT),
+                language.online_popup_text("Looking up the text…"),
+                BODY,
+            );
             return;
         }
         if r.service != Service::Wikipedia {
             canvas.button(position.rect(PROVIDER), r.service.name(), false, false);
             canvas.button(
                 position.rect(FROM),
-                &format!("From {}", r.from),
+                &format!("{} {}", language.online_popup_text("From"), r.from),
                 false,
                 false,
             );
         } else {
-            canvas.button(position.rect(PROVIDER), "Edit topic", false, false);
+            canvas.button(
+                position.rect(PROVIDER),
+                language.online_popup_text("Edit topic"),
+                false,
+                false,
+            );
         }
         canvas.button(
             position.rect(TO),
-            &format!("Language {}", r.to),
+            &format!("{} {}", language.online_popup_text("Language"), r.to),
             false,
             false,
         );
@@ -891,11 +926,11 @@ impl Reader {
         );
         canvas.button(
             position.rect(p.submit()),
-            if r.service == Service::Wikipedia {
+            language.online_popup_text(if r.service == Service::Wikipedia {
                 "Search"
             } else {
                 "Translate"
-            },
+            }),
             true,
             false,
         );

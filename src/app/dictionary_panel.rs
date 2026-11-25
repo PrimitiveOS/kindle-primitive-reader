@@ -722,6 +722,11 @@ impl Reader {
             Button::Expand if self.definition_expanded => ("Collapse", false),
             _ => (popup_button_label(button), false),
         };
+        // This label comes from the fixed Button enum/state, not a dictionary.
+        let label = self
+            .controls
+            .interface_language
+            .dictionary_popup_text(label);
         if self.dictionary_button_enabled(button) {
             draw_action_button(canvas, button, rect, label, selected);
         } else if self.dictionary_settings.popup_buttons.is_some() {
@@ -1614,8 +1619,16 @@ impl Reader {
         let choose = definition_results_button(popup);
         let end = edit.x - 12;
         let title = match view.results.active {
-            Some(Menu::Flat) => Some("Dictionary Results"),
-            Some(Menu::Sources) => Some("Dictionary Sources"),
+            Some(Menu::Flat) => Some(
+                self.controls
+                    .interface_language
+                    .dictionary_popup_text("Dictionary Results"),
+            ),
+            Some(Menu::Sources) => Some(
+                self.controls
+                    .interface_language
+                    .dictionary_popup_text("Dictionary Sources"),
+            ),
             Some(Menu::Source(index)) => self
                 .definitions
                 .get(index)
@@ -1644,16 +1657,25 @@ impl Reader {
         );
         canvas.button(
             back,
-            if view.results.active.is_some() || !self.dictionary_navigation.trail.is_empty() {
-                "Back"
-            } else {
-                "Done"
-            },
+            self.controls.interface_language.dictionary_popup_text(
+                if view.results.active.is_some() || !self.dictionary_navigation.trail.is_empty() {
+                    "Back"
+                } else {
+                    "Done"
+                },
+            ),
             false,
             false,
         );
         if self.definitions.len() > 1 {
-            canvas.button(choose, "Results", view.results.active.is_some(), false);
+            canvas.button(
+                choose,
+                self.controls
+                    .interface_language
+                    .dictionary_popup_text("Results"),
+                view.results.active.is_some(),
+                false,
+            );
         }
         if let Some(menu) = view.results.active {
             self.draw_definition_results(canvas, popup, menu);
@@ -1666,7 +1688,13 @@ impl Reader {
         if let Some(result) = self.definitions.get(self.list_page) {
             let text = &result.text;
             if text.is_empty() {
-                canvas.text(rect, HEADWORD_ONLY, CAPTION);
+                canvas.text(
+                    rect,
+                    self.controls
+                        .interface_language
+                        .dictionary_popup_text(HEADWORD_ONLY),
+                    CAPTION,
+                );
             }
             let lines = view
                 .layout
@@ -1764,7 +1792,13 @@ impl Reader {
             } else {
                 "No matches in installed dictionaries"
             };
-            canvas.text(rect, message, BODY.lines(2));
+            canvas.text(
+                rect,
+                self.controls
+                    .interface_language
+                    .dictionary_popup_text(message),
+                BODY.lines(2),
+            );
             self.draw_lookup_preset_button(canvas);
         }
         let grid = self.definition_button_grid(popup);

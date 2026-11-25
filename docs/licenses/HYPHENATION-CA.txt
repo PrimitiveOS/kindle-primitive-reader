@@ -1,0 +1,12 @@
+Catalan hyphenation patterns, version 1.11 (15 July 2003)
+Copyright (C) December 1991–January 1995, July 2003 Gonçal Badenes
+Compiled by Gonçal Badenes and Francina Turon
+
+Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-ca.tex
+Source SHA-256: 153b51e2a9f8afdd87a8848f73f4462a902c58d597aa55c66506af65c5596e7a
+
+The upstream source is licensed under the LaTeX Project Public License 1
+or later. Reader uses version 1.3c, included in LPPL-1.3c.txt. The unmodified
+upstream TeX file is included in hyph-ca.tex; Reader compiles its supported
+single-word patterns and exceptions into its own native lookup tables.
+Reader's compiled tables are a derived form, not the original TeX file.

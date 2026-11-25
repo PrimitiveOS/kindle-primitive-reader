@@ -25,6 +25,7 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Polish | 2 / 2 | 4,053 upstream word rules and 20 exceptions; stock comparison pending |
 | Russian | 2 / 2 | Upstream single-word rules and exceptions; stock comparison pending |
 | Swedish | 2 / 2 | Upstream single-word patterns; stock comparison pending |
+| Catalan | 2 / 2 | Upstream single-word patterns and exceptions; stock comparison pending |
 | Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
 | Russian + English (US) | 2 / 2 | Combined existing Russian and US English tries; stock comparison pending |
 | Slovak | 2 / 3 | 2,467 upstream word patterns and four active exceptions; stock comparison pending |
@@ -161,3 +162,12 @@ Swedish uses Jan Michael Rynning's upstream TeX patterns and KOReader's
 release packages. The compiled rules and their word breaks have not been
 compared with the pinned KOReader dictionary, built, or tested on the computer
 or Kindle. [Swedish terms](licenses/HYPHENATION-SV.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+Catalan uses the upstream TeX patterns and exceptions compiled by Gonçal
+Badenes and Francina Turon, with KOReader's 2 / 2 minima. The unmodified
+source, LPPL 1.3c and provenance are included in release packages. The matcher
+currently considers alphabetic word runs; punctuation-sensitive cases such as
+Catalan's middle dot need separate handling and verification. The compiled
+rules and their word breaks have not been compared with the pinned KOReader
+dictionary, built, or tested on the computer or Kindle.
+[Catalan terms](licenses/HYPHENATION-CA.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)

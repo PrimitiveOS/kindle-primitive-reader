@@ -60,6 +60,7 @@ pub(crate) enum Dictionary {
     RussianEnglishBritish,
     RussianEnglishAmerican,
     Swedish,
+    Catalan,
     Slovak,
     Slovenian,
 }
@@ -102,6 +103,7 @@ impl Dictionary {
             ("ga", _) => Some(Self::Irish),
             ("pl", _) => Some(Self::Polish),
             ("sv", _) => Some(Self::Swedish),
+            ("ca", _) => Some(Self::Catalan),
             ("sk", _) => Some(Self::Slovak),
             ("sl", _) => Some(Self::Slovenian),
             _ => None,
@@ -132,6 +134,7 @@ impl Dictionary {
             Self::RussianEnglishBritish => "Russian + English (UK)",
             Self::RussianEnglishAmerican => "Russian + English (US)",
             Self::Swedish => "Swedish",
+            Self::Catalan => "Catalan",
             Self::Slovak => "Slovak",
             Self::Slovenian => "Slovenian",
         }
@@ -153,6 +156,7 @@ impl Dictionary {
             | Self::RussianEnglishBritish
             | Self::RussianEnglishAmerican
             | Self::Swedish
+            | Self::Catalan
             | Self::Slovenian => HyphenationLimits { left: 2, right: 2 },
             Self::French => HyphenationLimits { left: 2, right: 1 },
             Self::American
@@ -186,6 +190,7 @@ impl Dictionary {
             Self::Polish => &POLISH,
             Self::Russian | Self::RussianEnglishBritish | Self::RussianEnglishAmerican => &RUSSIAN,
             Self::Swedish => &SWEDISH,
+            Self::Catalan => &CATALAN,
             Self::Slovak => &SLOVAK,
             Self::Slovenian => &SLOVENIAN,
         }

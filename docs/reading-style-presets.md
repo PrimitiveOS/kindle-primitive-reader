@@ -53,6 +53,16 @@ vertical or Blitz rendering are not covered by this implementation. The
 source text and saved anchors are unchanged. This behavior has not yet been
 built or tested. [Pinned KOReader tweak](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L364-L371)
 
+**Allow hyphenation on all text** overrides publisher hyphenation restrictions
+and excludes heading elements, using KOReader's selectors. Automatic
+hyphenation still depends on the reading setting and an available language
+dictionary or algorithm. **Left align all elements** and **Justify all
+elements** apply their alignment across the document. These two choices are
+exclusive with the existing paragraph-alignment choices; an explicit reading
+alignment setting can still override publisher-style alignment. The original
+document and saved anchors do not change. These additions have not yet been
+built or behaviorally tested. [Pinned alignment choices](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L263-L295) · [Pinned hyphenation choice](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L347-L353)
+
 ## Paragraph spacing and browser defaults
 
 **Spacing between paragraphs** contains three mutually exclusive choices.
