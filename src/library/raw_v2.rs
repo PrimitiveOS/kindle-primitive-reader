@@ -5,14 +5,19 @@
 //! boundaries must be checked against the actual book before any use.
 #![allow(dead_code)]
 
-use super::{MAX_BACKUP_BOOKS, MAX_STATE_BYTES, SavedLibrary, invalid_state};
-use crate::Anchor;
-use crate::source::raw_whitespace::{MAX_BLOCK_BYTES, RawCaret};
+use super::{MAX_BACKUP_BOOKS, MAX_STATE_BYTES, SavedLibrary, SavedLibraryRef, invalid_state};
+use crate::source::raw_whitespace::{MAX_BLOCK_BYTES, RawAnchor, RawCaret};
+use crate::{Anchor, Probe};
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Number, Value};
 use std::{fmt, io};
 
 const MAX_CARETS: usize = 8192;
+mod encoder;
+
+pub(super) fn encode(library: &SavedLibrary) -> io::Result<Vec<u8>> {
+    encoder::encode(library)
+}
 
 #[derive(Clone, Copy)]
 enum Place {
@@ -117,7 +122,20 @@ pub(super) fn decode(bytes: &[u8]) -> io::Result<SavedLibrary> {
             "A raw caret occurs outside a supported reader anchor",
         ));
     }
+    let original_canonical = value.clone();
     let mut library: SavedLibrary = serde_json::from_value(value).map_err(io::Error::other)?;
+    let round_trip = serde_json::to_value(SavedLibraryRef {
+        version: 2,
+        books: &library.books,
+        collections: &library.collections,
+        page_browser_grid: library.page_browser_grid,
+    })
+    .map_err(io::Error::other)?;
+    if round_trip != original_canonical {
+        return Err(invalid_state(
+            "The v2 reader state contains fields that cannot be preserved",
+        ));
+    }
     for entry in entries {
         let state = library
             .books
@@ -171,8 +189,16 @@ fn capture(
 }
 
 fn attach(anchor: &mut Anchor, caret: RawCaret) -> io::Result<()> {
-    if anchor.raw_caret.is_some()
-        || anchor.illustration.is_some()
+    if anchor.raw_caret.is_some() {
+        return Err(invalid_state("A raw whitespace anchor is repeated"));
+    }
+    check(anchor, &caret)?;
+    anchor.raw_caret = Some(caret);
+    Ok(())
+}
+
+fn check(anchor: &Anchor, caret: &RawCaret) -> io::Result<()> {
+    if anchor.illustration.is_some()
         || anchor.chapter.is_empty()
         || anchor.chapter.len() > super::MAX_ANCHOR_PATH_BYTES
         || anchor.chapter.chars().any(char::is_control)
@@ -184,7 +210,27 @@ fn attach(anchor: &mut Anchor, caret: RawCaret) -> io::Result<()> {
             "A raw whitespace anchor is structurally invalid",
         ));
     }
-    anchor.raw_caret = Some(caret);
+    Ok(())
+}
+
+/// Validate an available book's exact source fingerprint before using a raw
+/// location. Missing books remain stored without invented source positions.
+pub(super) fn validate_in_probe(anchor: &Anchor, probe: &Probe) -> io::Result<()> {
+    let Some(caret) = &anchor.raw_caret else {
+        return Ok(());
+    };
+    check(anchor, caret)?;
+    let mut canonical = anchor.clone();
+    canonical.raw_caret = None;
+    let bound = RawAnchor {
+        canonical,
+        caret: caret.clone(),
+    };
+    probe
+        .validate_raw_whitespace_anchor(&bound)
+        .ok_or_else(|| {
+            invalid_state("The raw whitespace position no longer matches this document")
+        })?;
     Ok(())
 }
 

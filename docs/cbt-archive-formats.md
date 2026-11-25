@@ -22,3 +22,11 @@ reader recognizes GNU long-name records; its source does not establish PAX
 support. The PAX implementation, random-access validation, malformed input
 handling and simulator/Kindle comparisons remain unverified; KOReader PAX
 parity is not established. [KOReader provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L374-L377) · [Reader comic implementation](../src/comic.rs)
+
+If a CBZ or CBT contains no supported raster pages, Reader can index SVG-only
+pages in natural order and render them using its offline static-SVG subset.
+Each SVG is limited to 256 KiB and the existing SVG side/pixel bounds; remote
+and external references are rejected. CBR and mixed raster/SVG page lists keep
+their previous behavior so existing page numbers remain stable. This fallback
+has not been behaviorally verified, and support in KOReader's comic provider
+has not been established.

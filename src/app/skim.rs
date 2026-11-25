@@ -719,11 +719,15 @@ impl Reader {
         }
     }
 
-    /// Jump directly from the reading menu to a saved mark on a different page.
+    /// Jump from the reading menu to an adjacent or outermost saved-mark page.
     /// Reflow anchors must resolve before reopening so stale marks cannot silently
     /// turn into a different reading position.
-    pub(super) fn jump_adjacent_saved_mark(&mut self, direction: Direction) -> crate::Result<()> {
-        let Some(target) = self.skim_mark_destination(direction, false) else {
+    pub(super) fn jump_saved_mark(
+        &mut self,
+        direction: Direction,
+        boundary: bool,
+    ) -> crate::Result<()> {
+        let Some(target) = self.skim_mark_destination(direction, boundary) else {
             let language = self.controls.interface_language;
             return Err(language
                 .skim_text(match direction {

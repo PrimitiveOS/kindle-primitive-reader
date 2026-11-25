@@ -118,6 +118,14 @@ impl Reader {
                 "Next saved mark",
                 Action::SavedMark(Direction::Next),
             ));
+            items.push(Item::new(
+                "First saved mark",
+                Action::SavedMarkEdge(Direction::Previous),
+            ));
+            items.push(Item::new(
+                "Last saved mark",
+                Action::SavedMarkEdge(Direction::Next),
+            ));
         }
         if let Some(book) = self
             .active

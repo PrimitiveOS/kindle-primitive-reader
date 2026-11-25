@@ -201,9 +201,18 @@ impl Comic {
             });
         }
         let mut pages = if extension.eq_ignore_ascii_case("cbt") {
-            tar_pages(path)?
+            tar_pages(path, false)?
         } else {
-            zip_pages(path)?
+            zip_pages(path, false)?
+        };
+        if pages.is_empty() {
+            // Preserve the exact page list of every previously openable comic.
+            // Only archives without raster pages use the SVG-only fallback.
+            pages = if extension.eq_ignore_ascii_case("cbt") {
+                tar_pages(path, true)?
+            } else {
+                zip_pages(path, true)?
+            };
         };
         if pages.is_empty() {
             return Err("This comic archive contains no supported image pages".into());
@@ -252,16 +261,25 @@ impl Comic {
                 extension,
             } => tar_image(path, member, header, length, modified, extension)?,
         };
-        ImagePage::decode(&bytes)
+        if svg_page_name(&member.name) {
+            ImagePage::decode_svg(&bytes)
+        } else {
+            ImagePage::decode(&bytes)
+        }
     }
 }
 
-fn zip_pages(path: &Path) -> Result<Vec<Member>> {
+fn zip_pages(path: &Path, svg_only: bool) -> Result<Vec<Member>> {
     let mut archive = open_archive(path)?;
     let mut pages = Vec::new();
     for index in 0..archive.len() {
         let entry = archive.by_index_raw(index)?;
-        if page_name(entry.name()) && entry.is_file() {
+        let selected = if svg_only {
+            svg_page_name(entry.name())
+        } else {
+            page_name(entry.name())
+        };
+        if selected && entry.is_file() {
             pages.push(Member {
                 name: entry.name().to_owned(),
                 size: entry.size(),
@@ -324,7 +342,7 @@ struct TarHeader {
     extension: Option<TarExtensionKind>,
 }
 
-fn tar_pages(path: &Path) -> Result<Vec<Member>> {
+fn tar_pages(path: &Path, svg_only: bool) -> Result<Vec<Member>> {
     let (file, length) = open_regular(path, MAX_COMIC_BYTES)?;
     let block_bytes = TAR_BLOCK_BYTES as u64;
     if length < block_bytes * 2 || !length.is_multiple_of(block_bytes) {
@@ -384,7 +402,12 @@ fn tar_pages(path: &Path) -> Result<Vec<Member>> {
         if !names.insert(name.clone()) {
             return Err("The CBT has duplicate entry names".into());
         }
-        if !header.directory && page_name(&name) {
+        let selected = if svg_only {
+            svg_page_name(&name)
+        } else {
+            page_name(&name)
+        };
+        if !header.directory && selected {
             if !(1..=raster_input_limit(Path::new(&name))).contains(&header.size) {
                 return Err("A CBT page is empty or exceeds the image size limit".into());
             }
@@ -678,7 +701,7 @@ fn tar_octal(field: &[u8]) -> Option<u64> {
     u64::from_str_radix(std::str::from_utf8(&field[..end]).ok()?, 8).ok()
 }
 
-pub(crate) fn page_name(name: &str) -> bool {
+fn valid_page_path(name: &str) -> bool {
     if name.len() > MAX_MEMBER_NAME
         || name.contains(['\\', ':'])
         || name.chars().any(char::is_control)
@@ -688,9 +711,23 @@ pub(crate) fn page_name(name: &str) -> bool {
     {
         return false;
     }
+    true
+}
+
+pub(crate) fn page_name(name: &str) -> bool {
+    if !valid_page_path(name) {
+        return false;
+    }
     name.rsplit_once('.').is_some_and(|(_, extension)| {
         crate::library::DocumentFormat::raster_for_extension(extension).is_some()
     })
+}
+
+fn svg_page_name(name: &str) -> bool {
+    valid_page_path(name)
+        && name
+            .rsplit_once('.')
+            .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("svg"))
 }
 
 /// Compare digit groups by numeric value without converting them to integers.
@@ -761,17 +798,21 @@ impl ImagePage {
         {
             let (file, length) = open_regular(path, crate::svg_image::MAX_SVG_BYTES as u64)?;
             let bytes = read_image(file, length)?;
-            let image = crate::svg_image::rasterize(
-                &bytes,
-                crate::svg_image::MAX_SVG_SIDE,
-                crate::svg_image::MAX_SVG_SIDE,
-                crate::svg_image::MAX_SVG_PIXELS,
-            )?;
-            return Self::from_grayscale(image.width(), image.height(), image.into_raw());
+            return Self::decode_svg(&bytes);
         }
         let (file, size) = open_regular(path, raster_input_limit(path))?;
         let bytes = read_image(file, size)?;
         Self::decode(&bytes)
+    }
+
+    fn decode_svg(bytes: &[u8]) -> Result<Self> {
+        let image = crate::svg_image::rasterize(
+            bytes,
+            crate::svg_image::MAX_SVG_SIDE,
+            crate::svg_image::MAX_SVG_SIDE,
+            crate::svg_image::MAX_SVG_PIXELS,
+        )?;
+        Self::from_grayscale(image.width(), image.height(), image.into_raw())
     }
 
     pub fn page_size(&self) -> (f32, f32) {
@@ -1008,6 +1049,12 @@ impl ImagePage {
 }
 
 pub(crate) fn raster_input_limit(path: &Path) -> u64 {
+    if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+    {
+        return crate::svg_image::MAX_SVG_BYTES as u64;
+    }
     path.extension()
         .and_then(|extension| extension.to_str())
         .and_then(crate::library::DocumentFormat::raster_for_extension)

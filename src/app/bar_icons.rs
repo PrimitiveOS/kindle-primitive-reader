@@ -52,6 +52,16 @@ const READING_GUIDES: Icon = line(&["M5 4 V20 M19 4 V20 M9 9 H15 M9 13 H15 M9 17
 const FAVORITE: Icon = line(&[
     "M12 4 L14.4 9.2 L20 9.8 L15.8 13.6 L17 19.2 L12 16.3 L7 19.2 L8.2 13.6 L4 9.8 L9.6 9.2 Z",
 ]);
+const MARK_FIRST: Icon = line(&[
+    "M14 5 H20 V19 L17 16 L14 19 Z",
+    "M9 8 L5 12 L9 16",
+    "M3 5 V19",
+]);
+const MARK_LAST: Icon = line(&[
+    "M4 5 H10 V19 L7 16 L4 19 Z",
+    "M15 8 L19 12 L15 16",
+    "M21 5 V19",
+]);
 const INFO: Icon = line(&["M12 3 A9 9 0 1 0 12 21 A9 9 0 1 0 12 3 Z M12 11 V16 M12 8 V8.1"]);
 const SAVE: Icon = line(&["M4 4 H16 L20 8 V20 H4 Z M8 4 V10 H16 V4 M8 20 V14 H16 V20"]);
 
@@ -97,6 +107,8 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         Action::Chapter(super::chapter_navigation::Direction::Next) => LAST_PAGE,
         Action::SavedMark(super::chapter_navigation::Direction::Previous) => super::skim::MARK_BACK,
         Action::SavedMark(super::chapter_navigation::Direction::Next) => super::skim::MARK_FORWARD,
+        Action::SavedMarkEdge(super::chapter_navigation::Direction::Previous) => MARK_FIRST,
+        Action::SavedMarkEdge(super::chapter_navigation::Direction::Next) => MARK_LAST,
         Action::OpenFolderFile(super::FolderDirection::Previous) => FIRST_PAGE,
         Action::OpenFolderFile(super::FolderDirection::Next) => LAST_PAGE,
         Action::Show(Screen::FixedBookmarks | Screen::Bookmarks)

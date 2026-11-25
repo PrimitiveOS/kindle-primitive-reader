@@ -60,9 +60,13 @@ An inactive v2 candidate decoder rejects duplicate JSON keys and raw fields
 outside the known resume, bookmark, highlight, custom-contents and hidden-flow
 anchors. It bounds file size and raw-caret count, checks each caret's structural
 relationship to its canonical anchor, and keeps missing books without guessing
-their source data. It does not yet validate the caret against the actual book,
-activate the resulting library, or provide complete v2 encoding/merge and
-rollback behavior.
+their source data. The canonical JSON portion must round-trip exactly through
+Reader's state types, so unsupported fields or normalizations are rejected. An
+inactive encoder clones the state, detaches and validates raw carets, serializes
+the canonical part, reinserts them at the approved paths and runs the decoder on
+the result. A separate check can validate a raw caret against an open book's
+source fingerprint and grapheme mapping. None of this activates the resulting
+library or completes v2 merge, restore and UI behavior.
 Resume, canonical selection, saved-mark validation and old ODT anchor migration
 also reject transient raw carets instead of silently using their collapsed
 canonical positions. Mark comparisons and custom-contents/flow ordering account
