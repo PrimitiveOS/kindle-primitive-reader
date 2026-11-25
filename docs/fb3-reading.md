@@ -43,13 +43,14 @@ keeps its document position. Backlinks, selection and saved locations in the
 band use the same text as the original.
 
 Band layout applies to supported single-page horizontal reading and links to
-notes within the same converted part. Notes in later parts, and notes whose
-content spans converted parts, remain reachable through their original links
-without being copied incompletely into a band. Existing page, note and
-reference limits apply.
+notes within the same converted part. A single, complete text-only note in a
+different part can also appear in a verified blank area on the reference page.
+Notes that span parts and other unsupported cases remain reachable through
+their original links. Existing page, note and reference limits apply.
 Facing pages, continuous reading and unsupported note layouts keep the ordinary
 reading flow. [Reader pagination](../src/footnotes/in_page.rs) ·
-[FictionBook 2 controls](fb2-footnotes.md#in-page-footnotes-and-endnotes)
+[FictionBook 2 controls](fb2-footnotes.md#in-page-footnotes-and-endnotes) ·
+[Cross-part FB3 notes](fb3-cross-part-notes.md)
 
 KOReader converts FB3 `<notes>` to a FictionBook `notes` body and `notebody`
 to `section`. Its `fb2-document` selector matches both FictionBook formats.

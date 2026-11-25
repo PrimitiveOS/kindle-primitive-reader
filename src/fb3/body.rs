@@ -15,11 +15,15 @@ const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 pub(super) const MAX_DEPTH: usize = 48;
 const MAX_TOC: usize = 512;
 const MAX_ID: usize = 256;
+// Inventory is optional metadata; exceeding the limit keeps the remaining
+// notes reachable through their existing links without in-page copying.
+pub(super) const MAX_COMPLETE_NOTES: usize = 512;
 
 pub(super) struct Converted {
     pub(super) chapters: Vec<(String, String)>,
     pub(super) toc: Vec<TocEntry>,
     pub(super) incomplete_note_ids: BTreeSet<String>,
+    pub(super) complete_notes: BTreeMap<String, String>,
 }
 
 pub(super) fn convert(
@@ -63,7 +67,7 @@ fn convert_groups<'a, 'i>(
 ) -> Result<Converted> {
     // Keep this out of converted XHTML: changing markup would invalidate saved
     // Source revisions for FB3s that were already split by an earlier build.
-    let incomplete_note_ids = groups
+    let incomplete_note_ids: BTreeSet<String> = groups
         .iter()
         .flatten()
         .filter_map(|piece| match *piece {
@@ -84,6 +88,57 @@ fn convert_groups<'a, 'i>(
                 ids.entry(id)
                     .and_modify(|entry| *entry = None)
                     .or_insert(Some(chapter));
+            }
+        };
+        for piece in pieces {
+            match *piece {
+                Piece::Whole(node) => {
+                    for child in node.descendants().filter(|child| {
+                        child.is_element()
+                            && child
+                                .ancestors()
+                                .take_while(|ancestor| *ancestor != root)
+                                .all(retained)
+                    }) {
+                        register(child);
+                    }
+                }
+                Piece::Open {
+                    node,
+                    continued: false,
+                    ..
+                } => register(node),
+                Piece::Open { .. } | Piece::Close(_) => (),
+            }
+        }
+    }
+    // Map only unique, complete, unnested note roots to the existing chapter
+    // containing them. This is out-of-band metadata: no generated IDs or
+    // attributes are added to XHTML, so saved Source revisions stay stable.
+    let mut complete_notes = BTreeMap::new();
+    for (chapter, pieces) in groups.iter().enumerate() {
+        let mut register = |node: Node<'_, '_>| {
+            if complete_notes.len() >= MAX_COMPLETE_NOTES
+                || !node.has_tag_name((FB3_BODY_NS, "notebody"))
+                || !node
+                    .parent()
+                    .is_some_and(|parent| parent.has_tag_name((FB3_BODY_NS, "notes")))
+                || node
+                    .ancestors()
+                    .skip(1)
+                    .take_while(|ancestor| *ancestor != root)
+                    .any(|ancestor| ancestor.has_tag_name((FB3_BODY_NS, "notebody")))
+                || node.descendants().skip(1).any(|child| {
+                    child.is_element() && child.has_tag_name((FB3_BODY_NS, "notebody"))
+                })
+            {
+                return;
+            }
+            if let Some(id) = identifier(node)
+                && ids.get(id) == Some(&Some(chapter))
+                && !incomplete_note_ids.contains(id)
+            {
+                complete_notes.insert(id.to_owned(), chapter_path(chapter));
             }
         };
         for piece in pieces {
@@ -163,6 +218,7 @@ fn convert_groups<'a, 'i>(
         chapters,
         toc: body.toc,
         incomplete_note_ids,
+        complete_notes,
     })
 }
 

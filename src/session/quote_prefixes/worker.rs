@@ -9,12 +9,15 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use primitive_app::with_storage;
 
 use super::ForegroundQuotes;
-use crate::book_style::pseudo::quotes::{self, ExactPrefix};
-use crate::epub::{Book, Chapter};
+use crate::book_style::pseudo::quotes::{self, Checkpoints, ExactPrefix};
+use crate::epub::{Book, Chapter, MAX_ARCHIVE};
+use crate::epub_leased::LeasedReader;
+use crate::epub_members::Members;
 use crate::session::screen_pages::{
     FileStamp,
     background::{ARCHIVE_LIMIT, check_cancelled, read_snapshot},
@@ -23,6 +26,8 @@ use crate::{Result, Settings, user_styles};
 
 #[cfg(test)]
 mod tests;
+
+const LEASED_DEADLINE: Duration = Duration::from_secs(5);
 
 /// The caller must pass the effective profile used by the active layout,
 /// including note-layout and fallback settings, rather than generic defaults.
@@ -85,12 +90,12 @@ impl Request {
             && self.main_language == other.main_language
     }
 
-    fn verify(&self) -> Result<()> {
-        with_storage(|| {
+    fn verify(&self) -> Result<u64> {
+        Ok(with_storage(|| {
             let metadata = std::fs::metadata(&self.path)?;
-            if metadata.len() > ARCHIVE_LIMIT {
+            if metadata.len() > MAX_ARCHIVE {
                 return Err(std::io::Error::other(
-                    "This EPUB exceeds the quote preparation snapshot limit",
+                    "This EPUB exceeds the quote preparation archive limit",
                 ));
             }
             if FileStamp::from_metadata(&metadata).as_ref() != Some(&self.stamp) {
@@ -98,17 +103,28 @@ impl Request {
                     "The EPUB changed during quote preparation",
                 ));
             }
-            Ok(())
-        })?;
-        Ok(())
+            Ok(metadata.len())
+        })?)
     }
 
-    fn run(self, cancelled: &AtomicBool) -> Result<Prepared> {
+    fn run(self, cancelled: &Arc<AtomicBool>) -> Result<Prepared> {
         check_cancelled(cancelled)?;
-        self.verify()?;
-        let bytes: Arc<[u8]> = read_snapshot(&self.path, &self.stamp, cancelled)?.into();
-        check_cancelled(cancelled)?;
-        let mut book = Book::open_snapshot(bytes)?;
+        let deadline = Instant::now() + LEASED_DEADLINE;
+        let len = self.verify()?;
+        let (mut book, health) = if len <= ARCHIVE_LIMIT {
+            let bytes: Arc<[u8]> = read_snapshot(&self.path, &self.stamp, cancelled)?.into();
+            check_cancelled(cancelled)?;
+            (Book::open_snapshot(bytes)?, None)
+        } else {
+            let (reader, health) =
+                LeasedReader::open(&self.path, self.stamp.clone(), cancelled.clone(), deadline)?;
+            let archive = crate::epub_zip::open_leased(reader)?;
+            health.check()?;
+            let mut book = Book::from_archive(Members::Zip(archive))?;
+            health.check()?;
+            book.quote_prefixes = Some(Box::new(Checkpoints::snapshot()));
+            (book, Some(health))
+        };
         if book.revision() != self.edition || !same_spine(&self.spine, &book.chapters) {
             return Err("The EPUB edition changed during quote preparation".into());
         }
@@ -119,9 +135,18 @@ impl Request {
             &self.styles,
             self.shaping_language,
             &self.main_language,
-            &|| Ok(check_cancelled(cancelled)?),
+            &|| {
+                check_cancelled(cancelled)?;
+                if let Some(health) = &health {
+                    health.check()?;
+                }
+                Ok(())
+            },
         )?;
         check_cancelled(cancelled)?;
+        if let Some(health) = &health {
+            health.verify()?;
+        }
         self.verify()?;
         Ok(Prepared {
             request: self,

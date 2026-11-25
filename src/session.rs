@@ -1269,6 +1269,11 @@ impl Reading {
     }
 
     fn column_at(&self, x: f32, y: f32) -> Option<(Range<f32>, f32, f32)> {
+        // A foreign note owns its entire band, including blank margins.
+        // Never interpret a touch behind that band as host-chapter text.
+        if self.probe.foreign_band_at(self.page, x, y).is_some() {
+            return None;
+        }
         if self.probe.is_vertical() {
             let settings = self.probe.settings;
             let columns = settings.text_columns();
@@ -1290,6 +1295,10 @@ impl Reading {
     }
 
     pub(crate) fn word_at(&self, x: f32, y: f32) -> Option<TextSelection> {
+        if let Some(band) = self.probe.foreign_band_at(self.page, x, y) {
+            let (x, y) = band.coordinates(self.page, x, y)?;
+            return band.layout.note_word_at(x, y);
+        }
         let (range, x, y) = self.column_at(x, y)?;
         self.probe.word_in(range, x, y)
     }
@@ -1300,6 +1309,32 @@ impl Reading {
         saved: &TextSelection,
         word: &TextSelection,
     ) -> Result<TextSelection> {
+        if let Some(band) = self.probe.foreign_note_band.as_ref() {
+            let anchors = [&saved.start, &saved.end, &word.start, &word.end];
+            let in_note = anchors.map(|anchor| band.layout.note_contains_anchor(anchor));
+            if in_note.iter().any(|inside| *inside) {
+                if !in_note.iter().all(|inside| *inside) {
+                    return Err("Selection cannot cross between the note and page text".into());
+                }
+                let start = if (saved.start.block, saved.start.offset)
+                    <= (word.start.block, word.start.offset)
+                {
+                    &saved.start
+                } else {
+                    &word.start
+                };
+                let end =
+                    if (saved.end.block, saved.end.offset) >= (word.end.block, word.end.offset) {
+                        &saved.end
+                    } else {
+                        &word.end
+                    };
+                return band
+                    .layout
+                    .note_select_range(start, end)
+                    .ok_or_else(|| "The note selection no longer resolves".into());
+            }
+        }
         let order = |anchor: &Anchor| -> Result<(usize, usize, usize)> {
             let chapter = self
                 .probe
@@ -1321,10 +1356,28 @@ impl Reading {
     }
 
     pub(crate) fn rendered_quote(&self, start: &Anchor, end: &Anchor) -> Result<TextSelection> {
+        if let Some(band) = self.probe.foreign_note_band.as_ref()
+            && band.layout.note_contains_anchor(start)
+            && band.layout.note_contains_anchor(end)
+        {
+            return band
+                .layout
+                .note_select_range(start, end)
+                .ok_or_else(|| "The note selection no longer resolves".into());
+        }
         self.collect_anchored_quote(start, end, false)
     }
 
     pub(crate) fn anchored_quote(&self, start: &Anchor, end: &Anchor) -> Result<TextSelection> {
+        if let Some(band) = self.probe.foreign_note_band.as_ref()
+            && band.layout.note_contains_anchor(start)
+            && band.layout.note_contains_anchor(end)
+        {
+            return band
+                .layout
+                .note_select_range(start, end)
+                .ok_or_else(|| "The note selection no longer resolves".into());
+        }
         self.collect_anchored_quote(start, end, true)
     }
 
@@ -1385,7 +1438,8 @@ impl Reading {
     }
 
     pub(crate) fn highlight_rects(&self, selection: &TextSelection) -> Vec<HighlightRect> {
-        self.visible_parts()
+        let mut rects: Vec<_> = self
+            .visible_parts()
             .into_iter()
             .flat_map(|part| {
                 self.probe
@@ -1397,7 +1451,16 @@ impl Reading {
                         rect
                     })
             })
-            .collect()
+            .collect();
+        if let Some(band) = self.probe.foreign_band(self.page) {
+            rects.extend(band.layout.note_selection_rects(selection).into_iter().map(
+                |mut rect| {
+                    rect.y += band.y_offset() as i32;
+                    rect
+                },
+            ));
+        }
+        rects
     }
 
     pub(crate) fn note_reference_at(
@@ -1405,6 +1468,10 @@ impl Reading {
         x: f32,
         y: f32,
     ) -> Option<(crate::footnotes::ReferenceContext, TextSelection)> {
+        if let Some(band) = self.probe.foreign_band_at(self.page, x, y) {
+            let (x, y) = band.coordinates(self.page, x, y)?;
+            return band.layout.note_reference_at(x, y);
+        }
         let (range, x, y) = self.column_at(x, y)?;
         let (key, offset) = self.probe.source_at(range, x, y)?;
         let block = self.probe.source.blocks.iter().find(|b| b.key == key)?;
@@ -1431,13 +1498,21 @@ impl Reading {
     }
 
     pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<Destination> {
-        let (range, x, y) = self.column_at(x, y)?;
-        self.probe.link_in(range, x, y)
+        let (chapter, href) = self.link_context_at(x, y)?;
+        Book::resolve_link(chapter, href).ok()
     }
 
     pub(crate) fn link_href_at(&self, x: f32, y: f32) -> Option<&str> {
+        self.link_context_at(x, y).map(|(_, href)| href)
+    }
+
+    /// A foreign note link is resolved relative to its own canonical chapter.
+    pub(crate) fn link_context_at(&self, x: f32, y: f32) -> Option<(&str, &str)> {
+        if let Some(band) = self.probe.foreign_band_at(self.page, x, y) {
+            return band.link_at(self.page, x, y);
+        }
         let (range, x, y) = self.column_at(x, y)?;
-        self.probe.link_href_in(range, x, y)
+        Some((&self.probe.chapter, self.probe.link_href_in(range, x, y)?))
     }
 
     pub(crate) fn illustration_at(&self, x: f32, y: f32) -> Option<&str> {
@@ -1503,6 +1578,14 @@ impl Reading {
                 }
                 text.push_str(&selection.text);
             }
+        }
+        if let Some(note) = self.probe.foreign_band(self.page)
+            && let Some(note_text) = note.layout.note_visible_text()
+        {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&note_text);
         }
         text
     }
@@ -2556,6 +2639,112 @@ mod tests {
             hidden_flows: Default::default(),
         })
         .unwrap()
+    }
+
+    #[test]
+    fn cross_part_reading_routes_foreign_selection_links_and_preserves_host_progress() {
+        use crate::user_styles::{Data, FB2_FOOTNOTES};
+
+        let mut config = example("cross-note-quiet.fb3", 28.0, false).config;
+        config.fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut data = Data::default();
+        data.choose(1, FB2_FOOTNOTES, Some(true)).unwrap();
+        config.user_styles = data.snapshot(1).unwrap();
+        let reading = Reading::open(config).unwrap();
+        let visible = reading.visible_text();
+        assert!(visible.contains("The quiet dispatch arrived"));
+        assert!(visible.contains("Rainfall reached six millimeters overnight"));
+        assert_eq!(
+            visible
+                .matches("Rainfall reached six millimeters overnight")
+                .count(),
+            1
+        );
+        let progress = reading.anchor().unwrap();
+        assert_eq!(progress.chapter, "document.xhtml");
+        let band = reading
+            .probe
+            .foreign_band(reading.page)
+            .expect("the quiet page fits the note");
+        let (start, end) = {
+            let block = band
+                .layout
+                .note
+                .source
+                .blocks
+                .iter()
+                .find(|block| {
+                    band.layout.note.blocks.contains(&block.key) && block.text.contains("six")
+                })
+                .unwrap();
+            let offset = block.text.find("six").unwrap();
+            let anchor = |offset| Anchor {
+                book: band.layout.note.book,
+                chapter: band.layout.note.chapter.clone(),
+                revision: band.layout.note.source.revision,
+                block: block.key,
+                offset,
+                illustration: None,
+            };
+            (anchor(offset), anchor(offset + "six".len()))
+        };
+        let selected = band.layout.note_select_range(&start, &end).unwrap();
+        let rect = reading.highlight_rects(&selected)[0];
+        let hit = (rect.y.max(0)..rect.y + rect.height)
+            .find_map(|y| {
+                (rect.x.max(0)..rect.x + rect.width).find_map(|x| {
+                    reading
+                        .word_at(x as f32 + 0.5, y as f32 + 0.5)
+                        .filter(|word| word.text == "six")
+                        .map(|word| (x as f32 + 0.5, y as f32 + 0.5, word))
+                })
+            })
+            .expect("the note's painted word must be selectable");
+        assert_eq!(hit.2, selected);
+        assert_eq!(
+            reading.probe.word_at(reading.page, hit.0, hit.1),
+            Some(selected.clone())
+        );
+        assert_eq!(reading.rendered_quote(&start, &end).unwrap(), selected);
+        assert_eq!(
+            reading.probe.selection_rects(reading.page, &selected),
+            reading.highlight_rects(&selected)
+        );
+        let (label, href, rects) = band
+            .layout
+            .note_links()
+            .into_iter()
+            .find(|(label, _, _)| label == "Return to dispatch")
+            .unwrap();
+        assert_eq!(label, "Return to dispatch");
+        let link_rect = rects[0];
+        let link_hit = (link_rect.y + band.y_offset() as i32
+            ..link_rect.y + band.y_offset() as i32 + link_rect.height)
+            .find_map(|y| {
+                (link_rect.x..link_rect.x + link_rect.width).find_map(|x| {
+                    let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+                    (reading.link_context_at(x, y)
+                        == Some((band.layout.note.chapter.as_str(), href)))
+                    .then_some((x, y))
+                })
+            })
+            .expect("the note backlink must be hittable");
+        let target = reading.link_at(link_hit.0, link_hit.1).unwrap();
+        assert_eq!(target.path, "document.xhtml");
+        assert_eq!(target.fragment.as_deref(), Some("dispatch"));
+        let (_, reference) = reading.note_reference_at(link_hit.0, link_hit.1).unwrap();
+        assert_eq!(reference.text, "Return to dispatch");
+        assert_eq!(reference.start.chapter, band.layout.note.chapter);
+        let host_start = reading.probe.matches("quiet").pop().unwrap();
+        let mut host_end = host_start.clone();
+        host_end.offset += "quiet".len();
+        let host = reading.probe.select_range(&host_start, &host_end).unwrap();
+        assert!(reading.extend_saved_quote(&host, &selected).is_err());
+        assert!(reading.extend_saved_quote(&selected, &host).is_err());
+        assert_eq!(reading.anchor(), Some(progress));
+        let margin_y = (reading.probe.settings.top_margin() + band.y_offset()) as f32 + 1.0;
+        assert!(reading.word_at(1.0, margin_y).is_none());
+        assert!(reading.link_at(1.0, margin_y).is_none());
     }
 
     #[test]

@@ -112,6 +112,7 @@ enum Content {
         fonts: Option<kf8::fonts::FontSource>,
         fb2_note_sections: BTreeMap<String, loose::Fb2NoteKind>,
         incomplete_fb3_notes: BTreeSet<String>,
+        complete_fb3_notes: BTreeMap<String, String>,
     },
     Chm(Box<Chm>),
 }
@@ -202,7 +203,7 @@ impl Book {
         Self::open_snapshot(bytes)
     }
 
-    fn from_archive(mut archive: Archive) -> Result<Self> {
+    pub(crate) fn from_archive(mut archive: Archive) -> Result<Self> {
         // Some reader-compatible publications compress this marker or write another member
         // first. Its identity and the following OCF/OPF checks identify the publication.
         let marker = read_entry(&mut archive, "mimetype", 99)?;
@@ -640,6 +641,7 @@ impl Book {
                 resources: document.resources,
                 fb2_note_sections: document.fb2_note_sections,
                 incomplete_fb3_notes: BTreeSet::new(),
+                complete_fb3_notes: BTreeMap::new(),
                 fonts: None,
             },
         }
@@ -666,12 +668,14 @@ impl Book {
         let Content::Loose {
             xhtml,
             incomplete_fb3_notes,
+            complete_fb3_notes,
             ..
         } = &mut book.content
         else {
             unreachable!()
         };
         *incomplete_fb3_notes = imported.incomplete_note_ids;
+        *complete_fb3_notes = imported.complete_notes;
         for (href, body) in imported.rest {
             let label = book
                 .toc
@@ -826,6 +830,7 @@ impl Book {
                 resources: publication.resources,
                 fb2_note_sections: Default::default(),
                 incomplete_fb3_notes: BTreeSet::new(),
+                complete_fb3_notes: BTreeMap::new(),
                 fonts: (!publication.font_records.is_empty()).then_some(kf8::fonts::FontSource {
                     input: font_input,
                     records: publication.font_records,
@@ -881,6 +886,17 @@ impl Book {
                 incomplete_fb3_notes,
                 ..
             } => Some(incomplete_fb3_notes),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn complete_fb3_notes(&self) -> Option<&BTreeMap<String, String>> {
+        match &self.content {
+            Content::Loose {
+                format: loose::Format::Fb3,
+                complete_fb3_notes,
+                ..
+            } => Some(complete_fb3_notes),
             _ => None,
         }
     }

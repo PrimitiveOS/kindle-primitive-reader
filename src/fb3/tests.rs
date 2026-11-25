@@ -1,6 +1,7 @@
 use super::*;
 use crate::library::DocumentFormat;
 use crate::{Engine, Probe, Settings};
+use std::fmt::Write as _;
 use std::io::{Cursor, Write};
 use std::path::Path;
 
@@ -60,6 +61,131 @@ fn fb3_large_books_keep_contents_and_local_note_links_across_section_groups() {
     assert!(closing.contains("href=\"document.xhtml#harbor\""));
     assert!(!closing.contains("Hidden test string"));
     assert_eq!(converted.toc[1].destination.as_ref().unwrap().path, *second);
+    assert_eq!(converted.complete_notes.get("note"), Some(second));
+}
+
+#[test]
+fn fb3_complete_note_manifest_keeps_cross_part_destinations_and_existing_xhtml() {
+    let filler = "<p>Measured water and a visible lighthouse.</p>".repeat(10_000);
+    let xml = format!(
+        "<fb3-body xmlns=\"{FB3_BODY_NS}\"><section id=\"origin\"><p>See the <note href=\"report-note\">report note</note>.</p>{filler}</section><notes><notebody id=\"report-note\"><p>The tide was calm. <a href=\"origin\">Return</a>.</p></notebody></notes></fb3-body>"
+    );
+    let tree = parse_xml(&xml).unwrap();
+    let converted = body::convert(
+        tree.root_element(),
+        "",
+        None,
+        None,
+        &BTreeMap::new(),
+        |_| None,
+    )
+    .unwrap();
+    let (first_path, first) = &converted.chapters[0];
+    let note_path = converted.complete_notes.get("report-note").unwrap();
+    assert_ne!(note_path, first_path);
+    let (_, note_chapter) = converted
+        .chapters
+        .iter()
+        .find(|(path, _)| path == note_path)
+        .unwrap();
+    let link = format!("{note_path}#report-note");
+    assert!(first.contains(&format!("href=\"{link}\" epub:type=\"noteref\"")));
+    assert!(note_chapter.contains("<aside id=\"report-note\" epub:type=\"footnote\">"));
+    assert!(note_chapter.contains("href=\"document.xhtml#origin\""));
+    assert_eq!(converted.complete_notes.len(), 1);
+    assert!(converted.incomplete_note_ids.is_empty());
+    // No synthetic marker is added: the normal Source parser and its original
+    // chapter hash remain the authority for target anchors.
+    assert!(!note_chapter.contains("primitiveos-split"));
+    let source = crate::Source::parse(note_chapter).unwrap();
+    assert_eq!(source.revision, crate::revision(note_chapter));
+    assert!(source.fragment_owner("report-note").is_some());
+    let resolved = Book::resolve_link(first_path, &link).unwrap();
+    assert_eq!(&resolved.path, note_path);
+    assert_eq!(resolved.fragment.as_deref(), Some("report-note"));
+}
+
+#[test]
+fn fb3_complete_note_manifest_is_retained_by_the_package_importer() {
+    let original = std::fs::read(crate::test_fixture("harbor-continuation.fb3")).unwrap();
+    let imported = open(Cursor::new(&original), original.len() as u64, "Harbor").unwrap();
+    let note_chapter = imported.complete_notes.get("later-note").unwrap();
+    assert_eq!(note_chapter, "fb3-section-2.xhtml");
+    assert!(!imported.incomplete_note_ids.contains("later-note"));
+    assert!(
+        imported
+            .first
+            .xhtml
+            .contains("href=\"fb3-section-2.xhtml#later-note\"")
+    );
+    let (_, target) = imported
+        .rest
+        .iter()
+        .find(|(path, _)| path == note_chapter)
+        .unwrap();
+    let source = crate::Source::parse(target).unwrap();
+    let owner = source.fragment_owner("later-note").unwrap();
+    assert_eq!(source.elements[owner].tag, "aside");
+    assert_eq!(
+        source.elements[owner].type_attribute.as_deref(),
+        Some("footnote")
+    );
+    assert!(target.contains("The note records a calm sea"));
+    assert_eq!(
+        std::fs::read(crate::test_fixture("harbor-continuation.fb3")).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn fb3_complete_note_manifest_excludes_ambiguous_nested_and_discarded_roots() {
+    let xml = format!(
+        "<fb3-body xmlns=\"{FB3_BODY_NS}\"><section><p id=\"duplicate\">Duplicate anchor.</p></section><notes><notebody id=\"good\"><p>Good.</p></notebody><notebody id=\"duplicate\"><p>Ambiguous.</p></notebody><notebody id=\"outer\"><notes><notebody id=\"inner\"><p>Nested.</p></notebody></notes></notebody><notebody><p>Unidentified.</p></notebody></notes><script><notes><notebody id=\"discarded\"><p>Hidden.</p></notebody></notes></script></fb3-body>"
+    );
+    let tree = parse_xml(&xml).unwrap();
+    let converted = body::convert(
+        tree.root_element(),
+        "",
+        None,
+        None,
+        &BTreeMap::new(),
+        |_| None,
+    )
+    .unwrap();
+    assert_eq!(
+        converted.complete_notes,
+        BTreeMap::from([("good".to_owned(), crate::loose::CHAPTER_PATH.to_owned())])
+    );
+}
+
+#[test]
+fn fb3_complete_note_manifest_is_bounded_without_dropping_source() {
+    let mut notes = String::new();
+    for number in 0..body::MAX_COMPLETE_NOTES + 8 {
+        write!(
+            notes,
+            "<notebody id=\"note-{number:03}\"><p>Recorded sounding {number:03}.</p></notebody>"
+        )
+        .unwrap();
+    }
+    let xml = format!("<fb3-body xmlns=\"{FB3_BODY_NS}\"><notes>{notes}</notes></fb3-body>");
+    let tree = parse_xml(&xml).unwrap();
+    let converted = body::convert(
+        tree.root_element(),
+        "",
+        None,
+        None,
+        &BTreeMap::new(),
+        |_| None,
+    )
+    .unwrap();
+    assert_eq!(converted.complete_notes.len(), body::MAX_COMPLETE_NOTES);
+    assert!(converted.complete_notes.contains_key("note-000"));
+    assert!(converted.complete_notes.contains_key("note-511"));
+    assert!(!converted.complete_notes.contains_key("note-512"));
+    let body = &converted.chapters[0].1;
+    assert!(body.contains("id=\"note-519\""));
+    assert!(body.contains("Recorded sounding 519."));
 }
 
 #[test]
@@ -88,6 +214,7 @@ fn fb3_split_note_stays_linked_and_is_not_copied_incompletely() {
         converted.incomplete_note_ids,
         BTreeSet::from(["long-note".to_owned()])
     );
+    assert!(!converted.complete_notes.contains_key("long-note"));
     let (path, first) = &converted.chapters[0];
     assert_eq!(path, crate::loose::CHAPTER_PATH);
     assert!(first.contains("href=\"#long-note\" epub:type=\"noteref\""));

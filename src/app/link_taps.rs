@@ -322,8 +322,8 @@ impl Reader {
         let internal_only = self.controls.ignore_external_link_taps;
         if !internal_only
             && let Some(link) = reading
-                .link_href_at(x, y)
-                .and_then(|href| ReflowLink::resolve(&reading.probe.chapter, href))
+                .link_context_at(x, y)
+                .and_then(|(chapter, href)| ReflowLink::resolve(chapter, href))
         {
             return Some((link, x, y));
         }
@@ -400,6 +400,17 @@ impl Reader {
                 }
             }
         }
+        if let Some(band) = reading.probe.foreign_band(reading.page) {
+            for (label, href, _) in band.layout.note_links() {
+                if let Some(target) = ReflowLink::resolve(&band.layout.note.chapter, href)
+                    && !links
+                        .iter()
+                        .any(|(existing, link)| existing == &label && link == &target)
+                {
+                    links.push((label, target));
+                }
+            }
+        }
         links
             .into_iter()
             .map(|(label, target)| match target {
@@ -422,7 +433,12 @@ fn nearest_reflow_link(
     let probe = &reading.probe;
     let mut nearest = None;
     let mut distance = radius * radius;
-    for part in reading.visible_parts() {
+    let inside_foreign = probe.foreign_band_at(reading.page, x, y).is_some();
+    for part in reading
+        .visible_parts()
+        .into_iter()
+        .filter(|_| !inside_foreign)
+    {
         let local_x = x - part.x as f32;
         let local_y = y - part.y as f32;
         let content_y = local_y - probe.settings.top_margin() as f32 + part.range.start;
@@ -499,6 +515,27 @@ fn nearest_reflow_link(
                     },
                     href,
                 );
+            }
+        }
+    }
+    if let Some(band) = probe.foreign_band(reading.page) {
+        for (_, href, rects) in band.layout.note_links() {
+            for rect in rects {
+                let x0 = rect.x as f32;
+                let y0 = rect.y as f32 + band.y_offset() as f32;
+                let x1 = (rect.x + rect.width) as f32;
+                let y1 = (rect.y + rect.height) as f32 + band.y_offset() as f32;
+                let dx = x - x.clamp(x0, x1);
+                let dy = y - y.clamp(y0, y1);
+                let candidate = dx * dx + dy * dy;
+                if candidate <= distance
+                    && (candidate < distance || nearest.is_none())
+                    && let Some(link) = ReflowLink::resolve(&band.layout.note.chapter, href)
+                    && (!internal_only || matches!(link, ReflowLink::Internal(_)))
+                {
+                    distance = candidate;
+                    nearest = Some((link, (x0 + x1) * 0.5, (y0 + y1) * 0.5));
+                }
             }
         }
     }

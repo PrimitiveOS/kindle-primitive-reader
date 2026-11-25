@@ -61,6 +61,31 @@ fn screenshot(app: &Reader, case: &str, fonts: &[std::path::PathBuf], palettes: 
 }
 
 #[test]
+fn foreign_note_popup_reference_uses_its_canonical_chapter() {
+    let path = crate::test_fixture("harbor-continuation.fb3");
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let host = Probe::open(&path, Engine::Parley, &fonts, Settings::default(), 0).unwrap();
+    let target = Probe::open(&path, Engine::Parley, &fonts, Settings::default(), 1).unwrap();
+    let start = target.matches("Return to the boat").pop().unwrap();
+    let mut end = start.clone();
+    end.offset += "Return to the boat".len();
+    let selected = target.select_range(&start, &end).unwrap();
+    assert_eq!(reference_chapter(&host, 0, Some(&selected)), Some(1));
+    assert_eq!(reference_chapter(&host, 0, None), Some(0));
+
+    let mut invalid = selected.clone();
+    invalid.start.chapter = "missing.xhtml".into();
+    invalid.end.chapter = "missing.xhtml".into();
+    assert_eq!(reference_chapter(&host, 0, Some(&invalid)), None);
+    let mut mixed = selected.clone();
+    mixed.end.chapter = "document.xhtml".into();
+    assert_eq!(reference_chapter(&host, 0, Some(&mixed)), None);
+    let mut wrong_book = selected;
+    wrong_book.start.book ^= 1;
+    assert_eq!(reference_chapter(&host, 0, Some(&wrong_book)), None);
+}
+
+#[test]
 fn landscape_footnote_stages_repaginated_note_and_returns_to_the_exact_reading_anchor() {
     use crate::app::{ReadingOrientation, reading_viewport_stage::draw_test_candidate};
     use primitive_app::viewport::{LogicalTurn, ViewportDecision, ViewportRequest};

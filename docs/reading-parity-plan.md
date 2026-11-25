@@ -55,16 +55,18 @@ controls are typography and style tweaks. The audited SDL fullscreen row
 belongs to the host window and is unavailable in KOReader’s Kindle menu.
 [Control matrix](koreader-sdl-reference-controls.json)
 
-The current Mac comparison covers FB3 in-page notes, embedded WOFF 1 fonts,
-and asynchronous quote preparation for deep EPUB jumps. The replays verify
-links, selections, saved positions and bounded fallback. FB3 notes spanning
-converted parts remain in their original link flow. Eligible local EPUB ZIPs
+The current Mac comparison covers bounded cross-part FB3 notes and asynchronous
+quote preparation for larger EPUBs. The replays verify links, selections,
+saved positions and bounded fallback. A single complete text-only foreign
+note can appear on a blank reference page. Notes spanning parts and more
+complex layouts remain in their original link flow. Eligible local EPUB ZIPs
 prepare the exact quote prefix asynchronously and preserve the current anchor
-when repainting. Larger archives and prefixes beyond the worker budgets retain
-the foreground fallback. WOFF 2, cross-part FB3 note bands, generated block
-boxes, richer joined tables, additional initial layouts and more dictionaries
+when repainting. ZIPs above 8 MiB use bounded, storage-leased reads rather
+than a full archive copy. Archives and prefixes beyond the documented worker
+budgets retain the foreground fallback. WOFF 2, broader cross-part FB3 note
+bands, generated block boxes, richer joined tables, additional initial layouts and more dictionaries
 remain open. Foreground Kindle verification is pending.
-[FB3 reading](fb3-reading.md) · [WOFF 1 fonts](embedded-font-families.md#woff-1-publisher-fonts) · [Quote marks](quote-marks.md) ·
+[FB3 reading](fb3-reading.md) · [Cross-part notes](fb3-cross-part-notes.md) · [WOFF 1 fonts](embedded-font-families.md#woff-1-publisher-fonts) · [Quote marks](quote-marks.md) ·
 [Joined note comparison](in-page-footnotes.md#generated-text-in-flattened-notes)
 
 The [statistics reset comparison](reading-statistics.md#reset-statistics) updates

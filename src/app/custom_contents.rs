@@ -211,14 +211,22 @@ impl Reader {
     pub(super) fn edit_selected_contents_chapter(&mut self) -> Result<()> {
         if let (Some(active), Some(selection)) = (&self.active, &self.selection) {
             let anchor = selection.start.clone();
-            let page = active
-                .reading
+            let reading = &active.reading;
+            let chapter = reading
                 .probe
-                .page_for(&anchor)
+                .chapter_index(&anchor.chapter)
                 .ok_or("This selection is unavailable")?;
+            let page = if chapter == reading.chapter {
+                reading.probe.page_for(&anchor)
+            } else {
+                // A displayed in-page note may belong to a different chapter.
+                // Resolve its original page through the ordinary storage lease.
+                reading.config.chapter(chapter)?.page_for(&anchor)
+            }
+            .ok_or("This selection is unavailable")?;
             self.edit_custom(
                 ReadingPosition {
-                    chapter: active.reading.chapter,
+                    chapter,
                     page,
                     anchor: Some(anchor),
                 },
@@ -406,7 +414,7 @@ impl Reader {
 mod tests {
     use super::*;
     use crate::app::overview_bookmarks::{PageAction, tap_page_action};
-    use crate::app::tests::{Fixture, capture_test_screen};
+    use crate::app::tests::{Fixture, capture_test_screen, tap_contents_item};
 
     fn open_document(fixture: &Fixture) -> (Reader, PathBuf, Vec<u8>) {
         let path = fixture.root.join("Survey sheets.pdf");
@@ -442,6 +450,89 @@ mod tests {
             .find(|(key, _)| key.key == primitive_ui::Key::Go)
             .unwrap();
         assert_eq!(reader.input(tap(go)), Change::Partial);
+    }
+
+    #[test]
+    fn foreign_note_selection_creates_a_canonical_contents_destination() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Quiet.fb3");
+        fs::copy(crate::test_fixture("cross-note-quiet.fb3"), &path).unwrap();
+        let original = fs::read(&path).unwrap();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut reader = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        reader.open_path(&path).unwrap();
+        reader.show(Screen::StyleTweaks);
+        tap_contents_item(&mut reader, "In-page FB3 footnotes");
+        tap_contents_item(&mut reader, "On for this book");
+        reader.show(Screen::Book);
+
+        let (selection, chapter, page, original_position) = {
+            let reading = &reader.active.as_ref().unwrap().reading;
+            let band = reading
+                .probe
+                .foreign_band(reading.page)
+                .expect("quiet page note");
+            let block = band
+                .layout
+                .note
+                .source
+                .blocks
+                .iter()
+                .find(|block| {
+                    band.layout.note.blocks.contains(&block.key) && block.text.contains("six")
+                })
+                .unwrap();
+            let offset = block.text.find("six").unwrap();
+            let anchor = |offset| crate::Anchor {
+                book: band.layout.note.book,
+                chapter: band.layout.note.chapter.clone(),
+                revision: band.layout.note.source.revision,
+                block: block.key,
+                offset,
+                illustration: None,
+            };
+            let start = anchor(offset);
+            let selection = band
+                .layout
+                .note_select_range(&start, &anchor(offset + 3))
+                .unwrap();
+            let chapter = reading.probe.chapter_index(&start.chapter).unwrap();
+            let page = reading
+                .config
+                .chapter(chapter)
+                .unwrap()
+                .page_for(&start)
+                .unwrap();
+            (selection, chapter, page, position(reading))
+        };
+        let mut unavailable = selection.clone();
+        unavailable.start.chapter = "missing.xhtml".into();
+        reader.selection = Some(unavailable);
+        assert!(reader.edit_selected_contents_chapter().is_err());
+        assert_eq!(reader.current_position(), Some(original_position.clone()));
+        let mut wrong_book = selection.clone();
+        wrong_book.start.book ^= 1;
+        reader.selection = Some(wrong_book);
+        assert!(reader.edit_selected_contents_chapter().is_err());
+        assert_eq!(reader.current_position(), Some(original_position.clone()));
+
+        reader.selection = Some(selection.clone());
+        reader.edit_selected_contents_chapter().unwrap();
+        let draft = reader.chapter_draft.as_ref().unwrap();
+        assert_eq!(draft.position.chapter, chapter);
+        assert_eq!(draft.position.page, page);
+        assert_eq!(draft.position.anchor.as_ref(), Some(&selection.start));
+        reader.finish_custom(false).unwrap();
+        let saved = &reader.custom_entry(0).unwrap().position;
+        assert_eq!(saved.chapter, chapter);
+        assert_eq!(saved.page, page);
+        assert_eq!(saved.anchor.as_ref(), Some(&selection.start));
+        assert_eq!(reader.current_position(), Some(original_position));
+        reader.custom_action(CustomAction::Open(0)).unwrap();
+        let reading = &reader.active.as_ref().unwrap().reading;
+        assert_eq!(reading.chapter, chapter);
+        assert_eq!(reading.anchor(), Some(selection.start));
+        assert_eq!(fs::read(path).unwrap(), original);
     }
 
     #[test]

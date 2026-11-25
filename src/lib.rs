@@ -24,6 +24,8 @@ mod embedded_font_usage;
 pub mod epub;
 pub mod epub_cfi;
 mod epub_font;
+#[cfg(feature = "kindle")]
+mod epub_leased;
 mod epub_members;
 mod epub_xml;
 mod epub_zip;
@@ -1133,6 +1135,8 @@ chapter_probe! {
     lines: Vec<Line>,
     pages: Pagination,
     in_page_notes: Option<Vec<footnotes::in_page::Page>>,
+    #[cfg(feature = "kindle")]
+    foreign_note_band: Option<footnotes::cross_part::Band>,
 }
 
 impl Probe {
@@ -1650,7 +1654,7 @@ impl Probe {
                 check_cancelled,
             );
         }
-        Ok(Self {
+        let mut probe = Self {
             title,
             author,
             #[cfg(feature = "kindle")]
@@ -1696,8 +1700,63 @@ impl Probe {
             lines,
             pages,
             in_page_notes,
+            #[cfg(feature = "kindle")]
+            foreign_note_band: None,
             renderer,
-        })
+        };
+        #[cfg(feature = "kindle")]
+        if complete
+            && engine == Engine::Parley
+            && !spine_rtl
+            && user_styles.has_in_page_fb2_notes()
+            && let Some(book) = opened.as_mut()
+        {
+            // A failed or unsupported cross-part copy always leaves the
+            // original host page and link unchanged.
+            let _ = probe.try_foreign_note_band(book, user_styles, user_rules, &load_fonts);
+        }
+        Ok(probe)
+    }
+
+    #[cfg(feature = "kindle")]
+    fn try_foreign_note_band(
+        &mut self,
+        book: &mut Book,
+        styles: &user_styles::Snapshot,
+        hyphenation: &user_hyphenation::Rules,
+        load_fonts: &impl Fn() -> Result<FontContext>,
+    ) -> Option<()> {
+        if self.in_page_notes.is_some() || self.is_vertical() || self.spine_rtl {
+            return None;
+        }
+        let mut plan = footnotes::cross_part::prepare_for_settings(
+            book,
+            &self.chapter,
+            &self.source,
+            self.settings,
+        )?;
+        // The first stage has exactly one note and one reference. Repeated or
+        // competing references retain their existing navigation until a
+        // source-aware multi-band composer is available.
+        if plan.notes.len() != 1 || plan.links.len() != 1 {
+            return None;
+        }
+        let link = plan.links.pop()?;
+        let note = plan.notes.pop()?;
+        let start = self.anchor(link.host_block, link.bytes.start);
+        let end = self.anchor(link.host_block, link.bytes.end);
+        let selection = self.select_range(&start, &end)?;
+        if self.source_presentation(&selection.start) != Some(SourcePresentation::Normal) {
+            return None;
+        }
+        let page = self.page_for(&selection.start)?;
+        if self.selection_rects(page, &selection).is_empty() {
+            return None;
+        }
+        let foreign = note.layout(book, load_fonts().ok()?, self.settings, styles, hyphenation)?;
+        let host = self.capture_range(self.pages.range(page)?).ok()?;
+        self.foreign_note_band = footnotes::cross_part::Band::new(page, foreign, &host);
+        self.foreign_note_band.as_ref().map(|_| ())
     }
 
     pub fn page_count(&self) -> usize {
@@ -1757,6 +1816,24 @@ impl Probe {
                 .contains(&local_y)
                 .then_some((source, local_y))
         })
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn foreign_band(&self, page: usize) -> Option<&footnotes::cross_part::Band> {
+        self.foreign_note_band
+            .as_ref()
+            .filter(|band| band.page == page)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn foreign_band_at(
+        &self,
+        page: usize,
+        x: f32,
+        y: f32,
+    ) -> Option<&footnotes::cross_part::Band> {
+        self.foreign_band(page)
+            .filter(|band| band.contains(page, x, y))
     }
 
     #[cfg(feature = "kindle")]
@@ -1911,6 +1988,11 @@ impl Probe {
     }
 
     pub fn link_at(&self, page: usize, x: f32, y: f32) -> Option<Destination> {
+        #[cfg(feature = "kindle")]
+        if let Some(band) = self.foreign_band_at(page, x, y) {
+            let (base, href) = band.link_at(page, x, y)?;
+            return Book::resolve_link(base, href).ok();
+        }
         let (range, y) = self.page_target(page, y)?;
         self.link_in(range, x, y)
     }
@@ -1954,17 +2036,28 @@ impl Probe {
     }
 
     pub fn links_on_page(&self, page: usize) -> Vec<(String, Destination)> {
-        if self.in_page_notes.is_none() {
-            return self
-                .pages
+        let mut links = if self.in_page_notes.is_none() {
+            self.pages
                 .range(page)
                 .map(|bounds| self.links_in(bounds))
-                .unwrap_or_default();
-        }
-        let mut links = Vec::new();
-        for (bounds, _) in self.page_parts(page) {
-            for (label, target) in self.links_in(bounds) {
-                if !links.iter().any(|(_, previous)| previous == &target) {
+                .unwrap_or_default()
+        } else {
+            let mut links = Vec::new();
+            for (bounds, _) in self.page_parts(page) {
+                for (label, target) in self.links_in(bounds) {
+                    if !links.iter().any(|(_, previous)| previous == &target) {
+                        links.push((label, target));
+                    }
+                }
+            }
+            links
+        };
+        #[cfg(feature = "kindle")]
+        if let Some(band) = self.foreign_band(page) {
+            for (label, href, _) in band.layout.note_links() {
+                if let Ok(target) = Book::resolve_link(&band.layout.note.chapter, href)
+                    && !links.iter().any(|(_, previous)| previous == &target)
+                {
                     links.push((label, target));
                 }
             }
@@ -2511,7 +2604,17 @@ impl Probe {
             }
         }
         let range = self.pages.range(page).ok_or("That page is unavailable")?;
-        self.capture_range(range)
+        let mut pixels = self.capture_range(range)?;
+        #[cfg(feature = "kindle")]
+        if let Some(band) = self
+            .foreign_note_band
+            .as_mut()
+            .filter(|band| band.page == page)
+            && !band.paint(&mut pixels).unwrap_or(false)
+        {
+            self.foreign_note_band = None;
+        }
+        Ok(pixels)
     }
 
     pub(crate) fn capture_range(&mut self, range: Range<f32>) -> Result<Vec<u8>> {

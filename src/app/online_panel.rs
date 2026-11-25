@@ -1198,12 +1198,51 @@ fn draw_picture(canvas: &mut Canvas, slot: Rect, picture: &Picture) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::tests::{Fixture, tap_contents_item};
     use crate::test_fixture;
     use primitive_app::{App, frame};
     use serde_json::json;
     use std::fs;
     use std::process::Command;
     use std::time::Duration;
+
+    #[test]
+    fn translate_page_includes_the_visible_cross_part_fb3_note_once() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("Quiet.fb3");
+        fs::copy(test_fixture("cross-note-quiet.fb3"), &path).unwrap();
+        let original = fs::read(&path).unwrap();
+        let mut app = Reader::open(
+            &fixture.root,
+            &fixture.state,
+            vec![test_fixture("fonts/NotoSans-Regular.ttf")],
+        )
+        .unwrap();
+        app.open_path(&path).unwrap();
+        app.show(Screen::StyleTweaks);
+        tap_contents_item(&mut app, "In-page FB3 footnotes");
+        tap_contents_item(&mut app, "On for this book");
+        app.show(Screen::Book);
+        let reading = &app.active.as_ref().unwrap().reading;
+        assert!(reading.probe.foreign_band(reading.page).is_some());
+        let position = crate::app::position(reading);
+        let visible = reading.visible_text();
+        assert!(visible.contains("The quiet dispatch arrived"));
+        assert!(visible.contains("Rainfall reached six millimeters overnight"));
+        assert_eq!(
+            visible
+                .matches("Rainfall reached six millimeters overnight")
+                .count(),
+            1
+        );
+
+        // Preparing the panel is local and does not submit a network request.
+        app.prepare_online(false, true).unwrap();
+        assert_eq!(app.screen, Screen::OnlineLookup);
+        assert_eq!(app.online.as_ref().unwrap().request.text, visible.trim());
+        assert_eq!(app.current_position(), Some(position));
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
 
     #[test]
     fn romanization_setting_defaults_off_persists_and_is_used_by_google_requests() {

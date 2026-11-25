@@ -15,7 +15,9 @@ local narrow_ruby = arg[5] == "inline-ruby-narrow"
 local body_table = arg[5] == "body-table"
 local rtl_note = arg[5] == "rtl-note"
 local width, height, margin = narrow_ruby and 310 or 720, body_table and 520 or 480, 32
-local fb3_note = arg[5] == "fb3"
+local fb3_quiet = arg[5] == "fb3-cross-quiet"
+local fb3_cross = arg[5] == "fb3-cross" or fb3_quiet
+local fb3_note = arg[5] == "fb3" or fb3_cross
 local fb2 = arg[5] == "fb2" or fb3_note
 local classic = arg[5] == "classic"
 local wikipedia = arg[5] == "wikipedia" or arg[5] == "inline-root-wiki"
@@ -921,6 +923,15 @@ if fb3_note then
     local comments = assert(find_tweak(menu_items, "footnote-inpage_fb2_comments"))
     local epub = assert(find_tweak(menu_items, "footnote-inpage_epub"))
     local prose, note, backlink = "At dawn Mara checks the", "The spring tide peaks", "Return to soundings"
+    local destination, note_width_text, capture_prefix = "#morning", "midnight", "stock-fb3-note-"
+    if fb3_cross then
+        prose, note, backlink = "The early watch sets out", "The note records a calm sea", "Return to the boat"
+        destination, note_width_text, capture_prefix = "#opening", "calm sea", "stock-fb3-cross-note-"
+    end
+    if fb3_quiet then
+        prose, note, backlink = "The quiet dispatch arrived", "Rainfall reached six millimeters overnight", "Return to dispatch"
+        destination, note_width_text, capture_prefix = "#dispatch", "millimeters", "stock-fb3-cross-quiet-note-"
+    end
     local pointers = {}
     local function inspect(view, phrase)
         local page, y = position(view, phrase)
@@ -936,15 +947,15 @@ if fb3_note then
         local canonical = inspect(view, note)
         local link_page, _, link = inspect(view, backlink)
         assert(reference < canonical and link_page == canonical)
-        assert((capture(view, reference, "stock-fb3-note-" .. name) ~= nil) == band)
+        assert((capture(view, reference, capture_prefix .. name) ~= nil) == band)
         if name == "on" then
-            assert(not capture(view, canonical, "stock-fb3-note-original"))
+            assert(not capture(view, canonical, capture_prefix .. "original"))
         end
         view:gotoPage(canonical)
         local word = assert(view:getWordBoxesFromPositions(link.start, link["end"], true)[1])
         local href = view:getLinkFromPosition(word.x0 + 4, math.floor((word.y0 + word.y1) / 2))
-        assert(href == "#morning", href)
-        local note_width = width_in_canonical_note(view, "midnight")
+        assert(href == destination, href)
+        local note_width = width_in_canonical_note(view, note_width_text)
         view:close()
         return note_width, y
     end

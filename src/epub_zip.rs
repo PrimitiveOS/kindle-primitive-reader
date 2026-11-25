@@ -125,6 +125,22 @@ pub(crate) fn open(file: File, len: u64) -> Result<Archive> {
 pub(crate) fn open_snapshot(bytes: Arc<[u8]>) -> Result<Archive> {
     let len = bytes.len() as u64;
     let archive = open_input(Backing::Memory(Cursor::new(bytes)), len)?;
+    check_background_expansion(&archive)?;
+    Ok(archive)
+}
+
+#[cfg(feature = "kindle")]
+pub(crate) fn open_leased(input: crate::epub_leased::LeasedReader) -> Result<Archive> {
+    let len = input.len();
+    let stamp = input.stamp().clone();
+    let mut archive = open_input(Backing::Leased(input), len)?;
+    check_background_expansion(&archive)?;
+    archive.stamp = Some(stamp);
+    Ok(archive)
+}
+
+#[cfg(feature = "kindle")]
+fn check_background_expansion(archive: &Archive) -> Result<()> {
     if archive
         .zip
         .decompressed_size()
@@ -132,7 +148,7 @@ pub(crate) fn open_snapshot(bytes: Arc<[u8]>) -> Result<Archive> {
     {
         return Err("The EPUB expands beyond the background pagination limit".into());
     }
-    Ok(archive)
+    Ok(())
 }
 
 fn open_input(mut input: Backing, len: u64) -> Result<Archive> {
@@ -141,7 +157,8 @@ fn open_input(mut input: Backing, len: u64) -> Result<Archive> {
     }
     let dir = Directory::read(&mut input, len, true)?;
     #[cfg(feature = "kindle")]
-    if dir.start != dir.recorded_start && matches!(&input, Backing::Memory(_)) {
+    if dir.start != dir.recorded_start && matches!(&input, Backing::Memory(_) | Backing::Leased(_))
+    {
         return Err("The EPUB requires directory recovery".into());
     }
     let (entries, replacement, missing) = if dir.start != dir.recorded_start {
@@ -185,6 +202,8 @@ enum Backing {
     Disk(BufReader<File>),
     #[cfg(feature = "kindle")]
     Memory(Cursor<Arc<[u8]>>),
+    #[cfg(feature = "kindle")]
+    Leased(crate::epub_leased::LeasedReader),
 }
 
 impl Read for Backing {
@@ -193,6 +212,8 @@ impl Read for Backing {
             Self::Disk(file) => file.read(buffer),
             #[cfg(feature = "kindle")]
             Self::Memory(memory) => memory.read(buffer),
+            #[cfg(feature = "kindle")]
+            Self::Leased(reader) => reader.read(buffer),
         }
     }
 }
@@ -203,6 +224,8 @@ impl Seek for Backing {
             Self::Disk(file) => file.seek(from),
             #[cfg(feature = "kindle")]
             Self::Memory(memory) => memory.seek(from),
+            #[cfg(feature = "kindle")]
+            Self::Leased(reader) => reader.seek(from),
         }
     }
 }

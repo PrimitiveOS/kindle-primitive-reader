@@ -42,12 +42,18 @@ advance the scan.
 A cold jump beyond this budget uses default quote depth for that page.
 For a local EPUB ZIP, Reader then prepares the exact prefix in the background
 and repaints the current passage when it can preserve its anchor. Preparation
-begins after the first frame and uses a verified snapshot of at most 8 MiB.
-It permits at most 512 preceding spine entries and 16 MiB of decoded preceding
-XHTML; repeated references count each time. A five-second deadline is checked
-between entries, so an in-progress chapter can finish after that deadline.
-Linked stylesheets are read only within their existing per-sheet and remaining
-CSS budgets. Reader checks the file identity,
+begins after the first frame. Archives up to 8 MiB use a verified in-memory
+snapshot. Larger archives, up to Reader's 128 MiB archive limit, use
+storage-leased reads of at most 64 KiB and retain no open file handle between
+reads. Both paths reject archives whose declared total expanded size exceeds
+64 MiB or cannot be determined. The leased path also caps compressed input at
+32 MiB and counts at most 65,536 read and seek operations.
+
+Preparation permits at most 512 preceding spine entries and 16 MiB of decoded
+preceding XHTML; repeated references count each time. A five-second deadline
+is checked between entries and on leased reads, so an in-progress parse can
+finish after that deadline. Linked stylesheets are read only within their
+existing per-sheet and remaining CSS budgets. Reader checks the file identity,
 edition, active chapter and effective style before accepting the result.
 Repaint waits while a selection, modal, scroll gesture or page turn is active.
 Sleep, USB export, book changes and layout changes cancel stale work. On USB
@@ -56,10 +62,10 @@ return, Reader retries only if the original file identity still matches.
 If the archive or prefix exceeds these limits, or a preceding item cannot be
 read or parsed, the current page keeps the bounded foreground result. Reader
 does not repeatedly retry the same failed preparation; a changed reading
-marker or a lifecycle reset can request it again. Extracted EPUB folders
-also keep the foreground path.
-Larger archives need a bounded, storage-leased member reader for exact
-background preparation. [Quote worker](../src/session/quote_prefixes/worker.rs) ·
+marker or a lifecycle reset can request it again. Archives above these limits,
+recovery-requiring ZIPs and extracted EPUB folders keep the foreground path.
+[Quote worker](../src/session/quote_prefixes/worker.rs) ·
+[Leased ZIP reads](../src/epub_leased.rs) ·
 [Repaint and lifecycle](../src/app/quote_repair.rs)
 
 Whole-book preparation and background page counting reuse quote state

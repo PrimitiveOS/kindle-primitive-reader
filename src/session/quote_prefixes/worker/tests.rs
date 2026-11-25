@@ -1,5 +1,6 @@
 use super::*;
 use crate::{Engine, Probe, user_hyphenation};
+use std::fs::File;
 use std::io::{Cursor, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -64,7 +65,10 @@ fn quote_worker_exact_prefix_matches_snapshot_and_preserves_source() {
     let fixture = Fixture::copy();
     let before = std::fs::read(&fixture.0).unwrap();
     let (request, cache) = context(&fixture.0);
-    let prepared = request.clone().run(&AtomicBool::new(false)).unwrap();
+    let prepared = request
+        .clone()
+        .run(&Arc::new(AtomicBool::new(false)))
+        .unwrap();
     assert!(prepared.install(&request, &cache).unwrap());
     assert!(cache.need().is_some());
 
@@ -93,6 +97,62 @@ fn quote_worker_exact_prefix_matches_snapshot_and_preserves_source() {
     );
     assert_eq!(actual.capture(0).unwrap(), expected.capture(0).unwrap());
     assert_eq!(std::fs::read(&fixture.0).unwrap(), before);
+}
+
+#[test]
+fn quote_worker_large_epub_uses_leased_reads_and_keeps_the_same_anchor() {
+    let original = Fixture::copy();
+    let padded = Fixture::copy();
+    let bytes = std::fs::read(&original.0).unwrap();
+    let mut input = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut output = zip::ZipWriter::new(File::create(&padded.0).unwrap());
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index).unwrap();
+        output.start_file(entry.name(), options).unwrap();
+        std::io::copy(&mut entry, &mut output).unwrap();
+    }
+    output.start_file("unrelated-image.bin", options).unwrap();
+    let chunk = [42_u8; 64 * 1024];
+    for _ in 0..144 {
+        output.write_all(&chunk).unwrap();
+    }
+    output.finish().unwrap();
+    let before = std::fs::read(&padded.0).unwrap();
+    assert!(before.len() as u64 > ARCHIVE_LIMIT);
+    let (request, cache) = context(&padded.0);
+    let prepared = request
+        .clone()
+        .run(&Arc::new(AtomicBool::new(false)))
+        .unwrap();
+    assert!(prepared.install(&request, &cache).unwrap());
+    let mut foreground = Book::open(&padded.0).unwrap();
+    let stamp = cache.prepare(&padded.0, &mut foreground).unwrap().unwrap();
+    let mut opened = Some(foreground);
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut actual = Probe::layout_opened_book(
+        &mut opened,
+        Engine::Parley,
+        request.settings,
+        request.chapter,
+        None,
+        &user_hyphenation::Rules::default(),
+        &request.styles,
+        || crate::font_context(&fonts),
+    )
+    .unwrap();
+    cache
+        .save(&padded.0, opened.as_mut().unwrap(), stamp)
+        .unwrap();
+    let anchor = actual.matches("Quoted chapter 75").remove(0);
+    let mut expected = probe(
+        Book::open_snapshot(before.clone().into()).unwrap(),
+        &request,
+    );
+    assert_eq!(actual.page_for(&anchor), expected.page_for(&anchor));
+    assert_eq!(actual.capture(0).unwrap(), expected.capture(0).unwrap());
+    assert_eq!(std::fs::read(&padded.0).unwrap(), before);
 }
 
 #[test]
@@ -132,11 +192,17 @@ fn quote_worker_rejects_stale_epoch_target_profile_and_edition() {
         },
     ];
     for current in changed {
-        let prepared = original.clone().run(&AtomicBool::new(false)).unwrap();
+        let prepared = original
+            .clone()
+            .run(&Arc::new(AtomicBool::new(false)))
+            .unwrap();
         assert!(!prepared.install(&current, &cache).unwrap());
         assert!(cache.need().is_some());
     }
-    let prepared = original.clone().run(&AtomicBool::new(false)).unwrap();
+    let prepared = original
+        .clone()
+        .run(&Arc::new(AtomicBool::new(false)))
+        .unwrap();
     cache.clear();
     assert!(!prepared.install(&original, &cache).unwrap());
 }
@@ -145,8 +211,16 @@ fn quote_worker_rejects_stale_epoch_target_profile_and_edition() {
 fn quote_worker_cancels_and_rechecks_replaced_file_before_install() {
     let fixture = Fixture::copy();
     let (request, cache) = context(&fixture.0);
-    assert!(request.clone().run(&AtomicBool::new(true)).is_err());
-    let prepared = request.clone().run(&AtomicBool::new(false)).unwrap();
+    assert!(
+        request
+            .clone()
+            .run(&Arc::new(AtomicBool::new(true)))
+            .is_err()
+    );
+    let prepared = request
+        .clone()
+        .run(&Arc::new(AtomicBool::new(false)))
+        .unwrap();
     let metadata = std::fs::metadata(&fixture.0).unwrap();
     let modified = metadata.modified().unwrap();
     let bytes = std::fs::read(&fixture.0).unwrap();
@@ -161,17 +235,17 @@ fn quote_worker_cancels_and_rechecks_replaced_file_before_install() {
 }
 
 #[test]
-fn quote_worker_rejects_oversized_snapshot_before_reading_it() {
+fn quote_worker_rejects_oversized_archive_before_reading_it() {
     let fixture = Fixture::copy();
     let (mut request, _) = context(&fixture.0);
     std::fs::OpenOptions::new()
         .write(true)
         .open(&fixture.0)
         .unwrap()
-        .set_len(ARCHIVE_LIMIT + 1)
+        .set_len(MAX_ARCHIVE + 1)
         .unwrap();
     request.stamp = FileStamp::read(&fixture.0).unwrap();
-    assert!(request.run(&AtomicBool::new(false)).is_err());
+    assert!(request.run(&Arc::new(AtomicBool::new(false))).is_err());
 }
 
 #[test]

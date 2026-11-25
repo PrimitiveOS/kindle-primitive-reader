@@ -2,6 +2,7 @@
 //! The note gets a separate short-lived layout; saved book anchors stay in the original chapter.
 use roxmltree::{Document, Node, ParsingOptions};
 
+pub(crate) mod cross_part;
 pub(crate) mod font_size;
 pub(crate) mod in_page;
 mod layout_roots;

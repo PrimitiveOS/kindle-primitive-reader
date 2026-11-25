@@ -72,6 +72,54 @@ fn open_preferences(app: &mut Reader) {
 }
 
 #[test]
+fn cross_part_note_link_taps_and_listing_use_the_foreign_base_chapter() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("Quiet.fb3");
+    std::fs::copy(crate::test_fixture("cross-note-quiet.fb3"), &path).unwrap();
+    let mut app = Reader::open(&fixture.root, &fixture.state, test_fonts()).unwrap();
+    app.open_path(&path).unwrap();
+    app.show(Screen::StyleTweaks);
+    tap_contents_item(&mut app, "In-page FB3 footnotes");
+    tap_contents_item(&mut app, "On for this book");
+    app.show(Screen::Book);
+    let reading = &app.active.as_ref().unwrap().reading;
+    let band = reading
+        .probe
+        .foreign_band(reading.page)
+        .expect("the note must fit on the quiet page");
+    let (_, href, rects) = band
+        .layout
+        .note_links()
+        .into_iter()
+        .find(|(label, _, _)| label == "Return to dispatch")
+        .unwrap();
+    let rect = rects[0];
+    let point = (rect.y + band.y_offset() as i32..rect.y + band.y_offset() as i32 + rect.height)
+        .find_map(|y| {
+            (rect.x..rect.x + rect.width).find_map(|x| {
+                let (x, y) = (x as f32 + 0.5, y as f32 + 0.5);
+                (reading.link_context_at(x, y) == Some((band.layout.note.chapter.as_str(), href)))
+                    .then_some((x, y))
+            })
+        })
+        .expect("foreign backlink must have a touch point");
+    let expected = Destination {
+        path: "document.xhtml".into(),
+        fragment: Some("dispatch".into()),
+    };
+    assert!(
+        matches!(app.reflow_tap_link(point.0, point.1), Some((ReflowLink::Internal(ref target), _, _)) if target == &expected)
+    );
+    assert!(
+        matches!(nearest_reflow_link(reading, point.0, point.1, 0.0, true), Some((ReflowLink::Internal(ref target), _, _)) if target == &expected)
+    );
+    assert!(app.page_link_items().iter().any(|item| {
+        item.title == "Return to dispatch"
+            && matches!(&item.action, Action::Jump(target) if target == &expected)
+    }));
+}
+
+#[test]
 fn enlarged_link_taps_follow_external_preference_and_keep_zero_radius_internal_hits() {
     let fixture = Fixture::new();
     write_book(&fixture.book);

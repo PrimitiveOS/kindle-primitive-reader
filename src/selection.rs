@@ -37,6 +37,13 @@ impl Probe {
         selection: &TextSelection,
         words: usize,
     ) -> Option<(String, String)> {
+        #[cfg(feature = "kindle")]
+        if let Some(band) = &self.foreign_note_band
+            && band.layout.note_contains_anchor(&selection.start)
+            && band.layout.note_contains_anchor(&selection.end)
+        {
+            return band.layout.note_word_context(selection, words);
+        }
         let spans = self.selection_spans(&selection.start, &selection.end)?;
         let mut before = String::new();
         for (index, block) in self
@@ -88,6 +95,13 @@ impl Probe {
     /// at punctuation, inline block boundaries and 20 Unicode scalar values.
     /// The returned endpoint is an actual source anchor, never a lookup form.
     pub(crate) fn dictionary_scan(&self, selection: &TextSelection) -> Option<TextSelection> {
+        #[cfg(feature = "kindle")]
+        if let Some(band) = &self.foreign_note_band
+            && band.layout.note_contains_anchor(&selection.start)
+            && band.layout.note_contains_anchor(&selection.end)
+        {
+            return band.layout.note_dictionary_scan(selection);
+        }
         let spans = self.selection_spans(&selection.start, &selection.end)?;
         if spans.first != spans.last {
             return None;
@@ -121,6 +135,11 @@ impl Probe {
 
     /// Select the Unicode word directly under a page coordinate.
     pub fn word_at(&self, page: usize, x: f32, y: f32) -> Option<TextSelection> {
+        #[cfg(feature = "kindle")]
+        if let Some(band) = self.foreign_band_at(page, x, y) {
+            let (x, y) = band.coordinates(page, x, y)?;
+            return band.layout.note_word_at(x, y);
+        }
         let (range, y) = self.page_target(page, y)?;
         self.word_in(range, x, y)
     }
@@ -145,6 +164,11 @@ impl Probe {
 
     /// Find the caret nearest the point within a visible paragraph.
     pub fn text_position_at(&self, page: usize, x: f32, y: f32) -> Option<Anchor> {
+        #[cfg(feature = "kindle")]
+        if let Some(band) = self.foreign_band_at(page, x, y) {
+            let (x, y) = band.coordinates(page, x, y)?;
+            return band.layout.note_caret_at(x, y);
+        }
         let (range, y) = self.page_target(page, y)?;
         if let Renderer::Vertical(renderer) = &self.renderer {
             let (key, offset) = renderer.caret_at(range, x, y)?;
@@ -195,6 +219,13 @@ impl Probe {
     /// Select an anchored range across adjacent blocks and pages of the loaded
     /// chapter. The caller may supply the endpoints in either direction.
     pub fn select_range(&self, start: &Anchor, end: &Anchor) -> Option<TextSelection> {
+        #[cfg(feature = "kindle")]
+        if let Some(band) = &self.foreign_note_band
+            && band.layout.note_contains_anchor(start)
+            && band.layout.note_contains_anchor(end)
+        {
+            return band.layout.note_select_range(start, end);
+        }
         self.select_quote(start, end, false)
     }
 
@@ -205,6 +236,13 @@ impl Probe {
         start: &Anchor,
         end: &Anchor,
     ) -> Option<TextSelection> {
+        #[cfg(feature = "kindle")]
+        if let Some(band) = &self.foreign_note_band
+            && band.layout.note_contains_anchor(start)
+            && band.layout.note_contains_anchor(end)
+        {
+            return band.layout.note_select_range(start, end);
+        }
         self.select_quote(start, end, true)
     }
 
@@ -285,7 +323,8 @@ impl Probe {
     /// Return the portions of a selection visible on this page. Geometry is
     /// derived anew from source anchors after font, page, or viewport changes.
     pub fn selection_rects(&self, page: usize, selection: &TextSelection) -> Vec<HighlightRect> {
-        self.page_parts(page)
+        let mut rects: Vec<_> = self
+            .page_parts(page)
             .flat_map(|(range, y)| {
                 self.selection_rects_in(range, selection)
                     .into_iter()
@@ -294,7 +333,17 @@ impl Probe {
                         rect
                     })
             })
-            .collect()
+            .collect();
+        #[cfg(feature = "kindle")]
+        if let Some(band) = self.foreign_band(page) {
+            rects.extend(band.layout.note_selection_rects(selection).into_iter().map(
+                |mut rect| {
+                    rect.y += band.y_offset() as i32;
+                    rect
+                },
+            ));
+        }
+        rects
     }
 
     pub(crate) fn selection_rects_in(
@@ -470,6 +519,393 @@ impl Probe {
             return None;
         }
         let ((first, first_byte), (last, last_byte)) = if a < b { (a, b) } else { (b, a) };
+        Some(Spans {
+            first,
+            last,
+            first_byte,
+            last_byte,
+        })
+    }
+}
+
+#[cfg(feature = "kindle")]
+impl crate::footnotes::cross_part::Layout {
+    pub(crate) fn note_word_context(
+        &self,
+        selection: &TextSelection,
+        words: usize,
+    ) -> Option<(String, String)> {
+        let spans = self.note_spans(&selection.start, &selection.end)?;
+        let mut before = String::new();
+        for (index, block) in self
+            .note
+            .source
+            .blocks
+            .iter()
+            .enumerate()
+            .take(spans.first + 1)
+            .rev()
+        {
+            if !self.note.blocks.contains(&block.key) {
+                break;
+            }
+            let view = self.flow.view(&self.note.source, block).ok()?;
+            let end = if index == spans.first {
+                view.project_nearest(spans.first_byte, SourceAffinity::Before)?
+            } else {
+                view.text().len()
+            };
+            let text = view.text().get(..end)?;
+            before = bounded_context(
+                &format!("{} {before}", bounded_context(text, words, true)),
+                words,
+                true,
+            );
+            if word_ranges(&before).count() >= words || before.chars().count() == 512 {
+                break;
+            }
+        }
+        let mut after = String::new();
+        for (index, block) in self.note.source.blocks.iter().enumerate().skip(spans.last) {
+            if !self.note.blocks.contains(&block.key) {
+                break;
+            }
+            let view = self.flow.view(&self.note.source, block).ok()?;
+            let start = if index == spans.last {
+                view.project_nearest(spans.last_byte, SourceAffinity::After)?
+            } else {
+                0
+            };
+            let text = view.text().get(start..)?;
+            after = bounded_context(
+                &format!("{after} {}", bounded_context(text, words, false)),
+                words,
+                false,
+            );
+            if word_ranges(&after).count() >= words || after.chars().count() == 512 {
+                break;
+            }
+        }
+        Some((before, after))
+    }
+
+    pub(crate) fn note_dictionary_scan(&self, selection: &TextSelection) -> Option<TextSelection> {
+        let spans = self.note_spans(&selection.start, &selection.end)?;
+        if spans.first != spans.last {
+            return None;
+        }
+        let block = &self.note.source.blocks[spans.first];
+        let view = self.flow.view(&self.note.source, block).ok()?;
+        if !view.source_is_present(spans.first_byte) {
+            return None;
+        }
+        let start = view.project_offset(spans.first_byte, SourceAffinity::After)?;
+        let tail = view.text().get(start..)?;
+        let length = tail
+            .char_indices()
+            .take(crate::dictionary::MAX_SCAN_CHARACTERS)
+            .take_while(|(_, c)| crate::dictionary::cjk_word_character(*c))
+            .map(|(i, c)| i + c.len_utf8())
+            .last()?;
+        let length = icu_segmenter::GraphemeClusterSegmenter::new()
+            .segment_str(tail)
+            .take_while(|end| *end <= length)
+            .last()
+            .filter(|end| *end > 0)?;
+        self.note_select_range(
+            &self.note_anchor(block.key, view.source_offset(start, SourceAffinity::After)?)?,
+            &self.note_anchor(
+                block.key,
+                view.source_offset(start + length, SourceAffinity::Before)?,
+            )?,
+        )
+    }
+
+    /// Select a word at a foreign note's local text-column x and document y.
+    /// Every returned endpoint is from the retained canonical foreign chapter.
+    pub(crate) fn note_word_at(&self, x: f32, y: f32) -> Option<TextSelection> {
+        self.note_point(x, y)?;
+        let hit = self.anchor_at(x, y)?;
+        let index = self.note_anchor_index(&hit)?;
+        let block = &self.note.source.blocks[index];
+        let view = self.flow.view(&self.note.source, block).ok()?;
+        if !view.source_is_present(hit.offset) {
+            return None;
+        }
+        let offset = view.project_offset(hit.offset, SourceAffinity::After)?;
+        let word = word_range(view.text(), offset)?;
+        let start = self.note_anchor(
+            block.key,
+            view.source_offset(word.start, SourceAffinity::After)?,
+        )?;
+        let end = self.note_anchor(
+            block.key,
+            view.source_offset(word.end, SourceAffinity::Before)?,
+        )?;
+        self.note_select_range(&start, &end)
+    }
+
+    /// Resolve a drag caret in local text-column and foreign-document coordinates.
+    pub(crate) fn note_caret_at(&self, x: f32, y: f32) -> Option<Anchor> {
+        self.note_point(x, y)?;
+        let range = 0.0..self.extent;
+        for paragraph in self.renderer.paragraphs_in(range) {
+            let local_y = y - paragraph.y;
+            let local_x = x - paragraph.x;
+            let child = paragraph.text_box_at(local_x, local_y);
+            let (layout, x, y) = child.map_or((&paragraph.layout, local_x, local_y), |child| {
+                (&child.layout, local_x - child.x, local_y - child.y)
+            });
+            if !paragraph.hit_columns().contains(&(local_x + paragraph.x))
+                || !(0.0..layout.height()).contains(&y)
+                || Cluster::from_point(layout, x, y).is_none()
+            {
+                continue;
+            }
+            let cursor = Cursor::from_point(layout, x, y);
+            let affinity = match cursor.affinity() {
+                Affinity::Upstream => SourceAffinity::Before,
+                Affinity::Downstream => SourceAffinity::After,
+            };
+            let visible = match child {
+                Some(child) => child.source.start + cursor.index(),
+                None => paragraph.visible_text_offset(cursor.index(), affinity)?,
+            };
+            let (key, offset) = paragraph.source_location(visible, affinity)?;
+            return self.note_anchor(key, offset);
+        }
+        None
+    }
+
+    /// Extract the visible wording between canonical foreign-note anchors.
+    /// Endpoints may be reversed, but must identify this exact book, chapter,
+    /// source revision, and retained note subtree.
+    pub(crate) fn note_select_range(&self, start: &Anchor, end: &Anchor) -> Option<TextSelection> {
+        let spans = self.note_spans(start, end)?;
+        let mut quote = String::new();
+        for (offset, block) in self.note.source.blocks[spans.first..=spans.last]
+            .iter()
+            .enumerate()
+        {
+            let index = spans.first + offset;
+            let Some(span) = spans.in_block(index, block.text.len()) else {
+                continue;
+            };
+            let view = self.flow.view(&self.note.source, block).ok()?;
+            let mut part = String::new();
+            for range in view.layout_spans(span)? {
+                part.push_str(view.text().get(range)?);
+            }
+            if part.is_empty() {
+                continue;
+            }
+            if !quote.is_empty() {
+                quote.push('\n');
+            }
+            quote.push_str(&part);
+        }
+        if quote.trim().is_empty() {
+            return None;
+        }
+        Some(TextSelection {
+            start: self.note_anchor(self.note.source.blocks[spans.first].key, spans.first_byte)?,
+            end: self.note_anchor(self.note.source.blocks[spans.last].key, spans.last_byte)?,
+            text: quote,
+        })
+    }
+
+    /// The complete visible note text, in canonical source order. The initial
+    /// cross-part layout only permits a complete note that fits in its band.
+    pub(crate) fn note_visible_text(&self) -> Option<String> {
+        let mut lines = self.lines.iter().filter(|line| !line.bytes.is_empty());
+        let first = lines.next()?;
+        let last = lines.last().unwrap_or(first);
+        let (first_key, first_span) = first.sources().next()?;
+        let (last_key, last_span) = last.sources().last()?;
+        let start = self.note_anchor(first_key, first_span.start)?;
+        let end = self.note_anchor(last_key, last_span.end)?;
+        self.note_select_range(&start, &end)
+            .map(|selection| selection.text)
+    }
+
+    /// Rectangles use the foreign note's own screen coordinates, including
+    /// its left/top margins. An overlay may add its y offset directly.
+    pub(crate) fn note_selection_rects(&self, selection: &TextSelection) -> Vec<HighlightRect> {
+        let Some(spans) = self.note_spans(&selection.start, &selection.end) else {
+            return Vec::new();
+        };
+        let page = 0.0..self.extent;
+        let mut rects = Vec::new();
+        for paragraph in self.renderer.paragraphs_in(page.clone()) {
+            // Joined notes are explicitly rejected by cross_part::Note::layout.
+            if paragraph.joined_note.is_some() {
+                return Vec::new();
+            }
+            let Some(index) = self.note_block_index(paragraph.key) else {
+                continue;
+            };
+            let block = &self.note.source.blocks[index];
+            let Some(span) = spans.in_block(index, block.text.len()) else {
+                continue;
+            };
+            let Ok(view) = self.flow.view(&self.note.source, block) else {
+                continue;
+            };
+            let Some(layout_spans) = view.layout_spans(span) else {
+                continue;
+            };
+            let columns = paragraph.paint_columns(self.settings);
+            let geometry = Geometry {
+                layout: &paragraph.layout,
+                x: paragraph.x,
+                y: paragraph.y,
+                placed_boxes: paragraph.inline_text.is_some() || !block.images.is_empty(),
+            };
+            for span in layout_spans {
+                geometry.append_flow(paragraph, span, &page, self.settings, &columns, &mut rects);
+            }
+        }
+        rects
+    }
+
+    /// Find a link under a foreign note point and retain its canonical source.
+    pub(crate) fn note_reference_at(
+        &self,
+        x: f32,
+        y: f32,
+    ) -> Option<(crate::footnotes::ReferenceContext, TextSelection)> {
+        self.note_point(x, y)?;
+        let hit = self.anchor_at(x, y)?;
+        let block = &self.note.source.blocks[self.note_anchor_index(&hit)?];
+        let link = block
+            .links
+            .iter()
+            .find(|link| link.bytes.contains(&hit.offset))?;
+        let linked = block.text.get(link.bytes.clone())?;
+        let label = linked.trim();
+        if label.is_empty() {
+            return None;
+        }
+        let first = link.bytes.start + linked.len() - linked.trim_start().len();
+        let selection = self.note_select_range(
+            &self.note_anchor(block.key, first)?,
+            &self.note_anchor(block.key, first.checked_add(label.len())?)?,
+        )?;
+        Some((
+            crate::footnotes::ReferenceContext {
+                kind: link.note_reference,
+                label: label.chars().take(64).collect(),
+                in_prose: block
+                    .text
+                    .get(..link.bytes.start)?
+                    .chars()
+                    .chain(block.text.get(link.bytes.end..)?.chars())
+                    .any(char::is_alphanumeric),
+                source_block: block.key,
+            },
+            selection,
+        ))
+    }
+
+    /// Bounded foreign link labels, hrefs and note-local screen rectangles.
+    pub(crate) fn note_links(&self) -> Vec<(String, &str, Vec<HighlightRect>)> {
+        const MAX_FOREIGN_LINKS: usize = 128;
+        let mut result = Vec::new();
+        for block in &self.note.source.blocks {
+            if !self.note.blocks.contains(&block.key) {
+                continue;
+            }
+            for link in &block.links {
+                if result.len() == MAX_FOREIGN_LINKS {
+                    return Vec::new();
+                }
+                let Some(label) = block.text.get(link.bytes.clone()).map(str::trim) else {
+                    return Vec::new();
+                };
+                if label.is_empty() {
+                    continue;
+                }
+                let (Some(start), Some(end)) = (
+                    self.note_anchor(block.key, link.bytes.start),
+                    self.note_anchor(block.key, link.bytes.end),
+                ) else {
+                    continue;
+                };
+                let Some(selection) = self.note_select_range(&start, &end) else {
+                    continue;
+                };
+                let rects = self.note_selection_rects(&selection);
+                if !rects.is_empty() {
+                    result.push((label.to_owned(), link.href.as_str(), rects));
+                }
+            }
+        }
+        result
+    }
+
+    pub(crate) fn note_contains_anchor(&self, anchor: &Anchor) -> bool {
+        self.note_anchor_index(anchor).is_some()
+    }
+
+    fn note_point(&self, x: f32, y: f32) -> Option<()> {
+        (x.is_finite()
+            && y.is_finite()
+            && (0.0..self.settings.text_width() as f32).contains(&x)
+            && (0.0..self.extent).contains(&y))
+        .then_some(())
+    }
+
+    fn note_block_index(&self, key: usize) -> Option<usize> {
+        self.note.blocks.contains(&key).then_some(())?;
+        self.note
+            .source
+            .blocks
+            .binary_search_by_key(&key, |block| block.key)
+            .ok()
+    }
+
+    fn note_anchor(&self, key: usize, offset: usize) -> Option<Anchor> {
+        let block = &self.note.source.blocks[self.note_block_index(key)?];
+        if offset > block.text.len() || !block.text.is_char_boundary(offset) {
+            return None;
+        }
+        Some(Anchor {
+            book: self.note.book,
+            chapter: self.note.chapter.clone(),
+            revision: self.note.source.revision,
+            block: key,
+            offset,
+            illustration: None,
+        })
+    }
+
+    fn note_anchor_index(&self, anchor: &Anchor) -> Option<usize> {
+        if anchor.book != self.note.book
+            || anchor.chapter != self.note.chapter
+            || anchor.revision != self.note.source.revision
+            || anchor.illustration.is_some()
+        {
+            return None;
+        }
+        let index = self.note_block_index(anchor.block)?;
+        let block = &self.note.source.blocks[index];
+        (anchor.offset <= block.text.len() && block.text.is_char_boundary(anchor.offset))
+            .then_some(index)
+    }
+
+    fn note_spans(&self, start: &Anchor, end: &Anchor) -> Option<Spans> {
+        let a = (self.note_anchor_index(start)?, start.offset);
+        let b = (self.note_anchor_index(end)?, end.offset);
+        if a == b {
+            return None;
+        }
+        let ((first, first_byte), (last, last_byte)) = if a < b { (a, b) } else { (b, a) };
+        if self.note.source.blocks[first..=last]
+            .iter()
+            .any(|block| !self.note.blocks.contains(&block.key))
+        {
+            return None;
+        }
         Some(Spans {
             first,
             last,
@@ -741,6 +1177,10 @@ fn page_rect(
         height: bottom - top,
     })
 }
+
+#[cfg(test)]
+#[path = "selection/cross_part_tests.rs"]
+mod cross_part_tests;
 
 #[cfg(test)]
 mod tests {

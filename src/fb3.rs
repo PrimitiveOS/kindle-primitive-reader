@@ -41,6 +41,9 @@ pub(crate) struct Imported {
     pub(crate) revision: u64,
     pub(crate) cover: Option<BookCover>,
     pub(crate) incomplete_note_ids: BTreeSet<String>,
+    /// At most 512 complete, unique note IDs and their existing chapter paths.
+    /// Consumers must still check the active reference and source root.
+    pub(crate) complete_notes: BTreeMap<String, String>,
 }
 
 pub(crate) fn open(input: impl Read + Seek, len: u64, fallback: &str) -> Result<Imported> {
@@ -146,6 +149,7 @@ pub(crate) fn open(input: impl Read + Seek, len: u64, fallback: &str) -> Result<
         revision: crate::revision(&body_xml),
         cover,
         incomplete_note_ids: output.incomplete_note_ids,
+        complete_notes: output.complete_notes,
     })
 }
 

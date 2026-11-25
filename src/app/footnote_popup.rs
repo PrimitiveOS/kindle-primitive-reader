@@ -18,6 +18,24 @@ const MAX_FONT_PIXELS: f32 = 192.0;
 // A second size for lines with large authored spacing in the short popup.
 const TALL_LINE_FONT_PIXELS: f32 = 140.0;
 
+fn reference_chapter(
+    probe: &Probe,
+    host: usize,
+    reference: Option<&TextSelection>,
+) -> Option<usize> {
+    match reference {
+        Some(selection)
+            if selection.start.book == probe.book
+                && selection.end.book == probe.book
+                && selection.start.chapter == selection.end.chapter =>
+        {
+            probe.chapter_index(&selection.start.chapter)
+        }
+        Some(_) => None,
+        None => Some(host),
+    }
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -250,6 +268,11 @@ impl Reader {
                     None,
                 )
             });
+        let Some(reference_chapter) =
+            reference_chapter(&reading.probe, reading.chapter, reference.as_ref())
+        else {
+            return false;
+        };
         if context.kind == Reference::Ordinary {
             return false;
         }
@@ -288,7 +311,7 @@ impl Reader {
                 &xhtml,
                 fragment,
                 &context,
-                reading.chapter.cmp(&index),
+                reference_chapter.cmp(&index),
                 toc_target,
                 self.controls.prefer_footnotes,
                 &roots,
