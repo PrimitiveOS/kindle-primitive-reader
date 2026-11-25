@@ -19,6 +19,16 @@ pub struct TextSelection {
     pub text: String,
 }
 
+/// A transient selection over a verified raw whitespace snapshot. It is not
+/// persisted or used by UI until raw-anchor state and layout are complete.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) struct RawTextSelection {
+    pub(crate) start: crate::source::raw_whitespace::RawAnchor,
+    pub(crate) end: crate::source::raw_whitespace::RawAnchor,
+    pub(crate) text: String,
+}
+
 /// A highlight rectangle in the upright page image, including its margins.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HighlightRect {
@@ -29,6 +39,43 @@ pub struct HighlightRect {
 }
 
 impl Probe {
+    /// Select exact raw content inside one verified source block. Reject
+    /// cross-block, stale or unrepresentable endpoints rather than snapping.
+    #[allow(dead_code)]
+    pub(crate) fn select_raw_whitespace(
+        &self,
+        first: &crate::source::raw_whitespace::RawAnchor,
+        second: &crate::source::raw_whitespace::RawAnchor,
+    ) -> Option<RawTextSelection> {
+        self.validate_raw_whitespace_anchor(first)?;
+        self.validate_raw_whitespace_anchor(second)?;
+        if first.canonical.block != second.canonical.block
+            || first.caret.raw_offset == second.caret.raw_offset
+        {
+            return None;
+        }
+        let (start, end) = if first.caret.raw_offset < second.caret.raw_offset {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        let index = self
+            .source
+            .blocks
+            .binary_search_by_key(&start.canonical.block, |block| block.key)
+            .ok()?;
+        let block = &self.source.blocks[index];
+        let bound = block.raw_whitespace.as_ref()?.bind(&block.text)?;
+        let text = bound
+            .raw()
+            .get(start.caret.raw_offset..end.caret.raw_offset)?;
+        Some(RawTextSelection {
+            start: start.clone(),
+            end: end.clone(),
+            text: text.to_owned(),
+        })
+    }
+
     /// Up to `words` source words on either side of a selected passage.
     /// It uses the selection anchors so repeated words elsewhere on the page
     /// cannot attach their context to a vocabulary entry.

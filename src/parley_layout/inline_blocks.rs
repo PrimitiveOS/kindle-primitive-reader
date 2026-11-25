@@ -18,6 +18,7 @@ use std::ops::Range;
 pub(super) mod generated;
 pub(super) mod initial;
 pub(super) mod note_table;
+pub(super) mod raw_whitespace;
 
 pub(super) const MAX_CHAPTER_BOXES: usize = 256;
 const MAX_PARAGRAPH_BOXES: usize = 16;

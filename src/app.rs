@@ -6499,12 +6499,12 @@ impl Reader {
             if self.fixed.is_none() {
                 return match self.jump_reflow_number() {
                     Ok(()) => Change::Partial,
-                    Err(error) => self.report(error),
+                    Err(error) => self.report(self.page_jump_message(&error.to_string())),
                 };
             }
             let target = self.editor.string();
             if let Err(error) = self.jump_fixed_number(target.trim()) {
-                return self.report(error);
+                return self.report(self.page_jump_message(&error.to_string()));
             }
         }
         Change::Partial

@@ -647,6 +647,10 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
     let mut chapter = None;
     let mut metadata = None;
     let mut resources = Vec::new();
+    // New optional resource types are indexed here, but only read if
+    // referenced and within the remaining budget. An unrelated large asset
+    // must not make a previously readable archive fail to open.
+    let mut supplemental = BTreeMap::new();
     let mut remaining = MAX_HTMLZ_RESOURCES as u64;
     for index in 0..archive.len() {
         let entry = archive.by_index_raw(index)?;
@@ -699,6 +703,19 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
                     .ok_or("The HTMLZ exceeds its total resource limit")?;
                 resources.push((index, path.to_owned(), limit));
             }
+            Some(
+                "bmp" | "pnm" | "pbm" | "pgm" | "ppm" | "pam" | "ttf" | "otf" | "woff" | "woff2",
+            ) => {
+                match supplemental.entry(path.to_owned()) {
+                    std::collections::btree_map::Entry::Vacant(slot) => {
+                        slot.insert(Some((index, entry.size())));
+                    }
+                    std::collections::btree_map::Entry::Occupied(mut slot) => {
+                        // Never pick one of several indistinguishable members.
+                        slot.insert(None);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -731,7 +748,89 @@ fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
         let bytes = read_htmlz_member(&mut archive, index, limit)?;
         document.resources.insert(name, bytes);
     }
+    let references = htmlz_supplemental_references(&document);
+    for path in references {
+        let Some(Some((index, size))) = supplemental.get(&path).copied() else {
+            continue;
+        };
+        if size > MAX_HTMLZ_IMAGE as u64 || size > remaining {
+            continue;
+        }
+        let Ok(bytes) = read_htmlz_member(&mut archive, index, MAX_HTMLZ_IMAGE) else {
+            continue;
+        };
+        remaining -= size;
+        document.resources.insert(path, bytes);
+    }
     Ok(document)
+}
+
+fn htmlz_supplemental_references(document: &Document) -> BTreeSet<String> {
+    const MAX_REFERENCES: usize = 64;
+    let mut references = BTreeSet::new();
+    if let Ok(xml) = Xml::parse_with_options(
+        &document.xhtml,
+        ParsingOptions {
+            nodes_limit: 80_000,
+            ..ParsingOptions::default()
+        },
+    ) {
+        for node in xml.descendants().filter(Node::is_element) {
+            if let Some(css) = node.attribute("style") {
+                css_resources::collect(
+                    css,
+                    &document.chapter_path,
+                    &mut references,
+                    MAX_REFERENCES,
+                );
+            }
+            let tag = node.tag_name().name();
+            if tag == "style" {
+                for text in node.children().filter_map(|child| child.text()) {
+                    css_resources::collect(
+                        text,
+                        &document.chapter_path,
+                        &mut references,
+                        MAX_REFERENCES,
+                    );
+                }
+            }
+            if references.len() >= MAX_REFERENCES {
+                break;
+            }
+            let value = if tag == "img" {
+                node.attribute("src")
+            } else if tag == "image"
+                && node.tag_name().namespace() == Some("http://www.w3.org/2000/svg")
+            {
+                node.attribute("href")
+                    .or_else(|| node.attribute(("http://www.w3.org/1999/xlink", "href")))
+            } else {
+                None
+            };
+            if let Some(value) = value
+                && let Ok(path) = Book::resolve(&document.chapter_path, value)
+                && local_html_resource_limit(&path).is_some()
+            {
+                references.insert(path);
+            }
+        }
+    }
+    // Existing HTMLZ handling has already loaded bounded CSS resources; scan
+    // them using their own archive paths so relative font/image URLs resolve.
+    for (path, bytes) in &document.resources {
+        if references.len() >= MAX_REFERENCES {
+            break;
+        }
+        if path
+            .rsplit_once('.')
+            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("css"))
+            && let Ok(css) = std::str::from_utf8(bytes)
+        {
+            css_resources::collect(css, path, &mut references, MAX_REFERENCES);
+        }
+    }
+    references
 }
 
 fn read_htmlz_member(

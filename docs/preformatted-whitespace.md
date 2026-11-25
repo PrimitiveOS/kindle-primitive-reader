@@ -35,13 +35,25 @@ fingerprints and the canonical/raw relationship. The envelope is not yet
 attached to persisted state or used by rendering. Internal Probe methods can
 now create and validate transient raw anchors against the currently open
 publication, or project an existing canonical anchor to a raw edge without
-rewriting the saved anchor. Before raw carets are
+rewriting the saved anchor. A transient selection consumer can validate two
+raw anchors in the same captured block and return their exact raw substring;
+cross-block and invalid selections fail closed. It is not connected to the UI
+or persistence. Before raw carets are
 persisted, the library and backup format must support version 2, preserve an
 atomic version-1 backup and reject unsupported raw data. The existing version-1
 loader rejects other library/backup versions, which prevents older builds
 from normally opening and rewriting a version-2 state. Startup also recovers
 any pending backup journal before this check, so the eventual migration must
 coordinate its transaction with that recovery and keep the independent backup.
+
+A preformatted horizontal layout plan can now build a separate raw text view
+for a verified simple block with an explicit `pre`, `pre-wrap` or
+`break-spaces` mode. Every canonical byte must map in order to an identical raw
+byte; additional whitespace is synthetic, and a collapsed space with no raw
+space makes the plan fail closed. Images, ruby, inline markup, generated text,
+directional controls and other projections are currently excluded. The plan is
+not activated: blank-line pagination, raw-aware selection geometry and durable
+raw anchor storage must be integrated before it can safely affect reading.
 
 This stage does **not** change rendering, copying, selection, source revisions,
 existing anchors or saved state. It does not yet implement preformatted EPUB

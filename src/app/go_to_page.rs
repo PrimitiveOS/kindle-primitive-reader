@@ -26,6 +26,58 @@ impl PageJump {
 }
 
 impl Reader {
+    // Only Reader-owned validation messages are translated; unknown errors and
+    // user-supplied page labels are returned verbatim.
+    pub(super) fn page_jump_message(&self, message: &str) -> String {
+        if self.controls.interface_language.is_english() {
+            return message.to_owned();
+        }
+        if let Some(rest) = message.strip_prefix("Enter a page from 1 to ") {
+            let (number, suffix) = rest
+                .split_once(' ')
+                .map_or((rest, ""), |(number, suffix)| (number, suffix));
+            if !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()) {
+                match suffix {
+                    "" => return format!("Nhập trang từ 1 đến {number}"),
+                    "or a unique printed label" => {
+                        return format!("Nhập trang từ 1 đến {number} hoặc nhãn trang in duy nhất");
+                    }
+                    _ => {}
+                }
+            }
+        }
+        match message {
+            "No open book" => "Chưa mở sách",
+            "No open document" => "Chưa mở tài liệu",
+            "Enter a valid chapter number" => "Nhập số chương hợp lệ",
+            "Enter a valid page number" => "Nhập số trang hợp lệ",
+            "Enter a page number, chapter:page, or a percentage" => {
+                "Nhập số trang, chapter:page hoặc tỷ lệ phần trăm"
+            }
+            "Enter a stable page number from the list" => "Nhập số trang ổn định từ danh sách",
+            "Enter a printed page label from the book" => "Nhập nhãn trang in từ sách",
+            "That printed page label occurs more than once" => {
+                "Nhãn trang in đó xuất hiện nhiều hơn một lần"
+            }
+            "Document page numbers are unavailable here. Enter chapter:page or a percentage." => {
+                "Không có số trang tài liệu ở đây. Nhập chapter:page hoặc tỷ lệ phần trăm."
+            }
+            "That relative page number is too large" => "Số trang tương đối đó quá lớn",
+            "This document has no pages" => "Tài liệu này không có trang",
+            "Enter [page] or [page]flow" => "Nhập [page] hoặc [page]flow",
+            "That page is outside the selected flow" => "Trang đó nằm ngoài luồng đã chọn",
+            "Counting document pages…" => "Đang đếm trang tài liệu…",
+            "The book layout changed. Submit again to retry." => {
+                "Bố cục sách đã thay đổi. Gửi lại để thử lại."
+            }
+            "Page count cancelled. Submit again to retry." => {
+                "Đã hủy đếm trang. Gửi lại để thử lại."
+            }
+            _ => message,
+        }
+        .to_owned()
+    }
+
     pub(super) fn draw_page_jump_context(&self, canvas: &mut Canvas) {
         let language = self.controls.interface_language;
         let bounds = self.navigation_layout().body(LIST_Y + 218, 145);
@@ -154,7 +206,7 @@ impl Reader {
                     book: active.id,
                     settings: reading.config.settings,
                 });
-                self.notice = Some("Counting document pages…".into());
+                self.notice = Some(self.page_jump_message("Counting document pages…"));
                 return Ok(());
             }
         }
@@ -189,25 +241,28 @@ impl Reader {
         }) else {
             self.screen_page_worker.cancel();
             self.screen_page_jump = None;
-            return Some(self.report("The book layout changed. Submit again to retry."));
+            return Some(self.report(
+                self.page_jump_message("The book layout changed. Submit again to retry."),
+            ));
         };
         if active.reading.whole_book_screen_pages().is_some() {
             self.screen_page_jump = None;
             return Some(match self.follow_screen_ordinal(pending.jump) {
                 Ok(()) => Change::Partial,
-                Err(error) => self.report(error),
+                Err(error) => self.report(self.page_jump_message(&error.to_string())),
             });
         }
         if !wants_background(&active.reading) {
             self.screen_page_jump = None;
-            return Some(self.report(unavailable()));
+            return Some(self.report(self.page_jump_message(&unavailable().to_string())));
         }
         None
     }
 
     pub(super) fn cancel_screen_page_jump(&mut self) {
         if self.screen_page_jump.take().is_some() {
-            self.notice = Some("Page count cancelled. Submit again to retry.".into());
+            self.notice =
+                Some(self.page_jump_message("Page count cancelled. Submit again to retry."));
         }
     }
 
