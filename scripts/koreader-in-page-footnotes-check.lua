@@ -152,6 +152,40 @@ local function width_in_canonical_note(view_, text)
     return boxes[#boxes].x1 - boxes[1].x0, boxes[1].x0
 end
 
+if arg[5] == "inline-list" then
+    controller:onReadSettings(Settings:wrap({}))
+    local option = assert(find_tweak(menu.style_tweaks.sub_item_table,
+        "inpage_footnote_all_inline"))
+    local function measure(name, same_line)
+        local view = open(assert(controller:getCssText()))
+        local reference, body_y = position(view, "The final ledger")
+        assert(capture(view, reference, "stock-note-inline-list-" .. name))
+        local original, intro_y = position(view, "Inventory number eight.")
+        local first, first_y = position(view, "North lantern.")
+        local second, second_y = position(view, "Spare wick")
+        assert(original == first and first == second and original > reference)
+        if same_line then
+            assert(intro_y == first_y and first_y == second_y)
+            local _, intro_x = width_in_canonical_note(view, "Inventory number eight.")
+            local _, first_x = width_in_canonical_note(view, "North lantern.")
+            local _, second_x = width_in_canonical_note(view, "Spare wick")
+            assert(intro_x < first_x and first_x < second_x)
+            assert(not capture(view, original, "stock-note-inline-list-original"))
+        else
+            assert(intro_y < first_y and first_y < second_y)
+        end
+        view:close()
+        return body_y
+    end
+    assert(not option.checked_func())
+    local before = measure("before", false)
+    option.callback()
+    assert(option.checked_func())
+    assert(measure("after", true) == before)
+    print("Pinned whole-note inline toggle flattens list items on the original note and its page copy")
+    return
+end
+
 if arg[5] == "inline-all" then
     controller:onReadSettings(Settings:wrap({}))
     local option = assert(find_tweak(menu.style_tweaks.sub_item_table,

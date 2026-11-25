@@ -856,14 +856,99 @@ mod tests {
     }
 
     #[test]
-    fn whole_note_inline_keeps_list_structure_and_disabled_notes_ordinary() {
+    fn whole_note_inline_flattens_text_list_items_and_preserves_backlinks() {
         use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
         let mut before = advanced_note_layout(13, &[EPUB_FOOTNOTES]);
-        let mut option = advanced_note_layout(13, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
-        let page = before
-            .page_for(&before.fragment("complex-start").unwrap())
+        let mut joined = advanced_note_layout(13, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        let reference = before.fragment("inventory-ref").unwrap();
+        let page = before.page_for(&reference).unwrap();
+        let intro = before.fragment("inventory-intro").unwrap();
+        let original = before.page_for(&intro).unwrap();
+        assert!(original > page);
+        assert_eq!(joined.page_for(&reference), Some(page));
+        assert_eq!(
+            phrase_rects(&before, page, "The final ledger"),
+            phrase_rects(&joined, page, "The final ledger")
+        );
+        assert_eq!(joined.coverage(), before.coverage());
+        assert!(
+            before.in_page_notes.as_ref().unwrap()[page]
+                .separator
+                .is_some()
+        );
+        assert!(
+            joined.in_page_notes.as_ref().unwrap()[page]
+                .separator
+                .is_some()
+        );
+        let first = joined.fragment("inventory-first").unwrap();
+        let second = joined.fragment("inventory-second").unwrap();
+        assert_ne!(first.block, second.block);
+        assert_eq!(joined.matches("Spare wick"), before.matches("Spare wick"));
+        for (id, anchor) in [("inventory-first", &first), ("inventory-second", &second)] {
+            assert_eq!(before.fragment(id).as_ref(), Some(anchor));
+            assert_eq!(joined.page_for(anchor), Some(original));
+        }
+        assert!(joined.lines.iter().any(|line| {
+            let sources: Vec<_> = line.sources().map(|(key, _)| key).collect();
+            [intro.block, first.block, second.block]
+                .iter()
+                .all(|key| sources.contains(key))
+        }));
+
+        let old_intro = phrase_rects(&before, page, "Inventory number eight.")[0];
+        let old_first = phrase_rects(&before, page, "North lantern.")[0];
+        let old_second = phrase_rects(&before, page, "Spare wick")[0];
+        assert!(old_intro.y < old_first.y && old_first.y < old_second.y);
+        for current in [page, original] {
+            let intro = phrase_rects(&joined, current, "Inventory number eight.")[0];
+            let first = phrase_rects(&joined, current, "North lantern.")[0];
+            let second = phrase_rects(&joined, current, "Spare wick")[0];
+            assert!(intro.y == first.y && first.y == second.y);
+            assert!(intro.x < first.x && first.x < second.x);
+            let x = (second.x + 6) as f32;
+            let y = (second.y + second.height / 2) as f32;
+            assert_eq!(joined.word_at(current, x, y).unwrap().text, "Spare");
+            assert_eq!(
+                joined.link_at(current, x, y).unwrap().fragment.as_deref(),
+                Some("inventory-ref")
+            );
+        }
+        let range = joined
+            .select_range(&first, &joined.anchor(second.block, "Spare wick.".len()))
             .unwrap();
+        assert_eq!(range.text, "North lantern.\nSpare wick.");
+        let selection = joined.selection_rects(page, &range);
+        assert!(selection.len() >= 2 && selection.iter().all(|rect| rect.y == selection[0].y));
+        capture(&mut before, page, "reader-note-inline-list-before.png");
+        capture(&mut joined, page, "reader-note-inline-list-after.png");
+        capture(
+            &mut joined,
+            original,
+            "reader-note-inline-list-original.png",
+        );
+    }
+
+    #[test]
+    fn whole_note_inline_keeps_nested_lists_and_disabled_notes_ordinary() {
+        use crate::user_styles::{EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT};
+        let mut before = advanced_note_layout(15, &[EPUB_FOOTNOTES]);
+        let mut option = advanced_note_layout(15, &[EPUB_FOOTNOTES, INLINE_ALL_FOOTNOTE_CONTENT]);
+        let page = before
+            .page_for(&before.fragment("nested-start").unwrap())
+            .unwrap();
+        assert!(
+            before.in_page_notes.as_ref().unwrap()[page]
+                .separator
+                .is_some()
+        );
         assert!(before.capture(page).unwrap() == option.capture(page).unwrap());
+        assert!(
+            option
+                .lines
+                .iter()
+                .all(|line| line.additional_sources.is_none())
+        );
 
         let ordinary = advanced_note_layout(12, &[]);
         let disabled = advanced_note_layout(12, &[INLINE_ALL_FOOTNOTE_CONTENT]);

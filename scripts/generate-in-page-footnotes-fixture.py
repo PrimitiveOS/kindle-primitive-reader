@@ -111,13 +111,22 @@ chapters = {
 <div><p id="inline-body">The signal lamp marked the inner ferry landing.</p></div>
 <p id="inline-return"><a href="#inline-ref" role="doc-backlink">Return to the chart</a>.</p>
 </aside>""",
-    "inline-complex": """<p id="complex-start">The final ledger includes the spare inventory<a href="#complex-note" epub:type="noteref"><sup>8</sup></a>.</p>
-<aside id="complex-note" epub:type="footnote">
-<p>Inventory number eight.</p><ul><li>North lantern.</li><li>Spare wick.</li></ul>
+    "inline-list": """<p id="list-start">The final ledger includes the spare inventory<a id="inventory-ref" href="#inventory-note" epub:type="noteref"><sup>8</sup></a>.</p>
+<p style="page-break-before:always">The remaining entries follow on another leaf.</p>
+<aside id="inventory-note" epub:type="footnote">
+<p id="inventory-intro">Inventory number eight.</p>
+<ul>
+  <li id="inventory-first">North lantern.</li>
+  <li id="inventory-second"><a href="#inventory-ref" role="doc-backlink">Spare wick</a>.</li>
+</ul>
 </aside>""",
     "inline-fallback": """<p id="fallback-start">A separate schedule records the lantern count<a href="#fallback-note" epub:type="noteref"><sup>9</sup></a>.</p>
 <table><tbody><tr><td>Item</td><td>Quantity</td></tr><tr><td>Lantern</td><td>2</td></tr></tbody></table>
 <aside id="fallback-note" epub:type="footnote"><p>[9]</p><p>The count excludes the ferry light.</p></aside>""",
+    "inline-nested": """<p id="nested-start">The entry lists the compartments<a href="#nested-note" epub:type="noteref"><sup>10</sup></a>.</p>
+<aside id="nested-note" epub:type="footnote">
+<p>Compartment details.</p><ul><li>Upper drawer.<ol><li>Spare keys.</li></ol></li><li>Lower drawer.</li></ul>
+</aside>""",
 }
 manifest = ''.join(f'<item id="{name}" href="{name}.xhtml" media-type="application/xhtml+xml"/>'
                    for name in chapters)

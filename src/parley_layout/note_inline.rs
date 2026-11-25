@@ -75,10 +75,13 @@ fn join(
     let mut runs = Vec::new();
     for block in &source.blocks[indices] {
         let style = &styles[block.element];
-        // These contents have layout semantics that cannot be represented by
-        // an inline text run. Preserve the complete original note in this case.
+        // A direct, single-block item becomes inline text without its generated
+        // list marker. Keep nested lists and multi-block items in ordinary flow.
+        let complex_list = block.list_item.is_some_and(|item| {
+            item.parent_group.is_some() || !item.first || item.element == element
+        });
         if block.table_cell.is_some()
-            || block.list_item.is_some()
+            || complex_list
             || !block.images.is_empty()
             || !block.ruby.is_empty()
             || style.preformatted_spaces

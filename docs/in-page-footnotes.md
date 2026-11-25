@@ -199,8 +199,10 @@ the original position after reopening, and unchanged EPUB bytes.
 ## Inline all footnote content
 
 Open **Style tweaks › More footnote options › Inline all footnote content**.
-The note number and simple paragraphs share the same text flow inside the
-note. This removes the extra line for a number stored in its own paragraph.
+The note number, simple paragraphs and single-level text list items share
+the same text flow inside the note. This removes the extra line for a
+number stored in its own paragraph. Generated markers disappear from
+flattened list items. Reader uses a space between adjacent source blocks.
 The page band and canonical note use the same layout. Tapping or selecting
 text on their shared lines resolves to the original block and byte offset.
 Selection spanning the two paragraphs keeps their original text and newline,
@@ -211,10 +213,11 @@ and backlinks keep their targets.
 [Reader after](screenshots/reader-note-inline-after.png) ·
 [Reader original note](screenshots/reader-note-inline-original.png)
 
-Formatting applies to supported horizontal in-page notes. Lists, tables,
-images, ruby, inline boxes, preformatted blocks, and authored page breaks
-inside a note keep their original layout. If the chapter cannot fit the
-joined notes, Reader retries the original layout. The publication stays unchanged.
+Formatting applies to supported horizontal in-page notes. Nested lists,
+multi-block list items, tables, images, ruby, inline boxes, preformatted
+blocks, and authored page breaks inside a note keep their original layout.
+If the chapter cannot fit the joined notes, Reader retries the original
+layout. The publication stays unchanged.
 Reader stores this option with the edition's existing style settings.
 
 The pinned native replay uses the actual KOReader style callback. On the
@@ -225,6 +228,19 @@ E Ink verification remains pending.
 [KOReader before](screenshots/stock-note-inline-before.png) ·
 [KOReader after](screenshots/stock-note-inline-after.png) ·
 [KOReader original note](screenshots/stock-note-inline-original.png)
+
+The pinned `inline-list` replay measures a paragraph and two list items at
+y=72, 112 and 152 in the original note. With the tweak on, all three start
+at y=72 and the generated bullets disappear. The ordinary body stays at
+y=32. The Reader simulator verifies shared lines in the reference band
+and the original, selection across list items, the canonical fragment IDs,
+and the backlink hit from the second item.
+[Reader list before](screenshots/reader-note-inline-list-before.png) ·
+[Reader list after](screenshots/reader-note-inline-list-after.png) ·
+[Reader original list](screenshots/reader-note-inline-list-original.png) ·
+[KOReader list before](screenshots/stock-note-inline-list-before.png) ·
+[KOReader list after](screenshots/stock-note-inline-list-after.png) ·
+[KOReader original list](screenshots/stock-note-inline-list-original.png)
 
 ## Replay on macOS
 
@@ -254,7 +270,7 @@ KO_HOME="$scratch/profile" KO_DYLD_PREFIX="$stock/build/staging" \
   "$reader/tests/fixtures/fonts/NotoSans-Regular.ttf" "$scratch/captures"
 ```
 
-Pass `cosmetic`, `wikipedia`, or `inline-all` as the fifth argument
+Pass `cosmetic`, `wikipedia`, `inline-all`, or `inline-list` as the fifth argument
 to select the corresponding advanced style replay.
 
 Run the combined note flow checks with the same stock runtime and scratch

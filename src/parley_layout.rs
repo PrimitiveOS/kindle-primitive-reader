@@ -903,11 +903,17 @@ impl ParleyChapter {
             } else {
                 (natural_column, natural_width)
             };
-            let gutter = gutter_for(block);
+            let gutter = if note_layout.is_some() {
+                0
+            } else {
+                gutter_for(block)
+            };
             let image_width = column_width - gutter;
             let marker = block
                 .list_item
-                .filter(|item| marker_hosts.get(&item.element) == Some(&block.key))
+                .filter(|item| {
+                    note_layout.is_none() && marker_hosts.get(&item.element) == Some(&block.key)
+                })
                 .and_then(|item| {
                     let style = &styles[item.element];
                     let size = style.font_pixels(settings);
