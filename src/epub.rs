@@ -796,6 +796,9 @@ impl Book {
                 if anchor.raw_caret.is_none() {
                     return history.migrate(anchor, end);
                 }
+                if history.is_current_raw_only(anchor) {
+                    return Ok(None);
+                }
                 // Do not translate a raw caret through a legacy split. If its
                 // canonical portion already belongs to the verified current
                 // section, retain the entire original anchor unchanged; page

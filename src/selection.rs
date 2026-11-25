@@ -783,13 +783,47 @@ impl Probe {
         let Renderer::Parley(renderer) = &self.renderer else {
             return None;
         };
-        for paragraph in renderer.paragraphs_in(point.page) {
+        for paragraph in renderer.paragraphs_in(point.page.clone()) {
             let y = point.y - paragraph.y;
             let x = point.x - paragraph.x;
             let child = paragraph.text_box_at(x, y);
             let (layout, x, y) = child.map_or((&paragraph.layout, x, y), |child| {
                 (&child.layout, x - child.x, y - child.y)
             });
+            // A virtual line containing only a hard break may have no glyph
+            // cluster. Its verified line endpoints remain exact selectable
+            // positions; do not guess when line hit regions overlap.
+            if child.is_none()
+                && paragraph.raw_binding.is_some()
+                && point.inside_columns
+                && paragraph.hit_columns().contains(&point.x)
+                && self
+                    .source
+                    .raw_only_blocks
+                    .binary_search_by_key(&paragraph.key, |block| block.key)
+                    .is_ok()
+                && Cluster::from_point_exact(layout, x, y).is_none()
+            {
+                let block = self.raw_source_block(paragraph.key)?;
+                if !paragraph.is_verified_raw(block) {
+                    return None;
+                }
+                let mut hits = self.lines.iter().filter(|line| {
+                    line.block == paragraph.key
+                        && line.raw_whitespace.is_some()
+                        && line.top <= point.y
+                        && point.y < line.bottom
+                        && line.bottom > point.page.start
+                        && line.top < point.page.end
+                });
+                if let Some(line) = hits.next() {
+                    if hits.next().is_some() {
+                        return None;
+                    }
+                    let end = point.x >= (paragraph.column.start + paragraph.column.end) * 0.5;
+                    return self.raw_line_anchor(line, end);
+                }
+            }
             if (point.inside_columns || paragraph.allows_margin_hits())
                 && paragraph.hit_columns().contains(&point.x)
                 && (0.0..layout.height()).contains(&y)

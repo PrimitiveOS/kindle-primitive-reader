@@ -104,6 +104,7 @@ pub(crate) mod reading_guides;
 mod reading_orientation;
 mod reading_viewport_stage;
 mod reflow_book_map_exit;
+mod reflow_book_map_history;
 mod reflow_book_map_marks;
 mod result_context;
 mod saved_highlight_popup;
@@ -4185,6 +4186,7 @@ impl Reader {
         };
         let reading = &active.reading;
         let counts = reflow_book_map_marks::collect(reading, state);
+        let history = reflow_book_map_history::collect(reading, &self.back, &self.forward);
         reading
             .probe
             .chapter_entries()
@@ -4193,13 +4195,26 @@ impl Reader {
             .map(|(index, chapter)| {
                 let count = counts.get(index).copied().unwrap_or_default();
                 Item::new(&chapter.label, Action::BookMapChapter(index)).detail({
-                    let detail = map_detail(
+                    let mut detail = map_detail(
                         index == reading.chapter,
                         count.bookmarks,
                         count.highlights,
                         count.notes,
                         self.controls.interface_language,
                     );
+                    if let Some(cue) = history.get(&index) {
+                        let language = self.controls.interface_language;
+                        if let Some(number) = cue.next {
+                            detail =
+                                format!("{} {number} · {detail}", language.book_map_text("Next"));
+                        }
+                        if let Some(number) = cue.previous {
+                            detail = format!(
+                                "{} {number} · {detail}",
+                                language.book_map_text("Previous")
+                            );
+                        }
+                    }
                     let detail = if self.ribbon_map_target()
                         == Some(page_overview::RibbonMapTarget::Chapter(index))
                     {

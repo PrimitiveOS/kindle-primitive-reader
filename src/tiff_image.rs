@@ -15,6 +15,7 @@ const MAX_PIXELS: u32 = 8 * 1024 * 1024;
 const MAX_BYTES: usize = crate::comic::MAX_IMAGE_BYTES as usize;
 const MAX_REVERSED_COMPRESSED_STRIP: usize = 4 * 1024 * 1024;
 const MAX_JPEG_COMPRESSED_STRIP: usize = 4 * 1024 * 1024;
+const MAX_JPEG_TABLES: usize = 256 * 1024;
 
 const SHORT: u16 = 3;
 const LONG: u16 = 4;
@@ -124,7 +125,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
         || !(fill_order == 1 || (bits < 8 && fill_order == 2))
         || !matches!(compression, 1 | 2 | 3 | 4 | 5 | 7 | 8 | 32946 | 32773)
         || (matches!(compression, 2 | 3 | 4) && (!matches!(photometric, 0 | 1) || samples != 1 || bits != 1 || predictor != 1))
-        || (compression == 7 && (photometric != 1 || samples != 1 || bits != 8 || predictor != 1 || [280, 281, 301, 318, 319, 340, 341, 342, 347, 513, 514, 34675].iter().any(|&tag| image.has_tag(tag))))
+        || (compression == 7 && (photometric != 1 || samples != 1 || bits != 8 || predictor != 1 || [280, 281, 301, 318, 319, 340, 341, 342, 513, 514, 34675].iter().any(|&tag| image.has_tag(tag))))
         || (compression == 3 && fax_options > 1)
         || (compression == 4 && fax_options != 0)
         || !matches!(orientation, 1..=8)
@@ -147,6 +148,14 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     }
     if bits == 16 && samples == 4 && u64::from(pixel_count) * 9 > 32 * 1024 * 1024 {
         return Err(TiffError::Limit);
+    }
+    let jpeg_tables = if compression == 7 {
+        image.bytes(347, MAX_JPEG_TABLES)?
+    } else {
+        None
+    };
+    if let Some(tables) = &jpeg_tables {
+        validate_jpeg_tables(tables.data)?;
     }
 
     // TIFF ColorMap stores all 16-bit red entries, then green, then blue.
@@ -182,6 +191,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
             .and_then(|values| values.external.as_ref()),
         formats.as_ref().and_then(|values| values.external.as_ref()),
         palette.as_ref().and_then(|values| values.external.as_ref()),
+        jpeg_tables
+            .as_ref()
+            .and_then(|value| value.external.as_ref()),
     ];
     let external: Vec<_> = occupied.iter().flatten().copied().collect();
     if external.iter().enumerate().any(|(index, first)| {
@@ -296,7 +308,12 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
                 }
                 Err(error) => return Err(error),
             }),
-            7 => Some(unpack_grayscale_jpeg(compressed, width, rows)?),
+            7 => Some(unpack_grayscale_jpeg(
+                compressed,
+                width,
+                rows,
+                jpeg_tables.as_ref().map(|tables| tables.data),
+            )?),
             8 | 32946 => Some(unpack_deflate(compressed, row_bytes, rows)?),
             _ => None,
         };
@@ -514,12 +531,78 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     GrayImage::from_raw(out_width, out_height, visual).ok_or(TiffError::Strips)
 }
 
-/// Decode a self-contained grayscale JPEG strip with matching TIFF dimensions.
-fn unpack_grayscale_jpeg(input: &[u8], width: u32, rows: usize) -> Result<Vec<u8>, TiffError> {
+/// Accept only a bounded JPEG tables datastream with no image or APP markers.
+fn validate_jpeg_tables(tables: &[u8]) -> Result<(), TiffError> {
+    if tables.len() < 4 || !tables.starts_with(&[0xff, 0xd8]) || !tables.ends_with(&[0xff, 0xd9]) {
+        return Err(TiffError::Strips);
+    }
+    let end = tables.len() - 2;
+    let mut position = 2usize;
+    let mut found_table = false;
+    while position < end {
+        if tables[position] != 0xff {
+            return Err(TiffError::Strips);
+        }
+        while position < end && tables[position] == 0xff {
+            position += 1;
+        }
+        let marker = *tables
+            .get(position)
+            .filter(|_| position < end)
+            .ok_or(TiffError::Strips)?;
+        position += 1;
+        if !matches!(marker, 0xc4 | 0xdb | 0xdd) {
+            return Err(TiffError::Unsupported);
+        }
+        found_table |= matches!(marker, 0xc4 | 0xdb);
+        let length =
+            u16::from_be_bytes(at::<2>(tables, position).ok_or(TiffError::Strips)?) as usize;
+        if length < 2 || (marker == 0xdd && length != 4) {
+            return Err(TiffError::Strips);
+        }
+        position = position
+            .checked_add(length)
+            .filter(|&next| next <= end)
+            .ok_or(TiffError::Strips)?;
+    }
+    if position != end || !found_table {
+        return Err(TiffError::Strips);
+    }
+    Ok(())
+}
+
+/// Decode a self-contained or safely reconstructed grayscale JPEG strip.
+fn unpack_grayscale_jpeg(
+    input: &[u8],
+    width: u32,
+    rows: usize,
+    tables: Option<&[u8]>,
+) -> Result<Vec<u8>, TiffError> {
     // The JPEG adapter copies its input before its own limits are applied.
     if input.len() > MAX_JPEG_COMPRESSED_STRIP {
         return Err(TiffError::Limit);
     }
+    let reconstructed;
+    let input = if let Some(tables) = tables {
+        if !input.starts_with(&[0xff, 0xd8]) || !input.ends_with(&[0xff, 0xd9]) {
+            return Err(TiffError::Strips);
+        }
+        let length = tables
+            .len()
+            .checked_sub(2)
+            .and_then(|size| size.checked_add(input.len().checked_sub(2)?))
+            .ok_or(TiffError::Limit)?;
+        if length > MAX_JPEG_COMPRESSED_STRIP {
+            return Err(TiffError::Limit);
+        }
+        let mut joined = Vec::with_capacity(length);
+        joined.extend_from_slice(&tables[..tables.len() - 2]);
+        joined.extend_from_slice(&input[2..]);
+        reconstructed = joined;
+        reconstructed.as_slice()
+    } else {
+        input
+    };
     let reader = crate::image_reader(input).map_err(|_| TiffError::Strips)?;
     if reader.format() != Some(image::ImageFormat::Jpeg) {
         return Err(TiffError::Strips);
@@ -924,6 +1007,37 @@ impl<'a> Directory<'a> {
             .map_or(default, |values| values.value(0)))
     }
 
+    fn bytes(&self, tag: u16, cap: usize) -> Result<Option<Blob<'a>>, TiffError> {
+        let entry = self
+            .entries
+            .binary_search_by_key(&tag, |entry| self.order.short([entry[0], entry[1]]));
+        let Ok(index) = entry else { return Ok(None) };
+        let entry = &self.entries[index];
+        let kind = self.order.short([entry[2], entry[3]]);
+        let length = self.order.long([entry[4], entry[5], entry[6], entry[7]]) as usize;
+        if !matches!(kind, 1 | 7) || length == 0 {
+            return Err(TiffError::Directory);
+        }
+        if length > cap {
+            return Err(TiffError::Limit);
+        }
+        let (data, external) = if length <= 4 {
+            (&entry[8..8 + length], None)
+        } else {
+            let start = self.order.long([entry[8], entry[9], entry[10], entry[11]]) as usize;
+            let end = start.checked_add(length).ok_or(TiffError::Directory)?;
+            let range = start..end;
+            if start < HEADER_BYTES || !start.is_multiple_of(2) || overlaps(&range, &self.range) {
+                return Err(TiffError::Directory);
+            }
+            (
+                self.bytes.get(range.clone()).ok_or(TiffError::Directory)?,
+                Some(range),
+            )
+        };
+        Ok(Some(Blob { data, external }))
+    }
+
     fn numbers(
         &self,
         tag: u16,
@@ -963,6 +1077,11 @@ impl<'a> Directory<'a> {
             external,
         }))
     }
+}
+
+struct Blob<'a> {
+    data: &'a [u8],
+    external: Option<Range<usize>>,
 }
 
 struct Numbers<'a> {

@@ -1108,7 +1108,6 @@ impl ParleyChapter {
         let mut floating_table = None;
         let virtual_allowed = RAW_ONLY_RENDER_ENABLED
             && RAW_LAYOUT_ENABLED
-            && book.is_reflowable_epub()
             && !settings.in_page_footnotes
             && source.table_cells.is_empty()
             && float_plan.is_none()
@@ -3465,6 +3464,37 @@ fn overlaps_entire_page(layout: &Layout<PaintBrush>, page_height: f32) -> bool {
     false
 }
 
+fn virtual_plain_geometry(
+    style: &Style,
+    width: u32,
+    settings: Settings,
+    allow_background: bool,
+) -> bool {
+    !style.flow.suppressed
+        && style.flow.painted
+        && style.float_side.is_none()
+        && style.clear == Default::default()
+        && style.padding == [crate::book_style::CssLength::default(); 2]
+        && style.vertical_padding == [crate::book_style::CssLength::default(); 2]
+        && style.vertical_margin == [crate::book_style::CssLength::default(); 2]
+        && style.horizontal_margin.iter().all(|margin| {
+            matches!(margin,
+            crate::book_style::BoxMargin::Length(length) if *length == Default::default())
+        })
+        && style.page_breaks == Default::default()
+        && style.borders.is_none()
+        && style.image_width.is_none()
+        && style.image_height.is_none()
+        && style.min_width.is_none()
+        && style.min_height.is_none()
+        && style.text_indent.pixels(width, settings.font_size) == 0.0
+        && !style.text_indent.hanging
+        && style.generated.is_none()
+        && style.first_letter.is_none()
+        && style.first_line.is_none()
+        && (allow_background || style.background.is_none())
+}
+
 /// Shape a whitespace-only preformatted candidate without adding it to the
 /// canonical block vector. Unsupported placement/style returns no projection.
 fn virtual_raw_paragraph(
@@ -3480,33 +3510,38 @@ fn virtual_raw_paragraph(
     width: u32,
 ) -> Option<(Paragraph, Vec<Line>, f32)> {
     let element = source.elements.get(block.element)?;
-    let parent = source.elements.get(element.parent?)?;
     let style = styles.get(block.element)?;
     if element.tag != "pre"
-        || parent.tag != "body"
-        || style.flow.suppressed
-        || !style.flow.painted
         || !y.is_finite()
         || width == 0
-        || style.float_side.is_some()
-        || style.clear != Default::default()
-        || style.padding != [crate::book_style::CssLength::default(); 2]
-        || style.vertical_padding != [crate::book_style::CssLength::default(); 2]
-        || style.vertical_margin != [crate::book_style::CssLength::default(); 2]
-        || style.horizontal_margin.iter().any(|margin| {
-            !matches!(margin,
-            crate::book_style::BoxMargin::Length(length) if *length == Default::default())
-        })
-        || style.page_breaks != Default::default()
-        || style.borders.is_some()
-        || style.image_width.is_some()
-        || style.image_height.is_some()
-        || style.min_width.is_some()
-        || style.min_height.is_some()
-        || style.text_indent.pixels(width, settings.font_size) != 0.0
-        || style.text_indent.hanging
+        || style.display != crate::book_style::flow::Display::Block
+        || style.writing_mode != crate::book_style::WritingMode::Horizontal
+        || !virtual_plain_geometry(style, width, settings, true)
     {
         return None;
+    }
+    // Only transparent, ordinary block ancestors can be flattened into the
+    // current column without changing canonical pagination or box geometry.
+    let mut parent = element.parent?;
+    for depth in 0..=32 {
+        let ancestor = source.elements.get(parent)?;
+        let ancestor_style = styles.get(parent)?;
+        if !matches!(
+            ancestor.tag.as_str(),
+            "body" | "div" | "section" | "article" | "main"
+        ) || !virtual_plain_geometry(ancestor_style, width, settings, false)
+            || (ancestor.tag != "body"
+                && ancestor_style.display != crate::book_style::flow::Display::Block)
+        {
+            return None;
+        }
+        if ancestor.tag == "body" {
+            break;
+        }
+        if depth == 32 {
+            return None;
+        }
+        parent = ancestor.parent?;
     }
     let view = flow.view(source, block).ok()?;
     let input = flow.layout_block(source, block).ok()?;

@@ -76,7 +76,15 @@ existing completeness guard refuses to publish an incomplete replacement.
 Whitespace-only `<pre>` blocks use a separate bounded source collection and
 virtual raw positions, without changing canonical block indices, existing
 anchors or navigation. Their separate budget is up to 1 MiB per chapter.
-The local implementation renders eligible top-level EPUB blocks, with raw page
-anchors, selection and search; blocks in other formats, tables, floating layouts,
-in-page notes or unsupported box styles retain the previous canonical fallback.
+The local implementation renders eligible reflow blocks under simple, transparent
+block containers, with raw page anchors, selection and search. Blocks in tables,
+floating layouts, in-page notes or unsupported box styles retain the previous
+canonical fallback. Current virtual
+positions in split ODT/text sections pass the current-section identity check;
+legacy raw positions that would require translation remain unsupported.
 This path remains untested.
+
+When a virtual whitespace-only line has no glyph cluster, a touch within a
+single verified line maps to its exact start or end according to the touched
+half of the column. Overlapping or unverifiable line regions are rejected.
+This interaction remains untested.

@@ -31,6 +31,7 @@ struct CurrentBlock {
 struct CurrentSection {
     revision: u64,
     blocks: BTreeMap<usize, CurrentBlock>,
+    raw_only: std::collections::BTreeSet<usize>,
 }
 
 pub(crate) struct History {
@@ -233,6 +234,11 @@ pub(crate) fn prepare(
         .iter()
         .zip(parsed)
         .map(|(part, source)| {
+            let raw_only = source
+                .raw_only_blocks
+                .iter()
+                .map(|block| block.key)
+                .collect();
             let blocks = source
                 .blocks
                 .into_iter()
@@ -251,6 +257,7 @@ pub(crate) fn prepare(
                 CurrentSection {
                     revision: source.revision,
                     blocks,
+                    raw_only,
                 },
             )
         })
@@ -273,6 +280,21 @@ pub(crate) fn prepare(
 impl History {
     pub(crate) fn continued_before(&self) -> &[bool] {
         &self.continued_before
+    }
+
+    /// Virtual raw-only blocks never existed in the legacy canonical map.
+    /// Accept only a current section/key; page opening verifies the raw hash.
+    pub(crate) fn is_current_raw_only(&self, anchor: &Anchor) -> bool {
+        anchor.raw_caret.is_some()
+            && anchor.book == self.book_revision
+            && anchor.offset == 0
+            && anchor.illustration.is_none()
+            && self
+                .current_sections
+                .get(&anchor.chapter)
+                .is_some_and(|section| {
+                    section.revision == anchor.revision && section.raw_only.contains(&anchor.block)
+                })
     }
 
     pub(crate) fn migrate(&self, anchor: &Anchor, end: bool) -> Result<Option<(usize, Anchor)>> {
