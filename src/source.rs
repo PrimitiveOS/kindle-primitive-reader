@@ -165,6 +165,9 @@ pub(crate) struct Element {
     pub inline_style: Option<String>,
     pub(crate) pseudo_attributes: Box<[(String, String)]>,
     pub(crate) quote_language: Option<Box<str>>,
+    /// Outer option records an explicit attribute, including invalid/empty tags.
+    pub(crate) hyphenation_language: Option<Option<crate::TypographyLocale>>,
+    pub(crate) resolved_hyphenation_language: Option<crate::TypographyLocale>,
     /// This element's own HTML direction hint, independent of inherited style.
     pub(crate) direction_hint: Option<BaseDirection>,
     pub(crate) table_hints: Option<crate::book_style::table_hints::TableHints>,
@@ -180,6 +183,7 @@ pub(crate) struct StyledText {
     pub bytes: Range<usize>,
     pub element: usize,
     pub language: Option<Language>,
+    pub(crate) hyphenation_language: Option<crate::TypographyLocale>,
     pub(crate) preserve_whitespace: bool,
 }
 
@@ -474,6 +478,36 @@ impl Source {
         }
         resolved
     }
+    /// Apply the selected typography locale without changing canonical text or
+    /// shaping language. Embedded invalid or empty tags explicitly clear it.
+    pub(crate) fn resolve_hyphenation_languages(
+        &mut self,
+        main: Option<crate::TypographyLocale>,
+        respect_embedded: bool,
+    ) {
+        let mut locales = Vec::with_capacity(self.elements.len());
+        for element in &self.elements {
+            let inherited = match element.parent {
+                Some(id) => locales.get(id).copied().flatten(),
+                None => main,
+            };
+            let locale = if respect_embedded {
+                element.hyphenation_language.unwrap_or(inherited)
+            } else {
+                main
+            };
+            locales.push(locale);
+        }
+        for (element, locale) in self.elements.iter_mut().zip(&locales) {
+            element.resolved_hyphenation_language = *locale;
+        }
+        for block in &mut self.blocks {
+            for run in &mut block.styled_text {
+                run.hyphenation_language = locales.get(run.element).copied().flatten();
+            }
+        }
+    }
+
     pub fn parse(xhtml: &str) -> Result<Self> {
         Self::parse_with_language(xhtml, None)
     }
@@ -743,6 +777,12 @@ impl Source {
                 quote_language: language_attribute(node)
                     .filter(|tag| !tag.is_empty() && tag.len() <= MAX_LANGUAGE_BYTES)
                     .map(Box::from),
+                hyphenation_language: language_attribute(node).map(|tag| {
+                    (tag.len() <= MAX_LANGUAGE_BYTES)
+                        .then(|| crate::TypographyLocale::parse(tag))
+                        .flatten()
+                }),
+                resolved_hyphenation_language: None,
                 direction_hint: node.attribute("dir").and_then(parse_direction),
                 table_hints: if selector_only {
                     None
@@ -1000,6 +1040,8 @@ impl Source {
                             bytes: start..text.len(),
                             element,
                             language: languages[element],
+                            hyphenation_language: languages[element]
+                                .map(crate::TypographyLocale::publication),
                             preserve_whitespace,
                         });
                     }
@@ -1194,7 +1236,7 @@ impl Source {
                     .map(|offset| node.range().start + offset)
             })
             .unwrap_or(body.range().start);
-        Ok(Self {
+        let mut source = Self {
             revision,
             original_input_sha256: None,
             legacy_revision,
@@ -1213,7 +1255,12 @@ impl Source {
             normalized_xhtml: None,
             ruby_exclusions,
             head_end,
-        })
+        };
+        source.resolve_hyphenation_languages(
+            publication_language.map(crate::TypographyLocale::publication),
+            !extraction.ignore_embedded_language,
+        );
+        Ok(source)
     }
 
     /// The DOM element that supplied the existing destination, not the element
@@ -1426,7 +1473,9 @@ pub(crate) fn is_block_tag(tag: &str) -> bool {
 
 fn content_language(node: Node<'_, '_>, inherited: Option<Language>) -> Option<Language> {
     match language_attribute(node) {
-        Some(tag) if tag.len() <= MAX_LANGUAGE_BYTES => Language::parse(tag).ok(),
+        Some(tag) if tag.len() <= MAX_LANGUAGE_BYTES => {
+            crate::TypographyLocale::parse(tag).map(crate::TypographyLocale::shaping_language)
+        }
         Some(_) => None,
         None => inherited,
     }

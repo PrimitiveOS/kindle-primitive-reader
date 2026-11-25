@@ -45,6 +45,7 @@ with ZipFile(args.package) as package:
         'licenses/HYPHENATION-FUR.txt': root / 'docs/licenses/HYPHENATION-FUR.txt',
         'licenses/HYPHENATION-EO.txt': root / 'docs/licenses/HYPHENATION-EO.txt',
         'licenses/HYPHENATION-KA.txt': root / 'docs/licenses/HYPHENATION-KA.txt',
+        'licenses/HYPHENATION-LA.txt': root / 'docs/licenses/HYPHENATION-LA.txt',
         'licenses/LPPL-1.3c.txt': root / 'docs/licenses/LPPL-1.3c.txt',
         'licenses/hyph-ru.tex': root / 'assets/hyphenation/hyph-ru.tex',
         'licenses/hyph-sv.tex': root / 'assets/hyphenation/hyph-sv.tex',
@@ -61,6 +62,8 @@ with ZipFile(args.package) as package:
         'licenses/hyph-eu.tex': root / 'assets/hyphenation/hyph-eu.tex',
         'licenses/hyph-fur.tex': root / 'assets/hyphenation/hyph-fur.tex',
         'licenses/hyph-ka.tex': root / 'assets/hyphenation/hyph-ka.tex',
+        'licenses/hyph-la-x-classic.tex': root / 'assets/hyphenation/hyph-la-x-classic.tex',
+        'licenses/hyph-la-x-liturgic.tex': root / 'assets/hyphenation/hyph-la-x-liturgic.tex',
         'licenses/eo.pattern': root / 'assets/hyphenation/eo.pattern',
         'licenses/eohyph.m4': root / 'assets/hyphenation/eohyph.m4',
     }

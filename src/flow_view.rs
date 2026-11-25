@@ -164,6 +164,10 @@ impl ChapterFlow {
                             bytes: run.layout.clone(),
                             element: run.element,
                             language,
+                            hyphenation_language: source
+                                .elements
+                                .get(run.element)
+                                .and_then(|element| element.resolved_hyphenation_language),
                             preserve_whitespace: block.styled_text.iter().any(|original| {
                                 original.element == run.element && original.preserve_whitespace
                             }),

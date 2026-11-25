@@ -33,10 +33,17 @@ pub enum TypographyLocale {
 
 impl TypographyLocale {
     pub fn parse(tag: &str) -> Option<Self> {
-        if tag.eq_ignore_ascii_case("la-lit") || tag.eq_ignore_ascii_case("lat-lit") {
+        if tag.eq_ignore_ascii_case("la-lit")
+            || tag.eq_ignore_ascii_case("lat-lit")
+            || tag.eq_ignore_ascii_case("la-x-liturgic")
+        {
             return Some(Self::LiturgicalLatin);
         }
-        Some(Self::Language(Language::parse(tag).ok()?))
+        let language = Language::parse(tag).ok()?;
+        if language.language() == "lat" {
+            return Some(Self::Language(Language::parse("la").ok()?));
+        }
+        Some(Self::Language(language))
     }
 
     pub fn as_str(&self) -> &str {
@@ -54,6 +61,9 @@ impl TypographyLocale {
     }
 
     pub(crate) fn publication(language: Language) -> Self {
+        if language.as_str().eq_ignore_ascii_case("la-x-liturgic") {
+            return Self::LiturgicalLatin;
+        }
         CATALOG
             .iter()
             .find(|entry| {

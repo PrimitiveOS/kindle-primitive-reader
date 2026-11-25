@@ -339,6 +339,8 @@ pub(crate) struct Style {
     pub font_family: Family,
     pub font_weights: Arc<HashMap<u64, f32>>,
     pub size_scale: f32,
+    /// Computed publisher letter spacing, inherited independently of font size.
+    pub(crate) letter_spacing: CssLength,
     pub(crate) allow_small_note_text: bool,
     pub text_rise: TextRise,
     pub decoration: TextDecoration,
@@ -407,6 +409,7 @@ impl Default for Style {
             font_family: Family::Generic(GenericFamily::Serif),
             font_weights: Arc::default(),
             size_scale: 1.0,
+            letter_spacing: CssLength::default(),
             allow_small_note_text: false,
             text_rise: TextRise::default(),
             decoration: TextDecoration::default(),
@@ -732,6 +735,7 @@ impl BookStyle {
         }
         for style in &mut styles {
             style.text_indent.length = style.text_indent.length.for_dpi(dpi);
+            style.letter_spacing = style.letter_spacing.for_dpi(dpi);
             for edge in style
                 .padding
                 .iter_mut()
@@ -1031,6 +1035,18 @@ impl BookStyle {
                             Size::Root(scale) => root * scale,
                             Size::Reference(scale) => *scale,
                         };
+                    }
+                    Property::LetterSpacing(length) => {
+                        let font = relative_font(style.size_scale);
+                        let root_font = result
+                            .first()
+                            .map_or(font, |root| relative_font(root.size_scale));
+                        // CRE treats percentages as a fraction of the declaring font.
+                        let length = match *length {
+                            CssLength::Fraction(value) => CssLength::Em(value),
+                            value => value,
+                        };
+                        style.letter_spacing = length.computed(font, root_font);
                     }
                     Property::Padding(side, length) => {
                         let font = relative_font(style.size_scale);
@@ -1897,7 +1913,8 @@ type Priority = (u8, bool, Specificity);
 const CAPTION_SIDE: usize = 54;
 const COMMON_LIGATURES: usize = 55;
 const DIRECTION: usize = 56;
-const CASCADE_PROPERTY_COUNT: usize = 57;
+const LETTER_SPACING: usize = 57;
+const CASCADE_PROPERTY_COUNT: usize = 58;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -1959,6 +1976,7 @@ fn choose<'a>(
             Property::Slant(_) => 6,
             Property::CommonLigatures(_) => COMMON_LIGATURES,
             Property::Direction(_) => DIRECTION,
+            Property::LetterSpacing(_) => LETTER_SPACING,
             Property::LineBreak(_, _) => 7,
             Property::WordBreak(_) => 8,
             Property::NoWrap(_) => 53,
@@ -2073,6 +2091,7 @@ enum Property {
     Slant(FontStyle),
     CommonLigatures(bool),
     Direction(parley::BaseDirection),
+    LetterSpacing(CssLength),
     LineBreak(Option<LineBreak>, bool),
     WordBreak(WordBreak),
     NoWrap(bool),
@@ -2473,6 +2492,17 @@ impl<'i> DeclarationParser<'i> for Properties {
                             _ => return Err(ParseError::unexpected_token()),
                         };
                     Property::LineBreak(breaking, loose)
+                }
+                "letter-spacing" => {
+                    let length = if input
+                        .try_parse(|p| p.expect_ident_matching("normal"))
+                        .is_ok()
+                    {
+                        CssLength::default()
+                    } else {
+                        parse_css_length(input)?
+                    };
+                    Property::LetterSpacing(length)
                 }
                 "caption-side" => Property::CaptionBottom(
                     match input.expect_ident()?.to_ascii_lowercase().as_str() {

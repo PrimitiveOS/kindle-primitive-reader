@@ -1362,6 +1362,7 @@ impl Probe {
                 &Default::default(),
             )?
         };
+        source.resolve_hyphenation_languages(main_language, settings.typography.respect_embedded);
         if complete {
             for previous in book.previous_mobi_chapters(&href) {
                 source.accept_previous_mobi(previous)?;

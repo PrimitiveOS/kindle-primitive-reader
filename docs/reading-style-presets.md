@@ -88,6 +88,18 @@ vertical or Blitz rendering are not covered by this implementation. The
 source text and saved anchors are unchanged. This behavior has not yet been
 built or tested. [Pinned KOReader tweak](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/css_tweaks.lua#L364-L371)
 
+The horizontal reader also accepts publisher and user CSS `letter-spacing`
+on ordinary styled runs. It supports `normal`, signed CSS lengths, inheritance
+and KOReader's percentage-of-declaring-font extension. The reader's own letter
+spacing control adds its tracking to the computed CSS value. To keep malformed
+or extreme styles bounded, the publisher contribution is limited to
+−1–128 pixels and combined negative tracking to −1 pixel; non-finite values
+fall back to zero. Text and source anchors
+remain unchanged. Pseudo-element-specific declarations, ruby annotations,
+vertical text and Blitz rendering do not yet have equivalent support. The
+visual result and precise KOReader parity have not yet been tested.
+[CRE inherited value](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L11524-L11526) · [CRE text layout](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L4568-L4574)
+
 **Ignore publisher line-break restrictions** applies KOReader's non-important
 `line-break: -cr-loose` rule. The horizontal reader implements a conservative
 subset: non-breaking spaces and non-breaking hyphens between alphanumeric

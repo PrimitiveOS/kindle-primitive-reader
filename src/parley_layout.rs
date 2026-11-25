@@ -3252,6 +3252,16 @@ fn shape_paragraph(
         }
     };
     let font_size = |style: &Style| style.font_pixels(settings);
+    let letter_spacing = |style: &Style| {
+        let publisher = style.letter_spacing.pixels(0, settings.font_size);
+        let publisher = if publisher.is_finite() {
+            publisher.clamp(-1.0, 128.0)
+        } else {
+            0.0
+        };
+        // Match the existing reader control's safe negative tracking floor.
+        (settings.letter_spacing + publisher).max(-1.0)
+    };
     let weight = |style: &Style| {
         FontWeight::new(crate::font_render::font_weight(
             if settings.bold_text && style.font_weight < FontWeight::BOLD {
@@ -3272,8 +3282,8 @@ fn shape_paragraph(
     if settings.percent_word_spacing.is_none() && settings.word_spacing != 0.0 {
         builder.push_default(StyleProperty::WordSpacing(settings.word_spacing));
     }
-    if settings.letter_spacing != 0.0 {
-        builder.push_default(StyleProperty::LetterSpacing(settings.letter_spacing));
+    if letter_spacing(style) != 0.0 {
+        builder.push_default(StyleProperty::LetterSpacing(letter_spacing(style)));
     }
     builder.push_default(StyleProperty::Brush(PaintBrush {
         decoration: style.decoration,
@@ -3402,6 +3412,12 @@ fn shape_paragraph(
         }
         if run.line_height != base.line_height {
             builder.push(StyleProperty::LineHeight(line_height(run)), bytes.clone());
+        }
+        if letter_spacing(run) != letter_spacing(base) {
+            builder.push(
+                StyleProperty::LetterSpacing(letter_spacing(run)),
+                bytes.clone(),
+            );
         }
         if run.font_weight != base.font_weight {
             builder.push(StyleProperty::FontWeight(weight(run)), bytes.clone());

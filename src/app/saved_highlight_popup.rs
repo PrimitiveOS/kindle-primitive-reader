@@ -573,6 +573,11 @@ impl Reader {
             return;
         };
         let layout = popup.layout(self.reading_viewport());
+        let language = if matches!(popup.view, View::Choices | View::Note(_) | View::Actions(_)) {
+            self.controls.interface_language
+        } else {
+            super::interface_language::InterfaceLanguage::English
+        };
         let rect = layout.0;
         canvas.popup(rect);
         let (title, icon) = match popup.view {
@@ -597,14 +602,24 @@ impl Reader {
         canvas.icon(Rect::new(rect.x + 30, rect.y + 40, 44, 44), icon, 0);
         canvas.text(
             Rect::new(rect.x + 98, rect.y + 31, rect.w - 318, 69),
-            title,
+            language.saved_highlight_text(title),
             BODY.bold(),
         );
-        canvas.button(layout.close(), "Close", false, false);
+        canvas.button(
+            layout.close(),
+            language.saved_highlight_text("Close"),
+            false,
+            false,
+        );
         let buttons = |canvas: &mut Canvas, labels: &[&str]| {
             for (i, label) in labels.iter().enumerate() {
                 if !label.is_empty() {
-                    canvas.button(layout.button(i, labels.len()), label, false, false);
+                    canvas.button(
+                        layout.button(i, labels.len()),
+                        language.saved_highlight_text(label),
+                        false,
+                        false,
+                    );
                 }
             }
         };
@@ -639,7 +654,7 @@ impl Reader {
                     );
                     canvas.text(
                         Rect::new(row.x + 78, row.y + 64, row.w - 94, 40),
-                        note.unwrap_or("Highlight"),
+                        note.unwrap_or_else(|| language.saved_highlight_text("Highlight")),
                         CAPTION,
                     );
                     canvas.fill(Rect::new(row.x, row.bottom() - 2, row.w, 2), 180);
@@ -692,20 +707,28 @@ impl Reader {
                 );
                 canvas.button(
                     layout.manage_button(false),
-                    if note.is_some() {
+                    language.saved_highlight_text(if note.is_some() {
                         "Edit note"
                     } else {
                         "Add note"
-                    },
+                    }),
                     false,
                     false,
                 );
-                canvas.button(layout.manage_button(true), "Extend", false, false);
+                canvas.button(
+                    layout.manage_button(true),
+                    language.saved_highlight_text("Extend"),
+                    false,
+                    false,
+                );
                 canvas.button(
                     layout.style_action(),
                     &format!(
-                        "Style · {}",
-                        self.mark_style(index).unwrap_or_default().label()
+                        "{} · {}",
+                        language.saved_highlight_text("Style"),
+                        language.saved_highlight_text(
+                            self.mark_style(index).unwrap_or_default().label()
+                        )
                     ),
                     false,
                     false,

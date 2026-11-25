@@ -18,6 +18,7 @@ Launcher. [Launcher artwork terms](https://github.com/PrimitiveOS/kindle-primiti
 - [Wuff](WUFF.txt) contains the MIT terms for the isolated WOFF 2 decoder.
 - [French and German hyphenation patterns](HYPHENATION-FR-DE.txt) record the upstream versions, checksums, and terms for those dictionaries.
 - [Bulgarian, Galician, Irish and Ukrainian hyphenation patterns](HYPHENATION-BG-GL-GA.txt) record their individual upstream terms and checksums.
+- [Classical and liturgical Latin hyphenation patterns](HYPHENATION-LA.txt) include the original sources and MIT terms.
 - [Georgian hyphenation patterns](HYPHENATION-KA.txt) include the original source and MIT terms.
 - [Esperanto hyphenation patterns](HYPHENATION-EO.txt) include the original pattern and m4 source under [LPPL 1.3c](LPPL-1.3c.txt).
 - [Friulian hyphenation patterns](HYPHENATION-FUR.txt) include the original source and MIT terms.

@@ -317,7 +317,13 @@ impl Reader {
             .then_some(&self.browser.listing.entries)
             .into_iter()
             .flatten()
-            .map(|entry| file_item(entry, self.controls.folder_order.sort));
+            .map(|entry| {
+                file_item(
+                    entry,
+                    self.controls.folder_order.sort,
+                    self.controls.interface_language,
+                )
+            });
         let search = searching
             .then(|| self.library.matching(&self.library_query))
             .into_iter()
@@ -555,15 +561,22 @@ fn file_row(layout: NavigationLayout, slot: usize) -> Rect {
     layout.body(LIBRARY_LIST_Y + slot as i32 * ROW_HEIGHT, ROW_HEIGHT)
 }
 
-fn file_item(entry: &BrowseEntry, sort: FolderSort) -> Item {
+fn file_item(
+    entry: &BrowseEntry,
+    sort: FolderSort,
+    language: super::interface_language::InterfaceLanguage,
+) -> Item {
     let (action, detail) = match &entry.kind {
-        BrowseKind::Folder => (Action::Browse(entry.path.clone()), "Folder".into()),
+        BrowseKind::Folder => (
+            Action::Browse(entry.path.clone()),
+            language.library_view_text("Folder").into(),
+        ),
         BrowseKind::Readable(book) => (
             Action::Open(book.clone()),
             file_detail(
                 &entry.path,
                 book.size,
-                reading_detail(entry, sort).as_deref(),
+                reading_detail(entry, sort, language).as_deref(),
             ),
         ),
         BrowseKind::KindleProtected { size } => (
@@ -571,7 +584,7 @@ fn file_item(entry: &BrowseEntry, sort: FolderSort) -> Item {
             file_detail(
                 &entry.path,
                 *size,
-                Some("Protected · Open in Kindle Library"),
+                Some(language.library_view_text("Protected · Open in Kindle Library")),
             ),
         ),
         BrowseKind::Unavailable { size, too_large } => (
@@ -579,24 +592,27 @@ fn file_item(entry: &BrowseEntry, sort: FolderSort) -> Item {
             file_detail(
                 &entry.path,
                 *size,
-                Some(if *too_large {
-                    "Too large for Reader"
-                } else if entry
-                    .path
-                    .extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("kfx"))
-                {
-                    "Open in Kindle Library"
-                } else {
-                    "Not supported in Reader"
-                }),
+                Some(
+                    language.library_view_text(if *too_large {
+                        "Too large for Reader"
+                    } else if entry
+                        .path
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("kfx"))
+                    {
+                        "Open in Kindle Library"
+                    } else {
+                        "Not supported in Reader"
+                    }),
+                ),
             ),
         ),
     };
     let mut item = if matches!(entry.kind, BrowseKind::Readable(_))
         && crate::epub_members::is_folder_book(&entry.path)
     {
-        Item::new("Read this book", action).detail("EPUB · Extracted publication")
+        Item::new(language.library_view_text("Read this book"), action)
+            .detail(language.library_view_text("EPUB · Extracted publication"))
     } else {
         Item::new(&entry.name, action).detail(detail)
     };
@@ -604,7 +620,11 @@ fn file_item(entry: &BrowseEntry, sort: FolderSort) -> Item {
     item
 }
 
-fn reading_detail(entry: &BrowseEntry, sort: FolderSort) -> Option<String> {
+fn reading_detail(
+    entry: &BrowseEntry,
+    sort: FolderSort,
+    language: super::interface_language::InterfaceLanguage,
+) -> Option<String> {
     let label = match sort {
         FolderSort::LastRead => {
             if entry.reading.last_read.is_some() {
@@ -623,7 +643,7 @@ fn reading_detail(entry: &BrowseEntry, sort: FolderSort) -> Option<String> {
         },
         _ => return None,
     };
-    Some(label.to_owned())
+    Some(language.library_view_text(label).to_owned())
 }
 
 pub(super) fn file_type(path: &Path) -> String {

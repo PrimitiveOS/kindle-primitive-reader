@@ -67,6 +67,7 @@ fn slice_runs(block: &LayoutBlock<'_>, range: &Range<usize>, offset: usize) -> V
                 ..offset + run.bytes.end.min(range.end) - range.start,
             element: run.element,
             language: run.language,
+            hyphenation_language: run.hyphenation_language,
             preserve_whitespace: run.preserve_whitespace,
         })
         .collect()

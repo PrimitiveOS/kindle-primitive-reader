@@ -43,6 +43,7 @@ impl Reset {
                         | CAPTION_SIDE
                         | COMMON_LIGATURES
                         | DIRECTION
+                        | LETTER_SPACING
                 )
     }
 }
@@ -70,6 +71,7 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "font-weight" => vec![5],
         "font-style" => vec![6],
         "direction" => vec![DIRECTION],
+        "letter-spacing" => vec![LETTER_SPACING],
         "font-variant" | "font-variant-ligatures" | "-webkit-font-variant-ligatures" => {
             vec![COMMON_LIGATURES]
         }
@@ -128,6 +130,7 @@ pub(super) fn apply_reset(
         5 => style.font_weight = value.font_weight,
         6 => style.font_style = value.font_style,
         COMMON_LIGATURES => style.common_ligatures = value.common_ligatures,
+        LETTER_SPACING => style.letter_spacing = value.letter_spacing,
         DIRECTION => {
             style.direction = if reset.parent(DIRECTION) {
                 parent.direction

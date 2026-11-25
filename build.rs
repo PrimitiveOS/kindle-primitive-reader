@@ -225,6 +225,8 @@ fn main() {
         ("eu", "BASQUE"),
         ("fur", "FRIULIAN"),
         ("ka", "GEORGIAN"),
+        ("la-x-classic", "LATIN"),
+        ("la-x-liturgic", "LITURGICAL_LATIN"),
         ("sk", "SLOVAK"),
         ("sl", "SLOVENIAN"),
     ] {

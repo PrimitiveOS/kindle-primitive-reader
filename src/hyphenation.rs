@@ -74,6 +74,8 @@ pub(crate) enum Dictionary {
     Friulian,
     Esperanto,
     Georgian,
+    Latin,
+    LiturgicalLatin,
     Slovak,
     Slovenian,
 }
@@ -132,6 +134,7 @@ impl Dictionary {
             ("eu", _) => Some(Self::Basque),
             ("fur", _) => Some(Self::Friulian),
             ("eo", _) => Some(Self::Esperanto),
+            ("la", _) => Some(Self::Latin),
             ("sk", _) => Some(Self::Slovak),
             ("sl", _) => Some(Self::Slovenian),
             _ => None,
@@ -176,6 +179,8 @@ impl Dictionary {
             Self::Friulian => "Friulian",
             Self::Esperanto => "Esperanto",
             Self::Georgian => "Georgian",
+            Self::Latin => "Latin",
+            Self::LiturgicalLatin => "Latin (liturgical)",
             Self::Slovak => "Slovak",
             Self::Slovenian => "Slovenian",
         }
@@ -209,6 +214,8 @@ impl Dictionary {
             | Self::Basque
             | Self::Friulian
             | Self::Esperanto
+            | Self::Latin
+            | Self::LiturgicalLatin
             | Self::Slovenian => HyphenationLimits { left: 2, right: 2 },
             Self::French => HyphenationLimits { left: 2, right: 1 },
             Self::Georgian => HyphenationLimits { left: 1, right: 2 },
@@ -257,6 +264,8 @@ impl Dictionary {
             Self::Friulian => &FRIULIAN,
             Self::Esperanto => &ESPERANTO,
             Self::Georgian => &GEORGIAN,
+            Self::Latin => &LATIN,
+            Self::LiturgicalLatin => &LITURGICAL_LATIN,
             Self::Basque => {
                 // Retain the full upstream notice and modification statement
                 // alongside the compiled-in, modified Basque pattern data.
@@ -269,10 +278,14 @@ impl Dictionary {
     }
 }
 
-fn dictionary(style: &Style, lang: Option<Language>) -> Option<Dictionary> {
-    allows_user_rules(style)
-        .then(|| Dictionary::for_language(lang))
-        .flatten()
+fn dictionary(style: &Style, locale: Option<crate::TypographyLocale>) -> Option<Dictionary> {
+    if !allows_user_rules(style) {
+        return None;
+    }
+    match locale? {
+        crate::TypographyLocale::LiturgicalLatin => Some(Dictionary::LiturgicalLatin),
+        crate::TypographyLocale::Language(language) => Dictionary::for_language(Some(language)),
+    }
 }
 
 pub(crate) fn opportunities(block: &Block, styles: &[Style], settings: Settings) -> Vec<usize> {
@@ -294,7 +307,7 @@ pub(crate) fn opportunities_text(
             if algorithmic {
                 allows_user_rules(style)
             } else {
-                dictionary(style, run.language).is_some()
+                dictionary(style, run.hyphenation_language).is_some()
             }
         })
     {
@@ -321,8 +334,10 @@ pub(crate) fn opportunities_text(
                 let limits = settings.hyphenation_limits.unwrap_or(ALGORITHMIC_LIMITS);
                 algorithmic::breaks(word, limits, emit);
             }
-        } else if let Some(locale) = dictionary(&styles[head.element], head.language)
-            && spans.all(|span| dictionary(&styles[span.element], span.language) == Some(locale))
+        } else if let Some(locale) = dictionary(&styles[head.element], head.hyphenation_language)
+            && spans.all(|span| {
+                dictionary(&styles[span.element], span.hyphenation_language) == Some(locale)
+            })
         {
             let limits = settings
                 .hyphenation_limits
@@ -353,7 +368,9 @@ pub(crate) fn suggestion(
             word.char_indices()
                 .filter_map(|(i, c)| (c == '\u{ad}').then_some(i)),
         );
-    } else if let Some(locale) = dictionary(&Style::default(), Language::parse(language).ok()) {
+    } else if let Some(locale) =
+        dictionary(&Style::default(), crate::TypographyLocale::parse(language))
+    {
         word_breaks(locale, word, |i| breaks.push(i));
     }
     crate::user_hyphenation::marked(word, &breaks)

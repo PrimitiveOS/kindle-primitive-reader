@@ -1298,6 +1298,18 @@ impl InterfaceLanguage {
             "Reverse order" => "Đảo thứ tự",
             "On" => "Bật",
             "Off" => "Tắt",
+            "Folder" => "Thư mục",
+            "Protected · Open in Kindle Library" => "Được bảo vệ · Mở trong Thư viện Kindle",
+            "Too large for Reader" => "Quá lớn đối với Reader",
+            "Open in Kindle Library" => "Mở trong Thư viện Kindle",
+            "Not supported in Reader" => "Reader không hỗ trợ",
+            "Read this book" => "Đọc sách này",
+            "EPUB · Extracted publication" => "EPUB · Sách đã giải nén",
+            "Opened" => "Đã mở",
+            "Unopened" => "Chưa mở",
+            "In progress" => "Đang đọc",
+            "On hold" => "Tạm dừng",
+            "Finished" => "Đã đọc xong",
             "Exit" => "Thoát",
             "Documents" => "Tài liệu",
             "Search results" => "Kết quả tìm kiếm",
@@ -1314,6 +1326,34 @@ impl InterfaceLanguage {
             "Previous" => "Trước",
             "Next" => "Tiếp",
             "Showing part of this folder" => "Chỉ hiện một phần thư mục này",
+            _ => english,
+        }
+    }
+
+    /// Fixed controls in the main saved-highlight popup views only.
+    pub(super) fn saved_highlight_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Overlapping highlights" => "Đoạn tô sáng chồng nhau",
+            "Note" => "Ghi chú",
+            "Highlight" => "Đoạn tô sáng",
+            "Close" => "Đóng",
+            "Previous" => "Trước",
+            "Next" => "Tiếp",
+            "Edit" => "Sửa",
+            "Actions" => "Tùy chọn",
+            "Edit note" => "Sửa ghi chú",
+            "Add note" => "Thêm ghi chú",
+            "Extend" => "Mở rộng",
+            "Style" => "Kiểu",
+            "Lighten" => "Làm sáng",
+            "Underline" => "Gạch dưới",
+            "Strikethrough" => "Gạch ngang",
+            "Invert" => "Đảo màu",
+            "Remove note" => "Xóa ghi chú",
+            "Remove highlight" => "Xóa tô sáng",
             _ => english,
         }
     }

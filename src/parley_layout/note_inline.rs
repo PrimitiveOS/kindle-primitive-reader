@@ -168,6 +168,10 @@ fn join<'a>(
                 bytes: 0..joined.text.len(),
                 element,
                 language: block.language,
+                hyphenation_language: source
+                    .elements
+                    .get(element)
+                    .and_then(|owner| owner.resolved_hyphenation_language),
                 preserve_whitespace: false,
             });
             inside_marker = true;
@@ -229,6 +233,7 @@ fn join<'a>(
             bytes: offset + run.bytes.start..offset + run.bytes.end,
             element: run.element,
             language: run.language,
+            hyphenation_language: run.hyphenation_language,
             preserve_whitespace: run.preserve_whitespace,
         }));
         images.extend(input.images.iter().map(|mut image| {
