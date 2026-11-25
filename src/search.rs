@@ -7,6 +7,7 @@ mod flow;
 mod flow_tests;
 mod nearby;
 mod pattern;
+mod raw_layout;
 pub(crate) use flow::FlowConfig;
 #[cfg(feature = "kindle")]
 pub(crate) use nearby::ChapterText;
@@ -1248,6 +1249,7 @@ mod tests {
             source: Source::parse(&format!("<html><body>{html}</body></html>")).ok(),
             flow: Default::default(),
             flow_config: Default::default(),
+            raw_layout: None,
         }
     }
 

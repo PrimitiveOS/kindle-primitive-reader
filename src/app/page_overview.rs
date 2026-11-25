@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use super::fixed_book_map::MapWindow;
 use super::navigation_layout::NavigationLayout;
 use super::{Action, LIST_X, LIST_Y, OVERVIEW_PAGES, Reader, Screen, fixed_page_label};
+use crate::generated_contents::OutlineTarget;
 use crate::library::{PageBrowserGrid, PageBrowserNumbers};
 use crate::session::{PageThumbnail, page_thumbnail};
 use crate::{Anchor, Probe, Result};
@@ -591,6 +592,69 @@ impl Reader {
                     }
                 }
             }
+        }
+        if let Some(active) = self.active.as_ref().filter(|_| overview.chapter.is_some()) {
+            let probe = &active.reading.probe;
+            // The reflow track represents spine chapters, not pages within a
+            // chapter. Its markers show which chapters contain TOC entries.
+            let mut add_chapter = |chapter: usize| {
+                if chapter >= count {
+                    return;
+                }
+                let portion = chapter as f64 / count.saturating_sub(1).max(1) as f64;
+                let portion = if layout.navigation.mirrored {
+                    1.0 - portion
+                } else {
+                    portion
+                };
+                let offset = (portion * (track.w - 20).max(0) as f64).round() as i32;
+                ticks.insert(offset / 3 * 3);
+            };
+            if let Some(custom) = self
+                .library
+                .state(active.id)
+                .map(|book| &book.custom_contents)
+                .filter(|custom| custom.enabled)
+            {
+                for entry in custom.entries() {
+                    let chapter = match &entry.position.anchor {
+                        Some(anchor) => probe.chapter_index(&anchor.chapter),
+                        None => Some(entry.position.chapter),
+                    };
+                    if let Some(chapter) = chapter {
+                        add_chapter(chapter);
+                    }
+                }
+            } else if let Some(entries) = self.alternative_entries(active.id) {
+                for entry in entries {
+                    let chapter = match &entry.target {
+                        OutlineTarget::Chapter(chapter) | OutlineTarget::Heading(chapter, _) => {
+                            *chapter
+                        }
+                    };
+                    add_chapter(chapter);
+                }
+            } else if probe.toc.is_empty() {
+                for (chapter, _) in probe.chapter_entries().iter().enumerate() {
+                    add_chapter(chapter);
+                }
+            } else {
+                for entry in &probe.toc {
+                    if let Some(chapter) = entry
+                        .destination
+                        .as_ref()
+                        .and_then(|destination| probe.chapter_index(&destination.path))
+                    {
+                        add_chapter(chapter);
+                    }
+                }
+            }
+            // A TOC heading can start later within the chapter: show the
+            // spine label instead of implying the heading has started.
+            section_title = probe
+                .chapter_entries()
+                .get(selected)
+                .map(|entry| entry.label.clone());
         }
         let mut detail = format!(
             "{} · {} {} {count}",

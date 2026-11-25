@@ -1,7 +1,7 @@
 # Generic ZIP reading candidate
 
 Reader's candidate generic ZIP adapter accepts one unambiguous TXT, LOG, MD,
-RTF, FB2, HTML, HTM, XHTML or XHT document inside a ZIP. It rejects multiple
+RTF, FB2, HTML, HTM, XHTML, XHT or XML document inside a ZIP. It rejects multiple
 readable documents and known unsupported book formats rather than guessing.
 Images, CSS and other non-document assets do not count as separate books.
 Archive entries are read in memory; no files are extracted. HTML and Markdown
@@ -13,6 +13,15 @@ unsupported compression, and applies each existing per-format input limit.
 Plain text is restricted to one 512 KiB decoded section in this first scope.
 The caller will fingerprint the original archive under a distinct ZIP format
 tag; the selected document's converted source remains the reading anchor.
+
+XML members are limited to 512 KiB both before and after decoding. As for
+standalone XML, a FictionBook root uses the strict FB2 reader, an HTML root
+uses the XML-compatible HTML reader, and other XML is shown as source text.
+External resources referenced from XML members are not loaded. An XML member
+counts as a document for ambiguity checks, so a ZIP with both XML and another
+readable document is rejected rather than choosing one. Previously supported
+unambiguous ZIPs retain their existing reading path and identity. The XML ZIP
+candidate has not yet been compared with KOReader or behaviorally verified.
 
 KOReader registers generic ZIP and CREngine can choose among more archive
 members, preferring default HTML. Reader deliberately requires exactly one

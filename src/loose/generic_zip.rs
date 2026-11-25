@@ -5,7 +5,7 @@ use std::path::Path;
 
 use zip::{CompressionMethod, ZipArchive};
 
-use super::{Document, Format};
+use super::{Document, Format, ParsingOptions, Xml};
 use crate::Result;
 
 #[derive(Clone, Copy)]
@@ -15,6 +15,7 @@ enum Kind {
     Rtf,
     Fb2,
     Html,
+    Xml,
 }
 
 /// The caller limits the archive and fingerprints its original bytes. The
@@ -71,6 +72,7 @@ pub(super) fn open(file: File, length: u64, title: &str) -> Result<(Document, Fo
             "rtf" => Some(Kind::Rtf),
             "fb2" => Some(Kind::Fb2),
             "html" | "htm" | "xhtml" | "xht" => Some(Kind::Html),
+            "xml" => Some(Kind::Xml),
             "pdf" | "epub" | "epub3" | "mobi" | "azw" | "azw3" | "fb3" | "docx" | "docm"
             | "odt" | "chm" | "djvu" | "djv" => {
                 unsupported_document = true;
@@ -99,11 +101,12 @@ pub(super) fn open(file: File, length: u64, title: &str) -> Result<(Document, Fo
             super::read_markdown_archive(archive, index, name, title)?,
             Format::Markdown,
         )),
-        Kind::Text | Kind::Rtf | Kind::Fb2 => {
+        Kind::Text | Kind::Rtf | Kind::Fb2 | Kind::Xml => {
             let limit = match kind {
                 Kind::Text => super::MAX_INPUT,
                 Kind::Rtf => crate::rtf::MAX_INPUT,
                 Kind::Fb2 => super::MAX_FB2_INPUT,
+                Kind::Xml => super::MAX_INPUT,
                 _ => unreachable!(),
             };
             let bytes = super::read_htmlz_member(&mut archive, index, limit)?;
@@ -132,6 +135,27 @@ pub(super) fn open(file: File, length: u64, title: &str) -> Result<(Document, Fo
                         super::fb2_document(text.trim_start_matches('\u{feff}'), title)?,
                         Format::Fb2,
                     ))
+                }
+                Kind::Xml => {
+                    let text = super::decode_document(&bytes, Format::Html)?;
+                    let text = text.trim_start_matches('\u{feff}');
+                    if text.len() > super::MAX_INPUT {
+                        return Err("The decoded ZIP XML exceeds the single-section limit".into());
+                    }
+                    let root = Xml::parse_with_options(
+                        text,
+                        ParsingOptions {
+                            nodes_limit: 80_000,
+                            ..ParsingOptions::default()
+                        },
+                    )
+                    .ok()
+                    .map(|xml| xml.root_element().tag_name().name().to_owned());
+                    match root.as_deref() {
+                        Some("FictionBook") => Ok((super::fb2_document(text, title)?, Format::Fb2)),
+                        Some("html") => Ok((super::html_document(text, title)?, Format::Html)),
+                        _ => Ok((super::text_document(text, title)?, Format::Html)),
+                    }
                 }
                 _ => unreachable!(),
             }

@@ -310,9 +310,24 @@ pub(crate) struct ChapterText {
     pub(super) source: Option<Source>,
     pub(super) flow: crate::flow_view::ChapterFlow,
     pub(super) flow_config: FlowConfig,
+    pub(super) raw_layout: Option<super::raw_layout::VerifiedRawLayout>,
 }
 
 impl ChapterText {
+    /// Bind this worker's independently parsed chapter to an already shaped
+    /// layout. Without a handoff, search continues to use canonical text.
+    #[allow(dead_code)]
+    pub(crate) fn with_verified_raw_layout(mut self, probe: &crate::Probe) -> Result<Self> {
+        let layout = super::raw_layout::VerifiedRawLayout::from_probe(probe)?;
+        let source = self
+            .source
+            .as_ref()
+            .ok_or("The search chapter is unavailable")?;
+        layout.verify(self.book, &self.href, source)?;
+        self.raw_layout = Some(layout);
+        Ok(self)
+    }
+
     pub(crate) fn read(book: &mut Book, index: usize) -> Result<Self> {
         Self::read_with_flow(book, index, &FlowConfig::default())
     }
@@ -347,6 +362,7 @@ impl ChapterText {
             source,
             flow,
             flow_config: config.clone(),
+            raw_layout: None,
         })
     }
 }
