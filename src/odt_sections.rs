@@ -1,4 +1,4 @@
-//! ODT-only bounded chapter partitioning and verified historical source maps.
+//! Bounded ODT and generated-text partitioning with verified historical source maps.
 use crate::epub::{Book, TocEntry};
 use crate::kf8::Kf8Chapter;
 use crate::source::Source;
@@ -23,11 +23,21 @@ struct ImagePoint {
     ordinal: usize,
 }
 
+struct CurrentBlock {
+    text: String,
+    images: usize,
+}
+
+struct CurrentSection {
+    revision: u64,
+    blocks: BTreeMap<usize, CurrentBlock>,
+}
+
 pub(crate) struct History {
     book_revision: u64,
     original_path: String,
     original: Source,
-    current_revisions: BTreeMap<String, u64>,
+    current_sections: BTreeMap<String, CurrentSection>,
     continued_before: Vec<bool>,
     blocks: BTreeMap<usize, Vec<Span>>,
     images: BTreeMap<usize, Vec<ImagePoint>>,
@@ -56,7 +66,7 @@ pub(crate) fn prepare(
         .blocks
         .iter()
         .try_fold(0usize, |sum, block| sum.checked_add(block.text.len()))
-        .ok_or("ODT text size overflow")?;
+        .ok_or("Document text size overflow")?;
     if text_size <= MAX_SECTION_TEXT {
         return Ok(None);
     }
@@ -67,9 +77,9 @@ pub(crate) fn prepare(
         xhtml: xhtml.to_owned(),
     };
     let mut chapters = crate::kindle_sections::partition_odt(chapter)
-        .map_err(|_| "The OpenDocument text could not be safely partitioned")?;
+        .map_err(|_| "The document text could not be safely partitioned")?;
     if chapters.len() < 2 {
-        return Err("The OpenDocument text cannot fit a reading section".into());
+        return Err("The document text cannot fit a reading section".into());
     }
     let mut owners = BTreeMap::<String, String>::new();
     for part in &chapters {
@@ -82,8 +92,8 @@ pub(crate) fn prepare(
             }
         }
     }
-    // All generated ODT links are same-document fragments. Resolve the
-    // decoded ID, preserve its original escaped spelling, and use the first
+    // Generated ODT links are same-document fragments; text books have none.
+    // Resolve the decoded ID, preserve its original spelling, and use the first
     // occurrence in document order even if an author duplicated an ID.
     for part in &mut chapters {
         let xml = roxmltree::Document::parse(&part.xhtml)?;
@@ -136,9 +146,9 @@ pub(crate) fn prepare(
             .blocks
             .iter()
             .try_fold(0usize, |sum, block| sum.checked_add(block.text.len()))
-            .ok_or("ODT section text size overflow")?;
+            .ok_or("Document section text size overflow")?;
         if count > MAX_SECTION_TEXT {
-            return Err("An OpenDocument section exceeds the reading limit".into());
+            return Err("A document section exceeds the reading limit".into());
         }
         parsed.push(parsed_part);
     }
@@ -167,22 +177,22 @@ pub(crate) fn prepare(
         let mut image_points = Vec::new();
         while consumed < old.text.len() || image_index < old.images.len() {
             let Some(&(chapter, revision, block)) = current.get(index) else {
-                return Err("Partitioning lost OpenDocument content".into());
+                return Err("Partitioning lost document content".into());
             };
             if !old.text[consumed..].starts_with(block.text.as_str()) {
-                return Err("Partitioning changed OpenDocument text".into());
+                return Err("Partitioning changed document text".into());
             }
             let end = consumed + block.text.len();
             for (ordinal, image) in block.images.iter().enumerate() {
                 let Some(previous) = old.images.get(image_index) else {
-                    return Err("Partitioning added an OpenDocument image".into());
+                    return Err("Partitioning added a document image".into());
                 };
                 if previous.href != image.href
                     || previous.inline_svg != image.inline_svg
                     || previous.offset != consumed + image.offset
                     || previous.space_after != image.space_after
                 {
-                    return Err("Partitioning changed an OpenDocument image position".into());
+                    return Err("Partitioning changed a document image position".into());
                 }
                 image_points.push(ImagePoint {
                     chapter,
@@ -207,8 +217,9 @@ pub(crate) fn prepare(
         images.insert(old.key, image_points);
     }
     if index != current.len() {
-        return Err("Partitioning added OpenDocument content".into());
+        return Err("Partitioning added document content".into());
     }
+    drop(current);
 
     let mut continued_before = vec![false; chapters.len()];
     for spans in blocks.values() {
@@ -218,10 +229,31 @@ pub(crate) fn prepare(
             }
         }
     }
-    let current_revisions = chapters
+    let current_sections = chapters
         .iter()
-        .zip(&parsed)
-        .map(|(part, source)| (part.path.clone(), source.revision))
+        .zip(parsed)
+        .map(|(part, source)| {
+            let blocks = source
+                .blocks
+                .into_iter()
+                .map(|block| {
+                    (
+                        block.key,
+                        CurrentBlock {
+                            text: block.text,
+                            images: block.images.len(),
+                        },
+                    )
+                })
+                .collect();
+            (
+                part.path.clone(),
+                CurrentSection {
+                    revision: source.revision,
+                    blocks,
+                },
+            )
+        })
         .collect();
     Ok(Some(Split {
         chapters,
@@ -229,7 +261,7 @@ pub(crate) fn prepare(
         history: History {
             book_revision: crate::revision(xhtml),
             original_path: path.to_owned(),
-            current_revisions,
+            current_sections,
             continued_before,
             original,
             blocks,
@@ -245,36 +277,48 @@ impl History {
 
     pub(crate) fn migrate(&self, anchor: &Anchor, end: bool) -> Result<Option<(usize, Anchor)>> {
         if anchor.book != self.book_revision {
-            return Err("The saved OpenDocument edition cannot be migrated safely".into());
+            return Err("The saved document edition cannot be migrated safely".into());
         }
-        if self.current_revisions.get(&anchor.chapter) == Some(&anchor.revision) {
+        if let Some(section) = self.current_sections.get(&anchor.chapter)
+            && section.revision == anchor.revision
+        {
+            let block = section
+                .blocks
+                .get(&anchor.block)
+                .ok_or("The saved document block is unavailable")?;
+            if !block.text.is_char_boundary(anchor.offset)
+                || anchor
+                    .illustration
+                    .is_some_and(|ordinal| anchor.offset != 0 || ordinal >= block.images)
+            {
+                return Err("The saved document offset cannot be verified".into());
+            }
             return Ok(None);
         }
         if anchor.chapter != self.original_path {
-            return Err(
-                "The saved OpenDocument section or revision cannot be migrated safely".into(),
-            );
+            return Err("The saved document section or revision cannot be migrated safely".into());
         }
         let Some(key) = self.original.current_key(anchor.block, anchor.revision) else {
-            return Err("The saved OpenDocument block is unavailable".into());
+            return Err("The saved document block is unavailable".into());
         };
         let Some(block) = self.original.blocks.iter().find(|block| block.key == key) else {
-            return Err("The saved OpenDocument block is unavailable".into());
+            return Err("The saved document block is unavailable".into());
         };
         let Some(offset) = self
             .original
             .project_offset(block, anchor.revision, anchor.offset)
         else {
-            return Err(
-                "The saved OpenDocument revision or offset cannot be migrated safely".into(),
-            );
+            return Err("The saved document revision or offset cannot be migrated safely".into());
         };
         if let Some(ordinal) = anchor.illustration {
+            if anchor.offset != 0 {
+                return Err("The saved document image offset cannot be migrated safely".into());
+            }
             let image = self
                 .images
                 .get(&key)
                 .and_then(|images| images.get(ordinal))
-                .ok_or("The saved OpenDocument image position cannot be migrated safely")?;
+                .ok_or("The saved document image position cannot be migrated safely")?;
             let mut migrated = anchor.clone();
             migrated.chapter.clone_from(&image.path);
             migrated.revision = image.revision;
@@ -286,7 +330,7 @@ impl History {
         let spans = self
             .blocks
             .get(&key)
-            .ok_or("The saved OpenDocument position cannot be migrated safely")?;
+            .ok_or("The saved document position cannot be migrated safely")?;
         let found = if end {
             spans
                 .iter()
@@ -298,7 +342,7 @@ impl History {
                 .find(|span| span.original.start <= offset && offset < span.original.end)
                 .or_else(|| spans.iter().find(|span| span.original.end == offset))
         }
-        .ok_or("The saved OpenDocument offset cannot be migrated safely")?;
+        .ok_or("The saved document offset cannot be migrated safely")?;
         let mut migrated = anchor.clone();
         migrated.chapter.clone_from(&found.path);
         migrated.revision = found.revision;

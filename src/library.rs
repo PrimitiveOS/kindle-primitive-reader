@@ -167,7 +167,8 @@ impl DocumentFormat {
     pub const fn max_bytes(self) -> u64 {
         match self {
             Self::Epub => MAX_ARCHIVE,
-            Self::Text | Self::Html | Self::Markdown => MAX_INPUT as u64,
+            Self::Text => crate::loose::MAX_TEXT_INPUT as u64,
+            Self::Html | Self::Markdown => MAX_INPUT as u64,
             Self::Htmlz => MAX_HTMLZ_INPUT as u64,
             Self::Docx => crate::docx::MAX_INPUT as u64,
             Self::Odt => crate::odt::MAX_INPUT as u64,

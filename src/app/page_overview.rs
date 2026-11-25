@@ -223,7 +223,9 @@ impl Reader {
     pub(super) fn draw_book_map_tap_option(&self, canvas: &mut Canvas) {
         canvas.button(
             self.book_map_tap_option(),
-            "Page browser on tap",
+            self.controls
+                .interface_language
+                .overview_text("Page browser on tap"),
             self.book_map_previews_on_tap(),
             false,
         );
@@ -380,6 +382,7 @@ impl Reader {
             return;
         };
         let navigation = self.navigation_layout();
+        let language = self.controls.interface_language;
         let layout = OverviewLayout::with_grid(navigation, overview.grid);
         let count = overview.count;
         self.draw_overview_grid_button(canvas, navigation);
@@ -387,13 +390,17 @@ impl Reader {
             let reading = &active.reading;
             let probe = overview.preview.as_deref().unwrap_or(&reading.probe);
             (
-                format!("{}  ·  {count} pages", probe.chapter_label),
+                format!(
+                    "{}  ·  {}",
+                    probe.chapter_label,
+                    language.overview_page_count(count)
+                ),
                 (overview.chapter == Some(reading.chapter)).then_some(reading.page),
                 probe.chapter_count(),
             )
         } else {
             (
-                format!("{count} pages"),
+                language.overview_page_count(count),
                 self.fixed.as_ref().map(|fixed| fixed.reading.page()),
                 0,
             )
@@ -437,11 +444,12 @@ impl Reader {
                 );
             }
             let mut label = self.fixed.as_ref().map_or_else(
-                || format!("Page {}", page + 1),
+                || format!("{} {}", language.overview_text("Page"), page + 1),
                 |fixed| fixed_page_label(&fixed.reading, page),
             );
             if hidden {
-                label.push_str(" · Hidden");
+                label.push_str(" · ");
+                label.push_str(language.overview_text("Hidden"));
             }
             if let Some(tile) = tile {
                 let (frame, thumbnail) =
@@ -457,7 +465,7 @@ impl Reader {
                         rect.w - 20,
                         (layout.label(rect).y - y).clamp(1, 64),
                     ),
-                    "Preview unavailable",
+                    language.overview_text("Preview unavailable"),
                     CAPTION.center(),
                 );
             }
@@ -465,17 +473,37 @@ impl Reader {
             layout.draw_label(canvas, rect, &label, Some(page) == current);
         }
         if overview.first != 0 {
-            canvas.button(navigation.previous(), "Previous", false, false);
+            canvas.button(
+                navigation.previous(),
+                language.overview_text("Previous"),
+                false,
+                false,
+            );
         } else if overview.chapter.is_some_and(|chapter| chapter > 0) {
-            canvas.button(navigation.previous(), "Prev chapter", false, false);
+            canvas.button(
+                navigation.previous(),
+                language.overview_text("Prev chapter"),
+                false,
+                false,
+            );
         }
         if overview.first + capacity(overview.grid) < count {
-            canvas.button(navigation.next(), "Next", false, false);
+            canvas.button(
+                navigation.next(),
+                language.overview_text("Next"),
+                false,
+                false,
+            );
         } else if overview
             .chapter
             .is_some_and(|chapter| chapter + 1 < chapters)
         {
-            canvas.button(navigation.next(), "Next chapter", false, false);
+            canvas.button(
+                navigation.next(),
+                language.overview_text("Next chapter"),
+                false,
+                false,
+            );
         }
         self.draw_overview_track(canvas, overview, chapters, layout);
         if overview.grid_menu {
@@ -490,6 +518,7 @@ impl Reader {
         chapters: usize,
         layout: OverviewLayout,
     ) {
+        let language = self.controls.interface_language;
         let track = layout.track();
         let page = if overview.map_origin.is_some() {
             overview.focus.page
@@ -501,7 +530,12 @@ impl Reader {
             .map_or((page, overview.count, "Skim pages"), |chapter| {
                 (chapter, chapters, "Skim chapters")
             });
-        let detail = format!("{title} · {} of {count}", selected + 1);
+        let detail = format!(
+            "{} · {} {} {count}",
+            language.overview_text(title),
+            selected + 1,
+            language.overview_text("of")
+        );
         canvas.text(layout.track_caption(), &detail, CAPTION);
         let center = track.y + track.h / 2;
         canvas.fill(Rect::new(track.x, center - 3, track.w, 6), 151);

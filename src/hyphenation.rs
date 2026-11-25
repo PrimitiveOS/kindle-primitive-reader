@@ -5,7 +5,10 @@ use crate::{
     source::{Block, StyledText},
 };
 use icu_normalizer::{ComposingNormalizer, DecomposingNormalizer};
-use icu_properties::{CodePointMapData, props::GeneralCategory};
+use icu_properties::{
+    CodePointMapData,
+    props::{GeneralCategory, Script},
+};
 use icu_segmenter::GraphemeClusterSegmenter;
 use parley::{Language, LineBreak, WordBreak};
 use serde::{Deserialize, Serialize};
@@ -35,6 +38,13 @@ pub(crate) const ALGORITHMIC_LIMITS: HyphenationLimits = HyphenationLimits { lef
 struct Patterns {
     nodes: &'static [(u16, u8, u16, u8)],
     edges: &'static [(char, u16)],
+    weights: &'static [u8],
+}
+
+// Separate wide tables avoid increasing every other dictionary's memory cost.
+struct WidePatterns {
+    nodes: &'static [(u32, u32, u32, u32)],
+    edges: &'static [(char, u32)],
     weights: &'static [u8],
 }
 
@@ -76,6 +86,8 @@ pub(crate) enum Dictionary {
     Esperanto,
     Georgian,
     Greek,
+    Hungarian,
+    Malayalam,
     Latin,
     LiturgicalLatin,
     Slovak,
@@ -85,6 +97,9 @@ pub(crate) enum Dictionary {
 impl Dictionary {
     pub(crate) fn for_language(lang: Option<Language>) -> Option<Self> {
         let lang = lang?;
+        if matches!(lang.language(), "ml" | "mal") {
+            return matches!(lang.script(), None | Some("Mlym")).then_some(Self::Malayalam);
+        }
         if matches!(lang.language(), "el" | "ell") {
             return matches!(lang.script(), None | Some("Grek")).then_some(Self::Greek);
         }
@@ -140,6 +155,7 @@ impl Dictionary {
             ("fur", _) => Some(Self::Friulian),
             ("eo", _) => Some(Self::Esperanto),
             ("la", _) => Some(Self::Latin),
+            ("hu" | "hun", _) => Some(Self::Hungarian),
             ("sk", _) => Some(Self::Slovak),
             ("sl", _) => Some(Self::Slovenian),
             _ => None,
@@ -185,6 +201,8 @@ impl Dictionary {
             Self::Esperanto => "Esperanto",
             Self::Georgian => "Georgian",
             Self::Greek => "Greek",
+            Self::Hungarian => "Hungarian",
+            Self::Malayalam => "Malayalam",
             Self::Latin => "Latin",
             Self::LiturgicalLatin => "Latin (liturgical)",
             Self::Slovak => "Slovak",
@@ -221,6 +239,7 @@ impl Dictionary {
             | Self::Friulian
             | Self::Esperanto
             | Self::Latin
+            | Self::Hungarian
             | Self::LiturgicalLatin
             | Self::Slovenian => HyphenationLimits { left: 2, right: 2 },
             Self::French => HyphenationLimits { left: 2, right: 1 },
@@ -233,6 +252,7 @@ impl Dictionary {
             | Self::Estonian
             | Self::Irish
             | Self::Slovak
+            | Self::Malayalam
             | Self::Welsh => ENGLISH_LIMITS,
         }
     }
@@ -272,6 +292,8 @@ impl Dictionary {
             Self::Esperanto => &ESPERANTO,
             Self::Georgian => &GEORGIAN,
             Self::Greek => &GREEK,
+            Self::Hungarian => unreachable!("Hungarian uses the wide matcher"),
+            Self::Malayalam => &MALAYALAM,
             Self::Latin => &LATIN,
             Self::LiturgicalLatin => &LITURGICAL_LATIN,
             Self::Basque => {
@@ -343,6 +365,7 @@ pub(crate) fn opportunities_text(
                 algorithmic::breaks(word, limits, emit);
             }
         } else if let Some(locale) = dictionary(&styles[head.element], head.hyphenation_language)
+            && locale != Dictionary::Greek
             && spans.all(|span| {
                 dictionary(&styles[span.element], span.hyphenation_language) == Some(locale)
             })
@@ -356,7 +379,87 @@ pub(crate) fn opportunities_text(
             break;
         }
     }
+    if !algorithmic
+        && breaks.len() < MAX_BREAKS
+        && styled.iter().any(|run| {
+            dictionary(&styles[run.element], run.hyphenation_language) == Some(Dictionary::Greek)
+        })
+    {
+        for range in greek_word_ranges(text) {
+            let first = styled.partition_point(|span| span.bytes.end <= range.start);
+            let mut covered = range.start;
+            let mut valid = true;
+            for span in styled[first..]
+                .iter()
+                .take_while(|span| span.bytes.start < range.end)
+            {
+                if span.bytes.start > covered
+                    || dictionary(&styles[span.element], span.hyphenation_language)
+                        != Some(Dictionary::Greek)
+                {
+                    valid = false;
+                    break;
+                }
+                covered = covered.max(span.bytes.end.min(range.end));
+            }
+            if valid && covered == range.end {
+                let limits = settings
+                    .hyphenation_limits
+                    .unwrap_or_else(|| Dictionary::Greek.limits());
+                word_breaks_with_limits(
+                    Dictionary::Greek,
+                    &text[range.clone()],
+                    limits,
+                    |offset| {
+                        if breaks.len() < MAX_BREAKS {
+                            breaks.push(range.start + offset);
+                        }
+                    },
+                );
+            }
+            if breaks.len() == MAX_BREAKS {
+                break;
+            }
+        }
+        breaks.sort_unstable();
+        breaks.dedup();
+    }
     breaks
+}
+
+// CRE's word scanner treats U+02BC as an alphabetic letter and Greek
+// koronis/psili as modifiers. ASCII and right quotation apostrophes split.
+fn greek_word_ranges(text: &str) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    let mut chars = text.char_indices().peekable();
+    let categories = CodePointMapData::<GeneralCategory>::new();
+    let scripts = CodePointMapData::<Script>::new();
+    std::iter::from_fn(move || {
+        let mut start = None;
+        while let Some((at, ch)) = chars.next() {
+            let modifier = matches!(ch, '\u{1fbd}' | '\u{1fbf}')
+                || matches!(
+                    categories.get(ch),
+                    GeneralCategory::NonspacingMark
+                        | GeneralCategory::SpacingMark
+                        | GeneralCategory::EnclosingMark
+                );
+            let letter = !modifier
+                && ch.is_alphabetic()
+                && !matches!(
+                    scripts.get(ch),
+                    Script::Han | Script::Hiragana | Script::Katakana | Script::Hangul
+                );
+            let part = letter || modifier || ch == '\u{ad}';
+            if start.is_none() {
+                if letter || ch == '\u{ad}' {
+                    start = Some(at);
+                }
+            } else if !part {
+                return Some(start.unwrap()..at);
+            }
+        }
+        start.map(|at| at..text.len())
+    })
 }
 
 pub(crate) fn suggestion(
@@ -486,6 +589,15 @@ fn word_breaks_with_limits(
     if !limits.valid() || word.len() > MAX_WORD * 5 {
         return;
     }
+    if locale == Dictionary::Hungarian {
+        let mut offset = 0;
+        for part in word.split_inclusive(['\'', '\u{2019}']) {
+            let text = part.trim_end_matches(['\'', '\u{2019}']);
+            hungarian_pattern_breaks(text, limits, |at| emit(offset + at));
+            offset += part.len();
+        }
+        return;
+    }
     let patterns = locale.patterns();
     let additional = match locale {
         Dictionary::RussianEnglishBritish => Some(&BRITISH),
@@ -520,9 +632,19 @@ fn word_breaks_with_limits(
         let text = part.trim_end_matches(separators);
         if matches!(
             locale,
-            Dictionary::Latin | Dictionary::LiturgicalLatin | Dictionary::Greek
+            Dictionary::Latin
+                | Dictionary::LiturgicalLatin
+                | Dictionary::Greek
+                | Dictionary::Malayalam
         ) {
-            decomposed_pattern_breaks(patterns, text, limits, |at| emit(offset + at));
+            decomposed_pattern_breaks(
+                patterns,
+                text,
+                limits,
+                locale == Dictionary::Greek,
+                locale == Dictionary::Malayalam,
+                |at| emit(offset + at),
+            );
         } else {
             pattern_breaks(
                 patterns,
@@ -538,12 +660,80 @@ fn word_breaks_with_limits(
     }
 }
 
+// Hungarian is the only dictionary whose trie exceeds 16-bit node indexes.
+// Keep source offsets bounded to original grapheme boundaries.
+fn hungarian_pattern_breaks(word: &str, limits: HyphenationLimits, mut emit: impl FnMut(usize)) {
+    let mut letters = ['.'; MAX_WORD + 2];
+    let mut offsets = [0usize; MAX_WORD + 1];
+    let mut n = 0usize;
+    let mut start = 0usize;
+    let nfc = ComposingNormalizer::new_nfc();
+    for end in GraphemeClusterSegmenter::new().segment_str(word).skip(1) {
+        let cluster = &word[start..end];
+        start = end;
+        if cluster == "\u{ad}" {
+            continue;
+        }
+        let composed = nfc.normalize(cluster);
+        let mut chars = composed.chars();
+        let Some(character) = chars.next().filter(|ch| ch.is_alphabetic()) else {
+            return;
+        };
+        let mut lowercase = character.to_lowercase();
+        let Some(letter) = lowercase.next() else {
+            return;
+        };
+        if n == MAX_WORD || chars.next().is_some() || lowercase.next().is_some() {
+            return;
+        }
+        n += 1;
+        letters[n] = letter;
+        offsets[n] = end;
+    }
+    let left = usize::from(limits.left);
+    let right = usize::from(limits.right);
+    if n < left + right {
+        return;
+    }
+    let mut scores = [0u8; MAX_WORD + 3];
+    for start in 0..n + 2 {
+        let mut node = 0usize;
+        for &ch in &letters[start..n + 2] {
+            let (first, count, _, _) = HUNGARIAN.nodes[node];
+            let first = usize::try_from(first).expect("Hungarian edge offset");
+            let count = usize::try_from(count).expect("Hungarian edge count");
+            let branches = &HUNGARIAN.edges[first..][..count];
+            let Ok(next) = branches.binary_search_by_key(&ch, |&(label, _)| label) else {
+                break;
+            };
+            node = usize::try_from(branches[next].1).expect("Hungarian node index");
+            let (_, _, index, len) = HUNGARIAN.nodes[node];
+            let index = usize::try_from(index).expect("Hungarian weight offset");
+            let len = usize::try_from(len).expect("Hungarian weight count");
+            for (score, &weight) in scores[start..]
+                .iter_mut()
+                .zip(&HUNGARIAN.weights[index..][..len])
+            {
+                *score = (*score).max(weight);
+            }
+        }
+    }
+    for at in left..=n - right {
+        let offset = offsets[at];
+        if scores[at + 1] % 2 == 1 && !word[offset..].starts_with('\u{ad}') {
+            emit(offset);
+        }
+    }
+}
+
 // Some pattern rules describe several Unicode scalars in a single grapheme.
 // Match NFD scalars, but emit only original grapheme boundaries.
 fn decomposed_pattern_breaks(
     patterns: &Patterns,
     word: &str,
     limits: HyphenationLimits,
+    greek_modifiers: bool,
+    malayalam_joiners: bool,
     mut emit: impl FnMut(usize),
 ) {
     const MAX_SCALARS: usize = MAX_WORD * 4;
@@ -561,17 +751,27 @@ fn decomposed_pattern_breaks(
         if cluster == "\u{ad}" {
             continue;
         }
-        if graphemes == MAX_WORD {
-            return;
-        }
         let lower = cluster.to_lowercase();
         let normalized = nfd.normalize(&lower);
         let mut chars = normalized.chars();
-        let Some(first) = chars.next().filter(|ch| ch.is_alphabetic()) else {
+        let Some(first) = chars.next() else {
             return;
         };
+        let modifier = (greek_modifiers && matches!(first, '\u{1fbd}' | '\u{1fbf}'))
+            || (malayalam_joiners && matches!(first, '\u{200c}' | '\u{200d}'));
+        if modifier {
+            if graphemes == 0 {
+                return;
+            }
+            // The preceding grapheme owns this modifier; never wrap between them.
+            boundaries[scalars] = None;
+        } else if !first.is_alphabetic() || graphemes == MAX_WORD {
+            return;
+        }
         for ch in std::iter::once(first).chain(chars) {
             if !ch.is_alphabetic()
+                && !(greek_modifiers && matches!(ch, '\u{1fbd}' | '\u{1fbf}'))
+                && !(malayalam_joiners && matches!(ch, '\u{200c}' | '\u{200d}'))
                 && !matches!(
                     categories.get(ch),
                     GeneralCategory::NonspacingMark
@@ -587,7 +787,9 @@ fn decomposed_pattern_breaks(
             scalars += 1;
             letters[scalars] = ch;
         }
-        graphemes += 1;
+        if !modifier {
+            graphemes += 1;
+        }
         boundaries[scalars] = Some(end);
         ordinal[scalars] = graphemes as u8;
     }

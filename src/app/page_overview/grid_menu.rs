@@ -54,22 +54,32 @@ impl Reader {
         canvas: &mut Canvas,
         navigation: NavigationLayout,
     ) {
-        canvas.button(grid_button(navigation), "Grid", false, false);
+        canvas.button(
+            grid_button(navigation),
+            self.controls.interface_language.overview_text("Grid"),
+            false,
+            false,
+        );
     }
 
     pub(super) fn draw_overview_grid_menu(&self, canvas: &mut Canvas, layout: OverviewLayout) {
         let nav = layout.navigation;
+        let language = self.controls.interface_language;
         let place = |rect| nav.centered(rect);
         canvas.popup(place(PANEL));
         canvas.text(
             place(Rect::new(196, 644, 624, 84)),
-            "Page browser grid",
+            language.overview_text("Page browser grid"),
             TextStyle::new(48).bold(),
         );
-        canvas.button(place(CLOSE), "Done", true, false);
+        canvas.button(place(CLOSE), language.overview_text("Done"), true, false);
         for axis in Axis::ALL {
             let row = axis.row();
-            canvas.text(place(Rect::new(196, row + 18, 466, 67)), axis.label(), BODY);
+            canvas.text(
+                place(Rect::new(196, row + 18, 466, 67)),
+                language.overview_text(axis.label()),
+                BODY,
+            );
             canvas.text(
                 place(Rect::new(798, row + 20, 150, 72)),
                 &axis.count(layout.dimensions()).to_string(),

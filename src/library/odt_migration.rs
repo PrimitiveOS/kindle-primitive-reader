@@ -1,4 +1,4 @@
-//! Transactional translation of saved positions from unsplit ODT documents.
+//! Transactional translation of saved positions from unsplit documents.
 //!
 //! The book supplies a source-verified mapping. This module only edits a clone
 //! of the saved state; it never persists a partial translation.
@@ -10,8 +10,11 @@ fn position(position: &mut ReadingPosition, book: &Book) -> crate::Result<bool> 
     let anchor = position
         .anchor
         .as_ref()
-        .ok_or("An ODT position has no source anchor and cannot be safely migrated")?;
+        .ok_or("A saved document position has no source anchor and cannot be safely migrated")?;
     let Some((chapter, anchor)) = book.migrate_old_odt_anchor(anchor, false)? else {
+        if book.chapter_index(&anchor.chapter) != Some(position.chapter) {
+            return Err("A saved document position refers to an inconsistent section".into());
+        }
         return Ok(false);
     };
     position.chapter = chapter;
@@ -40,19 +43,31 @@ pub(super) fn translate(state: &BookState, book: &Book) -> crate::Result<Option<
         let start = book.migrate_old_odt_anchor(&highlight.selection.start, false)?;
         let end = book.migrate_old_odt_anchor(&highlight.selection.end, true)?;
         match (start, end) {
-            (None, None) => {}
+            (None, None) => {
+                let start = book
+                    .chapter_index(&highlight.selection.start.chapter)
+                    .ok_or("A saved highlight section is unavailable")?;
+                let end = book
+                    .chapter_index(&highlight.selection.end.chapter)
+                    .ok_or("A saved highlight section is unavailable")?;
+                if start > end || !valid_highlight(highlight) {
+                    return Err("A saved highlight has an invalid range".into());
+                }
+            }
             (Some((start_chapter, start)), Some((end_chapter, end))) => {
                 if start_chapter > end_chapter {
-                    return Err("An ODT highlight has an invalid migrated range".into());
+                    return Err("A document highlight has an invalid migrated range".into());
                 }
                 highlight.selection.start = start;
                 highlight.selection.end = end;
                 if !valid_highlight(highlight) {
-                    return Err("An ODT highlight has an invalid migrated range".into());
+                    return Err("A document highlight has an invalid migrated range".into());
                 }
                 changed = true;
             }
-            _ => return Err("An ODT highlight can only be migrated as a complete range".into()),
+            _ => {
+                return Err("A document highlight can only be migrated as a complete range".into());
+            }
         }
     }
     if !changed {
@@ -61,7 +76,7 @@ pub(super) fn translate(state: &BookState, book: &Book) -> crate::Result<Option<
     if !candidate.hidden_flows.sort_after_odt_migration()
         || !candidate.custom_contents.sort_after_odt_migration()
     {
-        return Err("ODT migration would duplicate a saved flow or custom chapter".into());
+        return Err("Document migration would duplicate a saved flow or custom chapter".into());
     }
     Ok(Some(candidate))
 }

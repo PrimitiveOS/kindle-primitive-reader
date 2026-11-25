@@ -1555,16 +1555,17 @@ impl Reader {
         }
         // Prepare a translated clone before selecting a section. The old
         // saved state is not replaced until its reading view opens successfully.
-        let (migrated_odt, split_odt) = if entry.format == DocumentFormat::Odt && !unseen {
-            let book =
-                with_storage(|| crate::epub::Book::open(&absolute).map_err(io::Error::other))?;
-            (
-                self.library.migrated_odt_state(id, &book)?,
-                book.has_split_odt(),
-            )
-        } else {
-            (None, false)
-        };
+        let (migrated_odt, split_odt) =
+            if matches!(entry.format, DocumentFormat::Odt | DocumentFormat::Text) && !unseen {
+                let book =
+                    with_storage(|| crate::epub::Book::open(&absolute).map_err(io::Error::other))?;
+                (
+                    self.library.migrated_odt_state(id, &book)?,
+                    book.has_split_odt(),
+                )
+            } else {
+                (None, false)
+            };
         let top_status_header = self.top_header_for_book(id);
         let mut initial_preferences = self
             .document_defaults
@@ -1893,7 +1894,10 @@ impl Reader {
             .is_ok()
         {
             if migrated_odt.is_some() {
-                return Err("The OpenDocument reading settings need repair before saved positions can be migrated".into());
+                return Err(
+                    "The reading settings need repair before saved positions can be migrated"
+                        .into(),
+                );
             }
             // Prove this is an otherwise readable edition before offering a
             // layout reset. Parser/DRM/font/source-anchor failures propagate.
@@ -1959,18 +1963,14 @@ impl Reader {
         if let Some(anchor) = &strict_odt_anchor
             && reading.probe.restore_anchor(anchor).is_none()
         {
-            return Err(
-                "The migrated OpenDocument reading position cannot be opened safely".into(),
-            );
+            return Err("The migrated reading position cannot be opened safely".into());
         }
         if let Some(candidate) = &migrated_odt {
             for highlight in &candidate.highlights {
                 let selected =
                     reading.anchored_quote(&highlight.selection.start, &highlight.selection.end)?;
                 if selected.text != highlight.selection.text {
-                    return Err(
-                        "An OpenDocument highlight could not be verified after splitting".into(),
-                    );
+                    return Err("A highlight could not be verified after splitting".into());
                 }
             }
         }
@@ -1979,7 +1979,7 @@ impl Reader {
             let prior = self
                 .library
                 .state_mut(id)
-                .ok_or("The saved OpenDocument state disappeared")?;
+                .ok_or("The saved document state disappeared")?;
             let original = std::mem::replace(prior, candidate);
             if let Err(error) = self.save_library() {
                 if let Some(state) = self.library.state_mut(id) {
@@ -5760,7 +5760,11 @@ impl Reader {
         let reading = &mut self.active.as_mut().ok_or("No open book")?.reading;
         let mut requested = new_position.clone();
         let mut strict_odt = false;
-        if DocumentFormat::for_path(&reading.config.book) == Some(DocumentFormat::Odt) {
+        let format = DocumentFormat::for_path(&reading.config.book);
+        if format == Some(DocumentFormat::Odt)
+            || (format == Some(DocumentFormat::Text)
+                && !reading.probe.odt_continued_before.is_empty())
+        {
             let book = with_storage(|| {
                 crate::epub::Book::open(&reading.config.book).map_err(io::Error::other)
             })?;
@@ -5769,7 +5773,7 @@ impl Reader {
                 let anchor = requested
                     .anchor
                     .as_ref()
-                    .ok_or("The saved OpenDocument position has no source anchor")?;
+                    .ok_or("The saved document position has no source anchor")?;
                 if let Some((chapter, anchor)) = book.migrate_old_odt_anchor(anchor, false)? {
                     requested.chapter = chapter;
                     requested.anchor = Some(anchor);
@@ -5789,7 +5793,7 @@ impl Reader {
                 .as_ref()
                 .is_some_and(|anchor| restored.probe.restore_anchor(anchor).is_none())
         {
-            return Err("The saved OpenDocument position cannot be opened safely".into());
+            return Err("The saved document position cannot be opened safely".into());
         }
         *reading = restored;
         self.selection = None;
@@ -7615,7 +7619,7 @@ impl Reader {
     }
 
     fn apply_koreader(&mut self) -> Result<()> {
-        // ODT may split one original paragraph into several chapters. Verify
+        // Partitioned documents may split an original paragraph into sections. Verify
         // all imported endpoints and exact canonical text before changing any
         // saved state, and leave the preview available if verification fails.
         let preview = self
@@ -7626,19 +7630,22 @@ impl Reader {
             return Err("Wait for the quote check to finish".into());
         }
         let active = self.active.as_ref().ok_or("No open book")?;
-        if active.entry.format == DocumentFormat::Odt {
+        if active.entry.format == DocumentFormat::Odt
+            || (active.entry.format == DocumentFormat::Text
+                && !active.reading.probe.odt_continued_before.is_empty())
+        {
             let unchanged = with_storage(|| self.library.identify(&active.entry))? == active.id;
             if !unchanged {
-                return Err(
-                    "The OpenDocument file changed. Reopen it before importing annotations".into(),
-                );
+                return Err("The document changed. Reopen it before importing annotations".into());
             }
             for mark in &preview.matched {
                 let verified = active
                     .reading
                     .anchored_quote(&mark.selection.start, &mark.selection.end)?;
                 if verified.text != mark.selection.text {
-                    return Err("An OpenDocument annotation could not be verified; no annotations were imported".into());
+                    return Err(
+                        "An annotation could not be verified; no annotations were imported".into(),
+                    );
                 }
             }
         }
@@ -8667,6 +8674,8 @@ impl Reader {
                 .controls
                 .interface_language
                 .contents_text("Search contents"),
+            (Screen::BookMap, _) => self.controls.interface_language.book_map_text("Book map"),
+            (Screen::PageOverview, _) => self.controls.interface_language.overview_text("Pages"),
             (Screen::BookmarkBrowser(page), _) => {
                 self.controls.interface_language.bookmark_text(page.title())
             }
@@ -8746,6 +8755,10 @@ impl Reader {
             self.controls.interface_language.bookmark_text("Back")
         } else if matches!(self.screen, Screen::LibraryFind | Screen::FolderOrder) {
             self.controls.interface_language.library_view_text("Back")
+        } else if self.screen == Screen::BookMap {
+            self.controls.interface_language.book_map_text("Back")
+        } else if self.screen == Screen::PageOverview {
+            self.controls.interface_language.overview_text("Back")
         } else if self.screen == Screen::DictionaryEntry {
             self.controls
                 .interface_language

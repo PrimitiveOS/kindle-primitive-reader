@@ -1,0 +1,14 @@
+Hungarian hyphenation patterns, 2011-08-15
+Copyright (C) 2003 Bence Nagy
+Initial Developer and Contributor: Bence Nagy
+
+Source: https://github.com/hyphenation/tex-hyphen/blob/5684c0f51c0b81133db2efbe60a408b4155a3ff5/hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-hu.tex
+Source SHA-256: c6f02d2b6f49d5068035f7bbc91aaeefd0b691ff806c17539a033a716c374692
+
+Upstream offers MPL 1.1, GPL 2.0 or LGPL 2.1. Reader selects MPL 1.1,
+included in MPL-1.1.txt. The original upstream TeX source is included
+unchanged in hyph-hu.tex. Reader compiles its supported single-word patterns
+into native lookup tables, which are a derived form.
+
+Distribution under MPL 1.1 has not yet been reviewed; packaging these files
+does not establish that all distribution obligations are satisfied.

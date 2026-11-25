@@ -127,6 +127,7 @@ impl Reader {
     pub(super) fn draw_fixed_book_map(&self, canvas: &mut Canvas) {
         let Some(fixed) = &self.fixed else { return };
         let reading = &fixed.reading;
+        let language = self.controls.interface_language;
         let layout = self.navigation_layout();
         let count = reading.count();
         let reading_page = reading.page();
@@ -137,12 +138,18 @@ impl Reader {
         let pages = window.pages(count);
         let sections = self.fixed_sections(fixed);
         let mut summary = format!(
-            "Pages {}   ·   Reading page {}",
+            "{} {}   ·   {} {}",
+            language.book_map_text("Pages"),
             range_label(&pages),
+            language.book_map_text("Reading page"),
             reading_page + 1
         );
         if ribbon.is_some() {
-            summary.push_str(&format!("   ·   Map focus {}", focus + 1));
+            summary.push_str(&format!(
+                "   ·   {} {}",
+                language.book_map_text("Map focus"),
+                focus + 1
+            ));
         }
         canvas.text(layout.body(137, 65), &summary, CAPTION);
         for (index, slot) in window.slots(count).enumerate() {
@@ -255,16 +262,21 @@ impl Reader {
             if hidden {
                 canvas.text(
                     Rect::new(rect.right() - 116, rect.bottom() - 50, 104, 34),
-                    "Hidden",
+                    language.book_map_text("Hidden"),
                     TextStyle::new(22).ink(ink),
                 );
             }
         }
         if window.adjacent(false, count).is_some() {
-            canvas.button(layout.previous(), "Previous", false, false);
+            canvas.button(
+                layout.previous(),
+                language.book_map_text("Previous"),
+                false,
+                false,
+            );
         }
         if window.adjacent(true, count).is_some() {
-            canvas.button(layout.next(), "Next", false, false);
+            canvas.button(layout.next(), language.book_map_text("Next"), false, false);
         }
     }
 

@@ -1465,6 +1465,60 @@ impl InterfaceLanguage {
         }
     }
 
+    /// Fixed Page Browser labels, never book chapters or publisher labels.
+    pub(super) fn overview_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Pages" => "Trang",
+            "Back" => "Quay lại",
+            "Grid" => "Lưới",
+            "Page browser grid" => "Lưới duyệt trang",
+            "Done" => "Xong",
+            "Thumbnail columns" => "Số cột ảnh thu nhỏ",
+            "Thumbnail rows" => "Số hàng ảnh thu nhỏ",
+            "Page browser on tap" => "Chạm để duyệt trang",
+            "Page" => "Trang",
+            "Hidden" => "Đã ẩn",
+            "Preview unavailable" => "Không có bản xem trước",
+            "Previous" => "Trước",
+            "Prev chapter" => "Chương trước",
+            "Next" => "Tiếp",
+            "Next chapter" => "Chương tiếp",
+            "Skim pages" => "Lướt trang",
+            "Skim chapters" => "Lướt chương",
+            "of" => "trên",
+            _ => english,
+        }
+    }
+
+    pub(super) fn overview_page_count(self, count: usize) -> String {
+        if self == Self::Vietnamese {
+            format!("{count} trang")
+        } else {
+            format!("{count} pages")
+        }
+    }
+
+    /// Fixed Book Map labels; chapter and publisher labels remain untouched.
+    pub(super) fn book_map_text<'a>(self, english: &'a str) -> &'a str {
+        if self != Self::Vietnamese {
+            return english;
+        }
+        match english {
+            "Book map" => "Sơ đồ sách",
+            "Back" => "Quay lại",
+            "Pages" => "Trang",
+            "Reading page" => "Trang đang đọc",
+            "Map focus" => "Vị trí đang chọn",
+            "Hidden" => "Đã ẩn",
+            "Previous" => "Trước",
+            "Next" => "Tiếp",
+            _ => english,
+        }
+    }
+
     /// Return the canonical English search alias for a known Screen-panel row.
     /// This deliberately excludes user-supplied names and other menu surfaces.
     pub(super) fn screen_row_english<'a>(self, label: &'a str) -> &'a str {

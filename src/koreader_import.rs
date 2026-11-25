@@ -323,7 +323,7 @@ impl QuoteResolver {
         // ODT has a dedicated extraction mode for explicit text:s whitespace.
         // Use the same source model as the reader, so imported byte offsets
         // refer to exactly the text and chapter being rendered.
-        let source = if book.is_odt() {
+        let source = if book.is_odt() || book.has_split_odt() {
             book.chapter_source(&book.chapters[index].href, &xhtml)
         } else {
             Source::parse(&xhtml)

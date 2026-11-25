@@ -39,7 +39,9 @@ inside a mixed-language book when **Respect embedded language tags** is on.
 | Friulian | 2 / 2 | Upstream alphabetic patterns; stock comparison pending |
 | Esperanto | 2 / 2 | Upstream 2020 pattern set matches pinned stock entries; behavior comparison pending |
 | Georgian | 1 / 2 | Upstream version 0.3 single-word patterns; stock comparison pending |
-| Greek | 1 / 1 | KOReader Ancient Greek pattern source; apostrophe rules and behavior pending |
+| Greek | 1 / 1 | KOReader Ancient Greek source; punctuation and behavior comparison pending |
+| Malayalam | 2 / 3 | Matching 88-pattern MIT source; grapheme and stock behavior comparison pending |
+| Hungarian | 2 / 2 | Matching upstream source; wide trie, distribution and behavior review pending |
 | Latin | 2 / 2 | Classical upstream patterns; combining-mark behavior unverified |
 | Latin (liturgical) | 2 / 2 | Liturgical upstream patterns; combining-mark behavior unverified |
 | Russian + English (UK) | 2 / 2 | Combined existing Russian and UK English tries; stock comparison pending |
@@ -341,9 +343,39 @@ Greek (`el` / `ell`, optionally `Grek`) uses the 2011 Ancient Greek pattern
 source selected by the pinned KOReader dictionary, with 1 / 1 minima. The
 unmodified LPPL source is included in release packages. The upstream and
 pinned KOReader contain the same 4,296 pattern strings after converting their
-word-boundary notation; Reader currently excludes 356 patterns containing
-apostrophe-like characters. The remaining rules use bounded NFD matching and
-emit only original UTF-8 grapheme boundaries. Greek final-sigma case behavior,
-apostrophe rules, compiled-rule comparison and real-document behavior remain
-open; this change has not been built or tested on the computer or Kindle.
+word-boundary notation. Reader includes patterns with modifier-letter
+apostrophe, Greek koronis and Greek psili and follows the pinned word scanner
+by splitting at ASCII and right quotation apostrophes; its 137 rules containing
+those separators remain excluded. The bounded NFD matcher emits only original
+UTF-8 grapheme boundaries and keeps Greek modifiers with the preceding
+grapheme. Greek capital sigma is lowercased per scalar to ordinary sigma, like
+the pinned engine; existing final sigma remains unchanged. Exact punctuation
+segmentation, compiled-rule comparison, and real-document behavior remain open;
+this change has not been built or tested on the computer or Kindle.
 [Greek terms](licenses/HYPHENATION-EL.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+
+Malayalam (`ml` / `mal`, optionally `Mlym`) uses Santhosh Thottingal's
+upstream v0.9.0 MIT patterns. The upstream and pinned KOReader sources have
+the same 88 pattern strings after word-boundary conversion; the original
+source and MIT notice are included in release packages. KOReader uses 2 / 3
+minima in code-point positions; Reader applies 2 / 3 to grapheme boundaries
+and preserves source UTF-8 offsets. The bounded NFD matcher retains vowel
+marks, virama and join controls inside graphemes, and fails closed on unsupported
+segmentation or length. Exact wrapping, join-control handling, minima and
+real-document behavior still need comparison; this change has not been built
+or tested on the computer or Kindle.
+[Malayalam terms](licenses/HYPHENATION-ML.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)
+
+
+Hungarian (`hu` / `hun`, optionally `Latn`) uses Bence Nagy's upstream
+2011-08-15 patterns and KOReader's 2 / 2 minima. The upstream and pinned
+KOReader sources contain the same 62,851 pattern strings after word-boundary
+conversion. The original source, attribution and MPL 1.1 are included in
+release packages. Hungarian alone uses a bounded wide-index trie; the other
+dictionaries retain their compact indexes. Words longer than 64 graphemes or
+the overall word-byte limit, and graphemes that NFC does not compose to one
+character, are skipped. MPL distribution obligations, device memory use,
+compiled-rule comparison, and real-document behavior remain open; this change
+has not been built or tested on the computer or Kindle.
+[Hungarian terms](licenses/HYPHENATION-HU.txt) · [KOReader language defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/textlang.cpp)

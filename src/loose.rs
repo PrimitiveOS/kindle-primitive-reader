@@ -27,6 +27,8 @@ use crate::epub::{
 
 pub(crate) const CHAPTER_PATH: &str = "document.xhtml";
 pub(crate) const MAX_INPUT: usize = 512 * 1024;
+pub(crate) const MAX_TEXT_INPUT: usize = 2 * 1024 * 1024;
+const MAX_LARGE_TEXT_OUTPUT: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_FB2_INPUT: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_HTMLZ_INPUT: usize = 16 * 1024 * 1024;
 const MAX_OUTPUT: usize = 1024 * 1024;
@@ -145,18 +147,24 @@ impl Document {
     /// Open the selected file with any supported resources contained inside it.
     #[cfg(test)]
     pub(crate) fn open(path: &Path, format: Format) -> Result<Self> {
-        Self::open_classified(path, format).map(|(document, _)| document)
+        Self::open_classified(path, format).map(|(document, _, _)| document)
     }
 
     /// Keep the path-derived format for identity, but return the content format
     /// separately when an XML document was successfully decoded as FictionBook.
-    pub(crate) fn open_classified(path: &Path, format: Format) -> Result<(Self, Format)> {
+    pub(crate) fn open_classified(path: &Path, format: Format) -> Result<(Self, Format, bool)> {
         let mut effective_format = format;
-        let document = Self::open_inner(path, format, &mut effective_format)?;
-        Ok((document, effective_format))
+        let mut large_text = false;
+        let document = Self::open_inner(path, format, &mut effective_format, &mut large_text)?;
+        Ok((document, effective_format, large_text))
     }
 
-    fn open_inner(path: &Path, format: Format, effective_format: &mut Format) -> Result<Self> {
+    fn open_inner(
+        path: &Path,
+        format: Format,
+        effective_format: &mut Format,
+        large_text: &mut bool,
+    ) -> Result<Self> {
         let metadata = fs::metadata(path)?;
         let limit = match format {
             Format::Fb2 => MAX_FB2_INPUT,
@@ -165,6 +173,7 @@ impl Document {
             Format::Odt => crate::odt::MAX_INPUT,
             Format::Rtf => crate::rtf::MAX_INPUT,
             Format::Tcr => crate::tcr::MAX_INPUT,
+            Format::Text => MAX_TEXT_INPUT,
             _ => MAX_INPUT,
         };
         if !metadata.is_file() || metadata.len() > limit as u64 {
@@ -198,12 +207,14 @@ impl Document {
                 .extension()
                 .and_then(|name| name.to_str())
                 .ok_or("The text ZIP has no document extension")?;
-            read_text_zip(file, metadata.len(), extension)?
+            read_text_zip(file, metadata.len(), extension, limit)?
         } else if has_extension(path, "zip") || has_extension(path, "fbz") {
             read_fb2_zip(file, metadata.len())?
         } else {
             read_bounded(file, limit)?
         };
+        *large_text = format == Format::Text
+            && (metadata.len() > MAX_INPUT as u64 || bytes.len() > MAX_INPUT);
         if format == Format::Rtf {
             return html_document(&crate::rtf::decode(&bytes)?, fallback_title);
         }
@@ -215,7 +226,7 @@ impl Document {
         let input = decode_document(&bytes, format)?;
         let input = input.trim_start_matches('\u{feff}');
         match format {
-            Format::Text => text_document(input, fallback_title),
+            Format::Text => text_document_limited(input, fallback_title, *large_text),
             Format::Html => {
                 if has_extension(path, "xml") {
                     let root = Xml::parse_with_options(
@@ -438,7 +449,7 @@ fn read_rtf_zip(file: File, length: u64) -> Result<Vec<u8>> {
     read_bounded(entry, crate::rtf::MAX_INPUT)
 }
 
-fn read_text_zip(file: File, length: u64, extension: &str) -> Result<Vec<u8>> {
+fn read_text_zip(file: File, length: u64, extension: &str, limit: usize) -> Result<Vec<u8>> {
     let mut input = BufReader::new(file);
     let count = check_zip_directory(&mut input, length)
         .map_err(|_| "The text ZIP directory is invalid or exceeds Reader's limits")?;
@@ -470,10 +481,10 @@ fn read_text_zip(file: File, length: u64, extension: &str) -> Result<Vec<u8>> {
     }
     let entry =
         archive.by_index(document.ok_or("The text ZIP contains no matching readable document")?)?;
-    if entry.size() > MAX_INPUT as u64 {
+    if entry.size() > limit as u64 {
         return Err("The text ZIP's document exceeds Reader's input limit".into());
     }
-    read_bounded(entry, MAX_INPUT)
+    read_bounded(entry, limit)
 }
 
 fn read_htmlz(file: File, length: u64, fallback: &str) -> Result<Document> {
@@ -731,6 +742,10 @@ fn add_htmlz_contents(document: &mut Document) -> Result<()> {
 }
 
 fn text_document(input: &str, title: &str) -> Result<Document> {
+    text_document_limited(input, title, false)
+}
+
+fn text_document_limited(input: &str, title: &str, large: bool) -> Result<Document> {
     let cleaned = strip_terminal_colors(input);
     let start = cleaned.trim_start();
     let html_tag = start
@@ -744,6 +759,9 @@ fn text_document(input: &str, title: &str) -> Result<Document> {
         .get(..15)
         .is_some_and(|head| head.eq_ignore_ascii_case("<!doctype html>"));
     if html_tag || html_doctype {
+        if large {
+            return Err("Large HTML content in a text file is not supported".into());
+        }
         // Some reading material distributed as .txt is an HTML export. Preserve well-formed
         // markup and otherwise use the existing bounded HTML tokenizer for the visible text.
         if let Ok(document) = html_document(&cleaned, title) {
@@ -757,7 +775,14 @@ fn text_document(input: &str, title: &str) -> Result<Document> {
         author: None,
         cover: None,
         chapter_path: CHAPTER_PATH.to_owned(),
-        xhtml: text_as_xhtml(&cleaned)?,
+        xhtml: text_as_xhtml_limited(
+            &cleaned,
+            if large {
+                MAX_LARGE_TEXT_OUTPUT
+            } else {
+                MAX_OUTPUT
+            },
+        )?,
         toc: Vec::new(),
         resources: BTreeMap::new(),
         fb2_note_sections: BTreeMap::new(),
@@ -790,6 +815,10 @@ fn strip_terminal_colors(input: &str) -> Cow<'_, str> {
 }
 
 pub(crate) fn text_as_xhtml(input: &str) -> Result<String> {
+    text_as_xhtml_limited(input, MAX_OUTPUT)
+}
+
+fn text_as_xhtml_limited(input: &str, limit: usize) -> Result<String> {
     if input.trim().is_empty() {
         return Err("The text file is empty".into());
     }
@@ -807,17 +836,21 @@ pub(crate) fn text_as_xhtml(input: &str) -> Result<String> {
         }
         output.push_str(if in_paragraph { "<br />" } else { "<p>" });
         in_paragraph = true;
-        xml_text(&mut output, line)?;
+        xml_text_limited(&mut output, line, limit)?;
     }
     if in_paragraph {
         output.push_str("</p>");
     }
     output.push_str("</body></html>");
-    check_output(&output)?;
+    check_output_limited(&output, limit)?;
     Ok(output)
 }
 
 pub(crate) fn xml_text(output: &mut String, text: &str) -> Result<()> {
+    xml_text_limited(output, text, MAX_OUTPUT)
+}
+
+fn xml_text_limited(output: &mut String, text: &str, limit: usize) -> Result<()> {
     for ch in text.chars() {
         match ch {
             '&' => output.push_str("&amp;"),
@@ -834,14 +867,25 @@ pub(crate) fn xml_text(output: &mut String, text: &str) -> Result<()> {
             }
             _ => return Err("The document contains an unsupported control character".into()),
         }
-        check_output(output)?;
+        check_output_limited(output, limit)?;
     }
     Ok(())
 }
 
 pub(crate) fn check_output(output: &str) -> Result<()> {
-    if output.len() > MAX_OUTPUT {
-        return Err("The converted document exceeds the one MiB layout input limit".into());
+    check_output_limited(output, MAX_OUTPUT)
+}
+
+fn check_output_limited(output: &str, limit: usize) -> Result<()> {
+    if output.len() > limit {
+        if limit == MAX_OUTPUT {
+            return Err("The converted document exceeds the one MiB layout input limit".into());
+        }
+        return Err(format!(
+            "The converted document exceeds the {} KiB layout input limit",
+            limit / 1024
+        )
+        .into());
     }
     Ok(())
 }

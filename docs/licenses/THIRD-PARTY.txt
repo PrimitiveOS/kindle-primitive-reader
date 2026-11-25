@@ -29,6 +29,8 @@ For the compiled Esperanto patterns, see HYPHENATION-EO.txt and LPPL-1.3c.txt.
 For the compiled Georgian patterns, see HYPHENATION-KA.txt and hyph-ka.tex.
 For the compiled Latin patterns, see HYPHENATION-LA.txt and the included hyph-la-x-classic.tex and hyph-la-x-liturgic.tex.
 For the compiled Greek patterns, see HYPHENATION-EL.txt and LPPL-1.3c.txt.
+For the compiled Malayalam patterns, see HYPHENATION-ML.txt and hyph-ml.tex.
+For the compiled Hungarian patterns, see HYPHENATION-HU.txt and MPL-1.1.txt.
 For the compiled Slovak and Slovenian patterns, see HYPHENATION-SK-SL.txt.
 
 ab_glyph_rasterizer 0.1.10 (Apache-2.0)

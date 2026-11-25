@@ -194,9 +194,10 @@ impl Book {
                 loose::Format::Chm => Self::open_chm(path),
                 loose::Format::Fb3 => Self::open_fb3(path),
                 _ => {
-                    let (document, actual_format) = loose::Document::open_classified(path, format)?;
-                    if actual_format == loose::Format::Odt {
-                        Self::from_odt(document)
+                    let (document, actual_format, large_text) =
+                        loose::Document::open_classified(path, format)?;
+                    if actual_format == loose::Format::Odt || large_text {
+                        Self::from_partitioned(document, actual_format)
                     } else {
                         Ok(Self::from_loose(document, actual_format))
                     }
@@ -700,7 +701,7 @@ impl Book {
         }
     }
 
-    fn from_odt(document: loose::Document) -> Result<Self> {
+    fn from_partitioned(document: loose::Document, format: loose::Format) -> Result<Self> {
         let split = if document.xhtml.len() <= 512 * 1024 {
             None
         } else {
@@ -711,7 +712,7 @@ impl Book {
                 &document.toc,
             )?
         };
-        let mut book = Self::from_loose(document, loose::Format::Odt);
+        let mut book = Self::from_loose(document, format);
         if let Some(split) = split {
             book.toc = split.toc;
             let Content::Loose {
@@ -1243,6 +1244,13 @@ impl Book {
             self.content,
             Content::Loose {
                 format: loose::Format::Odt,
+                ..
+            }
+        ) || matches!(
+            self.content,
+            Content::Loose {
+                format: loose::Format::Text,
+                odt_history: Some(_),
                 ..
             }
         ) {

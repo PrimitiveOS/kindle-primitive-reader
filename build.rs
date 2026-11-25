@@ -99,14 +99,21 @@ fn is_mark(ch: char) -> bool {
 // Normalize only runs between pattern weights: boundaries with explicit
 // weights must retain their position while canonically equivalent unweighted
 // combining sequences receive the same trie representation as input words.
-fn decomposed_rules(tex: &str, omit_unsupported: bool) -> Vec<String> {
+fn decomposed_rules(tex: &str, tag: &str) -> Vec<String> {
+    let omit_unsupported = tag == "grc";
     let nfd = DecomposingNormalizer::new_nfd();
     let mut rules = Vec::new();
     for pattern in group(tex, "\\patterns{").split_whitespace() {
         let supported = pattern.chars().any(|ch| ch.is_ascii_digit())
-            && pattern
-                .chars()
-                .all(|ch| ch.is_lowercase() || ch.is_ascii_digit() || ch == '.' || is_mark(ch));
+            && pattern.chars().all(|ch| {
+                ch.is_lowercase()
+                    || ch.is_ascii_digit()
+                    || ch == '.'
+                    || is_mark(ch)
+                    || (tag == "ml"
+                        && (ch.is_alphabetic() || matches!(ch, '\u{200c}' | '\u{200d}')))
+                    || (omit_unsupported && matches!(ch, '\u{02bc}' | '\u{1fbd}' | '\u{1fbf}'))
+            });
         if !supported && omit_unsupported {
             continue;
         }
@@ -269,14 +276,15 @@ fn main() {
         ("fur", "FRIULIAN"),
         ("ka", "GEORGIAN"),
         ("grc", "GREEK"),
+        ("ml", "MALAYALAM"),
         ("la-x-classic", "LATIN"),
         ("la-x-liturgic", "LITURGICAL_LATIN"),
         ("sk", "SLOVAK"),
         ("sl", "SLOVENIAN"),
     ] {
         let tex = tex_source(&format!("assets/hyphenation/hyph-{tag}.tex"));
-        let mut rules = if matches!(tag, "la-x-classic" | "la-x-liturgic" | "grc") {
-            decomposed_rules(&tex, tag == "grc")
+        let mut rules = if matches!(tag, "la-x-classic" | "la-x-liturgic" | "grc" | "ml") {
+            decomposed_rules(&tex, tag)
         } else {
             stock_word_rules(&tex, tag == "uk")
         };
@@ -300,6 +308,29 @@ fn main() {
         esperanto_rules(),
         "ESPERANTO",
         &out_dir.join("eo_rules.txt"),
+    ));
+    let hungarian_path = "assets/hyphenation/hyph-hu.tex";
+    assert!(
+        fs::metadata(hungarian_path)
+            .expect("Hungarian source metadata")
+            .len()
+            <= 1_048_576,
+        "Hungarian source limit exceeded"
+    );
+    let hungarian = tex_source(hungarian_path);
+    assert!(
+        hungarian.len() <= 1_048_576,
+        "Hungarian source limit exceeded"
+    );
+    let hungarian_rules = stock_word_rules(&hungarian, false);
+    assert_eq!(
+        hungarian_rules.len(),
+        62_851,
+        "Unexpected Hungarian pattern count"
+    );
+    output.push_str(&compile_hungarian(
+        hungarian_rules,
+        &out_dir.join("hu_rules.txt"),
     ));
     fs::write(out_dir.join("hyphenation_patterns.rs"), output).unwrap();
 }
@@ -328,7 +359,15 @@ fn compile(mut rules: Vec<String>, name: &str, normalized: &Path) -> String {
             if ch.is_ascii_digit() {
                 *weights.last_mut().unwrap() = ch as u8 - b'0';
             } else {
-                assert!(ch.is_lowercase() || ch == '.' || ch == '\'' || is_mark(ch));
+                assert!(
+                    ch.is_lowercase()
+                        || ch == '.'
+                        || ch == '\''
+                        || is_mark(ch)
+                        || (name == "GREEK" && matches!(ch, '\u{02bc}' | '\u{1fbd}' | '\u{1fbf}'))
+                        || (name == "MALAYALAM"
+                            && (ch.is_alphabetic() || matches!(ch, '\u{200c}' | '\u{200d}')))
+                );
                 let next = nodes.len();
                 let index = *nodes[at].edges.entry(ch).or_insert(next);
                 if index == next {
@@ -384,5 +423,88 @@ fn compile(mut rules: Vec<String>, name: &str, normalized: &Path) -> String {
     };
     format!(
         "{generated_notice}const {name}: Patterns = Patterns {{ nodes:&{records:?}, edges:&{edges:?}, weights:&{weights:?} }};\n"
+    )
+}
+
+// Hungarian exceeds compact 16-bit node indexes. Bound all build-time
+// allocations and use checked 32-bit node, edge, weight and count indexes.
+fn compile_hungarian(mut rules: Vec<String>, normalized: &Path) -> String {
+    const MAX_NODES: usize = 200_000;
+    const MAX_WEIGHTS: usize = 1_000_000;
+    const MAX_PATTERN_SCALARS: usize = 64;
+    rules.sort_unstable();
+    let notice = include_str!("docs/licenses/HYPHENATION-HU.txt");
+    let header = notice
+        .lines()
+        .map(|line| format!("# {line}\n"))
+        .collect::<String>();
+    fs::write(normalized, header + &rules.join("\n") + "\n").unwrap();
+    let mut nodes = vec![Node::default()];
+    for pattern in rules {
+        assert!(
+            pattern.chars().count() <= MAX_PATTERN_SCALARS,
+            "Hungarian pattern too long"
+        );
+        let mut at = 0usize;
+        let mut weights = vec![0u8];
+        for ch in pattern.chars() {
+            if ch.is_ascii_digit() {
+                *weights.last_mut().unwrap() = ch as u8 - b'0';
+            } else {
+                assert!(
+                    ch.is_lowercase() || ch == '.',
+                    "Unsupported Hungarian character"
+                );
+                let next = nodes.len();
+                let index = *nodes[at].edges.entry(ch).or_insert(next);
+                if index == next {
+                    assert!(nodes.len() < MAX_NODES, "Hungarian node limit exceeded");
+                    nodes.push(Node::default());
+                }
+                at = index;
+                weights.push(0);
+            }
+        }
+        if nodes[at].weights.is_empty() {
+            nodes[at].weights = weights;
+        } else {
+            for (old, new) in nodes[at].weights.iter_mut().zip(weights) {
+                *old = (*old).max(new);
+            }
+        }
+    }
+    let mut records = Vec::with_capacity(nodes.len());
+    let mut edges = Vec::with_capacity(nodes.len().saturating_sub(1));
+    let mut weights = Vec::new();
+    let mut weight_offsets = BTreeMap::new();
+    for node in &nodes {
+        let offset = *weight_offsets
+            .entry(node.weights.as_slice())
+            .or_insert_with(|| {
+                let offset = u32::try_from(weights.len()).expect("Hungarian weight offset");
+                assert!(
+                    weights.len() + node.weights.len() <= MAX_WEIGHTS,
+                    "Hungarian weight limit exceeded"
+                );
+                weights.extend_from_slice(&node.weights);
+                offset
+            });
+        records.push((
+            u32::try_from(edges.len()).expect("Hungarian edge offset"),
+            u32::try_from(node.edges.len()).expect("Hungarian edge count"),
+            offset,
+            u32::try_from(node.weights.len()).expect("Hungarian weight count"),
+        ));
+        for (&ch, &target) in &node.edges {
+            edges.push((ch, u32::try_from(target).expect("Hungarian target node")));
+        }
+        assert!(edges.len() < MAX_NODES, "Hungarian edge limit exceeded");
+    }
+    let header = notice
+        .lines()
+        .map(|line| format!("// {line}\n"))
+        .collect::<String>();
+    format!(
+        "{header}const HUNGARIAN: WidePatterns = WidePatterns {{ nodes:&{records:?}, edges:&{edges:?}, weights:&{weights:?} }};\n"
     )
 }
