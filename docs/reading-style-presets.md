@@ -38,6 +38,12 @@ pseudo-element cascade apply; Reader's floating-point scaling can differ
 from CREngine's fixed-point rounding. This candidate remains unverified.
 [CREngine font-size inheritance](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L11059-L11066)
 
+Publisher `font-size` in `rem` now uses the reader's default font rather than
+the styled outer HTML element, matching pinned CREngine. Books with a styled
+root and `rem` font sizes may repaginate; source anchors remain unchanged.
+Other uses of `rem` retain their existing behavior. This candidate is unverified.
+[CREngine rem resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L2557-L2559)
+
 **Normal line height** offers KOReader's 0.90–1.50 choices in 0.05 steps.
 The choices are mutually exclusive and can be saved for one book or as a
 default. They override only computed `line-height: normal`; an explicit

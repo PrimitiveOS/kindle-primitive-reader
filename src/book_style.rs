@@ -3264,7 +3264,8 @@ impl<'i> DeclarationParser<'i> for Properties {
                         Token::Dimension { value, unit, .. }
                             if unit.eq_ignore_ascii_case("rem") =>
                         {
-                            Size::Root(value)
+                            // CRE resolves rem font sizes against its default font.
+                            Size::Reference(value)
                         }
                         Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("px") => {
                             Size::Reference(value / 16.0)
@@ -4060,7 +4061,7 @@ mod tests {
         assert_eq!(large.font_weight, FontWeight::BLACK);
         assert_eq!(large.font_style, FontStyle::Italic);
         let root = style_of("root-size");
-        assert_eq!(root.size_scale, 2.5);
+        assert_eq!(root.size_scale, 2.0);
         assert_eq!(root.line_height, None);
         let explicit = style_of("plain");
         assert_eq!(explicit.font_weight, FontWeight::NORMAL);

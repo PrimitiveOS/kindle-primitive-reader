@@ -10794,7 +10794,7 @@ impl App for Reader {
         }
         if input == Input::Sleep {
             self.screen_page_worker.cancel();
-            self.nearby.cancel_page_marks();
+            self.nearby.suspend_page_marks();
             self.cancel_screen_page_jump();
             self.overview_raw = None;
             self.book_map_raw_history = None;
@@ -10842,7 +10842,8 @@ impl App for Reader {
             }
             self.sync_auto_turn(Instant::now());
             self.pages_since_refresh = 0;
-            if with_storage(|| Ok(())).is_ok() {
+            let storage_available = with_storage(|| Ok(())).is_ok();
+            if storage_available {
                 self.update_stats_activity(Instant::now());
             } else {
                 self.stats.discard_active();
@@ -10870,6 +10871,9 @@ impl App for Reader {
             if input == Input::Wake && self.screen == Screen::BookMap {
                 self.start_book_map_raw_history();
                 self.start_book_map_raw_counts();
+            }
+            if input == Input::Wake && storage_available {
+                self.resume_page_marks();
             }
             let progress_changed = if input == Input::Wake {
                 self.reset_footer_initial_position();
@@ -11939,7 +11943,12 @@ impl App for Reader {
             ));
         }
         self.finish_interrupted_scroll();
-        self.nearby.cancel_page_marks();
+        // The runtime saves immediately after Sleep. The pending job has
+        // already been cancelled there; keep its resume snapshot and any
+        // completed geometry until Wake or the explicit storage-return gate.
+        if self.stats_awake {
+            self.nearby.cancel_page_marks();
+        }
         self.overview_raw = None;
         self.book_map_raw_history = None;
         self.book_map_raw_counts = None;

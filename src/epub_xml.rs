@@ -149,6 +149,16 @@ pub(crate) fn recover_html_uppercase_voids(xml: &str, limit: usize) -> Option<St
 /// Quote only unambiguous ASCII HTML attribute values after earlier recovery
 /// paths fail. Full XML and root validation remains mandatory.
 pub(crate) fn recover_html_unquoted_attributes(xml: &str, limit: usize) -> Option<String> {
+    recover_html_attributes(xml, limit, false)
+}
+
+/// A later fallback for selected HTML boolean attributes. Existing attribute
+/// recovery is tried first so previously accepted output remains unchanged.
+pub(crate) fn recover_html_boolean_attributes(xml: &str, limit: usize) -> Option<String> {
+    recover_html_attributes(xml, limit, true)
+}
+
+fn recover_html_attributes(xml: &str, limit: usize, boolean: bool) -> Option<String> {
     if xml.len() > limit {
         return None;
     }
@@ -176,6 +186,8 @@ pub(crate) fn recover_html_unquoted_attributes(xml: &str, limit: usize) -> Optio
             )
     };
     let mut insertions = Vec::new();
+    let mut added_bytes = 0usize;
+    let mut had_boolean = false;
     let mut cursor = 0;
     while cursor < bytes.len() {
         let Some(offset) = bytes[cursor..].iter().position(|&byte| byte == b'<') else {
@@ -258,15 +270,36 @@ pub(crate) fn recover_html_unquoted_attributes(xml: &str, limit: usize) -> Optio
             if !name_start(bytes[pos]) {
                 return None;
             }
+            let attribute_start = pos;
             pos += 1;
             while pos < end && name_part(bytes[pos]) {
                 pos += 1;
             }
+            let attribute_end = pos;
             while pos < end && bytes[pos].is_ascii_whitespace() {
                 pos += 1;
             }
             if bytes.get(pos) != Some(&b'=') {
-                return None;
+                let attribute = &xml[attribute_start..attribute_end];
+                let value = match attribute {
+                    "hidden" if boolean => "=\"hidden\"",
+                    "reversed" if boolean && name == "ol" => "=\"reversed\"",
+                    _ => return None,
+                };
+                if name.contains(':')
+                    || name.bytes().any(|b| b.is_ascii_uppercase())
+                    || insertions.len() >= 16_384
+                {
+                    return None;
+                }
+                added_bytes = added_bytes.checked_add(value.len())?;
+                if xml.len().checked_add(added_bytes)? > limit {
+                    return None;
+                }
+                insertions.push((attribute_end, value));
+                had_boolean = true;
+                pos = attribute_end;
+                continue;
             }
             pos += 1;
             while pos < end && bytes[pos].is_ascii_whitespace() {
@@ -297,12 +330,15 @@ pub(crate) fn recover_html_unquoted_attributes(xml: &str, limit: usize) -> Optio
                 || !value.iter().copied().all(safe_value)
                 || pos == end && value.last() == Some(&b'/')
                 || insertions.len() >= 16_384
-                || xml.len().saturating_add(insertions.len() + 2) > limit
             {
                 return None;
             }
-            insertions.push(value_start);
-            insertions.push(pos);
+            added_bytes = added_bytes.checked_add(2)?;
+            if xml.len().checked_add(added_bytes)? > limit {
+                return None;
+            }
+            insertions.push((value_start, "\""));
+            insertions.push((pos, "\""));
         }
         if name == "style" && !xml[start + 1..end].trim_end().ends_with('/') {
             let after = &xml[end + 1..];
@@ -315,22 +351,42 @@ pub(crate) fn recover_html_unquoted_attributes(xml: &str, limit: usize) -> Optio
             cursor = end + 1;
         }
     }
-    if insertions.is_empty() {
+    if insertions.is_empty() || (boolean && !had_boolean) {
         return None;
     }
-    let mut candidate = String::with_capacity(xml.len() + insertions.len());
+    let mut candidate = String::with_capacity(xml.len() + added_bytes);
     let mut last = 0;
-    for at in insertions {
+    for (at, value) in insertions {
         candidate.push_str(&xml[last..at]);
-        candidate.push('"');
+        candidate.push_str(value);
         last = at;
     }
     candidate.push_str(&xml[last..]);
-    finish_void_recovery(candidate.clone(), limit)
+    let repaired = finish_void_recovery(candidate.clone(), limit)
         .or_else(|| recover_html_voids(&candidate, limit))
         .or_else(|| recover_html_bare_ampersands(&candidate, limit))
         .or_else(|| recover_html_voids_and_ampersands(&candidate, limit))
-        .or_else(|| recover_html_uppercase_voids(&candidate, limit))
+        .or_else(|| recover_html_uppercase_voids(&candidate, limit))?;
+    if boolean {
+        // The lexical scanner cannot establish a tag's inherited namespace.
+        // Reject foreign elements throughout the repaired document rather
+        // than interpreting their attributes as HTML boolean attributes.
+        let checked = without_plain_doctype(&repaired);
+        let document = parse_recovery_xml(&checked).ok()?;
+        if document
+            .descendants()
+            .filter(|node| node.is_element())
+            .any(|node| {
+                !matches!(
+                    node.tag_name().namespace(),
+                    None | Some("http://www.w3.org/1999/xhtml")
+                )
+            })
+        {
+            return None;
+        }
+    }
+    Some(repaired)
 }
 
 fn html_void_candidate(xml: &str, limit: usize, fold_void_case: bool) -> Option<String> {

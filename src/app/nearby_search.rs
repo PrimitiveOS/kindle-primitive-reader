@@ -276,6 +276,17 @@ struct PageMarks {
     viewport: crate::session::ReadingViewport,
     scroll_top: Option<f32>,
 }
+
+struct PageMarksResume {
+    chapter: usize,
+    page: usize,
+    selected_start: Anchor,
+    selected_end: Anchor,
+    layout_identity: Arc<()>,
+    viewport: crate::session::ReadingViewport,
+    scroll_top: Option<f32>,
+    query: SearchQuery,
+}
 impl Drop for PendingAll {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
@@ -332,6 +343,7 @@ pub(super) struct Nearby {
     all: Option<PendingAll>,
     page_pending: Option<PendingPageMarks>,
     page_marks: Option<PageMarks>,
+    page_resume: Option<PageMarksResume>,
     current: Option<SearchQuery>,
     end: Option<SearchDirection>,
     // Retain this even after a completed/cancelled job while hits still exist.
@@ -344,6 +356,23 @@ impl Nearby {
     pub(super) fn cancel_page_marks(&mut self) {
         self.page_pending = None;
         self.page_marks = None;
+        self.page_resume = None;
+    }
+
+    pub(super) fn suspend_page_marks(&mut self) {
+        if let (Some(pending), Some(query)) = (&self.page_pending, &self.current) {
+            self.page_resume = Some(PageMarksResume {
+                chapter: pending.chapter,
+                page: pending.page,
+                selected_start: pending.selected.start.clone(),
+                selected_end: pending.selected.end.clone(),
+                layout_identity: Arc::clone(&pending.layout_identity),
+                viewport: pending.viewport,
+                scroll_top: pending.scroll_top,
+                query: query.clone(),
+            });
+        }
+        self.page_pending = None;
     }
 
     pub(super) fn deadline(&self) -> Option<Instant> {
@@ -380,9 +409,37 @@ impl Nearby {
 }
 
 impl Reader {
+    pub(super) fn resume_page_marks(&mut self) {
+        let Some(resume) = self.nearby.page_resume.take() else {
+            return;
+        };
+        if self.screen != Screen::Book
+            || self.folder_resume_gate.is_some()
+            || self.nearby.searching_direction()
+            || self.nearby.searching_all()
+            || self.nearby.page_pending.is_some()
+            || self.nearby.current.as_ref() != Some(&resume.query)
+        {
+            return;
+        }
+        let Some(active) = &self.active else { return };
+        let reading = &active.reading;
+        if reading.chapter != resume.chapter
+            || reading.page != resume.page
+            || reading.config.viewport != resume.viewport
+            || reading.scroll_history_top() != resume.scroll_top
+            || !Arc::ptr_eq(&reading.probe.layout_identity, &resume.layout_identity)
+            || !self.result_selection.as_ref().is_some_and(|selection| {
+                selection.start == resume.selected_start && selection.end == resume.selected_end
+            })
+        {
+            return;
+        }
+        self.begin_page_marks(&resume.query);
+    }
+
     fn begin_page_marks(&mut self, query: &SearchQuery) {
-        self.nearby.page_pending = None;
-        self.nearby.page_marks = None;
+        self.nearby.cancel_page_marks();
         let Some(active) = &self.active else { return };
         let Some(selected) = self.result_selection.clone() else {
             return;
@@ -986,8 +1043,7 @@ impl Reader {
             }
         };
         // A new directional request supersedes any page-decoration work.
-        self.nearby.page_pending = None;
-        self.nearby.page_marks = None;
+        self.nearby.cancel_page_marks();
         if let Some(fixed) = &self.fixed {
             if !fixed.reading.supports_text() {
                 return Err("This document has no searchable text layer".into());
