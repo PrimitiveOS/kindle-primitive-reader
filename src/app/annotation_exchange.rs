@@ -67,6 +67,7 @@ struct Target {
 struct Candidate {
     book: u64,
     path: PathBuf,
+    folder: Option<PathBuf>,
     digest: String,
     device: Option<String>,
 }
@@ -326,15 +327,12 @@ impl Reader {
         })
     }
 
-    /// Start an advisory scan only for the adjacent default transfer. Actual
+    /// Start an advisory scan of the configured transfer location. Actual
     /// import always goes through the existing independent preview and checks.
     pub(super) fn start_annotation_discovery(&mut self) {
         self.annotation_exchange.discovery.cancel();
         self.annotation_exchange.candidate = None;
-        if !self.stats_awake
-            || self.annotation_exchange.settings.folder.is_some()
-            || !self.supports_annotation_exchange()
-        {
+        if !self.stats_awake || !self.supports_annotation_exchange() {
             return;
         }
         let Some((entry, book)) = self.current_document() else {
@@ -343,6 +341,7 @@ impl Reader {
         let request = discovery_job::Request {
             book,
             relative: entry.path.clone(),
+            folder: self.annotation_exchange.settings.folder.clone(),
             root: self.library.verification_root().to_owned(),
             fixed: self.fixed.is_some(),
             device: self.annotation_exchange.settings.device.clone(),
@@ -379,7 +378,7 @@ impl Reader {
         let Some(candidate) = &self.annotation_exchange.candidate else {
             return false;
         };
-        self.annotation_exchange.settings.folder.is_none()
+        self.annotation_exchange.settings.folder == candidate.folder
             && self.annotation_exchange.settings.device == candidate.device
             && self
                 .current_document()
@@ -436,7 +435,7 @@ impl Reader {
             return Some(Change::Partial);
         }
         let (request, digest) = self.annotation_exchange.discovery.poll(now)?;
-        if self.annotation_exchange.settings.folder.is_some()
+        if self.annotation_exchange.settings.folder != request.folder
             || self.annotation_exchange.settings.device != request.device
             || !self.current_document().is_some_and(|(entry, id)| {
                 id == request.book
@@ -455,6 +454,7 @@ impl Reader {
         self.annotation_exchange.candidate = Some(Candidate {
             book: request.book,
             path: request.relative,
+            folder: request.folder,
             digest,
             device: request.device,
         });

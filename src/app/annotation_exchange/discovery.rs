@@ -1,4 +1,4 @@
-//! Read-only discovery of an adjacent KOReader annotation transfer.
+//! Read-only discovery of a KOReader annotation transfer.
 //!
 //! Run `discover` on a cancellable worker. A positive result is only a hint:
 //! the ordinary preview/import path must still verify the book edition and
@@ -25,12 +25,14 @@ fn check(cancel: &AtomicBool) -> io::Result<()> {
 pub(super) fn discover(
     root: &Path,
     book: &Path,
+    folder: Option<&Path>,
     fixed: bool,
     current_device: Option<&str>,
     applied_digest: Option<&str>,
     cancel: &AtomicBool,
 ) -> io::Result<Option<String>> {
-    let (bytes, digest) = primitive_app::with_storage(|| read_adjacent(root, book, cancel))?;
+    let (bytes, digest, fingerprint) =
+        primitive_app::with_storage(|| read_transfer(root, book, folder, cancel))?;
     check(cancel)?;
     if applied_digest == Some(digest.as_str()) {
         return Ok(None);
@@ -42,14 +44,24 @@ pub(super) fn discover(
         Err(_) => return Ok(None),
     };
     check(cancel)?;
-    Ok(
-        (snapshot.fixed == fixed && current_device != Some(snapshot.device.as_str()))
-            .then_some(digest),
-    )
+    Ok((snapshot.fixed == fixed
+        && current_device != Some(snapshot.device.as_str())
+        && (folder.is_none()
+            || snapshot.fingerprint.as_deref().is_some_and(|value| {
+                fingerprint
+                    .as_deref()
+                    .is_some_and(|actual| value.eq_ignore_ascii_case(actual))
+            })))
+    .then_some(digest))
 }
 
 #[cfg(unix)]
-fn read_adjacent(root: &Path, book: &Path, cancel: &AtomicBool) -> io::Result<(Vec<u8>, String)> {
+fn read_transfer(
+    root: &Path,
+    book: &Path,
+    folder: Option<&Path>,
+    cancel: &AtomicBool,
+) -> io::Result<(Vec<u8>, String, Option<String>)> {
     use std::ffi::{CString, OsStr};
     use std::fs::{File, OpenOptions};
     use std::os::fd::{AsRawFd, FromRawFd};
@@ -75,11 +87,41 @@ fn read_adjacent(root: &Path, book: &Path, cancel: &AtomicBool) -> io::Result<(V
         Ok(unsafe { File::from_raw_fd(fd) })
     }
 
+    // Match Library::browse_folder's accepted relative folder names, but
+    // traverse using no-follow descriptors so a replaced component is never
+    // followed outside the chosen library root.
+    fn open_folder(root: &File, folder: &Path, cancel: &AtomicBool) -> io::Result<File> {
+        if !folder.as_os_str().is_empty()
+            && (!crate::library::safe_path(folder)
+                || folder.components().count() >= crate::library::MAX_PATH_DEPTH)
+        {
+            return Err(io::Error::other("The transfer folder is unavailable"));
+        }
+        let mut directory = root.try_clone()?;
+        for component in folder.components() {
+            check(cancel)?;
+            let Component::Normal(name) = component else {
+                return Err(io::Error::other("The transfer folder is unavailable"));
+            };
+            if Path::new(name)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("sdr"))
+                || name.to_string_lossy().chars().any(char::is_control)
+            {
+                return Err(io::Error::other("The transfer folder is unavailable"));
+            }
+            directory = open_child(&directory, name, true)?;
+        }
+        Ok(directory)
+    }
+
     check(cancel)?;
-    let mut directory = OpenOptions::new()
+    let root_file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
         .open(root)?;
+    let mut directory = root_file.try_clone()?;
     let mut parts = book.components().peekable();
     let mut count = 0usize;
     let name = loop {
@@ -96,14 +138,18 @@ fn read_adjacent(root: &Path, book: &Path, cancel: &AtomicBool) -> io::Result<(V
         check(cancel)?;
         directory = open_child(&directory, name, true)?;
     };
-    let book_file = open_child(&directory, name, false)?;
+    let mut book_file = open_child(&directory, name, false)?;
     let book_stamp = FileStamp::from_metadata(&book_file.metadata()?)
         .ok_or_else(|| io::Error::other("The book is unavailable"))?;
     let sidecar = Path::new(name).with_extension("sdr");
     let sidecar_name = sidecar
         .file_name()
         .ok_or_else(|| io::Error::other("The metadata folder is unavailable"))?;
-    let sidecar_dir = open_child(&directory, sidecar_name, true)?;
+    let sidecar_dir = if let Some(folder) = folder {
+        open_folder(&root_file, folder, cancel)?
+    } else {
+        open_child(&directory, sidecar_name, true)?
+    };
     let sidecar_metadata = sidecar_dir.metadata()?;
     let mut transfer_name = name.to_os_string();
     transfer_name.push(".annotations.lua");
@@ -133,6 +179,14 @@ fn read_adjacent(root: &Path, book: &Path, cancel: &AtomicBool) -> io::Result<(V
         hash.update(&buffer[..n]);
         bytes.extend_from_slice(&buffer[..n]);
     }
+    check(cancel)?;
+    let fingerprint = if folder.is_some() {
+        let checksum = crate::koreader_sidecar::partial_md5(&mut book_file)?;
+        check(cancel)?;
+        Some(format!("{:x}", md5::Digest(checksum)))
+    } else {
+        None
+    };
     if bytes.len() != size as usize
         || FileStamp::from_metadata(&file.metadata()?) != Some(stamp.clone())
         || FileStamp::from_metadata(&open_child(&sidecar_dir, &transfer_name, false)?.metadata()?)
@@ -145,7 +199,11 @@ fn read_adjacent(root: &Path, book: &Path, cancel: &AtomicBool) -> io::Result<(V
             "The book or transfer changed during discovery",
         ));
     }
-    let sidecar_now = open_child(&directory, sidecar_name, true)?.metadata()?;
+    let sidecar_now = if let Some(folder) = folder {
+        open_folder(&root_file, folder, cancel)?.metadata()?
+    } else {
+        open_child(&directory, sidecar_name, true)?.metadata()?
+    };
     if (sidecar_now.dev(), sidecar_now.ino()) != (sidecar_metadata.dev(), sidecar_metadata.ino()) {
         return Err(io::Error::other(
             "The metadata folder changed during discovery",
@@ -158,15 +216,16 @@ fn read_adjacent(root: &Path, book: &Path, cancel: &AtomicBool) -> io::Result<(V
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    Ok((bytes, digest))
+    Ok((bytes, digest, fingerprint))
 }
 
 #[cfg(not(unix))]
-fn read_adjacent(
+fn read_transfer(
     _root: &Path,
     _book: &Path,
+    _folder: Option<&Path>,
     _cancel: &AtomicBool,
-) -> io::Result<(Vec<u8>, String)> {
+) -> io::Result<(Vec<u8>, String, Option<String>)> {
     Err(io::Error::other(
         "Transfer discovery is unavailable on this platform",
     ))

@@ -10,6 +10,7 @@ const RETRY: Duration = Duration::from_millis(100);
 pub(super) struct Request {
     pub(super) book: u64,
     pub(super) relative: PathBuf,
+    pub(super) folder: Option<PathBuf>,
     pub(super) root: PathBuf,
     pub(super) fixed: bool,
     pub(super) device: Option<String>,
@@ -129,6 +130,7 @@ impl Manager {
                 let candidate = super::discovery::discover(
                     &worker_request.root,
                     &worker_request.relative,
+                    worker_request.folder.as_deref(),
                     worker_request.fixed,
                     worker_request.device.as_deref(),
                     worker_request.applied.as_deref(),
