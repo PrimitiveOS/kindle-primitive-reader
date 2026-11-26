@@ -103,8 +103,11 @@ impl Reader {
         }
         let active = self.active.as_ref()?;
         let result = with_storage(|| {
-            let mut publication =
-                Book::open(&active.reading.config.book).map_err(io::Error::other)?;
+            let mut publication = active
+                .reading
+                .config
+                .open_book()
+                .map_err(io::Error::other)?;
             scan.outline
                 .step(&mut publication)
                 .map_err(io::Error::other)

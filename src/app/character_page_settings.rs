@@ -622,7 +622,11 @@ impl Reader {
         let id = active.id;
         let finished = with_storage(|| {
             // Drop the archive before returning to the event loop so USB can own the volume.
-            let mut book = Book::open(&active.reading.config.book).map_err(io::Error::other)?;
+            let mut book = active
+                .reading
+                .config
+                .open_book()
+                .map_err(io::Error::other)?;
             scan.map.step(&mut book).map_err(io::Error::other)
         })?;
         if !finished {

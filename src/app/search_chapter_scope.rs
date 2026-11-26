@@ -215,7 +215,7 @@ fn remote_bounds(
         return Ok((start, end));
     }
     primitive_app::with_storage(|| {
-        let mut publication = Book::open(&reading.config.book).map_err(io::Error::other)?;
+        let mut publication = reading.config.open_book().map_err(io::Error::other)?;
         if start.is_none() {
             for (&chapter, entries) in before {
                 if let Some(offset) = source_offsets(reading, &mut publication, chapter, entries)?

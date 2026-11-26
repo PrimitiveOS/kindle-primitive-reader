@@ -1,6 +1,6 @@
 use std::io;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
@@ -247,6 +247,16 @@ pub(crate) struct PreparedFolderChapter {
 }
 
 impl SearchLayoutRecipe {
+    pub(crate) fn open_search_book(&self, path: &Path) -> Result<Book> {
+        if path != self.book.as_path() {
+            return Err("The search source changed".into());
+        }
+        match &self.folder_snapshot {
+            Some(proof) => Book::open_folder_snapshot(proof.members()),
+            None => Book::open(path),
+        }
+    }
+
     pub(crate) fn has_verified_fonts(&self) -> bool {
         self.font_sources.is_some() && self.font_sources == self.current_font_sources
     }
@@ -483,7 +493,7 @@ impl SearchLayoutRecipe {
                 ));
             }
             let sources = screen_pages::ScreenPageSources::read(&config);
-            let book = Book::open(&config.book).map_err(io::Error::other)?;
+            let book = config.open_book().map_err(io::Error::other)?;
             let probe = config
                 .layout_chapter_cancellable(book, index, sources, &check)
                 .map_err(io::Error::other)?;
@@ -518,6 +528,18 @@ impl FacingGeometry {
 }
 
 impl BookConfig {
+    /// Open the immutable member set for a snapshot-backed folder session.
+    /// Ordinary books continue through their existing provider.
+    pub(crate) fn open_book(&self) -> Result<Book> {
+        match &self.folder_snapshot {
+            Some(proof) if crate::epub_members::is_folder_book(&self.book) => {
+                Book::open_folder_snapshot(proof.members())
+            }
+            Some(_) => Err("Folder snapshot does not match the book".into()),
+            None => Book::open(&self.book),
+        }
+    }
+
     fn folder_snapshot_chapter(
         &self,
         proof: &screen_pages::folder_sources::FolderProof,
@@ -879,7 +901,7 @@ impl Reading {
             && !config.facing_pages
         {
             with_storage(|| {
-                let book = Book::open(&config.book).map_err(io::Error::other)?;
+                let book = config.open_book().map_err(io::Error::other)?;
                 Ok(book
                     .chapters
                     .iter()
@@ -2413,7 +2435,7 @@ impl Reading {
         let hide = self.hides_nonlinear();
         let candidate = with_storage(|| {
             let sources = screen_pages::ScreenPageSources::read(&self.config);
-            let mut book = Book::open(&self.config.book).map_err(io::Error::other)?;
+            let mut book = self.config.open_book().map_err(io::Error::other)?;
             let (chapter, in_chapter) = if hide {
                 book.linear_progress_target(fraction)
                     .map_err(io::Error::other)?

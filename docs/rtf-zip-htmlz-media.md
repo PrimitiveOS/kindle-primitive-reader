@@ -78,3 +78,20 @@ entries keep their existing conversion and anchors. Recovery remains unverified.
 
 These changes have not yet been tested in the simulator, compared with
 KOReader on matching files, or verified on Kindle.
+
+The image-only recovery candidate also accepts visible `\dibitmap0` pictures
+whose payload is exactly a 40-byte BITMAPINFOHEADER followed by uncompressed
+1-, 4- or 8-bit indexed rows with a validated RGBQUAD palette, or 24-bit RGB
+rows without a palette. Standard four-byte row padding is required; both
+bottom-up and top-down rows are accepted. Width must be positive, height must
+be nonzero, the optional image-size field must match, palette reserved bytes
+must be zero and every visible palette index must be in range. The generated
+14-byte BMP file header counts toward the existing 1 MiB per-picture and 4 MiB
+aggregate limits. Other DIB headers, 32-bit/alpha, compression, ambiguous or
+incomplete payloads remain unsupported. This path only runs when the text importer reports no readable
+text; previously successful text and image-only conversions keep their output
+and anchors. The DIB and resulting BMP buffers can coexist temporarily, and
+BMP decoder internals and actual rendering have not been measured. The pinned
+KOReader RTF command table explicitly registers PNG and JPEG picture controls;
+its DIB behavior, real-document, simulator and Kindle comparison remain open.
+[KOReader picture commands](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/include/rtfcmd.h#L44-L52)

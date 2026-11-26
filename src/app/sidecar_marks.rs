@@ -116,7 +116,11 @@ impl Reader {
             return Ok(Change::None);
         };
         let mapped = with_storage(|| {
-            let mut book = Book::open(&active.reading.config.book).map_err(io::Error::other)?;
+            let mut book = active
+                .reading
+                .config
+                .open_book()
+                .map_err(io::Error::other)?;
             let mut resolve =
                 |pointer: &str| crate::cre_pointer::resolve(&mut book, pointer, import.version);
             // A changed or unsupported location skips only this record.

@@ -115,7 +115,11 @@ fn load_text(
         return Err("Search was cancelled".into());
     }
     let chapter = with_storage(|| {
-        let mut book = Book::open(path).map_err(io::Error::other)?;
+        let mut book = match raw_layout {
+            Some(recipe) => recipe.open_search_book(path),
+            None => Book::open(path),
+        }
+        .map_err(io::Error::other)?;
         ChapterText::read_with_flow(&mut book, ci, flow).map_err(io::Error::other)
     })?;
     if cancelled.load(Ordering::Relaxed) {

@@ -35,9 +35,16 @@ struct Group {
     picture_started: bool,
 }
 
+#[derive(Clone, Copy)]
+enum PictureFormat {
+    Png,
+    Jpeg,
+    Dib,
+}
+
 #[derive(Default)]
 struct Payload {
-    format: Option<image::ImageFormat>,
+    format: Option<PictureFormat>,
     bytes: Vec<u8>,
     high: Option<u8>,
     binary: bool,
@@ -77,23 +84,109 @@ impl Payload {
             return Err("The RTF image has incomplete data".into());
         }
         let format = self.format.ok_or("The RTF image type is unsupported")?;
-        let reader = crate::image_reader(&self.bytes)?;
-        if reader.format() != Some(format) {
+        let (bytes, expected, extension) = match format {
+            PictureFormat::Png => (self.bytes, image::ImageFormat::Png, "png"),
+            PictureFormat::Jpeg => (self.bytes, image::ImageFormat::Jpeg, "jpg"),
+            PictureFormat::Dib => (dib_to_bmp(self.bytes)?, image::ImageFormat::Bmp, "bmp"),
+        };
+        let reader = crate::image_reader(&bytes)?;
+        if reader.format() != Some(expected) {
             return Err("The RTF image type does not match its data".into());
         }
         let (width, height) = reader.into_dimensions()?;
         if !crate::comic::image_dimensions_valid(width, height) {
             return Err("The RTF image exceeds the decoded image limit".into());
         }
-        Ok(Picture {
-            extension: if format == image::ImageFormat::Png {
-                "png"
-            } else {
-                "jpg"
-            },
-            bytes: self.bytes,
-        })
+        Ok(Picture { extension, bytes })
     }
+}
+
+// RTF DIBs omit the 14-byte BMP file header. Restrict recovery to exact,
+// uncompressed BITMAPINFOHEADER layouts and validate every palette index.
+fn dib_to_bmp(dib: Vec<u8>) -> Result<Vec<u8>> {
+    const INFO_HEADER: usize = 40;
+    const FILE_HEADER: usize = 14;
+    if dib.len() < INFO_HEADER || dib.len() > MAX_PICTURE_BYTES - FILE_HEADER {
+        return Err("The RTF DIB image exceeds its size limit or has an incomplete header".into());
+    }
+    let short = |at: usize| u16::from_le_bytes([dib[at], dib[at + 1]]);
+    let long = |at: usize| u32::from_le_bytes([dib[at], dib[at + 1], dib[at + 2], dib[at + 3]]);
+    let width = i32::from_le_bytes([dib[4], dib[5], dib[6], dib[7]]);
+    let height = i32::from_le_bytes([dib[8], dib[9], dib[10], dib[11]]);
+    let bits = short(14);
+    let rows = height.unsigned_abs();
+    if long(0) != INFO_HEADER as u32
+        || width <= 0
+        || height == 0
+        || short(12) != 1
+        || !matches!(bits, 1 | 4 | 8 | 24)
+        || long(16) != 0
+        || !crate::comic::image_dimensions_valid(width as u32, rows)
+    {
+        return Err("The RTF DIB image uses an unsupported bitmap layout".into());
+    }
+    let colors = long(32);
+    let important = long(36);
+    let palette_count = if bits == 24 {
+        if colors != 0 || important != 0 {
+            return Err("The RTF RGB DIB has an unsupported palette".into());
+        }
+        0usize
+    } else {
+        let maximum = 1u32 << bits;
+        let count = if colors == 0 { maximum } else { colors };
+        if count > maximum || important > count {
+            return Err("The RTF DIB palette is invalid".into());
+        }
+        usize::try_from(count)?
+    };
+    let palette_bytes = palette_count
+        .checked_mul(4)
+        .ok_or("The RTF DIB palette overflowed")?;
+    let pixel_start = INFO_HEADER
+        .checked_add(palette_bytes)
+        .ok_or("The RTF DIB palette overflowed")?;
+    let palette = dib
+        .get(INFO_HEADER..pixel_start)
+        .ok_or("The RTF DIB palette is incomplete")?;
+    if palette.chunks_exact(4).any(|color| color[3] != 0) {
+        return Err("The RTF DIB palette has unsupported reserved data".into());
+    }
+    let row = (width as usize)
+        .checked_mul(bits as usize)
+        .and_then(|value| value.checked_add(31))
+        .map(|value| value / 32 * 4)
+        .ok_or("The RTF DIB row size overflowed")?;
+    let pixels = row
+        .checked_mul(rows as usize)
+        .ok_or("The RTF DIB size overflowed")?;
+    if pixel_start.checked_add(pixels) != Some(dib.len())
+        || (long(20) != 0 && usize::try_from(long(20)).ok() != Some(pixels))
+    {
+        return Err("The RTF DIB pixel data is incomplete or ambiguous".into());
+    }
+    if palette_count != 0 {
+        let mask = ((1u16 << bits) - 1) as u8;
+        for scanline in dib[pixel_start..].chunks_exact(row) {
+            for column in 0..width as usize {
+                let at = column * bits as usize;
+                let shift = 8 - bits as usize - at % 8;
+                if usize::from((scanline[at / 8] >> shift) & mask) >= palette_count {
+                    return Err("The RTF DIB has an invalid palette index".into());
+                }
+            }
+        }
+    }
+    let total = FILE_HEADER
+        .checked_add(dib.len())
+        .ok_or("The RTF DIB size overflowed")?;
+    let mut bmp = Vec::with_capacity(total);
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&u32::try_from(total)?.to_le_bytes());
+    bmp.extend_from_slice(&[0; 4]);
+    bmp.extend_from_slice(&u32::try_from(FILE_HEADER + pixel_start)?.to_le_bytes());
+    bmp.extend_from_slice(&dib);
+    Ok(bmp)
 }
 
 pub(crate) fn image_only(input: &[u8]) -> Result<Vec<Picture>> {
@@ -166,8 +259,9 @@ fn scan(input: &[u8], allow_shape: bool) -> Result<Vec<Picture>> {
                 let group = groups.last_mut().ok_or("RTF content outside a group")?;
                 if let Some((_, payload)) = active.as_mut() {
                     let format = match word {
-                        b"pngblip" => Some(image::ImageFormat::Png),
-                        b"jpegblip" => Some(image::ImageFormat::Jpeg),
+                        b"pngblip" => Some(PictureFormat::Png),
+                        b"jpegblip" => Some(PictureFormat::Jpeg),
+                        b"dibitmap" if number == Some(0) => Some(PictureFormat::Dib),
                         _ => None,
                     };
                     if let Some(format) = format {

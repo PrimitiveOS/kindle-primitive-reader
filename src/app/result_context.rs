@@ -206,7 +206,7 @@ fn reflow_context(
         &probe.source
     } else {
         let xml = with_storage(|| {
-            let mut book = Book::open(&reading.config.book).map_err(io::Error::other)?;
+            let mut book = reading.config.open_book().map_err(io::Error::other)?;
             book.chapter(hit.chapter).map_err(io::Error::other)
         })?;
         other = crate::source::Source::parse(&xml)?;

@@ -39,7 +39,10 @@ impl Reader {
         }
         let initial_check = active.embedded_font_inventory.is_none();
         if let Ok(available) = with_storage(|| {
-            let mut book = Book::open(&active.reading.config.book)
+            let mut book = active
+                .reading
+                .config
+                .open_book()
                 .map_err(|error| io::Error::other(error.to_string()))?;
             Ok(if initial_check {
                 BookStyle::publication_has_embedded_fonts(&mut book, chapter)

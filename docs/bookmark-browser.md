@@ -23,6 +23,14 @@ and target are revalidated on save as above. Page bookmarks without a saved
 highlight quote do not offer this action. This control has not yet been
 validated in simulation or on Kindle.
 
+When text has been copied within Reader, **Paste** also inserts that clipboard
+at the caret in the saved-note editor or Bookmark Browser Find field. The
+entire paste is refused if it would exceed the field's UTF-8 byte limit (4 KiB
+for notes, 256 bytes for search). Editing a note still requires an explicit
+save and the same source and target checks. The clipboard is temporary Reader
+state. These Paste controls have not yet been validated in simulation or on
+Kindle.
+
 Result rows use the Reader's **Show in items** preference: highlighted text, highlighted text and note, or note when present. In the combined mode each part gets an excerpt so both can be seen; an empty note falls back to the saved text. This changes presentation only: searches still inspect both fields, and the mark preview retains the full saved quotation and note. KOReader's [bookmark display choices](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L315-L333) and [row rendering](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L1145-L1165) motivated this Reader-specific extension to the cross-book browser. The updated row behavior still needs simulation and device validation.
 
 Reading order follows source positions. **Date added** sorts each book's marks by their creation time. **Sort direction** reverses that order. Earlier marks without a recorded creation time appear after dated marks. The original reading order resolves equal or missing dates. The type, style and sorting preferences persist between sessions. Search text and the temporary book filter clear when the browser opens again.

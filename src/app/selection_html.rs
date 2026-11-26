@@ -203,8 +203,11 @@ impl Reader {
             if self.library.identify(&active.entry)? != active.id {
                 return Err(io::Error::other("The book changed"));
             }
-            let path = self.library.absolute_path(&active.entry.path)?;
-            let mut book = Book::open(&path).map_err(io::Error::other)?;
+            let mut book = active
+                .reading
+                .config
+                .open_book()
+                .map_err(io::Error::other)?;
             let found = book
                 .chapter_index(&probe.chapter)
                 .ok_or_else(|| io::Error::other(unavailable))?;

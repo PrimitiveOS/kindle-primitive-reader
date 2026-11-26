@@ -214,7 +214,7 @@ impl Reader {
         }
         let reading = &self.active.as_ref()?.reading;
         primitive_app::with_storage(|| {
-            let mut publication = Book::open(&reading.config.book).map_err(io::Error::other)?;
+            let mut publication = reading.config.open_book().map_err(io::Error::other)?;
             for (&chapter, entries) in nearby {
                 let targets: Vec<_> = entries.iter().map(|&(target, _)| target).collect();
                 let offsets = source_offsets(reading, &mut publication, chapter, &targets)?;

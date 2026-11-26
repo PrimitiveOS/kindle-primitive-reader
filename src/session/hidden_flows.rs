@@ -239,7 +239,7 @@ fn automatic_note_layouts(
         let mut book = Some(
             match folder {
                 Some((proof, _)) => Book::open_folder_snapshot(proof.members()),
-                None => Book::open(&config.book),
+                None => config.open_book(),
             }
             .map_err(io::Error::other)?,
         );

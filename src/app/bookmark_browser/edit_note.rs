@@ -16,16 +16,34 @@ pub(super) struct Pending {
     desired: Option<Option<String>>,
 }
 
-fn save_button(layout: BrowserLayout) -> Rect {
-    let width = ((layout.0.width - 96) / 2).min(260).max(1);
+fn action_width(layout: BrowserLayout, has_quote: bool, has_paste: bool) -> i32 {
+    if has_quote && has_paste {
+        ((layout.0.width - 104) / 3).min(260).max(1)
+    } else {
+        ((layout.0.width - 96) / 2).min(260).max(1)
+    }
+}
+
+fn save_button(layout: BrowserLayout, has_quote: bool, has_paste: bool) -> Rect {
+    let width = action_width(layout, has_quote, has_paste);
     layout
         .0
         .horizontal(Rect::new(layout.0.width - 40 - width, 150, width, 100))
 }
 
-fn quote_button(layout: BrowserLayout) -> Rect {
-    let width = ((layout.0.width - 96) / 2).min(260).max(1);
+fn quote_button(layout: BrowserLayout, has_quote: bool, has_paste: bool) -> Rect {
+    let width = action_width(layout, has_quote, has_paste);
     layout.0.horizontal(Rect::new(40, 150, width, 100))
+}
+
+fn paste_button(layout: BrowserLayout, has_quote: bool, has_paste: bool) -> Rect {
+    let width = action_width(layout, has_quote, has_paste);
+    let x = if has_quote {
+        (layout.0.width - width) / 2
+    } else {
+        40
+    };
+    layout.0.horizontal(Rect::new(x, 150, width, 100))
 }
 
 fn saved_quote(target: &Snapshot) -> Option<&str> {
@@ -87,17 +105,31 @@ pub(super) fn draw(reader: &Reader, canvas: &mut Canvas, layout: BrowserLayout) 
     let Some(pending) = &reader.bookmark_browser.pending_note_edit else {
         return;
     };
-    if saved_quote(&pending.target).is_some() {
+    let has_quote = saved_quote(&pending.target).is_some();
+    let has_paste = reader.clipboard_text.is_some();
+    if has_quote {
         canvas.button(
-            quote_button(layout),
-            language.bookmark_text("Insert quote"),
+            quote_button(layout, has_quote, has_paste),
+            language.bookmark_text(if has_paste { "Quote" } else { "Insert quote" }),
+            false,
+            false,
+        );
+    }
+    if has_paste {
+        canvas.button(
+            paste_button(layout, has_quote, has_paste),
+            language.bookmark_text("Paste"),
             false,
             false,
         );
     }
     canvas.button(
-        save_button(layout),
-        language.bookmark_text("Save note"),
+        save_button(layout, has_quote, has_paste),
+        language.bookmark_text(if has_quote && has_paste {
+            "Save"
+        } else {
+            "Save note"
+        }),
         true,
         false,
     );
@@ -242,27 +274,47 @@ pub(super) fn input(reader: &mut Reader, input: Input, layout: BrowserLayout) ->
     let result = (|| -> Result<Change> {
         let (area, rows) = text_area(layout);
         if let Input::Tap(x, y) = input {
-            if save_button(layout).contains(x, y) {
+            let pending = reader
+                .bookmark_browser
+                .pending_note_edit
+                .as_ref()
+                .ok_or("Open the note editor first")?;
+            let has_quote = saved_quote(&pending.target).is_some();
+            let has_paste = reader.clipboard_text.is_some();
+            if save_button(layout, has_quote, has_paste).contains(x, y) {
                 request_save(reader)?;
                 return Ok(Change::Partial);
             }
-            if quote_button(layout).contains(x, y) {
+            let quote_pressed =
+                has_quote && quote_button(layout, has_quote, has_paste).contains(x, y);
+            let paste_pressed =
+                has_paste && paste_button(layout, has_quote, has_paste).contains(x, y);
+            if quote_pressed || paste_pressed {
+                let clipboard = if paste_pressed {
+                    reader.clipboard_text.as_deref()
+                } else {
+                    None
+                };
                 let pending = reader
                     .bookmark_browser
                     .pending_note_edit
                     .as_mut()
                     .ok_or("Open the note editor first")?;
-                let Some(quote) = saved_quote(&pending.target) else {
+                let Some(text) = (if paste_pressed {
+                    clipboard
+                } else {
+                    saved_quote(&pending.target)
+                }) else {
                     return Ok(Change::None);
                 };
                 let editor = &mut pending.editor.editor;
                 let current_bytes: usize = editor.text.iter().map(|ch| ch.len_utf8()).sum();
-                if current_bytes.saturating_add(quote.len()) > crate::library::MAX_NOTE_BYTES {
+                if current_bytes.saturating_add(text.len()) > crate::library::MAX_NOTE_BYTES {
                     return Err("The note exceeds the saved note size limit".into());
                 }
                 let caret = editor.caret.min(editor.text.len());
-                let added = quote.chars().count();
-                editor.text.splice(caret..caret, quote.chars());
+                let added = text.chars().count();
+                editor.text.splice(caret..caret, text.chars());
                 editor.caret = caret + added;
                 pending.editor.show_caret(COLUMNS, rows);
                 reader.notice = None;

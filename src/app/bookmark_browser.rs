@@ -34,6 +34,22 @@ const REVIEW_SELECTION_CONTROL_ROWS: usize = 3;
 struct BrowserLayout(NavigationLayout);
 
 impl BrowserLayout {
+    fn search_field(self, paste: bool) -> Rect {
+        let mut field = self.0.body(154, 130);
+        if paste {
+            field.w = (field.w - 176).max(1);
+            if self.0.mirrored {
+                field.x += 176;
+            }
+        }
+        field
+    }
+
+    fn search_paste(self) -> Rect {
+        self.0
+            .horizontal(Rect::new(self.0.width - 200, 169, 160, 100))
+    }
+
     fn search_option(self, index: usize) -> Rect {
         let gap = 12;
         let width = ((self.0.width - 80 - gap * 3) / 4).max(1);
@@ -2285,11 +2301,19 @@ impl Reader {
             }
             Page::Search => {
                 canvas.single_line_field(
-                    layout.body(154, 130),
+                    layout.search_field(self.clipboard_text.is_some()),
                     &self.editor,
                     language.bookmark_text("Bookmark, highlighted text or note"),
                     false,
                 );
+                if self.clipboard_text.is_some() {
+                    canvas.button(
+                        layout.search_paste(),
+                        language.bookmark_text("Paste"),
+                        false,
+                        false,
+                    );
+                }
                 canvas.text(
                     layout.body(284, 28),
                     language.bookmark_text("Search options"),
@@ -2544,6 +2568,22 @@ impl Reader {
             return Change::None;
         };
         let layout = BrowserLayout(self.navigation_layout());
+        if contains(layout.search_paste(), x, y) {
+            if let Some(text) = self.clipboard_text.as_deref() {
+                let existing_bytes: usize = self.editor.text.iter().map(|ch| ch.len_utf8()).sum();
+                if existing_bytes.saturating_add(text.len()) > crate::search::MAX_QUERY_BYTES
+                    || self.editor.text.len().saturating_add(text.chars().count()) > self.editor.max
+                {
+                    return self.report("The copied text is too long for this search");
+                }
+                let caret = self.editor.caret.min(self.editor.text.len());
+                let added = text.chars().count();
+                self.editor.text.splice(caret..caret, text.chars());
+                self.editor.caret = caret + added;
+                self.notice = None;
+                return Change::Partial;
+            }
+        }
         if contains(layout.search_option(0), x, y) {
             self.bookmark_browser.case_sensitive = !self.bookmark_browser.case_sensitive;
             return Change::Partial;

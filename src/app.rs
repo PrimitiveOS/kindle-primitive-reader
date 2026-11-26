@@ -56,6 +56,7 @@ mod fixed_results_tests;
 mod flexible_results;
 mod folder_activation;
 mod folder_lifecycle;
+mod folder_open;
 #[cfg(test)]
 mod font_render_tests;
 mod footer_custom_text;
@@ -1038,6 +1039,14 @@ pub struct Reader {
     folder_resume_gate: Option<folder_lifecycle::Gate>,
     folder_activation: Option<folder_activation::Activation>,
     folder_activation_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    folder_open: Option<folder_open::Pending>,
+    folder_open_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    folder_open_bypass: bool,
+    pending_folder_snapshot: Option<(
+        PathBuf,
+        u64,
+        std::sync::Arc<crate::session::screen_pages::folder_sources::FolderProof>,
+    )>,
     page_bookmark_worker_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     skim: Option<skim::Session>,
     staged_viewport: Option<(
@@ -1313,6 +1322,10 @@ impl Reader {
             folder_resume_gate: None,
             folder_activation: None,
             folder_activation_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            folder_open: None,
+            folder_open_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            folder_open_bypass: false,
+            pending_folder_snapshot: None,
             page_bookmark_worker_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
@@ -1524,6 +1537,10 @@ impl Reader {
         let publication = with_storage(|| Ok(self.library.publication_for_chapter(&entry)))?;
         if let Some((marker, chapter, path)) = publication {
             self.open_with_password(marker, None)?;
+            if self.folder_open.is_some() {
+                self.cancel_folder_open();
+                return Err("Open the folder book before choosing its chapter".into());
+            }
             if self.metadata_archive.waiting_to_restore() {
                 return Ok(());
             }
@@ -1548,6 +1565,9 @@ impl Reader {
         password: Option<&str>,
         check_archive: bool,
     ) -> Result<()> {
+        if password.is_none() && self.maybe_start_folder_open(&entry, check_archive)? {
+            return Ok(());
+        }
         if check_archive && password.is_none() {
             self.metadata_archive.abandon_archive_consumption();
         }
@@ -1590,10 +1610,27 @@ impl Reader {
                 Ok((absolute, self.library.identify(&entry)?, None))
             }
         })?;
+        if let Some((path, expected, _)) = &self.pending_folder_snapshot
+            && path == &entry.path
+            && *expected != id
+        {
+            return Err(
+                "The folder book changed while opening; its saved position was kept".into(),
+            );
+        }
         with_storage(|| {
             self.library.recover_live_metadata(&entry, id);
             Ok(())
         })?;
+        if crate::epub_members::is_folder_book(&entry.path)
+            && self.library.has_raw_whitespace_state(id)
+            && !self
+                .pending_folder_snapshot
+                .as_ref()
+                .is_some_and(|(path, expected, _)| path == &entry.path && *expected == id)
+        {
+            return Err("This folder book has saved raw positions and needs a verified snapshot; its saved data was kept".into());
+        }
         if !crate::parley_layout::RAW_LAYOUT_ENABLED && self.library.has_raw_whitespace_state(id) {
             return Err(
                 "This book has raw whitespace positions that this reader cannot yet restore safely"
@@ -1880,7 +1917,11 @@ impl Reader {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
-            folder_snapshot: None,
+            folder_snapshot: self
+                .pending_folder_snapshot
+                .as_ref()
+                .filter(|(path, expected, _)| path == &entry.path && *expected == id)
+                .map(|(_, _, proof)| proof.clone()),
             engine: Engine::Parley,
             book: absolute,
             fonts,
@@ -5869,7 +5910,11 @@ impl Reader {
         let active = self.active.as_ref().ok_or("No open book")?;
         let previous = outline.contents.entries.len();
         let finished = with_storage(|| {
-            let mut book = Book::open(&active.reading.config.book).map_err(io::Error::other)?;
+            let mut book = active
+                .reading
+                .config
+                .open_book()
+                .map_err(io::Error::other)?;
             outline.contents.step(&mut book).map_err(io::Error::other)
         })?;
         if finished {
@@ -5969,9 +6014,7 @@ impl Reader {
             || (format == Some(DocumentFormat::Text)
                 && !reading.probe.odt_continued_before.is_empty())
         {
-            let book = with_storage(|| {
-                crate::epub::Book::open(&reading.config.book).map_err(io::Error::other)
-            })?;
+            let book = with_storage(|| reading.config.open_book().map_err(io::Error::other))?;
             strict_odt = book.has_split_odt();
             if strict_odt {
                 let anchor = requested
@@ -10093,6 +10136,7 @@ impl App for Reader {
         self.draw_bookmark_confirmation(canvas);
         self.draw_page_bookmark_search(canvas);
         self.draw_folder_resume_gate(canvas);
+        self.draw_folder_open(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
@@ -10137,6 +10181,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.folder_open_input(input) {
+            return change;
+        }
         self.folder_activation = None;
         if let Some(change) = self.folder_resume_input(input) {
             return change;
@@ -10277,6 +10324,9 @@ impl App for Reader {
     }
 
     fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        if self.folder_open.is_some() {
+            return Change::None;
+        }
         self.folder_activation = None;
         if self.folder_resume_gate.is_some() {
             return Change::None;
@@ -10417,6 +10467,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.folder_open_input(input) {
+            return change;
+        }
         if input == Input::Sleep {
             self.folder_activation = None;
         } else if input == Input::Wake && self.folder_resume_gate.is_none() {
@@ -11248,6 +11301,9 @@ impl App for Reader {
     }
 
     fn deadline(&self) -> Option<Instant> {
+        if let Some(open) = &self.folder_open {
+            return Some(open.deadline());
+        }
         if let Some(gate) = &self.folder_resume_gate {
             return gate.deadline();
         }
@@ -11343,6 +11399,9 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if self.folder_open.is_some() {
+            return self.poll_folder_open(now).unwrap_or(Change::None);
+        }
         if self.folder_resume_gate.is_some() {
             return self.poll_folder_resume(now).unwrap_or(Change::None);
         }
@@ -11595,6 +11654,7 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
+        self.cancel_folder_open();
         self.folder_activation = None;
         if self.folder_resume_gate.is_some() {
             return Err(io::Error::new(
@@ -11624,6 +11684,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.cancel_folder_open();
         self.folder_activation = None;
         if self.start_folder_resume_gate()? {
             return Ok(());

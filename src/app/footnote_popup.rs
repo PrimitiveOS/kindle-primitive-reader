@@ -315,7 +315,7 @@ impl Reader {
             .iter()
             .any(|entry| entry.destination.as_ref() == Some(&target));
         let result = with_storage(|| {
-            let mut book = Book::open(&reading.config.book).map_err(io::Error::other)?;
+            let mut book = reading.config.open_book().map_err(io::Error::other)?;
             if book.revision() != reading.probe.book {
                 return Ok(None);
             }
@@ -434,7 +434,7 @@ impl Reader {
                 if error.downcast_ref::<crate::PageContentTooTall>().is_some()
                     && settings.font_size > TALL_LINE_FONT_PIXELS =>
             {
-                let book = Book::open(&reading.config.book).map_err(io::Error::other)?;
+                let book = reading.config.open_book().map_err(io::Error::other)?;
                 if book.revision() != reading.probe.book {
                     return Err(io::Error::other(
                         "The book changed while opening the footnote",
@@ -474,7 +474,7 @@ impl Reader {
             .chapter_index(&note.target.path)
             .ok_or("The footnote is unavailable")?;
         let (preview, frame, page, selection) = with_storage(|| {
-            let book = Book::open(&reading.config.book).map_err(io::Error::other)?;
+            let book = reading.config.open_book().map_err(io::Error::other)?;
             if book.revision() != reading.probe.book {
                 return Err(io::Error::other(
                     "The book changed while resizing the footnote",
