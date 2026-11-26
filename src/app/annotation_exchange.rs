@@ -3,6 +3,7 @@
 mod discovery;
 mod discovery_job;
 mod marks;
+mod preview_worker;
 #[cfg(test)]
 mod tests;
 
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 const SETTINGS_LIMIT: u64 = 16 * 1024;
 
-#[derive(Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 struct Preferences {
     export_on_close: bool,
@@ -27,6 +28,9 @@ pub(super) struct State {
     path: PathBuf,
     settings: Preferences,
     preview: Option<Preview>,
+    preview_job: Option<preview_worker::Job>,
+    preview_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    preview_issue: Option<&'static str>,
     discovery: discovery_job::Manager,
     candidate: Option<Candidate>,
     announced: std::collections::VecDeque<(u64, String)>,
@@ -38,6 +42,8 @@ pub(super) enum Command {
     ToggleKeepAll,
     DefaultFolder,
     Preview,
+    PreviewBackground,
+    CancelPreview,
     Apply,
     Export,
 }
@@ -56,6 +62,7 @@ struct Preview {
     summary: Summary,
     imported: bool,
     confirming: bool,
+    background: Option<preview_worker::Reviewed>,
 }
 
 struct Target {
@@ -88,6 +95,9 @@ impl State {
             path,
             settings,
             preview: None,
+            preview_job: None,
+            preview_busy: Default::default(),
+            preview_issue: None,
             discovery: Default::default(),
             candidate: None,
             announced: Default::default(),
@@ -117,6 +127,8 @@ impl State {
 
     pub(super) fn finish_preview(&mut self) {
         self.preview = None;
+        self.preview_job = None;
+        self.preview_issue = None;
     }
 
     pub(super) fn toggle(&self, action: Command) -> Option<bool> {
@@ -224,6 +236,22 @@ impl Reader {
     }
 
     pub(super) fn annotation_exchange_preview_items(&self) -> Vec<Item> {
+        if self.annotation_exchange.preview_job.is_some() {
+            return vec![
+                Item::new("Checking annotation transfer…", Action::Heading),
+                Item::new("Cancel", Action::AnnotationExchange(Command::CancelPreview)),
+            ];
+        }
+        if let Some(issue) = self.annotation_exchange.preview_issue {
+            return vec![
+                Item::new(issue, Action::Heading),
+                Item::new(
+                    "Use standard preview",
+                    Action::AnnotationExchange(Command::Preview),
+                )
+                .detail("This preview may take time"),
+            ];
+        }
         let Some(preview) = &self.annotation_exchange.preview else {
             return Vec::new();
         };
@@ -289,6 +317,12 @@ impl Reader {
             Command::ToggleKeepAll => proposed.keep_all = !proposed.keep_all,
             Command::DefaultFolder => return self.set_annotation_exchange_folder(None),
             Command::Preview => return self.preview_annotation_exchange(),
+            Command::PreviewBackground => return self.start_annotation_preview_background(),
+            Command::CancelPreview => {
+                self.cancel_annotation_preview();
+                self.show(Screen::AnnotationExchange);
+                return Ok(());
+            }
             Command::Apply => {
                 if let Some(preview) = &mut self.annotation_exchange.preview
                     && preview.summary.removed != 0
@@ -579,12 +613,15 @@ impl Reader {
     fn preview_annotation_exchange(&mut self) -> Result<()> {
         let (import, imported) = self.read_annotation_exchange()?;
         self.show(Screen::AnnotationExchangePreview);
+        self.annotation_exchange.preview_issue = None;
+        self.annotation_exchange.preview_job = None;
         self.annotation_exchange.preview = Some(Preview {
             id: import.replacement.id,
             digest: import.digest,
             summary: import.summary,
             imported,
             confirming: false,
+            background: None,
         });
         Ok(())
     }
@@ -653,7 +690,21 @@ impl Reader {
             .preview
             .as_ref()
             .ok_or("Preview the transfer first")?;
+        if preview
+            .background
+            .as_ref()
+            .is_some_and(|reviewed| !reviewed.matches(self, preview.id))
+        {
+            return Err("The book or reading data changed. Preview it again.".into());
+        }
         let (import, imported) = self.read_annotation_exchange()?;
+        if preview
+            .background
+            .as_ref()
+            .is_some_and(|reviewed| !reviewed.matches_replacement(&import.replacement))
+        {
+            return Err("The verified transfer result changed. Preview it again.".into());
+        }
         if preview.id != import.replacement.id
             || preview.digest != import.digest
             || preview.imported != imported

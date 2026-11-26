@@ -9,19 +9,20 @@ alternatives. This follows the pinned CRE engine's screen-medium choice:
 Matching nested rules and font faces retain source order, subject to the
 existing stylesheet, face and rule budgets. Nested `@import` is ignored. The
 parser admits at most four nested media blocks and 256 parsed rules per
-stylesheet. Unsupported or malformed conditions fail closed: viewport,
-orientation, color, resolution and compound feature conditions do not match.
+stylesheet. Unsupported or malformed conditions fail closed, including color,
+resolution, negated features and unsupported compound conditions.
 Unsupported alternatives are false without suppressing another supported,
 matching alternative in the same comma-separated list. Strict user CSS remains unchanged.
 Source text, chapter revisions and saved positions are unchanged.
 
-Publisher rules and imports also support a single `width`, `min-width`,
+Publisher rules and imports also support `width`, `min-width`,
 `max-width`, `height`, `min-height`, `max-height`, or `orientation` feature,
-alone or after `screen`/`all`/`print and`. Size values are bounded nonnegative
+alone or after `screen`/`all`/`print and`. Up to eight supported features can
+be joined with `and`, including a width range and orientation. Size values are bounded nonnegative
 integer CSS pixels (or unitless zero); orientation accepts `portrait` and
 `landscape`. The effective leaf's text viewport and Render DPI are captured
 for layout and reused by search, generated-quote flow, and note/Contents
-helpers. Unsupported features, multiple conditions and feature negation remain
+helpers. Unsupported features, more than eight conditions and feature negation remain
 unmatched. Layout changes may repaginate without changing source positions.
 Publication-wide embedded-font diagnostics have no viewport and can omit
 faces declared only within these queries; the active layout still registers

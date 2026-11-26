@@ -76,7 +76,9 @@ impl Reader {
                 0,
                 Item::new(
                     "Review annotation transfer",
-                    Action::AnnotationExchange(super::annotation_exchange::Command::Preview),
+                    Action::AnnotationExchange(
+                        super::annotation_exchange::Command::PreviewBackground,
+                    ),
                 ),
             );
         }

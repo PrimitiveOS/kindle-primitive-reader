@@ -12,7 +12,7 @@ const MAX_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_COMPONENTS: usize = 32;
 
 #[derive(Clone)]
-pub(super) struct Proof {
+pub(in crate::app) struct Proof {
     root: PathBuf,
     path: PathBuf,
     stamp: FileStamp,
@@ -90,7 +90,7 @@ impl<R: Read> Read for Cancellable<'_, R> {
 }
 
 impl Proof {
-    pub(super) fn capture(
+    pub(in crate::app) fn capture(
         root: PathBuf,
         path: PathBuf,
         id: u64,
@@ -169,7 +169,7 @@ impl Proof {
         Ok((proof, bytes))
     }
 
-    pub(super) fn revalidate(&self) -> io::Result<()> {
+    pub(in crate::app) fn revalidate(&self) -> io::Result<()> {
         with_storage(|| {
             let file = open_file(&self.root, &self.path)?;
             if FileStamp::from_metadata(&file.metadata()?) != Some(self.stamp.clone()) {
@@ -179,7 +179,7 @@ impl Proof {
         })
     }
 
-    pub(super) fn digest(&self) -> [u8; 32] {
+    pub(in crate::app) fn digest(&self) -> [u8; 32] {
         self.digest
     }
 }

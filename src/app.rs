@@ -1645,6 +1645,7 @@ impl Reader {
         password: Option<&str>,
         check_archive: bool,
     ) -> Result<()> {
+        self.cancel_annotation_preview();
         self.eager_typography.cancel();
         self.closing_profile = None;
         self.opening_execution = None;
@@ -6294,6 +6295,7 @@ impl Reader {
     }
 
     fn close_book_to_library(&mut self) {
+        self.cancel_annotation_preview();
         self.cancel_annotation_discovery();
         self.eager_typography.cancel();
         self.closing_profile = None;
@@ -10741,6 +10743,7 @@ impl App for Reader {
 
     fn input(&mut self, input: Input) -> Change {
         if input == Input::Sleep {
+            self.cancel_annotation_preview();
             self.cancel_annotation_discovery();
             self.cancel_note_verification();
         }
@@ -11623,6 +11626,7 @@ impl App for Reader {
             .chain(self.quote_repair_deadline())
             .chain(self.notifications.deadline())
             .chain(self.annotation_discovery_deadline())
+            .chain(self.annotation_preview_deadline())
             .chain(self.eager_font_deadline())
             .chain(self.embedded_font_report_deadline())
             .chain(self.export_deadline())
@@ -11722,6 +11726,9 @@ impl App for Reader {
             return change;
         }
         if let Some(change) = self.poll_annotation_discovery(now) {
+            return change;
+        }
+        if let Some(change) = self.poll_annotation_preview(now) {
             return change;
         }
         if let Some(change) = self.poll_note_verification(now) {
@@ -11976,6 +11983,7 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
+        self.cancel_annotation_preview();
         self.cancel_annotation_discovery();
         self.cancel_folder_open();
         self.folder_activation = None;
@@ -12016,6 +12024,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.cancel_annotation_preview();
         self.cancel_annotation_discovery();
         self.nearby.cancel_page_marks();
         self.cancel_note_verification();

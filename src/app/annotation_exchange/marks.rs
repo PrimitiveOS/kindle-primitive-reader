@@ -7,14 +7,14 @@ use crate::library::HighlightPage;
 use exchange::{Mark, PageBox, PageBoxes, Place, Range};
 use std::num::NonZeroU32;
 
-fn raw_bookmark(mark: &Bookmark) -> bool {
+pub(super) fn raw_bookmark(mark: &Bookmark) -> bool {
     mark.position
         .anchor
         .as_ref()
         .is_some_and(|anchor| anchor.raw_caret.is_some())
 }
 
-fn raw_highlight(mark: &Highlight) -> bool {
+pub(super) fn raw_highlight(mark: &Highlight) -> bool {
     mark.selection.start.raw_caret.is_some() || mark.selection.end.raw_caret.is_some()
 }
 
@@ -110,6 +110,9 @@ impl Reader {
         // Stock XPointer snapshots cannot represent positions inside collapsed
         // whitespace. In particular, their timestamp cutoff must not delete
         // such local marks merely because they could not appear remotely.
+        let fixed_format = snapshot.fixed;
+        let incomplete = snapshot.incomplete;
+        let datetime = snapshot.datetime;
         let mut points = Vec::new();
         let mut ranges = Vec::new();
         let mut fixed_ranges = Vec::new();
@@ -182,57 +185,82 @@ impl Reader {
                 }
             }
         }
-        let mut summary = Summary {
-            unavailable,
-            ..Summary::default()
-        };
-        let cutoff = (!keep_all
-            && !snapshot.incomplete
-            && unavailable == 0
-            && !(points.is_empty() && ranges.is_empty() && fixed_ranges.is_empty()))
-        .then_some(snapshot.datetime);
-        merge(
-            &mut state.bookmarks,
+        Ok(merge_transfer(
+            state,
+            fixed_format,
+            incomplete,
+            datetime,
+            keep_all,
             points,
+            ranges,
+            fixed_ranges,
+            unavailable,
+        ))
+    }
+}
+
+/// Apply the exact existing merge rules to an isolated state snapshot.
+pub(super) fn merge_transfer(
+    state: &mut BookState,
+    fixed_format: bool,
+    incomplete: bool,
+    datetime: i64,
+    keep_all: bool,
+    points: Vec<Bookmark>,
+    ranges: Vec<Highlight>,
+    fixed_ranges: Vec<PdfHighlight>,
+    unavailable: usize,
+) -> Summary {
+    let mut summary = Summary {
+        unavailable,
+        ..Summary::default()
+    };
+    let cutoff = (!keep_all
+        && !incomplete
+        && unavailable == 0
+        && !(points.is_empty() && ranges.is_empty() && fixed_ranges.is_empty()))
+    .then_some(datetime);
+    merge(
+        &mut state.bookmarks,
+        points,
+        cutoff,
+        |mark| mark.updated_at.or(mark.created_at),
+        |a, b| {
+            !raw_bookmark(a)
+                && match (&a.position.anchor, &b.position.anchor) {
+                    (Some(a), Some(b)) => a == b,
+                    (None, None) => a.position.page == b.position.page,
+                    _ => false,
+                }
+        },
+        &mut summary,
+    );
+    if fixed_format {
+        merge(
+            &mut state.pdf_highlights,
+            fixed_ranges,
+            cutoff,
+            |mark| mark.updated_at.or(mark.created_at),
+            |a, b| a.page == b.page && same_pdf_highlight(a, b),
+            &mut summary,
+        );
+    } else {
+        merge(
+            &mut state.highlights,
+            ranges,
             cutoff,
             |mark| mark.updated_at.or(mark.created_at),
             |a, b| {
-                !raw_bookmark(a)
-                    && match (&a.position.anchor, &b.position.anchor) {
-                        (Some(a), Some(b)) => a == b,
-                        (None, None) => a.position.page == b.position.page,
-                        _ => false,
-                    }
+                !raw_highlight(a)
+                    && crate::library::raw_positions::same_selection_start(
+                        &a.selection,
+                        &b.selection,
+                    )
             },
             &mut summary,
         );
-        if snapshot.fixed {
-            merge(
-                &mut state.pdf_highlights,
-                fixed_ranges,
-                cutoff,
-                |mark| mark.updated_at.or(mark.created_at),
-                |a, b| a.page == b.page && same_pdf_highlight(a, b),
-                &mut summary,
-            );
-        } else {
-            merge(
-                &mut state.highlights,
-                ranges,
-                cutoff,
-                |mark| mark.updated_at.or(mark.created_at),
-                |a, b| {
-                    !raw_highlight(a)
-                        && crate::library::raw_positions::same_selection_start(
-                            &a.selection,
-                            &b.selection,
-                        )
-                },
-                &mut summary,
-            );
-        }
-        Ok(summary)
     }
+    summary
 }
 
 fn merge<T>(
@@ -266,7 +294,7 @@ fn merge<T>(
     }
 }
 
-fn same_words(left: &str, right: &str) -> bool {
+pub(super) fn same_words(left: &str, right: &str) -> bool {
     left.split_whitespace().eq(right.split_whitespace())
 }
 
@@ -463,12 +491,12 @@ fn load_fixed_mark(mark: Mark, reader: &crate::fixed_session::FixedReading) -> O
     mark.is_valid().then_some(FixedMark::Range(mark))
 }
 
-enum TextMark {
+pub(super) enum TextMark {
     Point(Bookmark),
     Range(Anchor, Anchor, Mark, exchange::Highlight),
 }
 
-fn load_reflow_mark(mut mark: Mark, book: &mut Book) -> Option<TextMark> {
+pub(super) fn load_reflow_mark(mut mark: Mark, book: &mut Book) -> Option<TextMark> {
     let Place::Pointer(value) = &mark.place else {
         return None;
     };

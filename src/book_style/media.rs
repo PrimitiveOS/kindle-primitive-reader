@@ -87,13 +87,11 @@ fn media_query_known(
     input: &mut Parser<'_>,
     context: Option<MediaContext>,
 ) -> CssResult<Option<bool>> {
-    let state = input.state();
+    // A query may start with a feature or a medium. The accumulator remains
+    // indeterminate if any feature is unknown, even when another is false.
     if let Ok(value) = input.try_parse(|input| feature_query(input, context)) {
-        if input.expect_exhausted().is_ok() {
-            return Ok(value);
-        }
+        return media_conjunction(input, context, value, 1);
     }
-    input.reset(&state);
     let Ok(first) = input.try_parse(Parser::expect_ident_cloned) else {
         // Feature-only or unknown branches are false independently; another
         // supported alternative in this comma-separated list may still match.
@@ -111,35 +109,52 @@ fn media_query_known(
         }
         _ => ("", first.clone()),
     };
-    if modifier != "not"
-        && input
-            .try_parse(|input| input.expect_ident_matching("and"))
-            .is_ok()
+    let matches = match medium.as_str() {
+        "all" | "screen" => true,
+        "print" => false,
+        _ => {
+            while input.next().is_ok() {}
+            return Ok(None);
+        }
+    };
+    if modifier == "not" {
+        // Invert a bare medium only, never a feature or an unknown condition.
+        if input.expect_exhausted().is_err() {
+            while input.next().is_ok() {}
+            return Ok(None);
+        }
+        return Ok(Some(!matches));
+    }
+    media_conjunction(input, context, Some(matches), 0)
+}
+
+fn media_conjunction(
+    input: &mut Parser<'_>,
+    context: Option<MediaContext>,
+    mut result: Option<bool>,
+    mut count: usize,
+) -> CssResult<Option<bool>> {
+    const MAX_FEATURES: usize = 8;
+    while input
+        .try_parse(|input| input.expect_ident_matching("and"))
+        .is_ok()
     {
+        count += 1;
         let value = input
             .try_parse(|input| feature_query(input, context))
             .ok()
             .flatten();
-        if input.expect_exhausted().is_ok() {
-            let medium_matches = matches!(medium.as_str(), "screen" | "all");
-            return Ok(match medium.as_str() {
-                "screen" | "all" | "print" => value.map(|v| medium_matches && v),
-                _ => None,
-            });
+        result = result.zip(value).map(|(left, right)| left && right);
+        if count > MAX_FEATURES || value.is_none() {
+            while input.next().is_ok() {}
+            return Ok(None);
         }
     }
     if input.expect_exhausted().is_err() {
-        // Includes feature queries and unknown conjunctions. Never invert an
-        // unsupported condition, even when the query starts with `not`.
         while input.next().is_ok() {}
         return Ok(None);
     }
-    let matches = match medium.as_str() {
-        "all" | "screen" => true,
-        "print" => false,
-        _ => return Ok(None),
-    };
-    Ok(Some(if modifier == "not" { !matches } else { matches }))
+    Ok(result)
 }
 
 /// Only discard an HTML stylesheet when every media alternative is known not
