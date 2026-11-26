@@ -160,6 +160,7 @@ pub(crate) enum CssLength {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum LineHeightLength {
     Relative(f32),
+    DefaultFont(f32),
     Pixels(f32),
 }
 
@@ -185,6 +186,7 @@ impl ComputedLineHeight {
         };
         let ratio = match self.value {
             LineHeightLength::Relative(factor) => factor,
+            LineHeightLength::DefaultFont(factor) => factor * settings.styled_font(1.0) / font,
             LineHeightLength::Pixels(px) => {
                 CssLength::Pixels(px)
                     .for_dpi(settings.render_dpi)
@@ -3441,6 +3443,19 @@ impl<'i> DeclarationParser<'i> for Properties {
                                     && (0.0..=8.0).contains(&value) =>
                             {
                                 Some(LineHeightLength::Relative(value))
+                            }
+                            Token::Dimension { value, unit, .. }
+                                if unit.eq_ignore_ascii_case("rem")
+                                    && (0.0..=8.0).contains(&value) =>
+                            {
+                                Some(LineHeightLength::DefaultFont(value))
+                            }
+                            Token::Dimension { value, unit, .. }
+                                if (unit.eq_ignore_ascii_case("ex")
+                                    || unit.eq_ignore_ascii_case("ch"))
+                                    && (0.0..=16.0).contains(&value) =>
+                            {
+                                Some(LineHeightLength::Relative(value * 0.5))
                             }
                             Token::Dimension { value, unit, .. }
                                 if unit.eq_ignore_ascii_case("px")

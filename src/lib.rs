@@ -1176,6 +1176,8 @@ chapter_probe! {
     raw_folder_sources: Option<std::sync::Arc<session::screen_pages::folder_sources::FolderProof>>,
     #[cfg(feature = "kindle")]
     foreground_font_sources: Option<Vec<session::screen_pages::FileStamp>>,
+    #[cfg(feature = "kindle")]
+    pub(crate) layout_identity: std::sync::Arc<()>,
     settings: Settings,
     spine_rtl: bool,
     #[cfg(feature = "kindle")]
@@ -1777,6 +1779,8 @@ impl Probe {
             raw_folder_sources: None,
             #[cfg(feature = "kindle")]
             foreground_font_sources: None,
+            #[cfg(feature = "kindle")]
+            layout_identity: std::sync::Arc::new(()),
             settings,
             #[cfg(feature = "kindle")]
             custom_hyphenation_allowed,

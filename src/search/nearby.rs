@@ -366,7 +366,7 @@ impl NearbySearch {
     }
 }
 
-fn boundary_offset(
+pub(super) fn boundary_offset(
     anchor: &Anchor,
     source: &Source,
     block: &crate::source::Block,

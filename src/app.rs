@@ -8985,6 +8985,12 @@ impl Reader {
                         .map(|r| (r, crate::highlight_style::Paint::Temporary(220))),
                 );
             }
+            highlights.extend(
+                self.directional_page_marks()
+                    .iter()
+                    .copied()
+                    .map(|r| (r, crate::highlight_style::Paint::Temporary(220))),
+            );
             let selection = self
                 .selection
                 .as_ref()
@@ -10788,6 +10794,7 @@ impl App for Reader {
         }
         if input == Input::Sleep {
             self.screen_page_worker.cancel();
+            self.nearby.cancel_page_marks();
             self.cancel_screen_page_jump();
             self.overview_raw = None;
             self.book_map_raw_history = None;
@@ -11932,6 +11939,7 @@ impl App for Reader {
             ));
         }
         self.finish_interrupted_scroll();
+        self.nearby.cancel_page_marks();
         self.overview_raw = None;
         self.book_map_raw_history = None;
         self.book_map_raw_counts = None;
@@ -11955,6 +11963,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.nearby.cancel_page_marks();
         self.cancel_note_verification();
         self.bookmark_focus = None;
         self.cancel_folder_open();

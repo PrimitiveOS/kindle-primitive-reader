@@ -242,6 +242,40 @@ struct PendingAll {
     result: mpsc::Receiver<Result<AllEvent>>,
     at: Instant,
 }
+
+struct PendingPageMarks {
+    cancel: Arc<AtomicBool>,
+    result: mpsc::Receiver<Result<Vec<SearchHit>>>,
+    at: Instant,
+    chapter: usize,
+    page: usize,
+    selected: TextSelection,
+    recipe: crate::session::SearchLayoutRecipe,
+    layout_identity: Arc<()>,
+    revision: u64,
+    viewport: crate::session::ReadingViewport,
+    scroll_top: Option<f32>,
+    hits: Option<std::collections::VecDeque<SearchHit>>,
+    rects: Vec<crate::selection::HighlightRect>,
+    limited: bool,
+}
+
+impl Drop for PendingPageMarks {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+struct PageMarks {
+    chapter: usize,
+    page: usize,
+    selected_start: Anchor,
+    selected_end: Anchor,
+    rects: Vec<crate::selection::HighlightRect>,
+    layout_identity: Arc<()>,
+    viewport: crate::session::ReadingViewport,
+    scroll_top: Option<f32>,
+}
 impl Drop for PendingAll {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
@@ -296,6 +330,8 @@ pub(super) struct Nearby {
     pending: Option<Pending>,
     fixed: Option<FixedPending>,
     all: Option<PendingAll>,
+    page_pending: Option<PendingPageMarks>,
+    page_marks: Option<PageMarks>,
     current: Option<SearchQuery>,
     end: Option<SearchDirection>,
     // Retain this even after a completed/cancelled job while hits still exist.
@@ -305,12 +341,18 @@ pub(super) struct Nearby {
 }
 
 impl Nearby {
+    pub(super) fn cancel_page_marks(&mut self) {
+        self.page_pending = None;
+        self.page_marks = None;
+    }
+
     pub(super) fn deadline(&self) -> Option<Instant> {
         self.pending
             .as_ref()
             .map(|p| p.at)
             .or_else(|| self.fixed.as_ref().map(|p| p.at))
             .or_else(|| self.all.as_ref().map(|p| p.at))
+            .or_else(|| self.page_pending.as_ref().map(|p| p.at))
     }
     pub(super) fn searching_direction(&self) -> bool {
         self.pending.is_some() || self.fixed.is_some()
@@ -322,6 +364,7 @@ impl Nearby {
         self.pending = None;
         self.fixed = None;
         self.all = None;
+        self.cancel_page_marks();
     }
     pub(super) fn clear(&mut self) {
         self.cancel();
@@ -337,6 +380,195 @@ impl Nearby {
 }
 
 impl Reader {
+    fn begin_page_marks(&mut self, query: &SearchQuery) {
+        self.nearby.page_pending = None;
+        self.nearby.page_marks = None;
+        let Some(active) = &self.active else { return };
+        let Some(selected) = self.result_selection.clone() else {
+            return;
+        };
+        let reading = &active.reading;
+        let Some(start) = reading.visible_search_boundary(SearchDirection::Next) else {
+            return;
+        };
+        let Some(end) = reading.visible_search_boundary(SearchDirection::Previous) else {
+            return;
+        };
+        let recipe = reading.config.search_layout_recipe(&reading.probe);
+        if !recipe.has_verified_sources() || start.chapter != end.chapter {
+            return;
+        }
+        let chapter = reading.chapter;
+        let page = reading.page;
+        let chapters = reading.probe.chapter_count();
+        let Some(context) = self.current_reflow_context() else {
+            return;
+        };
+        let mut search = match if query.regular_expression {
+            Search::with_regular_expression(&query.text, query.match_case)
+        } else {
+            Search::with_options(&query.text, query.match_case, query.ignore_accents)
+        } {
+            Ok(search) => search,
+            Err(_) => return,
+        };
+        search = search
+            .at_most(33)
+            .with_flow_config(context.flow.clone())
+            .for_publication(context.publication, chapters)
+            .within_chapter(chapter, start.clone(), end.clone());
+        let path = reading.config.book.clone();
+        let layout_identity = Arc::clone(&reading.probe.layout_identity);
+        let revision = reading.probe.source.revision;
+        let viewport = reading.config.viewport;
+        let scroll_top = reading.scroll_history_top();
+        let worker_recipe = recipe.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = Arc::clone(&cancel);
+        let (tx, result) = mpsc::channel();
+        let Some(worker) = &self.nearby.worker else {
+            return;
+        };
+        worker.submit(move || {
+            let scan = (|| {
+                let mut text = with_storage(|| {
+                    let mut book = worker_recipe
+                        .open_search_book(&path)
+                        .map_err(io::Error::other)?;
+                    ChapterText::read_with_flow(&mut book, chapter, &context.flow)
+                        .map_err(io::Error::other)
+                })?;
+                let probe = worker_recipe.chapter(chapter, &worker_cancel)?;
+                if crate::parley_layout::RAW_LAYOUT_ENABLED {
+                    text = text.with_verified_raw_layout(&probe)?;
+                }
+                search.step_loaded(text, chapters, &worker_cancel)
+            })();
+            if !worker_cancel.load(Ordering::Relaxed) {
+                let _ = tx.send(scan);
+            }
+        });
+        self.nearby.page_pending = Some(PendingPageMarks {
+            cancel,
+            result,
+            at: Instant::now() + SEARCH_DELAY,
+            chapter,
+            page,
+            selected,
+            recipe,
+            layout_identity,
+            revision,
+            viewport,
+            scroll_top,
+            hits: None,
+            rects: Vec::new(),
+            limited: false,
+        });
+    }
+
+    pub(super) fn directional_page_marks(&self) -> &[crate::selection::HighlightRect] {
+        let Some(marks) = &self.nearby.page_marks else {
+            return &[];
+        };
+        let Some(active) = &self.active else {
+            return &[];
+        };
+        let reading = &active.reading;
+        if self.nearby.current.is_none()
+            || !self.result_selection.as_ref().is_some_and(|selection| {
+                selection.start == marks.selected_start && selection.end == marks.selected_end
+            })
+            || reading.config.viewport != marks.viewport
+            || reading.scroll_history_top() != marks.scroll_top
+            || !Arc::ptr_eq(&marks.layout_identity, &reading.probe.layout_identity)
+            || reading.chapter != marks.chapter
+            || reading.page != marks.page
+        {
+            return &[];
+        }
+        &marks.rects
+    }
+
+    fn poll_page_marks(&mut self, now: Instant) -> Change {
+        let Some(mut pending) = self.nearby.page_pending.take() else {
+            return Change::None;
+        };
+        let Some(active) = &self.active else {
+            return Change::None;
+        };
+        let reading = &active.reading;
+        if self.screen != Screen::Book
+            || self.nearby.current.is_none()
+            || !self.result_selection.as_ref().is_some_and(|selection| {
+                selection.start == pending.selected.start && selection.end == pending.selected.end
+            })
+            || reading.chapter != pending.chapter
+            || reading.page != pending.page
+            || reading.probe.source.revision != pending.revision
+            || reading.config.viewport != pending.viewport
+            || reading.scroll_history_top() != pending.scroll_top
+            || !Arc::ptr_eq(&pending.layout_identity, &reading.probe.layout_identity)
+        {
+            return Change::None;
+        }
+        if pending.hits.is_none() {
+            let mut hits = match pending.result.try_recv() {
+                Err(mpsc::TryRecvError::Empty) => {
+                    pending.at = now + SEARCH_DELAY;
+                    self.nearby.page_pending = Some(pending);
+                    return Change::None;
+                }
+                Ok(Ok(hits)) => hits,
+                _ => return Change::None,
+            };
+            pending.limited = hits.len() > 32;
+            hits.truncate(32);
+            pending.hits = Some(hits.into());
+        }
+        // Resolve at most one match per event-loop tick. Keep geometry instead
+        // of repeating source and paragraph scans on every repaint.
+        if let Some(hit) = pending.hits.as_mut().and_then(|hits| hits.pop_front()) {
+            if hit.anchor.revision == pending.revision
+                && hit.end.revision == pending.revision
+                && let Some(selection) = reading.probe.select_range(&hit.anchor, &hit.end)
+                && (selection.start != pending.selected.start
+                    || selection.end != pending.selected.end)
+            {
+                if selection.text.len() > 4096 {
+                    pending.limited = true;
+                } else {
+                    let rects = reading.highlight_rects(&selection);
+                    if pending.rects.len().saturating_add(rects.len()) > 512 {
+                        pending.limited = true;
+                        pending.hits.as_mut().unwrap().clear();
+                    } else {
+                        pending.rects.extend(rects);
+                    }
+                }
+            }
+            pending.at = now + Duration::from_millis(1);
+            self.nearby.page_pending = Some(pending);
+            return Change::None;
+        }
+        if reading.config.search_layout_recipe(&reading.probe) != pending.recipe {
+            return Change::None;
+        }
+        self.nearby.page_marks = Some(PageMarks {
+            chapter: pending.chapter,
+            page: pending.page,
+            selected_start: pending.selected.start.clone(),
+            selected_end: pending.selected.end.clone(),
+            rects: std::mem::take(&mut pending.rects),
+            layout_identity: Arc::clone(&pending.layout_identity),
+            viewport: pending.viewport,
+            scroll_top: pending.scroll_top,
+        });
+        if pending.limited {
+            self.notice = Some("Some page matches are not highlighted".into());
+        }
+        Change::Partial
+    }
+
     pub(super) fn fixed_search_fit_active(&self) -> bool {
         self.nearby.fit.is_some()
     }
@@ -753,6 +985,9 @@ impl Reader {
                 regular_expression: self.active.is_some() && self.find_regex,
             }
         };
+        // A new directional request supersedes any page-decoration work.
+        self.nearby.page_pending = None;
+        self.nearby.page_marks = None;
         if let Some(fixed) = &self.fixed {
             if !fixed.reading.supports_text() {
                 return Err("This document has no searchable text layer".into());
@@ -988,6 +1223,13 @@ impl Reader {
 
     pub(super) fn poll_nearby(&mut self, now: Instant) -> Result<Change> {
         self.ensure_reflow_search_current()?;
+        if self.nearby.pending.is_none()
+            && self.nearby.fixed.is_none()
+            && self.nearby.all.is_none()
+            && self.nearby.page_pending.is_some()
+        {
+            return Ok(self.poll_page_marks(now));
+        }
         if let Some(mut pending) = self.nearby.fixed.take() {
             let fixed = self.fixed.as_ref().ok_or("No open document")?;
             let Some(page) = pending.next_page else {
@@ -1160,6 +1402,7 @@ impl Reader {
         self.activate(Action::SearchHit(0))?;
         self.nearby.current = Some(pending.query.clone());
         self.nearby.end = None;
+        self.begin_page_marks(&pending.query);
         Ok(Change::Partial)
     }
 }

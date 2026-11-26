@@ -146,6 +146,193 @@ pub(crate) fn recover_html_uppercase_voids(xml: &str, limit: usize) -> Option<St
         .or_else(|| recover_html_bare_ampersands(&candidate, limit))
 }
 
+/// Quote only unambiguous ASCII HTML attribute values after earlier recovery
+/// paths fail. Full XML and root validation remains mandatory.
+pub(crate) fn recover_html_unquoted_attributes(xml: &str, limit: usize) -> Option<String> {
+    if xml.len() > limit {
+        return None;
+    }
+    let checked = without_plain_doctype(xml);
+    if parse_recovery_xml(&checked).is_ok()
+        || checked
+            .as_bytes()
+            .windows(9)
+            .any(|w| w.eq_ignore_ascii_case(b"<!doctype"))
+        || checked
+            .as_bytes()
+            .windows(8)
+            .any(|w| w.eq_ignore_ascii_case(b"<!entity"))
+    {
+        return None;
+    }
+    let bytes = xml.as_bytes();
+    let name_start = |b: u8| b.is_ascii_alphabetic() || matches!(b, b'_' | b':');
+    let name_part = |b: u8| name_start(b) || b.is_ascii_digit() || matches!(b, b'-' | b'.');
+    let safe_value = |b: u8| {
+        b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'_' | b'-' | b'.' | b'/' | b'#' | b'?' | b'%' | b'+' | b'@' | b'~'
+            )
+    };
+    let mut insertions = Vec::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let Some(offset) = bytes[cursor..].iter().position(|&byte| byte == b'<') else {
+            break;
+        };
+        let start = cursor + offset;
+        if bytes[start..].starts_with(b"<!--") {
+            cursor = start + 4 + xml[start + 4..].find("-->")? + 3;
+            continue;
+        }
+        if bytes[start..].starts_with(b"<![CDATA[") {
+            cursor = start + 9 + xml[start + 9..].find("]]>")? + 3;
+            continue;
+        }
+        if bytes[start..].starts_with(b"<?") {
+            cursor = start + 2 + xml[start + 2..].find("?>")? + 2;
+            continue;
+        }
+        if bytes[start..].starts_with(b"<!DOCTYPE html>") {
+            cursor = start + "<!DOCTYPE html>".len();
+            continue;
+        }
+        if bytes.get(start + 1) == Some(&b'!') {
+            return None;
+        }
+        let mut end = start + 1;
+        let mut quote = None;
+        while end < bytes.len() {
+            let byte = bytes[end];
+            if let Some(delimiter) = quote {
+                if byte == delimiter {
+                    quote = None;
+                }
+            } else if byte == b'\'' || byte == b'"' {
+                quote = Some(byte);
+            } else if byte == b'>' {
+                break;
+            } else if byte == b'<' {
+                return None;
+            }
+            end += 1;
+        }
+        if end == bytes.len() || quote.is_some() {
+            return None;
+        }
+        let closing = bytes.get(start + 1) == Some(&b'/');
+        let mut pos = start + 1 + usize::from(closing);
+        if !bytes.get(pos).is_some_and(|b| name_start(*b)) {
+            return None;
+        }
+        let name_begin = pos;
+        while pos < end && name_part(bytes[pos]) {
+            pos += 1;
+        }
+        let name = &xml[name_begin..pos];
+        let local = name.rsplit(':').next()?;
+        if local.eq_ignore_ascii_case("script") {
+            return None;
+        }
+        if local.eq_ignore_ascii_case("style") && name != "style" {
+            return None;
+        }
+        if closing {
+            cursor = end + 1;
+            continue;
+        }
+        while pos < end {
+            if bytes[pos] == b'/' && pos + 1 == end {
+                break;
+            }
+            if !bytes[pos].is_ascii_whitespace() {
+                return None;
+            }
+            while pos < end && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if pos == end || bytes[pos] == b'/' && pos + 1 == end {
+                break;
+            }
+            if !name_start(bytes[pos]) {
+                return None;
+            }
+            pos += 1;
+            while pos < end && name_part(bytes[pos]) {
+                pos += 1;
+            }
+            while pos < end && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if bytes.get(pos) != Some(&b'=') {
+                return None;
+            }
+            pos += 1;
+            while pos < end && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if pos == end {
+                return None;
+            }
+            if matches!(bytes[pos], b'\'' | b'"') {
+                let delimiter = bytes[pos];
+                pos += 1;
+                while pos < end && bytes[pos] != delimiter {
+                    pos += 1;
+                }
+                if pos == end {
+                    return None;
+                }
+                pos += 1;
+                continue;
+            }
+            let value_start = pos;
+            while pos < end && !bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            let value = &bytes[value_start..pos];
+            // A trailing slash before > is ambiguous in HTML's unquoted syntax.
+            if value.is_empty()
+                || !value.iter().copied().all(safe_value)
+                || pos == end && value.last() == Some(&b'/')
+                || insertions.len() >= 16_384
+                || xml.len().saturating_add(insertions.len() + 2) > limit
+            {
+                return None;
+            }
+            insertions.push(value_start);
+            insertions.push(pos);
+        }
+        if name == "style" && !xml[start + 1..end].trim_end().ends_with('/') {
+            let after = &xml[end + 1..];
+            let close = after.find("</style>")?;
+            if after[..close].contains('<') {
+                return None;
+            }
+            cursor = end + 1 + close;
+        } else {
+            cursor = end + 1;
+        }
+    }
+    if insertions.is_empty() {
+        return None;
+    }
+    let mut candidate = String::with_capacity(xml.len() + insertions.len());
+    let mut last = 0;
+    for at in insertions {
+        candidate.push_str(&xml[last..at]);
+        candidate.push('"');
+        last = at;
+    }
+    candidate.push_str(&xml[last..]);
+    finish_void_recovery(candidate.clone(), limit)
+        .or_else(|| recover_html_voids(&candidate, limit))
+        .or_else(|| recover_html_bare_ampersands(&candidate, limit))
+        .or_else(|| recover_html_voids_and_ampersands(&candidate, limit))
+        .or_else(|| recover_html_uppercase_voids(&candidate, limit))
+}
+
 fn html_void_candidate(xml: &str, limit: usize, fold_void_case: bool) -> Option<String> {
     if xml.len() > limit {
         return None;

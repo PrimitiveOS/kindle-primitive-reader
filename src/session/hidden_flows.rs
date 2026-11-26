@@ -452,6 +452,9 @@ impl Reading {
                 return Err(error);
             }
         };
+        // Visible page mapping changed without replacing the Probe. Invalidate
+        // cached geometry only after the new frame has been captured.
+        self.probe.layout_identity = std::sync::Arc::new(());
         self.config = config;
         self.custom_flows = resolved;
         self.frame = frame;

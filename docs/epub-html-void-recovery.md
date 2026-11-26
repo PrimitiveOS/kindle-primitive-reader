@@ -40,3 +40,13 @@ requires the same complete-document validation.
 Source text and anchors for previously readable chapters remain unchanged;
 newly readable chapters use the deterministic repaired source. This path is
 also untested on real books, simulator and Kindle.
+
+As a final fallback, Reader can quote up to 8,192 unquoted ASCII attribute
+values such as `href=#note` or `src=cover.jpg`. It only accepts a conservative
+set of URL and numeric characters; values containing ampersands, colons,
+equals signs, quotes or ambiguous trailing slashes are not repaired. Boolean
+attributes, scripts, non-ASCII names and ambiguous tags are also excluded.
+The resulting candidate may use the earlier void-tag and ampersand recovery
+paths and must still pass complete bounded XML validation. Earlier successful
+paths, source files and existing anchors remain unchanged. This compatibility
+path has not yet been tested with real books, the simulator or Kindle.

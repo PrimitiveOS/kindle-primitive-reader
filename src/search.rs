@@ -106,6 +106,7 @@ pub struct Search {
     memory_limited: bool,
     skipped: usize,
     stopped: bool,
+    window: Option<(Anchor, Anchor)>,
 }
 
 impl Search {
@@ -146,12 +147,21 @@ impl Search {
             memory_limited: false,
             skipped: 0,
             stopped: false,
+            window: None,
         })
     }
 
     /// Request a smaller result set for an explicit bounded comparison.
     pub fn at_most(mut self, limit: usize) -> Self {
         self.limit = limit.min(MAX_REFLOW_SEARCH_HITS);
+        self
+    }
+
+    /// Restrict one loaded-chapter scan to a verified visible text window.
+    #[cfg(feature = "kindle")]
+    pub(crate) fn within_chapter(mut self, chapter: usize, start: Anchor, end: Anchor) -> Self {
+        self.next_chapter = chapter;
+        self.window = Some((start, end));
         self
     }
 
@@ -241,10 +251,39 @@ impl Search {
             layout.verify(text.book, &text.href, &source, &text.flow_config)?;
         }
 
+        let ordered = raw_layout::ordered_blocks(&source, text.raw_layout.as_ref());
+        let window = if let Some((start, end)) = &self.window {
+            if start.book != text.book
+                || end.book != text.book
+                || start.chapter != text.href
+                || end.chapter != text.href
+                || start.revision != source.revision
+                || end.revision != source.revision
+                || start.illustration.is_some()
+                || end.illustration.is_some()
+            {
+                return Err("The visible search window changed".into());
+            }
+            let first = ordered
+                .binary_search_by_key(&start.block, |block| block.key)
+                .map_err(|_| "The visible search window is unavailable")?;
+            let last = ordered
+                .binary_search_by_key(&end.block, |block| block.key)
+                .map_err(|_| "The visible search window is unavailable")?;
+            if first > last {
+                return Err("The visible search window is out of order".into());
+            }
+            Some((first, last, start, end))
+        } else {
+            None
+        };
         let mut hits = Vec::new();
-        for block in raw_layout::ordered_blocks(&source, text.raw_layout.as_ref()) {
+        for (index, block) in ordered.into_iter().enumerate() {
             if cancel.load(Ordering::Relaxed) {
                 break;
+            }
+            if window.is_some_and(|(first, last, _, _)| index < first || index > last) {
+                continue;
             }
             let view = text
                 .flow
@@ -273,15 +312,45 @@ impl Search {
                 || view.text(),
                 |bound| projection.map_or(bound.raw(), |projection| projection.text()),
             );
-            let ranges = match &self.query {
-                ReflowQuery::Literal(query) => {
-                    query.matches_until(rendered, self.limit - self.hits, || {
+            let (mut left, mut right) = (0, rendered.len());
+            if let Some((first, last, start, end)) = window {
+                if index == first {
+                    left = nearby::boundary_offset(
+                        start,
+                        &source,
+                        block,
+                        &view,
+                        raw.as_ref(),
+                        projection,
+                        crate::flow_projection::Affinity::After,
+                    )?;
+                }
+                if index == last {
+                    right = nearby::boundary_offset(
+                        end,
+                        &source,
+                        block,
+                        &view,
+                        raw.as_ref(),
+                        projection,
+                        crate::flow_projection::Affinity::Before,
+                    )?;
+                }
+            }
+            let visible = rendered
+                .get(left..right)
+                .ok_or("The visible search window is out of order")?;
+            let ranges: Vec<Range<usize>> = match &self.query {
+                ReflowQuery::Literal(query) => query
+                    .matches_until(visible, self.limit - self.hits, || {
                         cancel.load(Ordering::Relaxed)
                     })
-                }
+                    .into_iter()
+                    .map(|range| range.start + left..range.end + left)
+                    .collect(),
                 ReflowQuery::Pattern(expression) => expression.ranges(
                     rendered,
-                    0..rendered.len(),
+                    left..right,
                     self.limit - self.hits,
                     false,
                     cancel,
