@@ -31,6 +31,7 @@ pub(super) struct Layout {
     marks: [Rect; 3],
     pub(super) cancel: Rect,
     pub(super) commit: Rect,
+    mark_mode: Option<Rect>,
 }
 
 #[cfg(test)]
@@ -305,7 +306,7 @@ mod placement_tests {
 }
 
 impl Layout {
-    fn new(position: SkimPosition, viewport: ReadingViewport, mirrored: bool) -> Self {
+    fn new(position: SkimPosition, viewport: ReadingViewport, mirrored: bool, fixed: bool) -> Self {
         let (width, screen_height) = viewport.dimensions();
         let width = width as i32;
         let screen_height = screen_height as i32;
@@ -319,7 +320,8 @@ impl Layout {
             SkimPosition::Bottom => screen_height - height - 76,
         };
         let button_stride = (width - 144) / 5;
-        let action_stride = (width - 160) / 3;
+        let action_base = if fixed { 48 } else { 80 };
+        let action_stride = (width - 2 * action_base) / if fixed { 4 } else { 3 };
         let place = |rect: Rect| {
             if mirrored {
                 Rect::new(width - rect.right(), rect.y, rect.w, rect.h)
@@ -337,10 +339,10 @@ impl Layout {
         };
         let action = |index| {
             place(Rect::new(
-                80 + action_stride * index,
+                action_base + action_stride * index,
                 top + actions,
-                action_stride - 16,
-                82,
+                action_stride - if fixed { 12 } else { 16 },
+                if fixed { 96 } else { 82 },
             ))
         };
         Self {
@@ -360,7 +362,8 @@ impl Layout {
             ],
             cancel: action(0),
             origin: action(1),
-            commit: action(2),
+            mark_mode: fixed.then(|| action(2)),
+            commit: action(if fixed { 3 } else { 2 }),
         }
     }
 
@@ -378,6 +381,7 @@ pub(super) struct Session {
     origin: HistoryLocation,
     origin_fraction: f64,
     commit_when_idle: bool,
+    mark_mode_origin: Option<HistoryLocation>,
 }
 
 impl Reader {
@@ -386,6 +390,7 @@ impl Reader {
             self.controls.skim_position,
             self.reading_viewport(),
             self.document_dialogs_mirrored(),
+            self.fixed.is_some(),
         )
     }
 
@@ -400,6 +405,7 @@ impl Reader {
             origin,
             origin_fraction: self.skim_progress(),
             commit_when_idle: false,
+            mark_mode_origin: None,
         });
         self.selection = None;
         self.pdf_selection = None;
@@ -548,7 +554,15 @@ impl Reader {
         let panel = layout.panel;
         let track = layout.track;
         canvas.popup(panel);
-        let title = format!("{}  ·  {}", language.skim_text("Skim"), self.skim_label());
+        let mark_mode = self
+            .skim
+            .as_ref()
+            .is_some_and(|skim| skim.mark_mode_origin.is_some());
+        let title = format!(
+            "{}  ·  {}",
+            language.skim_text(if mark_mode { "Mark browsing" } else { "Skim" }),
+            self.skim_label()
+        );
         canvas.text(
             Rect::new(panel.x + 28, panel.y + 20, panel.w - 56, 46),
             self.notice.as_deref().unwrap_or(&title),
@@ -681,6 +695,13 @@ impl Reader {
         canvas.button(layout.next_ten, "+10", false, false);
         canvas.button(layout.cancel, language.skim_text("Cancel"), false, false);
         canvas.button(layout.origin, language.skim_text("Origin"), false, false);
+        if let Some(button) = layout.mark_mode {
+            let active = self
+                .skim
+                .as_ref()
+                .is_some_and(|skim| skim.mark_mode_origin.is_some());
+            canvas.button(button, language.skim_text("Marks"), active, false);
+        }
         let waiting = self.skim.as_ref().is_some_and(|skim| skim.commit_when_idle);
         canvas.button(
             layout.commit,
@@ -817,7 +838,10 @@ impl Reader {
                     )
                 } else {
                     let fixed = self.fixed.as_ref()?;
-                    if position.page >= fixed.reading.count() {
+                    if position.chapter != 0
+                        || position.anchor.is_some()
+                        || position.page >= fixed.reading.count()
+                    {
                         return None;
                     }
                     (0, position.page, 0, 0)
@@ -974,7 +998,22 @@ impl Reader {
             return self.skim_preview_progress(layout.fraction(start_x + dx));
         }
         if dx.abs() > dy.abs() {
-            self.skim_step(if (dx < 0.0) ^ layout.mirrored {
+            let forward = (dx < 0.0) ^ layout.mirrored;
+            if self
+                .skim
+                .as_ref()
+                .is_some_and(|skim| skim.mark_mode_origin.is_some())
+            {
+                return self.skim_mark(
+                    if forward {
+                        Direction::Next
+                    } else {
+                        Direction::Previous
+                    },
+                    false,
+                );
+            }
+            self.skim_step(if forward {
                 Input::PageForward
             } else {
                 Input::PageBack
@@ -986,10 +1025,54 @@ impl Reader {
 
     pub(super) fn skim_input(&mut self, input: Input) -> Change {
         let layout = self.skim_layout();
+        let mark_mode = self
+            .skim
+            .as_ref()
+            .is_some_and(|skim| skim.mark_mode_origin.is_some());
         match input {
             Input::Tap(x, y) if self.reading_viewport().done().contains(x, y) => self.exit(),
+            Input::PageForward if mark_mode => self.skim_mark(Direction::Next, false),
+            Input::PageBack if mark_mode => self.skim_mark(Direction::Previous, false),
             Input::PageForward => self.skim_step(Input::PageForward),
             Input::PageBack => self.skim_step(Input::PageBack),
+            Input::Tap(x, y)
+                if layout
+                    .mark_mode
+                    .is_some_and(|button| button.inset(-2).contains(x, y)) =>
+            {
+                if self.skim_turn_pending() {
+                    return self.report("Wait for the page to settle");
+                }
+                if mark_mode {
+                    let Some(origin) = self
+                        .skim
+                        .as_ref()
+                        .and_then(|skim| skim.mark_mode_origin.clone())
+                    else {
+                        return Change::None;
+                    };
+                    if let Err(error) = self.skim_apply_location(&origin) {
+                        return self.report(error);
+                    }
+                    if let Some(skim) = &mut self.skim {
+                        skim.mark_mode_origin = None;
+                    }
+                } else {
+                    let Some(origin) = self.current_history_location() else {
+                        return self.report("Open a document before skimming");
+                    };
+                    if let Some(skim) = &mut self.skim {
+                        skim.mark_mode_origin = Some(origin);
+                    }
+                    self.notice = Some(
+                        self.controls
+                            .interface_language
+                            .skim_text("Swipe or use page keys to browse marks")
+                            .to_owned(),
+                    );
+                }
+                Change::Partial
+            }
             Input::Tap(x, y) | Input::LongTap(x, y) if layout.chapters[0].contains(x, y) => {
                 self.skim_chapter(Direction::Previous, matches!(input, Input::LongTap(..)))
             }
@@ -1029,18 +1112,24 @@ impl Reader {
             Input::Tap(x, y) if layout.previous.contains(x, y) => self.skim_step(Input::PageBack),
             Input::Tap(x, y) if layout.next.contains(x, y) => self.skim_step(Input::PageForward),
             Input::Tap(x, y) if layout.next_ten.contains(x, y) => self.skim_step_ten(1),
-            Input::Tap(x, y) if layout.origin.contains(x, y) => match self.skim_restore_origin() {
-                Ok(()) => Change::Partial,
-                Err(error) => self.report(error),
-            },
-            Input::Tap(x, y) if layout.cancel.contains(x, y) => match self.skim_close(false) {
-                Ok(()) => Change::Partial,
-                Err(error) => self.report(error),
-            },
-            Input::Tap(x, y) if layout.commit.contains(x, y) => match self.skim_close(true) {
-                Ok(()) => Change::Partial,
-                Err(error) => self.report(error),
-            },
+            Input::Tap(x, y) if layout.origin.inset(-2).contains(x, y) => {
+                match self.skim_restore_origin() {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                }
+            }
+            Input::Tap(x, y) if layout.cancel.inset(-2).contains(x, y) => {
+                match self.skim_close(false) {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                }
+            }
+            Input::Tap(x, y) if layout.commit.inset(-2).contains(x, y) => {
+                match self.skim_close(true) {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                }
+            }
             Input::Tap(x, y) if !layout.panel.contains(x, y) => match self.skim_close(false) {
                 Ok(()) => Change::Partial,
                 Err(error) => self.report(error),

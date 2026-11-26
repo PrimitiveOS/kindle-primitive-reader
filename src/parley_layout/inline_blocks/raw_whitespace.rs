@@ -143,22 +143,32 @@ impl Plan {
             }
         }
         let raw = bound.raw();
-        let pre_line_projection =
-            if owner_style.white_space == WhiteSpace::PreLine && !pre_line_identity(raw) {
-                if !EXTENDED_PRE_LINE_ENABLED {
-                    return None;
-                }
-                let projection = crate::source::pre_line_projection::PreLineProjection::build(
-                    raw,
-                    bound.hard_breaks(),
-                )?;
-                if projection.text() == block.text {
-                    return None;
-                }
-                Some(std::sync::Arc::new(projection))
-            } else {
-                None
-            };
+        if raw.contains('\u{c}') {
+            return None;
+        }
+        let pre_line_projection = if owner_style.white_space == WhiteSpace::PreLine
+            && !pre_line_identity(raw)
+        {
+            if !EXTENDED_PRE_LINE_ENABLED {
+                return None;
+            }
+            let projection = crate::source::pre_line_projection::PreLineProjection::build(
+                raw,
+                bound.hard_breaks(),
+            )?;
+            if projection.text() == block.text {
+                return None;
+            }
+            Some(std::sync::Arc::new(projection))
+        } else if owner_style.white_space != WhiteSpace::PreLine && raw.contains('\r') {
+            let projection = crate::source::pre_line_projection::PreLineProjection::preserved(raw)?;
+            if projection.text() == block.text {
+                return None;
+            }
+            Some(std::sync::Arc::new(projection))
+        } else {
+            None
+        };
         let display = pre_line_projection
             .as_ref()
             .map_or(raw, |projection| projection.text());

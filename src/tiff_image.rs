@@ -89,7 +89,7 @@ impl Sequence {
     pub(crate) fn image_page(&self, index: usize) -> crate::Result<crate::comic::ImagePage> {
         let offset = *self.offsets.get(index).ok_or(TiffError::Directory)?;
         let (directory, _) = Directory::at_offset(&self.data, self.order, offset)?;
-        let image = decode_directory(directory)?;
+        let image = decode_directory(directory, self.offsets.len() > 1)?;
         crate::comic::ImagePage::from_grayscale(image.width(), image.height(), image.into_raw())
     }
 }
@@ -97,10 +97,10 @@ impl Sequence {
 /// Decode one top-left-origin page. Samples use 0 for black and 255 for white.
 pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let image = Directory::open(bytes)?;
-    decode_directory(image)
+    decode_directory(image, false)
 }
 
-fn decode_directory(image: Directory<'_>) -> Result<GrayImage, TiffError> {
+fn decode_directory(image: Directory<'_>, multipage: bool) -> Result<GrayImage, TiffError> {
     let bytes = image.bytes;
     let width = image.required(256, SHORT_OR_LONG)?;
     let height = image.required(257, SHORT_OR_LONG)?;
@@ -188,6 +188,8 @@ fn decode_directory(image: Directory<'_>) -> Result<GrayImage, TiffError> {
     } else {
         None
     };
+    let new_subfile = image.scalar(254, LONG_ONLY, 0)?;
+    let subfile = image.scalar(255, SHORT_ONLY, 1)?;
     if !matches!(bits, 1 | 2 | 4 | 8 | 16)
         || (bits == 16 && !matches!((photometric, samples), (0 | 1, 1 | 2) | (2, 3 | 4) | (3, 1)))
         || (!matches!(photometric, 0 | 1 | 3) && !matches!(bits, 1 | 8) && !(photometric == 2 && bits == 16))
@@ -203,9 +205,8 @@ fn decode_directory(image: Directory<'_>) -> Result<GrayImage, TiffError> {
         || !matches!(orientation, 1..=8)
         || image.scalar(284, SHORT_ONLY, 1)? != 1 // PlanarConfiguration
         || !(predictor == 1 || (predictor == 2 && (matches!(bits, 8 | 16) || (samples == 1 && matches!(bits, 1 | 2 | 4))) && matches!(compression, 5 | 8 | 32946)))
-        || image.scalar(254, LONG_ONLY, 0)? != 0 // NewSubfileType
-        || image.scalar(255, SHORT_ONLY, 1)? != 1
-    // SubfileType
+        || (new_subfile != 0 && !(multipage && new_subfile == 2))
+        || (subfile != 1 && !(multipage && subfile == 3))
     {
         return Err(TiffError::Unsupported);
     }

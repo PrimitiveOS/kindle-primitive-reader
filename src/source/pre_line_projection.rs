@@ -1,4 +1,4 @@
-//! Bounded source mapping for CSS pre-line's collapsed display text.
+//! Bounded source mapping for CSS whitespace display text.
 //!
 //! This is deliberately separate from canonical source and is not installed
 //! into layout until selection, line mapping and search use it consistently.
@@ -18,11 +18,18 @@ struct Segment {
     exact: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    PreLine,
+    Preserved,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PreLineProjection {
     display: String,
     segments: Vec<Segment>,
     raw_len: usize,
+    mode: Mode,
 }
 
 impl PreLineProjection {
@@ -116,7 +123,55 @@ impl PreLineProjection {
             display,
             segments,
             raw_len: raw.len(),
+            mode: Mode::PreLine,
         })
+    }
+
+    /// Preserve all source whitespace except retained DOM carriage returns,
+    /// which CSS renders as spaces. Both representations remain one byte.
+    pub(crate) fn preserved(raw: &str) -> Option<Self> {
+        if raw.is_empty() || raw.len() > MAX_BYTES || raw.contains('\u{c}') {
+            return None;
+        }
+        let mut display = String::with_capacity(raw.len());
+        let mut segments: Vec<Segment> = Vec::new();
+        for (at, ch) in raw.char_indices() {
+            let end = at.checked_add(ch.len_utf8())?;
+            let start = display.len();
+            display.push(if ch == '\r' { ' ' } else { ch });
+            let exact = ch != '\r';
+            if let Some(previous) = segments.last_mut()
+                && exact
+                && previous.exact
+                && previous.visible.end == start
+                && previous.raw.end == at
+            {
+                previous.visible.end = display.len();
+                previous.raw.end = end;
+            } else {
+                segments.push(Segment {
+                    visible: start..display.len(),
+                    raw: at..end,
+                    exact,
+                });
+            }
+            if segments.len() > MAX_SEGMENTS {
+                return None;
+            }
+        }
+        Some(Self {
+            display,
+            segments,
+            raw_len: raw.len(),
+            mode: Mode::Preserved,
+        })
+    }
+
+    pub(crate) fn rebuild(&self, raw: &str, hard_breaks: &[usize]) -> Option<Self> {
+        match self.mode {
+            Mode::PreLine => Self::build(raw, hard_breaks),
+            Mode::Preserved => Self::preserved(raw),
+        }
     }
 
     /// Preserve the first owner's style on a collapsed sequence; following

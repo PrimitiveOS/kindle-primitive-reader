@@ -8,7 +8,8 @@ elements. Collapsed whitespace crossing inline boundaries keeps the first
 space's computed style, while later collapsible spaces have no width.
 Unsupported mappings, form-feed controls and unverifiable boundaries retain the
 canonical fallback. A carriage return retained in the parsed document is
-treated as a collapsible space in this pre-line projection. When the projected text
+treated as a space; pre-line collapses it, while pre, pre-wrap and break-spaces
+keep its one-byte position and surrounding preserved whitespace. When the projected text
 already matches canonical text, Reader keeps the canonical layout and anchors. It preserves
 verified spaces, tabs and line breaks while keeping existing canonical source
 identities. This implementation has not yet been behaviorally tested in the

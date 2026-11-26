@@ -3622,6 +3622,9 @@ impl InterfaceLanguage {
         }
         match english {
             "Skim" => "Đọc lướt",
+            "Marks" => "Dấu",
+            "Mark browsing" => "Duyệt dấu",
+            "Swipe or use page keys to browse marks" => "Vuốt hoặc dùng nút trang để duyệt dấu",
             "Page" => "Trang",
             "of" => "trên",
             "No open document" => "Chưa mở tài liệu",

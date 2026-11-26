@@ -265,7 +265,9 @@ directories as separate pages. The encoded file is retained in memory, with
 the existing input-size limit; directories must be well formed and nonoverlapping,
 and loops are rejected. Each requested page is decoded on demand with the
 existing single-page strip, dimension, color and allocation limits. Pages
-that use unsupported TIFF features remain unavailable; embedded TIFF artwork
+marked as ordinary full-resolution pages by the TIFF subfile tags are also
+accepted within a multi-page sequence. Pages that use unsupported TIFF
+features remain unavailable; embedded TIFF artwork
 still uses the single-page path. A single-page standalone TIFF continues to
 use its existing image path. No page files are extracted to storage. Repeated
 page-size requests may decode the page again, so performance, peak memory,
