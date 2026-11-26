@@ -2122,8 +2122,27 @@ impl Probe {
             return Err("This illustration is unavailable in the current chapter".into());
         }
         let mut book = Book::open(path)?;
-        if book.revision() != self.book || book.chapter_index(&self.chapter).is_none() {
+        let chapter = book.chapter_index(&self.chapter);
+        if book.revision() != self.book || chapter.is_none() {
             return Err("This book changed after it was opened".into());
+        }
+        if package_path.starts_with("data-image-sha256:") {
+            let image = self
+                .source
+                .blocks
+                .iter()
+                .flat_map(|block| &block.images)
+                .find(|image| {
+                    image.inline_svg.is_none()
+                        && svg_image::data_image_key(&image.href).as_deref() == Some(package_path)
+                })
+                .ok_or("This illustration is unavailable in the current chapter")?;
+            let xhtml = book.chapter(chapter.ok_or("This chapter is unavailable")?)?;
+            if !self.source.matches_input(&xhtml) {
+                return Err("This chapter changed after it was opened".into());
+            }
+            let bytes = svg_image::svg_data_image(&image.href, svg_image::MAX_SVG_BYTES)?;
+            return parley_layout::original_illustration(&bytes);
         }
         if let Some(xml) = self
             .source

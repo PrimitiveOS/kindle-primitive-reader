@@ -301,7 +301,7 @@ fn pixmap_with_images(
 
 // Restrict embedded images to canonical base64 of the three existing raster
 // types. The same image and aggregate budgets apply as for local book paths.
-fn svg_data_image(href: &str, limit: usize) -> Result<Vec<u8>> {
+pub(crate) fn svg_data_image(href: &str, limit: usize) -> Result<Vec<u8>> {
     let (mime, encoded) = href
         .strip_prefix("data:")
         .and_then(|value| value.split_once(";base64,"))
@@ -323,6 +323,21 @@ fn svg_data_image(href: &str, limit: usize) -> Result<Vec<u8>> {
         return Err("The SVG data image does not match its declared type".into());
     }
     Ok(bytes)
+}
+
+/// Use a bounded identity in per-illustration records, avoiding a copy of a
+/// potentially large data URI for every repeated image on the page.
+pub(crate) fn data_image_key(href: &str) -> Option<String> {
+    use std::fmt::Write as _;
+    if !href.starts_with("data:") || href.len() > MAX_SVG_BYTES + 64 {
+        return None;
+    }
+    let digest = ring::digest::digest(&ring::digest::SHA256, href.as_bytes());
+    let mut key = String::from("data-image-sha256:");
+    for byte in digest.as_ref() {
+        write!(&mut key, "{byte:02x}").ok()?;
+    }
+    Some(key)
 }
 
 // Limit PNG output while encoding, rather than allocating an unbounded result

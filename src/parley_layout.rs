@@ -5075,8 +5075,13 @@ fn load_image(
         return cache_vector(image.href.clone(), art);
     }
     let image_href = &image.href;
-    let path = Book::resolve(chapter_href, image_href).ok()?;
-    if svg_image::is_package_svg(&path) {
+    let embedded = image_href.starts_with("data:");
+    let path = if embedded {
+        svg_image::data_image_key(image_href)?
+    } else {
+        Book::resolve(chapter_href, image_href).ok()?
+    };
+    if !embedded && svg_image::is_package_svg(&path) {
         if image_href
             .split_once('#')
             .is_some_and(|(_, fragment)| !fragment.is_empty())
@@ -5098,7 +5103,11 @@ fn load_image(
         .ok()?;
         return cache_vector(path, art);
     }
-    let mut bytes = book.resource(&path).ok()?;
+    let mut bytes = if embedded {
+        svg_image::svg_data_image(image_href, svg_image::MAX_SVG_BYTES).ok()?
+    } else {
+        book.resource(&path).ok()?
+    };
     if let Some(converted) = supported_extra_raster_as_png(&bytes).ok()? {
         bytes = converted;
     }

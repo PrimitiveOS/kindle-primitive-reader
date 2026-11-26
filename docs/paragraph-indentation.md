@@ -71,7 +71,12 @@ existing selector and source-position bounds apply.
 The bounded attribute-selector candidate also recognizes `class`, `id` and
 `href` presence and value operators alongside the existing `type` support.
 It reuses Reader's CRE-compatible local-name and comparison behavior. Other
-arbitrary attributes and CSS namespace bindings remain unsupported. The
+local attribute names, such as `lang`, `role` and `data-*`, are captured with
+a 64 KiB accounted name/value and tuple-size budget, an 8,192-entry chapter
+limit, at most 32 attributes per element and a 4 KiB value limit. Allocator and
+temporary-vector overhead are additional. On incomplete capture, a compound consulting those generic
+attributes is declined, including inside nested negation or alternatives.
+CRE's special inner-text `_` selector and CSS namespace bindings remain unsupported. The
 source extractor retains these attribute values for selector matching without
 changing the publication text or saved anchors. Multiple attributes sharing
 the same local name are treated as ambiguous by the new value selectors. Any

@@ -958,6 +958,13 @@ struct SavedMarkRow {
 struct HistoryLocation {
     position: ReadingPosition,
     scan_point: Option<hayro::kurbo::Point>,
+    fixed_view: Option<FixedHistoryView>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FixedHistoryView {
+    preferences: crate::library::FixedPreferences,
+    viewport: crate::session::ReadingViewport,
 }
 
 impl From<ReadingPosition> for HistoryLocation {
@@ -965,6 +972,7 @@ impl From<ReadingPosition> for HistoryLocation {
         Self {
             position,
             scan_point: None,
+            fixed_view: None,
         }
     }
 }
@@ -6120,10 +6128,16 @@ impl Reader {
 
     fn jump_fixed(&mut self, page: usize, target: Option<FixedJump>) -> Result<HistoryLocation> {
         self.close_fixed_search_fit()?;
+        let fixed_view = if matches!(target.as_ref(), Some(FixedJump::FitPoint(..))) {
+            self.capture_fixed_history_view()
+        } else {
+            None
+        };
         let fixed = self.fixed.as_mut().ok_or("No open document")?;
         let previous = HistoryLocation {
             position: fixed_position(&fixed.reading),
             scan_point: fixed.reading.history_point(),
+            fixed_view,
         };
         fixed.reading.jump_to(page, target.as_ref())?;
         self.finish_fixed_jump(page, target);
@@ -6203,6 +6217,14 @@ impl Reader {
                 .fixed
                 .as_ref()
                 .and_then(|book| book.reading.history_point()),
+            fixed_view: None,
+        })
+    }
+
+    fn capture_fixed_history_view(&self) -> Option<FixedHistoryView> {
+        Some(FixedHistoryView {
+            preferences: self.fixed.as_ref()?.reading.preferences(),
+            viewport: self.reading_viewport(),
         })
     }
 
@@ -6255,9 +6277,12 @@ impl Reader {
             .cloned()
             .ok_or("No previous location")?;
         self.close_fixed_search_fit()?;
-        let current = self
+        let mut current = self
             .current_history_location()
             .ok_or("Open a document first")?;
+        if previous.fixed_view.is_some() {
+            current.fixed_view = self.capture_fixed_history_view();
+        }
         self.go_to_location(&previous)?;
         Self::remember_location(&mut self.forward, current);
         for location in self.back.drain(index..).rev() {
@@ -6271,9 +6296,12 @@ impl Reader {
     fn next_location(&mut self) -> Result<()> {
         let next = self.forward.last().cloned().ok_or("No next location")?;
         self.close_fixed_search_fit()?;
-        let current = self
+        let mut current = self
             .current_history_location()
             .ok_or("Open a document first")?;
+        if next.fixed_view.is_some() {
+            current.fixed_view = self.capture_fixed_history_view();
+        }
         self.go_to_location(&next)?;
         self.forward.pop();
         self.swipe_back_notice_pending = false;
@@ -6292,10 +6320,23 @@ impl Reader {
             return Err("This raw whitespace position cannot yet be restored safely".into());
         }
         if self.fixed.is_some() {
-            self.jump_fixed(
-                target.position.page,
-                target.scan_point.map(FixedJump::LinkPoint),
-            )?;
+            if let Some(saved) = target.fixed_view {
+                let viewport = self.reading_viewport();
+                let fixed = &mut self.fixed.as_mut().ok_or("No open document")?.reading;
+                let view =
+                    back_navigation::with_fixed_geometry(fixed.preferences(), saved.preferences);
+                if viewport == saved.viewport {
+                    fixed.restore_view_at(target.position.page, view)?;
+                } else {
+                    fixed.restore_history_view_at(target.position.page, view, target.scan_point)?;
+                }
+                self.finish_fixed_jump(target.position.page, None);
+            } else {
+                self.jump_fixed(
+                    target.position.page,
+                    target.scan_point.map(FixedJump::LinkPoint),
+                )?;
+            }
         } else {
             self.restore_position(&target.position)?;
         }

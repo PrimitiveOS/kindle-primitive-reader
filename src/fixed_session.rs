@@ -282,6 +282,8 @@ struct EpubSpreads {
 pub(crate) enum FixedJump {
     /// Upright source points for PDF XYZ links and scan viewport history.
     LinkPoint(Point),
+    /// A PDF FitH/FitV point and the fitting axis to install atomically.
+    FitPoint(Point, crate::fixed::PdfDestinationFit),
     /// Source word rectangles in reading order, normalized to the upright page.
     Regions(Vec<PdfTextRect>),
 }
@@ -1928,17 +1930,7 @@ impl FixedReading {
         };
         let partial = partial?;
         if partial.fit != crate::fixed::PdfDestinationFit::Current {
-            let correct_fit = match partial.fit {
-                crate::fixed::PdfDestinationFit::Width => self.view.width_fit,
-                crate::fixed::PdfDestinationFit::Height => {
-                    self.view.height_fit && !self.view.width_fit
-                }
-                crate::fixed::PdfDestinationFit::Current => unreachable!(),
-            };
-            if !correct_fit
-                || self.view.zoom != 0
-                || self.view.tile_zoom.is_some()
-                || self.view.turns != 0
+            if self.view.turns != 0
                 || self.view.crop.is_some()
                 || self.view.straighten_limit != 0
                 || self.view.continuous
@@ -1949,7 +1941,14 @@ impl FixedReading {
                 return None;
             }
             let size = pdf.page_size(page).ok()?;
-            let metrics = view_metrics(size, &self.view, self.frame_size());
+            let target_view = View {
+                width_fit: partial.fit == crate::fixed::PdfDestinationFit::Width,
+                height_fit: partial.fit == crate::fixed::PdfDestinationFit::Height,
+                zoom: 0,
+                tile_zoom: None,
+                ..self.view
+            };
+            let metrics = view_metrics(size, &target_view, self.frame_size());
             let expected = match partial.fit {
                 crate::fixed::PdfDestinationFit::Width => metrics.width_scale,
                 crate::fixed::PdfDestinationFit::Height => metrics.height_scale,
@@ -1963,7 +1962,17 @@ impl FixedReading {
             }
             return pdf
                 .complete_partial_destination(self.page, Point::ORIGIN, page, partial)
-                .map(FixedJump::LinkPoint);
+                .map(|point| {
+                    if self.view.width_fit == target_view.width_fit
+                        && self.view.height_fit == target_view.height_fit
+                        && self.view.zoom == 0
+                        && self.view.tile_zoom.is_none()
+                    {
+                        FixedJump::LinkPoint(point)
+                    } else {
+                        FixedJump::FitPoint(point, partial.fit)
+                    }
+                });
         }
         // Reader's zoom is fit-relative: different page dimensions or a
         // per-page crop can change actual magnification even when the stored
@@ -2014,6 +2023,16 @@ impl FixedReading {
         self.jump_to_view(page, target, self.view)
     }
 
+    /// Reapply a saved view with a source-point anchor after a viewport change.
+    pub(crate) fn restore_history_view_at(
+        &mut self,
+        page: usize,
+        view: View,
+        point: Option<Point>,
+    ) -> Result<()> {
+        self.jump_to_view(page, point.map(FixedJump::LinkPoint).as_ref(), view)
+    }
+
     fn jump_to_view(
         &mut self,
         page: usize,
@@ -2030,6 +2049,16 @@ impl FixedReading {
         target: Option<&FixedJump>,
         original: View,
     ) -> Result<View> {
+        let original = match target {
+            Some(FixedJump::FitPoint(_, fit)) => View {
+                width_fit: *fit == crate::fixed::PdfDestinationFit::Width,
+                height_fit: *fit == crate::fixed::PdfDestinationFit::Height,
+                zoom: 0,
+                tile_zoom: None,
+                ..original
+            },
+            _ => original,
+        };
         let mut view = self.resolve_crop(
             page,
             View {
@@ -2049,7 +2078,9 @@ impl FixedReading {
             let correction = scan.correction(page, size, &view, &mut self.deskew_cache)?;
             let transform = request.page_to_viewport(size)? * correction;
             let offset = match target {
-                FixedJump::LinkPoint(point) => Point::ORIGIN - transform * *point,
+                FixedJump::LinkPoint(point) | FixedJump::FitPoint(point, _) => {
+                    Point::ORIGIN - transform * *point
+                }
                 FixedJump::Regions(bounds) => {
                     let crop = source_rect(size, view.crop.unwrap_or(FULL_PAGE));
                     let mut visible = bounds.iter().filter_map(|&r| {

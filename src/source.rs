@@ -18,6 +18,9 @@ mod selection_html;
 const RUBY_TEXT_MODEL: u64 = 0xe026_92a4_3415_b12f;
 const MAX_RUBY_GROUPS: usize = 1_024;
 const MAX_RUBY_ANNOTATION_BYTES: usize = 192;
+const MAX_SELECTOR_ATTRIBUTE_BYTES: usize = 64 * 1024;
+const MAX_SELECTOR_ATTRIBUTE_ENTRIES: usize = 8_192;
+const MAX_SELECTOR_ATTRIBUTES_PER_ELEMENT: usize = 32;
 pub(crate) const MAX_LANGUAGE_BYTES: usize = 128;
 const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
 
@@ -167,6 +170,8 @@ pub(crate) struct Element {
     pub(crate) selector_href_attribute: Option<String>,
     pub(crate) selector_id_attribute: Option<String>,
     pub(crate) selector_ambiguous: u8,
+    pub(crate) selector_other_attributes: Box<[(String, String)]>,
+    pub(crate) selector_other_complete: bool,
     /// Pinned CRE selectors identify attributes by local name, ignoring prefixes.
     pub type_attribute: Option<String>,
     pub list_kind: Option<crate::list_marker::MarkerKind>,
@@ -782,6 +787,8 @@ impl Source {
         let mut last_types = HashMap::new();
         let mut last_children = HashMap::new();
         let mut pseudo_attribute_bytes = crate::book_style::pseudo::MAX_ATTRIBUTE_BYTES;
+        let mut selector_attribute_bytes = MAX_SELECTOR_ATTRIBUTE_BYTES;
+        let mut selector_attribute_entries = MAX_SELECTOR_ATTRIBUTE_ENTRIES;
         for node in root.descendants().filter(Node::is_element) {
             let parent: Option<usize> = node
                 .parent()
@@ -875,6 +882,33 @@ impl Source {
             let (selector_class_attribute, ambiguous_class) = selector_attribute("class");
             let (selector_id_attribute, ambiguous_id) = selector_attribute("id");
             let (selector_href_attribute, ambiguous_href) = selector_attribute("href");
+            let mut selector_other_attributes = Vec::new();
+            let mut selector_other_complete = true;
+            if !anonymous {
+                for attribute in node.attributes() {
+                    let name = attribute.name();
+                    if matches!(name, "class" | "id" | "href" | "type") {
+                        continue;
+                    }
+                    let value = attribute.value();
+                    let cost = name
+                        .len()
+                        .saturating_add(value.len())
+                        .saturating_add(std::mem::size_of::<(String, String)>());
+                    if name.len() > 128
+                        || value.len() > 4 * 1024
+                        || selector_other_attributes.len() >= MAX_SELECTOR_ATTRIBUTES_PER_ELEMENT
+                        || selector_attribute_entries == 0
+                        || cost > selector_attribute_bytes
+                    {
+                        selector_other_complete = false;
+                        break;
+                    }
+                    selector_attribute_bytes -= cost;
+                    selector_attribute_entries -= 1;
+                    selector_other_attributes.push((name.to_owned(), value.to_owned()));
+                }
+            }
             elements.push(Element {
                 tag: node.tag_name().name().to_owned(),
                 list_kind: crate::list_marker::MarkerKind::html(node),
@@ -884,6 +918,8 @@ impl Source {
                 selector_ambiguous: u8::from(ambiguous_class)
                     | (u8::from(ambiguous_id) << 1)
                     | (u8::from(ambiguous_href) << 2),
+                selector_other_attributes: selector_other_attributes.into_boxed_slice(),
+                selector_other_complete,
                 type_attribute: node
                     .attributes()
                     .find(|a| a.name() == "type")

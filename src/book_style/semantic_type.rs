@@ -6,12 +6,12 @@ pub(super) enum Attribute {
     Href,
     Value(Selector),
 }
-#[derive(Clone, Copy)]
 enum Field {
     Type,
     Class,
     Id,
     Href,
+    Other(String),
 }
 #[derive(Clone, Copy)]
 enum Operation {
@@ -31,20 +31,35 @@ pub(super) struct Selector {
 }
 impl Selector {
     pub(super) fn ambiguous(&self, element: &Element) -> bool {
-        let mask = match self.field {
+        let mask = match &self.field {
             Field::Class => 1,
             Field::Id => 2,
             Field::Href => 4,
             Field::Type => 0,
+            Field::Other(name) => {
+                return !element.selector_other_complete
+                    || element
+                        .selector_other_attributes
+                        .iter()
+                        .filter(|(candidate, _)| candidate == name)
+                        .take(2)
+                        .count()
+                        > 1;
+            }
         };
         element.selector_ambiguous & mask != 0
     }
     pub(super) fn matches(&self, element: &Element) -> bool {
-        let value = match self.field {
+        let value = match &self.field {
             Field::Type => element.type_attribute.as_deref(),
             Field::Class => element.selector_class_attribute.as_deref(),
             Field::Id => element.selector_id_attribute.as_deref(),
             Field::Href => element.selector_href_attribute.as_deref(),
+            Field::Other(name) => element
+                .selector_other_attributes
+                .iter()
+                .find(|(candidate, _)| candidate == name)
+                .map(|(_, value)| value.as_str()),
         };
         let Some(value) = value else {
             return false;
@@ -104,6 +119,7 @@ pub(super) fn parse(input: &mut Parser<'_>) -> CssResult<Attribute> {
         "class" => Field::Class,
         "id" => Field::Id,
         value if value.eq_ignore_ascii_case("href") => Field::Href,
+        value if value != "_" && value.len() <= 128 => Field::Other(value.to_owned()),
         _ => return Err(ParseError::unexpected_token()),
     };
     let operation = if input.is_exhausted() {

@@ -92,6 +92,18 @@ The image data is not extracted or fetched, and source XML and anchors remain
 unchanged. KOReader parity, malformed-input and
 memory behavior, and real-book, simulator and Kindle validation remain open.
 
+Reflow HTML/XHTML `<img>` also accepts canonical base64 PNG, JPEG and GIF data
+images through the same strict MIME/signature check. The encoded payload is
+limited to 256 KiB; the usual source-pixel, illustration-cache and first-frame
+GIF limits still apply. A SHA-256 identity is stored for each rendered image
+instead of copying the potentially large URI into every repeated image record.
+Opening the original image rechecks the chapter source digest and decodes the
+matching source URI again. Publisher XHTML, text and saved anchors remain
+unchanged. SVG data URIs, noncanonical encodings, animated GIF playback and
+network images remain outside this subset. Peak decoder memory and real-book,
+simulator and Kindle behavior remain unverified. Pinned KOReader recognizes
+data-image references in its [document engine](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvtinydom.cpp#L16164-L16165).
+
 Standalone SVG embedded-image fallback uses the same 256 KiB input, eight
 unique images, pixel and 8 MiB aggregate raster limits, plus the existing GIF
 conversion checks. Previously successful vector-only output is tried first.

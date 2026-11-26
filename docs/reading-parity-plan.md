@@ -50,6 +50,9 @@ pass remain unverified and are not counted as completed acceptance.
 Within that implementation pass, prioritize everyday EPUB and PDF opening,
 document fidelity, navigation, search, annotations and saved-position
 recovery before less common format variants and peripheral display options.
+An explicit EPUB footnote whose XHTML resource is in the manifest but outside
+the spine remains an open reading gap: investigate a bounded, source-verified
+popup without changing the persisted reading order, and compare with KOReader.
 The remaining in-scope reading features are still required; this is an
 ordering change, not a reduction in the goal. Keep implementation and release
 status visible separately so a build-only candidate is not mistaken for a

@@ -102,7 +102,10 @@ enum ReadView {
     },
 }
 
-fn with_fixed_geometry(mut current: FixedPreferences, saved: FixedPreferences) -> FixedPreferences {
+pub(super) fn with_fixed_geometry(
+    mut current: FixedPreferences,
+    saved: FixedPreferences,
+) -> FixedPreferences {
     current.zoom = saved.zoom;
     current.tile_zoom = saved.tile_zoom;
     current.turns = saved.turns;
@@ -295,7 +298,16 @@ impl Reader {
         let current = self.current_position()?;
         self.back.iter().rposition(|saved| {
             if self.fixed.is_some() {
-                return saved.position.page != current.page;
+                return saved.position.page != current.page
+                    || saved.fixed_view.is_some_and(|view| {
+                        self.fixed.as_ref().is_some_and(|fixed| {
+                            with_fixed_geometry(FixedPreferences::default(), view.preferences)
+                                != with_fixed_geometry(
+                                    FixedPreferences::default(),
+                                    fixed.reading.preferences(),
+                                )
+                        })
+                    });
             }
             match (saved.position.anchor.as_ref(), current.anchor.as_ref()) {
                 (Some(saved), Some(current)) => saved != current,
