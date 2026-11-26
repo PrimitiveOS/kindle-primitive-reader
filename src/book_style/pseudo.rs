@@ -3,8 +3,9 @@ pub(crate) mod quotes;
 
 use super::{
     BookStyle, BoxMargin, CascadeOrigin, ComputedLineHeight, CssLength, CssResult, Display,
-    Element, Family, LigatureExtras, Priority, Property, Rule, Size, Style, TextDecoration,
-    TextTransform, VariantCaps, VariantEastAsian, VariantNumeric, VariantPosition, Weight, flow,
+    Element, Family, LigatureExtras, LineHeightLength, Priority, Property, Rule, Size, Style,
+    TextDecoration, TextTransform, VariantCaps, VariantEastAsian, VariantNumeric, VariantPosition,
+    Weight, flow,
 };
 use cssparser::{Parser, Token};
 use parley::{FontStyle, FontWeight, GenericFamily};
@@ -237,7 +238,7 @@ struct Typography {
     slant: Option<FontStyle>,
     decoration: Option<TextDecoration>,
     line_height: Option<Option<f32>>,
-    relative_line_height: Option<f32>,
+    length_line_height: Option<LineHeightLength>,
     letter_spacing: Option<CssLength>,
     common_ligatures: Option<bool>,
     ligature_extras: Option<LigatureExtras>,
@@ -293,10 +294,10 @@ impl Typography {
             style.line_height = height;
             style.line_height_relative = None;
         }
-        if let Some(factor) = self.relative_line_height {
+        if let Some(value) = self.length_line_height {
             style.line_height = None;
             style.line_height_relative = Some(ComputedLineHeight {
-                factor,
+                value,
                 font_scale: style.size_scale,
                 allow_small: style.allow_small_note_text,
             });
@@ -479,8 +480,8 @@ impl FirstLine {
                 style.line_height
             },
             line_height_relative: match declaration(2) {
-                Some(Property::RelativeLineHeight(factor)) => Some(ComputedLineHeight {
-                    factor: *factor,
+                Some(Property::LengthLineHeight(value)) => Some(ComputedLineHeight {
+                    value: *value,
                     font_scale: size,
                     allow_small: style.allow_small_note_text,
                 }),
@@ -593,7 +594,7 @@ fn property_slot(property: &Property) -> Option<usize> {
         Property::Weight(_) => 5,
         Property::Slant(_) => 6,
         Property::Decoration(_) => 7,
-        Property::LineHeight(_) | Property::RelativeLineHeight(_) => 8,
+        Property::LineHeight(_) | Property::LengthLineHeight(_) => 8,
         Property::Float(_) => 9,
         Property::InitialLetter(_) => 10,
         Property::HorizontalMargin(1, _) => 11,
@@ -657,7 +658,7 @@ fn is_first_line_typography(property: &Property) -> bool {
             | Property::Slant(_)
             | Property::Decoration(_)
             | Property::LineHeight(_)
-            | Property::RelativeLineHeight(_)
+            | Property::LengthLineHeight(_)
             | Property::LetterSpacing(_)
             | Property::CommonLigatures(_)
             | Property::LigatureExtras(_)
@@ -967,7 +968,7 @@ impl<'a> Rules<'a> {
                 Property::Slant(value) => style.slant = Some(*value),
                 Property::Decoration(value) => style.decoration = *value,
                 Property::LineHeight(value) => style.line_height = Some(*value),
-                Property::RelativeLineHeight(factor) => style.relative_line_height = Some(*factor),
+                Property::LengthLineHeight(value) => style.length_line_height = Some(*value),
                 Property::LetterSpacing(value) => style.letter_spacing = Some(*value),
                 Property::CommonLigatures(value) => style.common_ligatures = Some(*value),
                 Property::LigatureExtras(value) => style.ligature_extras = Some(*value),

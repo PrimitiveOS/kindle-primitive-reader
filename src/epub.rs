@@ -15,6 +15,9 @@ use crate::{Result, kf8, loose, mobi};
 pub(crate) const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
 pub(crate) const MAX_ENTRIES: usize = 8192;
 const MAX_XML: usize = 512 * 1024;
+// Reflow chapters may be markup-heavy while still fitting the existing 512 KiB
+// laid-out text limit. Metadata and fixed-page XML keep the smaller cap.
+const MAX_REFLOW_CHAPTER_XML: usize = 1024 * 1024;
 const MAX_RESOURCE: usize = 8 * 1024 * 1024;
 const MAX_RASTER_COVER: usize = 4 * 1024 * 1024;
 const MAX_COVER_PATH: usize = 512;
@@ -460,7 +463,7 @@ impl Book {
         if (toc.is_empty() || printed_pages.is_empty())
             && let Some(nav) = navigation
             && matches!(nav.media.as_str(), "application/xhtml+xml" | "text/html")
-            && let Ok(xml) = archive_html_recovery(&mut archive, &nav.path)
+            && let Ok(xml) = archive_html_recovery(&mut archive, &nav.path, MAX_XML)
         {
             let prepared = loose::without_plain_html_doctype(&xml);
             if let Ok(doc) = parse_xml(&prepared) {
@@ -1406,7 +1409,7 @@ impl Book {
                             read_entry(archive, &chapter.href, crate::svg_image::MAX_SVG_BYTES)?;
                         reflow_svg_chapter(&bytes)
                     } else {
-                        archive_html_recovery(archive, &chapter.href)
+                        archive_html_recovery(archive, &chapter.href, MAX_REFLOW_CHAPTER_XML)
                     }
                 } else {
                     xml_entry(archive, &chapter.href)
@@ -2064,7 +2067,7 @@ fn inherit_group_targets(
                 };
                 remaining -= size;
                 let result = if reflow_paths.contains(dest.path.as_str()) {
-                    archive_html_recovery(archive, &dest.path)
+                    archive_html_recovery(archive, &dest.path, MAX_XML)
                 } else {
                     xml_entry(archive, &dest.path)
                 };
@@ -2186,7 +2189,7 @@ fn toc_entry(base: &str, href: Option<&str>, node: Node<'_, '_>, depth: usize) -
 }
 
 fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
-    xml_entry_with_declaration(archive, path, false).map(|(xml, _, _)| xml)
+    xml_entry_with_declaration(archive, path, false, MAX_XML).map(|(xml, _, _)| xml)
 }
 
 /// Keep the original SVG member as the image resource. An empty relative
@@ -2216,21 +2219,21 @@ fn reflow_svg_chapter(bytes: &[u8]) -> Result<String> {
     ))
 }
 
-fn archive_html_recovery(archive: &mut Archive, path: &str) -> Result<String> {
+fn archive_html_recovery(archive: &mut Archive, path: &str, limit: usize) -> Result<String> {
     let (xml, had_declaration, plain_html_doctype) =
-        xml_entry_with_declaration(archive, path, true)?;
+        xml_entry_with_declaration(archive, path, true, limit)?;
     let xml = if had_declaration {
         xml
     } else {
-        crate::epub_xml::recover_html_names(xml, MAX_XML)
+        crate::epub_xml::recover_html_names(xml, limit)
     };
     // The original bytes, before XML preparation, must contain either no
     // DTD/entity declaration or exactly one verified plain HTML doctype.
     Ok(if !had_declaration || plain_html_doctype {
-        crate::epub_xml::recover_html_voids(&xml, MAX_XML)
-            .or_else(|| crate::epub_xml::recover_html_bare_ampersands(&xml, MAX_XML))
-            .or_else(|| crate::epub_xml::recover_html_voids_and_ampersands(&xml, MAX_XML))
-            .or_else(|| crate::epub_xml::recover_html_uppercase_voids(&xml, MAX_XML))
+        crate::epub_xml::recover_html_voids(&xml, limit)
+            .or_else(|| crate::epub_xml::recover_html_bare_ampersands(&xml, limit))
+            .or_else(|| crate::epub_xml::recover_html_voids_and_ampersands(&xml, limit))
+            .or_else(|| crate::epub_xml::recover_html_uppercase_voids(&xml, limit))
             .unwrap_or(xml)
     } else {
         xml
@@ -2241,8 +2244,9 @@ fn xml_entry_with_declaration(
     archive: &mut Archive,
     path: &str,
     check_declaration: bool,
+    limit: usize,
 ) -> Result<(String, bool, bool)> {
-    let mut bytes = read_entry(archive, path, MAX_XML)?;
+    let mut bytes = read_entry(archive, path, limit)?;
     let utf32 = if bytes.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
         Some((true, 4, false))
     } else if bytes.starts_with(&[0x00, 0x00, 0xfe, 0xff]) {
@@ -2320,7 +2324,7 @@ fn xml_entry_with_declaration(
         }
         match String::from_utf8(bytes) {
             Ok(text) => text,
-            Err(error) if !utf8_bom => decode_legacy_epub_xml(error.as_bytes())?,
+            Err(error) if !utf8_bom => decode_legacy_epub_xml(error.as_bytes(), limit)?,
             Err(error) => return Err(error.into()),
         }
     };
@@ -2346,7 +2350,7 @@ fn xml_entry_with_declaration(
             std::borrow::Cow::Owned(_)
         );
     Ok((
-        crate::epub_xml::prepare(text, MAX_XML)?,
+        crate::epub_xml::prepare(text, limit)?,
         had_declaration,
         plain_html_doctype,
     ))
@@ -2405,7 +2409,7 @@ fn decode_utf32_epub_xml(input: &[u8], little_endian: bool) -> Result<String> {
 
 /// Compatibility with nonconforming XML that declares a legacy charset. Only
 /// consulted after the unchanged UTF-8 and UTF-16 paths have failed.
-fn decode_legacy_epub_xml(bytes: &[u8]) -> Result<String> {
+fn decode_legacy_epub_xml(bytes: &[u8], limit: usize) -> Result<String> {
     if !bytes.starts_with(b"<?xml") || !bytes.get(5).is_some_and(u8::is_ascii_whitespace) {
         return Err("The EPUB XML is not valid UTF-8 and has no encoding declaration".into());
     }
@@ -2451,7 +2455,7 @@ fn decode_legacy_epub_xml(bytes: &[u8]) -> Result<String> {
     let decoded = encoding
         .decode_without_bom_handling_and_without_replacement(bytes)
         .ok_or("The EPUB XML does not match its declared encoding")?;
-    if decoded.len() > MAX_XML || decoded.contains('\0') {
+    if decoded.len() > limit || decoded.contains('\0') {
         return Err("The EPUB XML contains binary data or exceeds its size limit".into());
     }
     Ok(decoded.into_owned())

@@ -1,14 +1,15 @@
 # Line spacing parity
 
-Publisher `line-height` percentages and `em` values have a bounded
-implementation candidate in the horizontal Parley renderer. Their height is resolved from the declaring
-element's font and inherited as a fixed computed height, so changing a
+Publisher `line-height` percentages, `em`, and `px` values have a bounded
+implementation candidate in the horizontal Parley renderer. Relative heights
+resolve against the declaring element's font and inherit as a fixed computed height, so changing a
 descendant's font size does not rescale that inherited height. Unitless and
 `normal` declarations retain their existing behavior. The reader's line-spacing
 control and existing minimum/maximum line-height limits still apply. Generated
 content and supported first-line/first-letter styles use the same model.
-Absolute CSS lengths such as `px` and `pt`, other relative units, and values
-outside the bounded 0–8 range remain unsupported. This change does not alter
+Pixel values use Reader's configured CSS DPI once and remain fixed when the
+descendant font changes. Physical units such as `pt`, other relative units,
+relative values outside 0–8, and pixel values outside 0–4096 remain unsupported. This change does not alter
 source text or saved positions and has not yet been behaviorally tested.
 Vertical and Blitz rendering do not yet consume this new computed height.
 

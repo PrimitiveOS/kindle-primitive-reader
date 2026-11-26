@@ -33,6 +33,11 @@ absolute scale and source position rather than recalculating the rectangle fit.
 This candidate has not been behaviorally tested against real PDFs, KOReader,
 the simulator or Kindle.
 
+Rectangles near a page edge can require white margin outside the ordinary pan
+limits and currently use the point-only fallback. Supporting that case also
+requires stable per-view traversal bounds so reversing a page-button movement
+returns to the original fitted position without adding unintended stops.
+
 For PDF `/XYZ` links and Contents entries with a null left or top coordinate
 and a null or zero zoom, the candidate retains the corresponding coordinate
 from the current viewport. It converts that position from the current page's

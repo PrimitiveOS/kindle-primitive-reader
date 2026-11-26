@@ -157,11 +157,17 @@ pub(crate) enum CssLength {
     Fraction(f32),
 }
 
-/// A percentage or em line-height computed against its declaring font.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum LineHeightLength {
+    Relative(f32),
+    Pixels(f32),
+}
+
+/// A length line-height computed against its declaring font.
 /// Keeping that font's scale preserves CSS inheritance across size changes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ComputedLineHeight {
-    pub(crate) factor: f32,
+    pub(crate) value: LineHeightLength,
     pub(crate) font_scale: f32,
     pub(crate) allow_small: bool,
 }
@@ -177,7 +183,16 @@ impl ComputedLineHeight {
         } else {
             1.0
         };
-        font * (self.factor * settings.line_height_scale()).clamp(minimum, 3.0)
+        let ratio = match self.value {
+            LineHeightLength::Relative(factor) => factor,
+            LineHeightLength::Pixels(px) => {
+                CssLength::Pixels(px)
+                    .for_dpi(settings.render_dpi)
+                    .pixels(0, font)
+                    / font
+            }
+        };
+        font * (ratio * settings.line_height_scale()).clamp(minimum, 3.0)
     }
 }
 
@@ -1460,10 +1475,10 @@ impl BookStyle {
                         style.line_height = *height;
                         style.line_height_relative = None;
                     }
-                    Property::RelativeLineHeight(factor) => {
+                    Property::LengthLineHeight(value) => {
                         style.line_height = None;
                         style.line_height_relative = Some(ComputedLineHeight {
-                            factor: *factor,
+                            value: *value,
                             font_scale: if logical.is_some() {
                                 style.size_scale.clamp(f32::MIN_POSITIVE, f32::MAX)
                             } else {
@@ -2772,7 +2787,7 @@ fn choose<'a>(
             Property::MinHeight(_) => 52,
             Property::Family(_) => 0,
             Property::Size(_) => 1,
-            Property::LineHeight(_) | Property::RelativeLineHeight(_) => 2,
+            Property::LineHeight(_) | Property::LengthLineHeight(_) => 2,
             Property::Background(_) => 3,
             Property::Alignment(_) => 4,
             Property::LastLineAlignment(_) => LAST_LINE_ALIGNMENT,
@@ -2900,7 +2915,7 @@ enum Property {
     FontSource(Vec<String>),
     Size(Size),
     LineHeight(Option<f32>),
-    RelativeLineHeight(f32),
+    LengthLineHeight(LineHeightLength),
     Background(Option<u8>),
     Alignment(Alignment),
     LastLineAlignment(Option<Alignment>),
@@ -3391,20 +3406,28 @@ impl<'i> DeclarationParser<'i> for Properties {
                         Property::LineHeight(None)
                     } else {
                         let before = input.state();
-                        let relative = match input.next()?.clone() {
-                            Token::Percentage { unit_value, .. } => Some(unit_value),
-                            Token::Dimension { value, unit, .. }
-                                if unit.eq_ignore_ascii_case("em") =>
+                        let length = match input.next()?.clone() {
+                            Token::Percentage { unit_value, .. }
+                                if (0.0..=8.0).contains(&unit_value) =>
                             {
-                                Some(value)
+                                Some(LineHeightLength::Relative(unit_value))
+                            }
+                            Token::Dimension { value, unit, .. }
+                                if unit.eq_ignore_ascii_case("em")
+                                    && (0.0..=8.0).contains(&value) =>
+                            {
+                                Some(LineHeightLength::Relative(value))
+                            }
+                            Token::Dimension { value, unit, .. }
+                                if unit.eq_ignore_ascii_case("px")
+                                    && (0.0..=4096.0).contains(&value) =>
+                            {
+                                Some(LineHeightLength::Pixels(value))
                             }
                             _ => None,
                         };
-                        if let Some(factor) = relative {
-                            if !(0.0..=8.0).contains(&factor) {
-                                return Err(ParseError::unexpected_token());
-                            }
-                            Property::RelativeLineHeight(factor)
+                        if let Some(length) = length {
+                            Property::LengthLineHeight(length)
                         } else {
                             input.reset(&before);
                             let height = input.expect_number()?;

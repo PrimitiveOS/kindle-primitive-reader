@@ -12,7 +12,8 @@ is permitted only when verified against the original bytes before XML
 preparation; other DTDs, entity declarations and ambiguous declarations do not
 use this repair.
 
-The existing 512 KiB chapter limit includes inserted characters. Already
+The applicable XML limit includes inserted characters: 1 MiB for reflow spine
+chapters and 512 KiB for navigation documents. Already
 parseable chapter content is returned unchanged. Links, image references and
 text in a repaired chapter are retained, and navigation uses the same repaired
 source. New anchors in such previously unreadable chapters address the
