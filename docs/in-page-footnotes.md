@@ -520,5 +520,6 @@ packaged EPUB of at most 16 MiB with a verified source and fonts. Folder EPUBs,
 ambiguous or non-XHTML manifest entries, damaged or missing note resources,
 oversized snapshots and unsupported source layouts retain the existing
 fallback. ZIP parsing, font loading and an individual layout operation are
-not interruptible, although cancellation is checked between stages. This
+not interruptible, although cancellation is checked between stages. Peak ZIP,
+font, shaping and decoded-layout memory use remains unmeasured. This
 implementation has not been behaviorally tested or validated on Kindle.
