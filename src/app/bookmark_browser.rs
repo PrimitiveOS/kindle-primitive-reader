@@ -6,6 +6,7 @@ pub(super) mod focus;
 mod metadata;
 mod metadata_view;
 pub(super) mod note_verify;
+mod other_pdf;
 use super::{
     Action, AnnotationListText, Book, Canvas, Change, Editor, Input, Item, Reader, Rect, Result,
     Screen, mark_chapters::location_caption, navigation_layout::NavigationLayout, with_storage,
@@ -2473,6 +2474,8 @@ impl Reader {
                         false,
                         false,
                     );
+                }
+                if edit_note::can_edit_current(self) {
                     canvas.button(
                         layout.detail_action(1),
                         language.bookmark_text("Remove"),
@@ -2644,7 +2647,7 @@ impl Reader {
             return Some(self.bookmark_change(Command::EditCurrentNote));
         }
         if page == Page::Detail
-            && edit_note::can_edit(self)
+            && edit_note::can_edit_current(self)
             && matches!(input, Input::Tap(x, y) if layout.detail_action(1).contains(x, y))
         {
             return Some(self.bookmark_change(Command::AskRemoveFocusedMark));

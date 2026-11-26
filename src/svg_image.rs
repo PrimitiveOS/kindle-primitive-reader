@@ -20,6 +20,7 @@ const MAX_VECTOR_BYTES: usize = 128 * 1024;
 const MAX_INTRINSIC_SIDE: f64 = 32_768.0;
 const MAX_PAINT_PIXELS: usize = 64 * 1024 * 1024;
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+const XLINK_NAMESPACE: &str = "http://www.w3.org/1999/xlink";
 
 pub(crate) fn is_package_svg(path: &str) -> bool {
     path.rsplit_once('.')
@@ -524,6 +525,7 @@ fn validate(root: roxmltree::Node<'_, '_>, local_images: bool) -> Result<()> {
     if root.tag_name().name() != "svg" || root.tag_name().namespace() != Some(SVG_NAMESPACE) {
         return Err("The illustration needs a standalone SVG root".into());
     }
+    validate_primitive_uses(root)?;
     let mut vector_bytes = 0;
     for node in root.descendants().filter(roxmltree::Node::is_element) {
         if node
@@ -552,6 +554,7 @@ fn validate(root: roxmltree::Node<'_, '_>, local_images: bool) -> Result<()> {
                         | "linearGradient"
                         | "radialGradient"
                         | "stop"
+                        | "use"
                         | "title"
                         | "desc"
                 ))
@@ -565,6 +568,14 @@ fn validate(root: roxmltree::Node<'_, '_>, local_images: bool) -> Result<()> {
         for attribute in node.attributes() {
             let name = attribute.name();
             let value = attribute.value();
+            if element.name() == "use"
+                && name == "href"
+                && matches!(attribute.namespace(), None | Some(XLINK_NAMESPACE))
+            {
+                // The local target and uniqueness were verified before usvg
+                // can resolve and expand this reference.
+                continue;
+            }
             if name == "style" && attribute.namespace().is_none() {
                 if !static_inline_style(value) {
                     return Err("The SVG inline style is outside the static subset".into());
@@ -596,6 +607,78 @@ fn validate(root: roxmltree::Node<'_, '_>, local_images: bool) -> Result<()> {
                     return Err("The SVG exceeds the path and point data limit".into());
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// Bound use expansion before the SVG parser can clone referenced geometry.
+/// Only one unambiguous primitive leaf in this SVG may be referenced.
+fn validate_primitive_uses(root: roxmltree::Node<'_, '_>) -> Result<()> {
+    let nodes = || root.descendants().filter(|node| node.is_element());
+    if !nodes().any(|node| node.has_tag_name((SVG_NAMESPACE, "use"))) {
+        return Ok(());
+    }
+    let mut ids = HashMap::new();
+    for node in nodes() {
+        if let Some(id) = node.attribute("id") {
+            ids.entry(id)
+                .and_modify(|value| *value = None)
+                .or_insert(Some(node));
+        }
+    }
+    let mut uses = 0usize;
+    let mut expanded = 0usize;
+    for node in nodes().filter(|node| node.has_tag_name((SVG_NAMESPACE, "use"))) {
+        uses += 1;
+        if uses > 128
+            || node.children().any(|child| {
+                child.is_element()
+                    || child.is_text() && !child.text().unwrap_or("").trim().is_empty()
+            })
+        {
+            return Err("The SVG use element exceeds the static subset".into());
+        }
+        let href = match (
+            node.attribute("href"),
+            node.attribute((XLINK_NAMESPACE, "href")),
+        ) {
+            (Some(value), None) | (None, Some(value)) => value,
+            _ => return Err("The SVG use reference is missing or ambiguous".into()),
+        };
+        let id = href
+            .strip_prefix('#')
+            .ok_or("The SVG use must refer to a local primitive")?;
+        if id.is_empty()
+            || id.len() > 256
+            || !id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.'))
+        {
+            return Err("The SVG use target ID is unsupported".into());
+        }
+        let target = ids
+            .get(id)
+            .copied()
+            .flatten()
+            .ok_or("The SVG use target is missing or ambiguous")?;
+        if target.tag_name().namespace() != Some(SVG_NAMESPACE)
+            || !matches!(
+                target.tag_name().name(),
+                "path" | "rect" | "circle" | "ellipse" | "polygon" | "polyline" | "line"
+            )
+            || target.children().any(|child| {
+                child.is_element()
+                    || child.is_text() && !child.text().unwrap_or("").trim().is_empty()
+            })
+        {
+            return Err("The SVG use target is not a supported primitive leaf".into());
+        }
+        expanded = expanded
+            .checked_add(target.range().len())
+            .ok_or("The SVG use expansion budget overflowed")?;
+        if expanded > 512 * 1024 {
+            return Err("The SVG use exceeds its expansion budget".into());
         }
     }
     Ok(())

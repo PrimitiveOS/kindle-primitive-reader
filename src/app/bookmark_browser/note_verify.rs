@@ -34,10 +34,14 @@ pub(in crate::app) struct Verification {
     desired: Option<Option<String>>,
     confirmation: Option<Confirmation>,
     screen: Screen,
-    origin: super::super::HistoryLocation,
-    recipe: Arc<crate::session::SearchLayoutRecipe>,
+    origin_book: Option<u64>,
+    origin: Option<super::super::HistoryLocation>,
+    origin_fixed_view: Option<crate::library::FixedPreferences>,
+    recipe: Option<Arc<crate::session::SearchLayoutRecipe>>,
+    other_path: Option<std::path::PathBuf>,
+    other_digest: Option<[u8; 32]>,
     cancelled: Arc<AtomicBool>,
-    receiver: mpsc::Receiver<Result<(), &'static str>>,
+    receiver: mpsc::Receiver<Result<Option<super::other_pdf::Proof>, &'static str>>,
     deadline: Instant,
 }
 impl Drop for Verification {
@@ -234,7 +238,7 @@ impl Reader {
                             .verify_bound_folder_snapshot(&cancel)
                             .map_err(|_| "The book changed; review the note again")?;
                     }
-                    Ok(())
+                    Ok(None)
                 })();
                 if !cancel.load(Ordering::Relaxed) {
                     let _ = tx.send(result);
@@ -254,8 +258,121 @@ impl Reader {
             desired,
             confirmation,
             screen,
+            origin_book: Some(book),
+            origin: Some(origin),
+            origin_fixed_view: None,
+            recipe: Some(recipe),
+            other_path: None,
+            other_digest: None,
+            cancelled,
+            receiver,
+            deadline: Instant::now() + TICK,
+        });
+        Ok(())
+    }
+
+    pub(in crate::app) fn start_other_pdf_note_verification(
+        &mut self,
+        intent: Intent,
+    ) -> crate::Result<()> {
+        if self.note_verify_busy.swap(true, Ordering::AcqRel) {
+            return Err("Previous note verification is still stopping".into());
+        }
+        let build = (|| -> crate::Result<_> {
+            let pending = self
+                .bookmark_browser
+                .pending_note_edit
+                .as_ref()
+                .ok_or("Review the note first")?;
+            let path = pending.other_pdf.clone().ok_or("That PDF is unavailable")?;
+            let state = self
+                .library
+                .state(pending.book)
+                .ok_or("That book is unavailable")?;
+            let expected_screen = match intent {
+                Intent::Open => Page::Detail,
+                Intent::Save => Page::EditNote,
+            };
+            if self.screen != Screen::BookmarkBrowser(expected_screen)
+                || self.bookmark_browser.focus != Some(pending.key)
+                || self.open_book_id() != pending.origin_book
+                || self.current_history_location() != pending.origin
+                || self.fixed.as_ref().map(|fixed| fixed.reading.preferences())
+                    != pending.origin_fixed_view
+                || state.path != path
+                || state.title != pending.title
+                || !pending.target.matches(state)
+            {
+                return Err("The book or mark changed; review the note again".into());
+            }
+            Ok((
+                pending.book,
+                pending.key,
+                pending.title.clone(),
+                pending.target.clone(),
+                pending.desired.clone(),
+                self.bookmark_browser.confirmation,
+                self.screen,
+                pending.origin_book,
+                pending.origin.clone(),
+                pending.origin_fixed_view,
+                pending.other_digest,
+                self.library.verification_root().to_owned(),
+                path,
+            ))
+        })();
+        let (
+            book,
+            key,
+            title,
+            target,
+            desired,
+            confirmation,
+            screen,
+            origin_book,
             origin,
-            recipe,
+            origin_fixed_view,
+            other_digest,
+            root,
+            path,
+        ) = match build {
+            Ok(value) => value,
+            Err(error) => {
+                self.note_verify_busy.store(false, Ordering::Release);
+                return Err(error);
+            }
+        };
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::clone(&cancelled);
+        let worker_path = path.clone();
+        let work = target.clone();
+        let busy = Arc::clone(&self.note_verify_busy);
+        let (tx, receiver) = mpsc::sync_channel(1);
+        if std::thread::Builder::new().name("reader-other-pdf-note-check".into()).spawn(move || {
+            let _guard = Guard(busy);
+            let result = super::other_pdf::Proof::verify(root, worker_path, book, &work, &cancel)
+                .map(Some)
+                .map_err(|_| "The PDF is unavailable, changed, protected, or exceeds the verification limit");
+            if !cancel.load(Ordering::Relaxed) { let _ = tx.send(result); }
+        }).is_err() {
+            self.note_verify_busy.store(false, Ordering::Release);
+            return Err("Unable to start note verification".into());
+        }
+        self.note_verification = Some(Verification {
+            intent,
+            book,
+            key,
+            title,
+            target,
+            desired,
+            confirmation,
+            screen,
+            origin_book,
+            origin,
+            origin_fixed_view,
+            recipe: None,
+            other_path: Some(path),
+            other_digest,
             cancelled,
             receiver,
             deadline: Instant::now() + TICK,
@@ -304,7 +421,7 @@ impl Reader {
         );
         canvas.text(
             Rect::new(panel.x + 36, panel.y + 100, panel.w - 72, 64),
-            match (vi, bookmark) {
+            match (vi, bookmark || job.other_path.is_some()) {
                 (true, true) => "Xác minh sách và vị trí đã lưu",
                 (true, false) => "Xác minh sách và đoạn trích",
                 (false, true) => "Verifying the book and saved location",
@@ -330,8 +447,10 @@ impl Reader {
             Err(mpsc::TryRecvError::Disconnected) => Err("Note verification stopped"),
         };
         let valid = self.screen == job.screen
-            && self.open_book_id() == Some(job.book)
-            && self.current_history_location().as_ref() == Some(&job.origin)
+            && self.open_book_id() == job.origin_book
+            && self.current_history_location() == job.origin
+            && self.fixed.as_ref().map(|fixed| fixed.reading.preferences())
+                == job.origin_fixed_view
             && self.bookmark_browser.focus == Some(job.key)
             && self.bookmark_browser.confirmation == job.confirmation
             && self
@@ -344,24 +463,50 @@ impl Reader {
                         && pending.title == job.title
                         && pending.target == job.target
                         && pending.desired == job.desired
+                        && pending.other_pdf == job.other_path
+                        && pending.other_digest == job.other_digest
+                        && (job.other_path.is_none()
+                            || (pending.origin_book == job.origin_book
+                                && pending.origin == job.origin
+                                && pending.origin_fixed_view == job.origin_fixed_view))
                 })
-            && self
-                .library
-                .state(job.book)
-                .is_some_and(|book| book.title == job.title && job.target.matches(book))
-            && self.active.as_ref().is_some_and(|active| {
-                active
-                    .reading
-                    .config
-                    .search_layout_recipe(&active.reading.probe)
-                    == *job.recipe
-            });
-        if !valid || result.is_err() {
+            && self.library.state(job.book).is_some_and(|book| {
+                book.title == job.title
+                    && job.target.matches(book)
+                    && job
+                        .other_path
+                        .as_ref()
+                        .is_none_or(|path| &book.path == path)
+            })
+            && match &job.recipe {
+                Some(recipe) => self.active.as_ref().is_some_and(|active| {
+                    active
+                        .reading
+                        .config
+                        .search_layout_recipe(&active.reading.probe)
+                        == **recipe
+                }),
+                None => job.other_path.is_some(),
+            };
+        let source_valid = match (&job.recipe, &result) {
+            (Some(_), Ok(None)) => true,
+            (None, Ok(Some(proof))) => {
+                proof.revalidate().is_ok()
+                    && match job.intent {
+                        Intent::Open => job.other_digest.is_none(),
+                        Intent::Save => job.other_digest == Some(proof.digest()),
+                    }
+            }
+            _ => false,
+        };
+        if !valid || !source_valid {
             if job.intent == Intent::Open {
                 self.bookmark_browser.pending_note_edit = None;
             }
             let message = if valid {
-                result.err().unwrap_or("Note verification stopped")
+                result
+                    .err()
+                    .unwrap_or("The PDF changed; review the note again")
             } else {
                 "The book or mark changed; review the note again"
             };
@@ -369,6 +514,11 @@ impl Reader {
         }
         match job.intent {
             Intent::Open => {
+                if let Ok(Some(proof)) = &result
+                    && let Some(pending) = &mut self.bookmark_browser.pending_note_edit
+                {
+                    pending.other_digest = Some(proof.digest());
+                }
                 self.show(Screen::BookmarkBrowser(Page::EditNote));
                 Some(Change::Partial)
             }

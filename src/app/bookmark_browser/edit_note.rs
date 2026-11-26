@@ -14,6 +14,11 @@ pub(super) struct Pending {
     pub(super) target: Snapshot,
     editor: Multiline,
     pub(super) desired: Option<Option<String>>,
+    pub(super) other_pdf: Option<std::path::PathBuf>,
+    pub(super) other_digest: Option<[u8; 32]>,
+    pub(super) origin_book: Option<u64>,
+    pub(super) origin: Option<super::super::HistoryLocation>,
+    pub(super) origin_fixed_view: Option<crate::library::FixedPreferences>,
 }
 
 fn action_width(layout: BrowserLayout, has_quote: bool, has_paste: bool) -> i32 {
@@ -61,12 +66,29 @@ fn text_area(layout: BrowserLayout) -> (Rect, usize) {
     (layout.0.body(260, rows as i32 * LINE_HEIGHT), rows)
 }
 
-pub(super) fn can_edit(reader: &Reader) -> bool {
+pub(super) fn can_edit_current(reader: &Reader) -> bool {
     reader
         .bookmark_browser
         .focus
         .is_some_and(|key| reader.open_book_id() == Some(key.book))
         && matches!(reader.bookmark_browser.origin, Screen::Book | Screen::Fixed)
+}
+
+pub(super) fn can_edit(reader: &Reader) -> bool {
+    if can_edit_current(reader) {
+        return true;
+    }
+    reader.bookmark_browser.focus.is_some_and(|key| {
+        reader.open_book_id() != Some(key.book)
+            && matches!(
+                key.locator,
+                super::Locator::Bookmark(_) | super::Locator::Fixed(_)
+            )
+            && reader.library.state(key.book).is_some_and(|book| {
+                crate::library::DocumentFormat::for_path(&book.path)
+                    == Some(crate::library::DocumentFormat::Pdf)
+            })
+    })
 }
 
 pub(super) fn open(reader: &mut Reader) -> Result<()> {
@@ -82,7 +104,9 @@ pub(super) fn open(reader: &mut Reader) -> Result<()> {
         .state(key.book)
         .ok_or("That book is unavailable")?;
     let target = Snapshot::capture(book, key.locator)?;
-    let verify_async = super::note_verify::uses_reflow_worker(reader, &target);
+    let other_pdf = (reader.open_book_id() != Some(key.book)).then(|| book.path.clone());
+    let verify_async =
+        other_pdf.is_some() || super::note_verify::uses_reflow_worker(reader, &target);
     if !verify_async {
         target.verify_source(reader)?;
     }
@@ -90,17 +114,39 @@ pub(super) fn open(reader: &mut Reader) -> Result<()> {
     editor.editor.caret = editor.editor.text.len();
     let (_, rows) = text_area(BrowserLayout(reader.navigation_layout()));
     editor.show_caret(COLUMNS, rows);
+    let title = book.title.clone();
+    let origin_book = reader.open_book_id();
+    let origin = reader.current_history_location();
+    let origin_fixed_view = reader
+        .fixed
+        .as_ref()
+        .map(|fixed| fixed.reading.preferences());
     reader.bookmark_browser.pending_note_edit = Some(Pending {
         book: key.book,
         key,
-        title: book.title.clone(),
+        title,
         target,
         editor,
         desired: None,
+        other_pdf,
+        other_digest: None,
+        origin_book,
+        origin,
+        origin_fixed_view,
     });
     reader.notice = None;
     if verify_async {
-        if let Err(error) = reader.start_note_verification(super::note_verify::Intent::Open) {
+        let result = if reader
+            .bookmark_browser
+            .pending_note_edit
+            .as_ref()
+            .is_some_and(|pending| pending.other_pdf.is_some())
+        {
+            reader.start_other_pdf_note_verification(super::note_verify::Intent::Open)
+        } else {
+            reader.start_note_verification(super::note_verify::Intent::Open)
+        };
+        if let Err(error) = result {
             reader.bookmark_browser.pending_note_edit = None;
             return Err(error);
         }
@@ -245,22 +291,44 @@ fn commit_inner(reader: &mut Reader, verified: bool) -> Result<()> {
         return Err("Confirm removal before deleting the note".into());
     }
     if reader.screen != Screen::BookmarkBrowser(expected_screen)
-        || reader.open_book_id() != Some(pending.book)
+        || reader.open_book_id() != pending.origin_book
+        || (pending.other_pdf.is_some()
+            && (reader.current_history_location() != pending.origin
+                || reader
+                    .fixed
+                    .as_ref()
+                    .map(|fixed| fixed.reading.preferences())
+                    != pending.origin_fixed_view))
         || reader.bookmark_browser.focus != Some(pending.key)
-        || !matches!(reader.bookmark_browser.origin, Screen::Book | Screen::Fixed)
+        || (pending.other_pdf.is_none()
+            && !matches!(reader.bookmark_browser.origin, Screen::Book | Screen::Fixed))
     {
         return Err("The open book changed; review the note again".into());
     }
-    let verify_async = super::note_verify::uses_reflow_worker(reader, &pending.target);
+    let verify_async = pending.other_pdf.is_some()
+        || super::note_verify::uses_reflow_worker(reader, &pending.target);
+    if pending.other_pdf.is_some() && pending.other_digest.is_none() {
+        return Err("The PDF has not been verified; review the note again".into());
+    }
     if verify_async && !verified {
-        return reader.start_note_verification(super::note_verify::Intent::Save);
+        return if pending.other_pdf.is_some() {
+            reader.start_other_pdf_note_verification(super::note_verify::Intent::Save)
+        } else {
+            reader.start_note_verification(super::note_verify::Intent::Save)
+        };
     }
     if !verify_async {
         pending.target.verify_source(reader)?;
     }
     let id = pending.book;
     let state = reader.library.state(id).ok_or("That book is unavailable")?;
-    if state.title != pending.title || !pending.target.matches(state) {
+    if state.title != pending.title
+        || !pending.target.matches(state)
+        || pending
+            .other_pdf
+            .as_ref()
+            .is_some_and(|path| &state.path != path)
+    {
         return Err("The mark changed; review the note again".into());
     }
     let before = state.clone();

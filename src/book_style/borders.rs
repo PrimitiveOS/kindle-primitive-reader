@@ -17,6 +17,9 @@ pub(crate) struct Border {
     pub width: CssLength,
     pub pattern: Pattern,
     pub gray: Option<(u8, u8)>,
+    // Keep the symbolic value for explicit inheritance by a child whose
+    // foreground may differ from this element's resolved foreground.
+    pub current_color: bool,
 }
 
 impl Default for Border {
@@ -25,6 +28,7 @@ impl Default for Border {
             width: CssLength::Pixels(3.),
             pattern: Pattern::None,
             gray: Some((0, 255)),
+            current_color: true,
         }
     }
 }
@@ -34,20 +38,29 @@ pub(super) enum Value {
     Width(Option<CssLength>),
     Pattern(Option<Pattern>),
     Gray(Option<Option<(u8, u8)>>),
+    CurrentColor,
 }
 impl Value {
     pub fn component(self) -> usize {
         match self {
             Self::Width(_) => 0,
             Self::Pattern(_) => 1,
-            Self::Gray(_) => 2,
+            Self::Gray(_) | Self::CurrentColor => 2,
         }
     }
     pub fn apply(self, to: &mut Border, from: Border, font: f32, root: f32) {
         match self {
             Self::Width(v) => to.width = v.map_or(from.width, |w| w.computed(font, root)),
             Self::Pattern(v) => to.pattern = v.unwrap_or(from.pattern),
-            Self::Gray(v) => to.gray = v.unwrap_or(from.gray),
+            Self::Gray(Some(gray)) => {
+                to.gray = gray;
+                to.current_color = false;
+            }
+            Self::Gray(None) => {
+                to.gray = from.gray;
+                to.current_color = from.current_color;
+            }
+            Self::CurrentColor => to.current_color = true,
         }
     }
 }
@@ -142,7 +155,7 @@ fn initial(component: usize) -> Value {
     match component {
         0 => Value::Width(Some(b.width)),
         1 => Value::Pattern(Some(b.pattern)),
-        _ => Value::Gray(Some(b.gray)),
+        _ => Value::CurrentColor,
     }
 }
 fn inherit(component: usize) -> Value {
@@ -150,6 +163,16 @@ fn inherit(component: usize) -> Value {
         0 => Value::Width(None),
         1 => Value::Pattern(None),
         _ => Value::Gray(None),
+    }
+}
+
+fn color_value(p: &mut Parser<'_>) -> CssResult<Value> {
+    if p.try_parse(|p| p.expect_ident_matching("currentcolor"))
+        .is_ok()
+    {
+        Ok(Value::CurrentColor)
+    } else {
+        Ok(Value::Gray(Some(color(p)?)))
     }
 }
 
@@ -200,7 +223,7 @@ pub(super) fn parse(name: &str, p: &mut Parser<'_>) -> CssResult<Vec<(usize, Val
             values.push(match c {
                 0 => Value::Width(Some(width(p)?)),
                 1 => Value::Pattern(Some(pattern(p)?)),
-                _ => Value::Gray(Some(color(p)?)),
+                _ => color_value(p)?,
             });
         }
         let all = match values.as_slice() {
@@ -223,7 +246,7 @@ pub(super) fn parse(name: &str, p: &mut Parser<'_>) -> CssResult<Vec<(usize, Val
             } else if let Ok(line) = p.try_parse(pattern) {
                 Value::Pattern(Some(line))
             } else {
-                Value::Gray(Some(color(p)?))
+                color_value(p)?
             };
             if parts[value.component()].replace(value).is_some() {
                 return Err(ParseError::unexpected_token());

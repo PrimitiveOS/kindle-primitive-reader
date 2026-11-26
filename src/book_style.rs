@@ -1712,6 +1712,16 @@ impl BookStyle {
                 style.display = Display::Block;
             }
             style.flow = flow::resolve(parent.flow, style.display, style.visibility);
+            // Border declarations precede text color in the winner array.
+            // Resolve currentColor only after the full element cascade, while
+            // retaining its symbolic identity for explicit child inheritance.
+            if let Some(borders) = &mut style.borders {
+                for border in Arc::make_mut(borders) {
+                    if border.current_color {
+                        border.gray = Some((style.text_ink.unwrap_or(0), 255));
+                    }
+                }
+            }
             if self.layout_tweaks.monochrome {
                 style.background = None;
                 if let Some(borders) = &mut style.borders {

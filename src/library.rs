@@ -2205,6 +2205,12 @@ impl Library {
         Some((marker, chapter, name.to_owned()))
     }
 
+    /// Canonical Documents root for descriptor-relative, read-only verification.
+    #[cfg(feature = "kindle")]
+    pub(crate) fn verification_root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn absolute_path(&self, path: &Path) -> io::Result<PathBuf> {
         let relative = if path.is_absolute() {
             path.strip_prefix(&self.root)
