@@ -40,9 +40,9 @@ pub(super) enum Target {
     None,
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub(super) struct ContentsEntry {
-    title: String,
+    pub(super) title: String,
     pub(super) depth: usize,
     pub(super) target: Target,
 }

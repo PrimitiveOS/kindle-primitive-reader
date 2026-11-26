@@ -447,13 +447,18 @@ impl Reader {
             "Searching pages"
         } else if self.search_at.is_some() || self.nearby.searching_all() {
             "Searching chapters"
+        } else if self.reflow_results_completeness().is_some() {
+            self.controls
+                .interface_language
+                .document_search_text("Search incomplete")
         } else {
             "No matches"
         }
     }
 
     fn draw_flexible_result_notice(&self, canvas: &mut Canvas) {
-        if let Some(notice) = &self.notice {
+        let status = self.reflow_results_completeness();
+        if let Some(notice) = status.as_deref().or(self.notice.as_deref()) {
             canvas.text(
                 self.search_layout().list_caption(LIST_X, 179, 64),
                 notice,

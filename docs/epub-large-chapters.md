@@ -84,3 +84,26 @@ settings or complete metadata snapshot, establish a total device-memory cap,
 provide a page/window cache, or implement search, selection, navigation or
 resume across batches. Those are prerequisites before any user-facing path can
 use it. The stream has not been behaviorally tested or used on a device.
+
+An unwired `PageIndex` experiment combines the planner, simple stream and
+incremental paginator over one immutable packaged EPUB snapshot and an ordered
+set of immutable font byte snapshots. It caps the EPUB at 16 MiB, the font
+stack at eight files totaling 16 MiB, and the index at 30,000 line records and
+16,384 pages. It disables system font discovery and embedded fonts, rejects
+missing glyphs or a shaped font outside the captured stack, and derives the
+source and computed styles from the same snapshot and exact settings. It stores
+original-source line ranges, exact simple-page bounds and batch-to-line ranges;
+these ranges are not resumable layout checkpoints. It returns nothing if a
+batch fails or is cancelled. Digests check cancellation between 64 KiB
+chunks; a single ZIP parse, font registration or paragraph shape is not
+interruptible. Scroll, facing-page, hidden-flow, nonlinear-hiding and in-page
+note modes remain excluded.
+
+The proof covers these in-memory EPUB/font bytes and the supplied settings,
+user-style and hyphenation snapshots. It does not prove that they are the live
+open book or that this isolated font context is equivalent to Reader's normal
+firmware-mapped or system-fallback font context. It also does not provide a
+windowed renderer, interactive navigation, Find, selections or saved-position
+handoff. Peak allocator and device memory remain unmeasured. No reader path
+uses this index; source and font handoff proofs and all those consumers remain
+prerequisites to user-visible support. No behavioral or device tests have run.

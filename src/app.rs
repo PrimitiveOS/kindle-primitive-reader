@@ -1048,6 +1048,8 @@ pub struct Reader {
     book_map_raw_history: Option<reflow_book_map_history::Verification>,
     book_map_raw_counts: Option<reflow_book_map_raw_counts::Verification>,
     page_bookmark_search: Option<page_bookmark_navigation::Search>,
+    chapter_navigation_job: Option<chapter_navigation::worker::Job>,
+    chapter_navigation_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     bookmark_focus: Option<bookmark_browser::focus::Focus>,
     bookmark_focus_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     note_verification: Option<bookmark_browser::note_verify::Verification>,
@@ -1341,6 +1343,8 @@ impl Reader {
             book_map_raw_history: None,
             book_map_raw_counts: None,
             page_bookmark_search: None,
+            chapter_navigation_job: None,
+            chapter_navigation_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             bookmark_focus: None,
             bookmark_focus_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             note_verification: None,
@@ -1662,6 +1666,7 @@ impl Reader {
         self.pdf_hits.clear();
         self.search_results_navigation = Default::default();
         self.cancel_search();
+        self.nearby.discard_all_completeness();
         self.search_result = None;
         self.result_selection = None;
     }
@@ -1673,6 +1678,7 @@ impl Reader {
         check_archive: bool,
         resume: Option<&resume_recovery::Recovery>,
     ) -> Result<()> {
+        self.chapter_navigation_job = None;
         self.resume_recovery = None;
         self.cancel_detached_note();
         self.cancel_annotation_preview();
@@ -2346,6 +2352,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.chapter_navigation_job = None;
         self.cancel_detached_note();
         self.defer_folder_activation();
         self.page_bookmark_search = None;
@@ -6525,6 +6532,7 @@ impl Reader {
     fn auto_turn_eligible(&self) -> bool {
         self.stats_awake
             && self.quickstart.is_none()
+            && self.chapter_navigation_job.is_none()
             && !self.scroll_pan.busy()
             && self.closing_profile.is_none()
             && !self.opening_ask_visible()
@@ -6874,6 +6882,7 @@ impl Reader {
         self.matches_return_to_reading = false;
         self.remember_all_results_origin();
         self.nearby.clear();
+        self.nearby.discard_all_completeness();
         self.search_result = None;
         self.reset_match_window();
         self.focused_result = None;
@@ -8355,6 +8364,7 @@ impl Reader {
             self.matches_return_to_reading = false;
             self.hits.clear();
             self.pdf_hits.clear();
+            self.nearby.discard_all_completeness();
         }
         self.selection = None;
         self.pdf_selection = None;
@@ -10140,7 +10150,10 @@ impl Reader {
                 &format!("{first}–{last} of {count}{more}"),
                 self.search_layout().counter_style(),
             );
-            if let Some(notice) = &self.notice {
+            let status = (self.screen == Screen::Matches)
+                .then(|| self.reflow_results_completeness())
+                .flatten();
+            if let Some(notice) = status.as_deref().or(self.notice.as_deref()) {
                 canvas.text(navigation.footer_text(LIST_X, 179, 64), notice, CAPTION);
             }
         } else {
@@ -10162,8 +10175,13 @@ impl Reader {
                 };
                 canvas.button(navigation.next(), label, false, false);
             }
-            if let Some(notice) = &self.notice {
-                let area = if self.screen == Screen::BookMap
+            let status = (self.screen == Screen::Matches)
+                .then(|| self.reflow_results_completeness())
+                .flatten();
+            if let Some(notice) = status.as_deref().or(self.notice.as_deref()) {
+                let area = if self.screen == Screen::Matches {
+                    navigation.footer_text(LIST_X, 179, 64)
+                } else if self.screen == Screen::BookMap
                     && self.active.is_some()
                     && self.fixed.is_none()
                 {
@@ -10197,6 +10215,7 @@ impl Reader {
     fn reading_overlays_clear(&self) -> bool {
         matches!(self.screen, Screen::Book | Screen::Fixed)
             && self.logical_recovery.is_none()
+            && self.chapter_navigation_job.is_none()
             && self.resume_recovery.is_none()
             && self.end_dialog.is_none()
             && self.flow_popup.is_none()
@@ -10497,6 +10516,7 @@ impl App for Reader {
         self.draw_menu_search_preview(canvas);
         self.draw_bookmark_confirmation(canvas);
         self.draw_page_bookmark_search(canvas);
+        self.draw_chapter_navigation(canvas);
         self.draw_bookmark_focus(canvas);
         self.draw_note_verification(canvas);
         self.draw_detached_note(canvas);
@@ -10546,6 +10566,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.chapter_navigation_input(input) {
+            return change;
+        }
         if let Some(change) = self.resume_recovery_input(input) {
             return change;
         }
@@ -10701,6 +10724,9 @@ impl App for Reader {
     }
 
     fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        if self.chapter_navigation_job.is_some() {
+            return Change::None;
+        }
         if self.resume_recovery.is_some() {
             return Change::None;
         }
@@ -10853,6 +10879,12 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if input == Input::Sleep {
+            self.chapter_navigation_job = None;
+        }
+        if let Some(change) = self.chapter_navigation_input(input) {
+            return change;
+        }
         if let Some(change) = self.resume_recovery_input(input) {
             return change;
         }
@@ -11748,6 +11780,11 @@ impl App for Reader {
             .chain(self.annotation_discovery_deadline())
             .chain(self.annotation_preview_deadline())
             .chain(
+                self.chapter_navigation_job
+                    .as_ref()
+                    .map(chapter_navigation::worker::Job::deadline),
+            )
+            .chain(
                 self.detached_note
                     .as_ref()
                     .map(footnote_popup::detached::Job::deadline),
@@ -11857,6 +11894,9 @@ impl App for Reader {
             return change;
         }
         if let Some(change) = self.poll_detached_note(now) {
+            return change;
+        }
+        if let Some(change) = self.poll_chapter_navigation(now) {
             return change;
         }
         if let Some(change) = self.poll_note_verification(now) {
@@ -12111,6 +12151,7 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
+        self.chapter_navigation_job = None;
         self.cancel_detached_note();
         self.cancel_annotation_preview();
         self.cancel_annotation_discovery();
@@ -12153,6 +12194,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.chapter_navigation_job = None;
         self.cancel_detached_note();
         self.cancel_annotation_preview();
         self.cancel_annotation_discovery();

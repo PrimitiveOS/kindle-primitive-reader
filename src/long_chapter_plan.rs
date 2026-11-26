@@ -5,6 +5,7 @@
 //! a future continuation/index pass must prove that separately.
 #![allow(dead_code)]
 
+pub(crate) mod index;
 pub(crate) mod pagination;
 
 use crate::book_style::{CssLength, Style, WhiteSpace, WritingMode, flow::Display};
@@ -25,11 +26,12 @@ const MAX_ELEMENTS: usize = 8192;
 const MAX_CHAPTERS: usize = 4096;
 const MAX_HREF_BYTES: usize = 4096;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LayoutMode {
     pub scroll: bool,
     pub facing_pages: bool,
     pub hidden_flows: bool,
+    pub hide_nonlinear: bool,
     pub in_page_notes: bool,
 }
 
@@ -179,6 +181,7 @@ impl LongChapterPlan {
             || mode.scroll
             || mode.facing_pages
             || mode.hidden_flows
+            || mode.hide_nonlinear
             || mode.in_page_notes
             || settings.in_page_footnotes
             || !user_styles.is_empty()

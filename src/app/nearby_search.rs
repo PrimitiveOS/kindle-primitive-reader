@@ -223,11 +223,21 @@ impl Drop for Worker {
 
 enum AllEvent {
     Hits(Vec<SearchHit>),
+    Skipped(usize),
     Finished {
         limited: bool,
         memory_limited: bool,
-        skipped: bool,
+        skipped: usize,
     },
+}
+
+#[derive(Default)]
+struct AllCompleteness {
+    skipped: usize,
+    limited: bool,
+    memory_limited: bool,
+    stopped: bool,
+    failed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -341,6 +351,7 @@ pub(super) struct Nearby {
     pending: Option<Pending>,
     fixed: Option<FixedPending>,
     all: Option<PendingAll>,
+    all_completeness: Option<AllCompleteness>,
     page_pending: Option<PendingPageMarks>,
     page_marks: Option<PageMarks>,
     page_resume: Option<PageMarksResume>,
@@ -392,8 +403,16 @@ impl Nearby {
     pub(super) fn cancel(&mut self) {
         self.pending = None;
         self.fixed = None;
-        self.all = None;
+        if self.all.take().is_some()
+            && let Some(status) = &mut self.all_completeness
+        {
+            status.stopped = true;
+        }
         self.cancel_page_marks();
+    }
+
+    pub(super) fn discard_all_completeness(&mut self) {
+        self.all_completeness = None;
     }
     pub(super) fn clear(&mut self) {
         self.cancel();
@@ -413,6 +432,53 @@ impl Nearby {
 }
 
 impl Reader {
+    /// Results can outlive the worker and any transient notice. Keep their
+    /// completeness visible whenever the retained reflow list is reopened.
+    pub(super) fn reflow_results_completeness(&self) -> Option<String> {
+        let status = self.nearby.all_completeness.as_ref()?;
+        if status.skipped == 0
+            && !status.limited
+            && !status.memory_limited
+            && !status.stopped
+            && !status.failed
+        {
+            return None;
+        }
+        let language = self.controls.interface_language;
+        let mut parts = vec![
+            language
+                .document_search_text("Search incomplete")
+                .to_owned(),
+        ];
+        if status.skipped > 0 {
+            parts.push(format!(
+                "{} {}",
+                language.document_search_text("Scanned skips (at least)"),
+                status.skipped
+            ));
+        }
+        if status.limited {
+            parts.push(language.document_search_text("5,000 limit").to_owned());
+        }
+        if status.memory_limited {
+            parts.push(language.document_search_text("Memory limit").to_owned());
+        }
+        if status.stopped {
+            parts.push(language.document_search_text("Search stopped").to_owned());
+        }
+        if status.failed {
+            parts.push(language.document_search_text("Search failed").to_owned());
+        }
+        if status.stopped || status.failed || status.limited || status.memory_limited {
+            parts.push(
+                language
+                    .document_search_text("More may be unsearched")
+                    .to_owned(),
+            );
+        }
+        Some(parts.join(" · "))
+    }
+
     pub(super) fn resume_page_marks(&mut self) {
         let Some(resume) = self.nearby.page_resume.take() else {
             return;
@@ -899,7 +965,11 @@ impl Reader {
 
     /// Call before accepting a worker delivery or activating a retained hit.
     pub(super) fn ensure_reflow_search_current(&mut self) -> Result<()> {
-        if self.hits.is_empty() && self.nearby.pending.is_none() && self.nearby.all.is_none() {
+        if self.hits.is_empty()
+            && self.nearby.pending.is_none()
+            && self.nearby.all.is_none()
+            && self.nearby.all_completeness.is_none()
+        {
             self.nearby.results_context = None;
             return Ok(());
         }
@@ -911,6 +981,7 @@ impl Reader {
         {
             self.nearby.clear();
             self.nearby.results_context = None;
+            self.nearby.discard_all_completeness();
             self.hits.clear();
             self.clear_flexible_results();
             self.reset_search_chapter();
@@ -1247,6 +1318,7 @@ impl Reader {
         self.update_lookup_history(|h| h.search(pattern, case, accents, regex))?;
         self.remember_all_results_origin();
         self.cancel_search();
+        self.nearby.discard_all_completeness();
         self.search_result = None;
         self.reset_match_window();
         self.focused_result = None;
@@ -1259,6 +1331,7 @@ impl Reader {
         let (tx, result) = mpsc::sync_channel(1);
         let cancelled = Arc::new(AtomicBool::new(false));
         self.nearby.results_context = Some(context.clone());
+        self.nearby.all_completeness = Some(AllCompleteness::default());
         self.nearby.all = Some(PendingAll {
             cancel: Arc::clone(&cancelled),
             result,
@@ -1266,6 +1339,7 @@ impl Reader {
         });
         self.nearby.worker.as_ref().unwrap().submit(move || {
             let scanned = (|| {
+                let mut reported_skipped = 0;
                 for ci in 0..chapters {
                     if cancelled.load(Ordering::Relaxed) || search.is_finished() {
                         break;
@@ -1281,6 +1355,14 @@ impl Reader {
                         chapters,
                         &cancelled,
                     )?;
+                    // One early update makes a cancelled partial list truthful
+                    // without one UI round trip per unreadable chapter.
+                    if reported_skipped == 0 && search.skipped_chapters() > 0 {
+                        reported_skipped = search.skipped_chapters();
+                        if tx.send(Ok(AllEvent::Skipped(reported_skipped))).is_err() {
+                            break;
+                        }
+                    }
                     let mut hits = results.into_iter().peekable();
                     // At most one delivery waits in the mailbox. Dropping the
                     // receiver when leaving Find releases a blocked sender.
@@ -1294,7 +1376,7 @@ impl Reader {
                 Ok(AllEvent::Finished {
                     limited: search.limit_reached(),
                     memory_limited: search.memory_limited(),
-                    skipped: search.skipped_chapters() > 0,
+                    skipped: search.skipped_chapters(),
                 })
             })();
             if !cancelled.load(Ordering::Relaxed) {
@@ -1414,41 +1496,29 @@ impl Reader {
                     }
                     self.next_search_refresh = now + SEARCH_REFRESH;
                 }
+                Ok(AllEvent::Skipped(skipped)) => {
+                    if let Some(status) = &mut self.nearby.all_completeness {
+                        status.skipped = skipped;
+                    }
+                    all.at = now + SEARCH_DELAY;
+                }
                 Ok(AllEvent::Finished {
                     limited,
                     memory_limited,
                     skipped,
                 }) => {
                     self.nearby.all = None;
-                    if self.screen == Screen::Matches {
-                        self.notice = if memory_limited {
-                            Some(
-                                self.controls
-                                    .interface_language
-                                    .document_search_text("Search result memory limit reached")
-                                    .into(),
-                            )
-                        } else if limited {
-                            Some(
-                                self.controls
-                                    .interface_language
-                                    .document_search_text("Showing first 5,000 matches")
-                                    .into(),
-                            )
-                        } else if skipped {
-                            Some(
-                                self.controls
-                                    .interface_language
-                                    .document_search_text("Some chapters could not be searched")
-                                    .into(),
-                            )
-                        } else {
-                            None
-                        };
+                    if let Some(status) = &mut self.nearby.all_completeness {
+                        status.skipped = skipped;
+                        status.limited = limited;
+                        status.memory_limited = memory_limited;
                     }
                 }
                 Err(e) => {
                     self.nearby.all = None;
+                    if let Some(status) = &mut self.nearby.all_completeness {
+                        status.failed = true;
+                    }
                     return Err(e);
                 }
             }
@@ -1481,6 +1551,7 @@ impl Reader {
             self.search_result = None;
         }
         self.clear_flexible_results();
+        self.nearby.discard_all_completeness();
         self.hits = vec![hit];
         self.activate(Action::SearchHit(0))?;
         self.nearby.current = Some(pending.query.clone());

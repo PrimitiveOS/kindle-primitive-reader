@@ -11,6 +11,8 @@ use crate::library::Bookmark;
 use crate::session::{ChapterLayout, Reading};
 use crate::{Anchor, Probe, Result};
 
+pub(super) mod worker;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Direction {
     Previous,
@@ -43,7 +45,7 @@ impl Reader {
     pub(super) fn jump_chapter(&mut self, direction: Direction) -> Result<()> {
         let book = self.open_book_id().ok_or("Open a document first")?;
         let state = self.library.state(book);
-        let custom = state.map_or(&[][..], |state| state.custom_contents.entries());
+        let custom = state.map_or_else(Vec::new, |state| state.custom_contents.entries().to_vec());
         let headings =
             self.contents_entries(book)
                 .into_iter()
@@ -52,8 +54,10 @@ impl Reader {
                     state
                         .is_none_or(|state| state.contents_depths.use_for_navigation(heading.depth))
                 });
+        let headings: Vec<_> = headings.collect();
         if let Some(fixed) = &mut self.fixed {
-            if let Some(page) = fixed_page(&fixed.reading, headings, custom, direction) {
+            if let Some(page) = fixed_page(&fixed.reading, headings.into_iter(), &custom, direction)
+            {
                 if self.screen == Screen::Skim {
                     fixed.reading.jump(page)?;
                     return Ok(());
@@ -64,20 +68,34 @@ impl Reader {
                     return Ok(());
                 }
             }
-        } else if let Some(active) = &mut self.active
-            && let Some((chapter, page, probe)) = reflow_page(
-                &active.reading,
-                headings.map(|(_, heading)| heading),
-                custom,
-                direction,
-            )
-        {
-            let previous = position(&active.reading);
-            active.reading.go_to_laid_out_page(chapter, page, probe)?;
-            if self.screen != Screen::Skim {
-                self.finish_reflow_jump(previous);
+        } else if self.active.is_some() {
+            if self.screen != Screen::Skim
+                && (self.active.as_ref().unwrap().reading.page_turn_pending()
+                    || self.touch_hold.is_some()
+                    || self.scroll_pan.busy())
+            {
+                return Err("Wait for the current page movement to finish".into());
             }
-            return Ok(());
+            let use_worker = self.can_defer_chapter_navigation();
+            let reading = &self.active.as_ref().unwrap().reading;
+            if let Some((chapter, page, probe)) = reflow_page(
+                reading,
+                headings.iter().map(|(_, heading)| heading.clone()),
+                &custom,
+                direction,
+                use_worker,
+            ) {
+                let active = self.active.as_mut().unwrap();
+                let previous = position(&active.reading);
+                active.reading.go_to_laid_out_page(chapter, page, probe)?;
+                if self.screen != Screen::Skim {
+                    self.finish_reflow_jump(previous);
+                }
+                return Ok(());
+            }
+            if use_worker {
+                return self.start_chapter_navigation(direction, headings, custom);
+            }
         }
         self.notice = Some(self.controls.interface_language.chapter_navigation_text(
             match direction {
@@ -286,6 +304,7 @@ fn reflow_page(
     headings: impl Iterator<Item = ContentsEntry>,
     custom: &[Bookmark],
     direction: Direction,
+    current_only: bool,
 ) -> Option<(usize, usize, Option<ChapterLayout>)> {
     let current = reading.chapter;
     // The start of a heading already visible on the second page of a spread
@@ -328,7 +347,7 @@ fn reflow_page(
             }
             _ => continue,
         };
-        if chapter == current || direction.beyond(chapter, current) {
+        if chapter == current || !current_only && direction.beyond(chapter, current) {
             by_chapter.entry(chapter).or_default().push(target);
         }
     }

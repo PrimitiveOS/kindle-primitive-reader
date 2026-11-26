@@ -237,6 +237,10 @@ impl Search {
         }
         let chapter = self.next_chapter;
         self.next_chapter += 1;
+        if text.placeholder {
+            self.skipped += 1;
+            return Ok(Vec::new());
+        }
         let source = match text.source {
             Some(source) => source,
             None => {
