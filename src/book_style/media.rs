@@ -6,6 +6,7 @@ const MAX_MEDIA_DEPTH: u8 = 4;
 enum Prelude {
     Ordinary(SheetPrelude),
     Media(bool),
+    IgnoredImport,
 }
 
 struct PublisherParser<'a> {
@@ -121,6 +122,38 @@ impl<'i> AtRuleParser<'i> for PublisherParser<'_> {
         if name.eq_ignore_ascii_case("supports") {
             return supports_query(input).map(Prelude::Media);
         }
+        if name.eq_ignore_ascii_case("import") && self.depth == 0 {
+            // Preserve the existing bare-import parser and add only the
+            // media forms already understood by the publisher media matcher.
+            if let Ok(prelude) = input.try_parse(|input| {
+                AtRuleParser::parse_prelude(&mut SheetParser, name.clone(), input)
+            }) {
+                return Ok(Prelude::Ordinary(prelude));
+            }
+            let href = input
+                .try_parse(|input| input.expect_string_cloned())
+                .or_else(|_| input.expect_url())?
+                .to_string();
+            // These are import qualifiers, not media-query alternatives.
+            // Do not let a later matching comma branch bypass their absence.
+            let start = input.state();
+            let unsupported_qualifier = matches!(
+                input.next(),
+                Ok(Token::Ident(name) | Token::Function(name))
+                    if name.eq_ignore_ascii_case("layer")
+                        || name.eq_ignore_ascii_case("supports")
+            );
+            input.reset(&start);
+            if unsupported_qualifier {
+                return Err(ParseError::unexpected_token());
+            }
+            let queries = input.parse_comma_separated(media_query)?;
+            return Ok(if queries.into_iter().any(|matches| matches) {
+                Prelude::Ordinary(SheetPrelude::Import(href))
+            } else {
+                Prelude::IgnoredImport
+            });
+        }
         AtRuleParser::parse_prelude(&mut SheetParser, name, input).map(Prelude::Ordinary)
     }
 
@@ -140,6 +173,7 @@ impl<'i> AtRuleParser<'i> for PublisherParser<'_> {
             Prelude::Ordinary(other) => {
                 AtRuleParser::rule_without_block(&mut SheetParser, other, state).map(|_| Vec::new())
             }
+            Prelude::IgnoredImport => Ok(Vec::new()),
             Prelude::Media(_) => Err(()),
         }
     }
@@ -155,6 +189,7 @@ impl<'i> AtRuleParser<'i> for PublisherParser<'_> {
         }
         *self.remaining -= 1;
         match prelude {
+            Prelude::IgnoredImport => Err(ParseError::unexpected_token()),
             Prelude::Ordinary(other) => {
                 AtRuleParser::parse_block(&mut SheetParser, other, state, input)
                     .map(|item| vec![item])

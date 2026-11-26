@@ -4793,6 +4793,7 @@ struct ImageSizing {
     max_height: Option<f64>,
     min_width: Option<f64>,
     min_height: Option<f64>,
+    cross_axis_constraints: bool,
     render_dpi: u16,
 }
 
@@ -4803,6 +4804,7 @@ struct ImageKey<'a> {
     maximum: [Option<u64>; 2],
     minimum_width: Option<u64>,
     minimum_height: Option<u64>,
+    cross_axis_constraints: bool,
     viewport: (u32, u32),
     render_dpi: u16,
 }
@@ -4955,6 +4957,7 @@ impl ImageSizing {
             ],
             minimum_width: self.min_width.map(f64::to_bits),
             minimum_height: self.min_height.map(f64::to_bits),
+            cross_axis_constraints: self.cross_axis_constraints,
             viewport: (self.width, self.height),
             render_dpi: self.render_dpi,
         }
@@ -5013,22 +5016,65 @@ impl ImageSizing {
             .map(f64::from);
         // Cross-axis or inverted constraints need the full replaced-element
         // algorithm; keep those cases on the existing image path.
-        let min_width = style
+        let resolved_min_width = style
             .image_min_width
             .map(|value| value.pixels(width, settings.font_size))
             .filter(|value| value.is_finite() && *value > 0.0)
-            .map(f64::from)
-            .filter(|minimum| {
-                style.image_max_height.is_none()
+            .map(f64::from);
+        let resolved_min_height = match style.min_height {
+            Some(ImageLength::Pixels(value) | ImageLength::Physical(value))
+                if value.is_finite() && value > 0.0 =>
+            {
+                Some(f64::from(value))
+            }
+            _ => None,
+        };
+        // Do not admit partial constraint sets: an unresolved declaration must
+        // retain the previous sizing behavior, not expose an earlier limit.
+        let resolved = |specified: bool, value: Option<f64>| !specified || value.is_some();
+        let cross_axis_constraints = (style.image_min_width.is_some()
+            && style.image_max_height.is_some()
+            || style.min_height.is_some() && style.image_max_width.is_some()
+            || style.image_min_width.is_some() && style.min_height.is_some())
+            && resolved(style.image_min_width.is_some(), resolved_min_width)
+            && resolved(style.min_height.is_some(), resolved_min_height)
+            && resolved(style.image_max_width.is_some(), max_width)
+            && resolved(style.image_max_height.is_some(), max_height)
+            && !matches!(style.image_width, Some(ImageLength::FitContent))
+            && !matches!(
+                style.image_height,
+                Some(ImageLength::FitContent | ImageLength::Fraction(_))
+            )
+            && (style
+                .image_width
+                .is_none_or(|value| matches!(value, ImageLength::Auto))
+                || requested_width.is_some())
+            && (style
+                .image_height
+                .is_none_or(|value| matches!(value, ImageLength::Auto))
+                || requested_height.is_some())
+            && resolved_min_width
+                .zip(max_width)
+                .is_none_or(|(min, max)| min <= max)
+            && resolved_min_height
+                .zip(max_height)
+                .is_none_or(|(min, max)| min <= max)
+            && requested_width.is_none_or(|value| value.is_finite() && value > 0.0)
+            && requested_height.is_none_or(|value| value.is_finite() && value > 0.0);
+        let min_width = resolved_min_width.filter(|minimum| {
+            cross_axis_constraints
+                || (style.image_max_height.is_none()
                     && style.min_height.is_none()
                     && match style.image_max_width {
                         None => true,
                         Some(_) => max_width.is_some_and(|maximum| *minimum <= maximum),
-                    }
-            });
+                    })
+        });
         // Percentage heights have no definite container; font-relative and
         // conflicting constraints remain on the existing sizing path.
-        let min_height = if style.image_max_width.is_none()
+        let min_height = if cross_axis_constraints {
+            resolved_min_height
+        } else if style.image_max_width.is_none()
             && style.image_min_width.is_none()
             && !matches!(style.image_width, Some(ImageLength::FitContent))
         {
@@ -5056,6 +5102,7 @@ impl ImageSizing {
             max_height,
             min_width,
             min_height,
+            cross_axis_constraints,
             render_dpi: settings.render_dpi,
         }
     }
@@ -5069,25 +5116,30 @@ impl ImageSizing {
         let ratio = f64::from(original_w) / f64::from(original_h);
         let max_width = self.max_width.unwrap_or(f64::INFINITY);
         let max_height = self.max_height.unwrap_or(f64::INFINITY);
-        let (mut w, mut h) = match (self.requested_width, self.requested_height) {
-            // If the width is definite, the height cap does not change it.
-            (Some(width), height) => {
-                let width = width.min(max_width);
-                let height = height.unwrap_or(width / ratio).min(max_height);
-                (width, height)
-            }
-            (None, Some(height)) => {
-                let height = height.min(max_height);
-                ((height * ratio).min(max_width), height)
-            }
-            (None, None) => {
-                let width = f64::from(original_w) * intrinsic_scale;
-                let height = width / ratio;
-                let scale = (max_width / width).min(max_height / height).min(1.0);
-                (width * scale, height * scale)
+        let (mut w, mut h) = if self.cross_axis_constraints {
+            self.cross_axis_target(original_w, original_h, ratio, intrinsic_scale)
+        } else {
+            match (self.requested_width, self.requested_height) {
+                // If the width is definite, the height cap does not change it.
+                (Some(width), height) => {
+                    let width = width.min(max_width);
+                    let height = height.unwrap_or(width / ratio).min(max_height);
+                    (width, height)
+                }
+                (None, Some(height)) => {
+                    let height = height.min(max_height);
+                    ((height * ratio).min(max_width), height)
+                }
+                (None, None) => {
+                    let width = f64::from(original_w) * intrinsic_scale;
+                    let height = width / ratio;
+                    let scale = (max_width / width).min(max_height / height).min(1.0);
+                    (width * scale, height * scale)
+                }
             }
         };
-        if let Some(minimum) = self.min_width
+        if !self.cross_axis_constraints
+            && let Some(minimum) = self.min_width
             && w < minimum
         {
             w = minimum;
@@ -5095,7 +5147,8 @@ impl ImageSizing {
                 h = w / ratio;
             }
         }
-        if let Some(minimum) = self.min_height
+        if !self.cross_axis_constraints
+            && let Some(minimum) = self.min_height
             && h < minimum
         {
             h = minimum;
@@ -5110,6 +5163,74 @@ impl ImageSizing {
             (w * scale).round().clamp(1.0, f64::from(self.width)) as u32,
             (h * scale).round().clamp(1.0, f64::from(self.height)) as u32,
         )
+    }
+
+    // CRE's replaced-element rules distinguish authored dimensions from
+    // intrinsic dimensions and can distort the ratio for opposing limits.
+    fn cross_axis_target(
+        &self,
+        original_w: u32,
+        original_h: u32,
+        ratio: f64,
+        intrinsic_scale: f64,
+    ) -> (f64, f64) {
+        let min_w = self.min_width.unwrap_or(0.0);
+        let min_h = self.min_height.unwrap_or(0.0);
+        let max_w = self.max_width.unwrap_or(f64::INFINITY);
+        let max_h = self.max_height.unwrap_or(f64::INFINITY);
+        if self.requested_width.is_some() || self.requested_height.is_some() {
+            let mut w = self
+                .requested_width
+                .unwrap_or_else(|| self.requested_height.unwrap() * ratio)
+                .min(max_w)
+                .max(min_w);
+            let mut h = self.requested_height.unwrap_or(w / ratio);
+            if h > max_h {
+                h = max_h;
+                if self.requested_width.is_none() {
+                    w = (h * ratio).min(max_w).max(min_w);
+                }
+            }
+            if h < min_h {
+                h = min_h;
+                if self.requested_width.is_none() {
+                    w = (h * ratio).min(max_w).max(min_w);
+                }
+            }
+            return (w, h);
+        }
+
+        let w = f64::from(original_w) * intrinsic_scale;
+        let h = f64::from(original_h) * intrinsic_scale;
+        if w > max_w {
+            if h > max_h {
+                if max_w <= max_h * w / h {
+                    (max_w, (max_w * h / w).max(min_h))
+                } else {
+                    ((max_h * w / h).max(min_w), max_h)
+                }
+            } else if h < min_h {
+                (max_w, min_h)
+            } else {
+                (max_w, (max_w * h / w).max(min_h))
+            }
+        } else if h > max_h {
+            if w < min_w {
+                (min_w, max_h)
+            } else {
+                ((max_h * w / h).max(min_w), max_h)
+            }
+        } else if w < min_w {
+            if h < min_h && min_w <= min_h * w / h {
+                ((min_h * w / h).min(max_w), min_h)
+            } else {
+                (min_w, (min_w * h / w).min(max_h))
+            }
+        } else if h < min_h {
+            ((min_h * w / h).min(max_w), min_h)
+        } else {
+            (w, h)
+        }
     }
 }
 
@@ -6644,6 +6765,7 @@ mod tests {
             max_height: None,
             min_width: None,
             min_height: None,
+            cross_axis_constraints: false,
             render_dpi: 96,
         };
         let (path, preview, display) =

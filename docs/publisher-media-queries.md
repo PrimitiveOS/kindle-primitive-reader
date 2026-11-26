@@ -15,6 +15,15 @@ Unsupported alternatives are false without suppressing another supported,
 matching alternative in the same comma-separated list. Strict user CSS remains unchanged.
 Source text, chapter revisions and saved positions are unchanged.
 
+Top-level local `@import` rules can also use these simple media types, for
+example `@import url("reading.css") screen;`. Matching imports retain their
+position in the cascade and use the existing relative-path, cycle, import-count,
+depth and byte limits; nonmatching or unsupported media conditions do not
+load a stylesheet. Unqualified imports retain their previous behavior. Applying
+a newly matched publisher stylesheet can change formatting and pagination;
+the original source and text anchors do not change. Media features, `layer()`
+and `supports()` import qualifiers remain unsupported.
+
 This is an implementation candidate. Cascade behavior, nested blocks, font
 registration, resource limits, KOReader comparison, real EPUBs, simulator and
 Kindle behavior have not yet been behaviorally validated.
