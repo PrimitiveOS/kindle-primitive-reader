@@ -51,8 +51,8 @@ impl Verification {
     }
 }
 
-pub(super) fn is_cross_chapter(target: &Snapshot) -> bool {
-    matches!(target, Snapshot::Reflow(_, mark) if mark.selection.start.chapter != mark.selection.end.chapter)
+pub(super) fn is_reflow_highlight(target: &Snapshot) -> bool {
+    matches!(target, Snapshot::Reflow(..))
 }
 
 fn panel(reader: &Reader) -> (Rect, Rect) {
@@ -104,7 +104,7 @@ impl Reader {
                 .probe
                 .chapter_index(&mark.selection.end.chapter)
                 .ok_or("That chapter is unavailable")?;
-            if first >= last
+            if first > last
                 || mark.selection.start.book != active.reading.probe.book
                 || mark.selection.end.book != active.reading.probe.book
             {
@@ -131,7 +131,6 @@ impl Reader {
                 origin,
                 recipe,
                 first,
-                last,
                 mark.clone(),
                 crate::epub_members::is_folder_book(&active.reading.config.book),
             ))
@@ -147,7 +146,6 @@ impl Reader {
             origin,
             recipe,
             first,
-            last,
             mark,
             folder,
         ) = match build {
@@ -170,15 +168,12 @@ impl Reader {
                     let probe = worker_recipe
                         .chapter(first, &cancel)
                         .map_err(|_| "The book changed; review the note again")?;
-                    let mut work = 0;
-                    let verified = focus::verify_cross_chapter(
+                    let verified = super::super::page_bookmark_navigation::verify_winning_quote(
                         &worker_recipe,
-                        &cancel,
                         &probe,
-                        first,
-                        last,
                         &mark,
-                        &mut work,
+                        None,
+                        &cancel,
                     )
                     .map_err(|error| match error {
                         focus::Failure::Limit => "This passage exceeds the verification limit",

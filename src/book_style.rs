@@ -1943,6 +1943,20 @@ struct Compound {
 }
 
 impl Compound {
+    fn ambiguous(&self, element: &Element) -> bool {
+        self.semantic_types
+            .iter()
+            .any(|selector| selector.ambiguous(element))
+            || self
+                .negations
+                .iter()
+                .any(|negative| negative.ambiguous(element))
+            || self
+                .alternatives
+                .iter()
+                .flatten()
+                .any(|candidate| candidate.ambiguous(element))
+    }
     fn is_empty(&self) -> bool {
         self.tag.is_none()
             && !self.universal
@@ -1967,6 +1981,7 @@ impl Compound {
 
     fn matches(&self, element: &Element) -> bool {
         !element.anonymous
+            && !self.ambiguous(element)
             && (!self.has_href || element.has_href)
             && self
                 .semantic_types
@@ -2078,7 +2093,7 @@ impl Selector {
                 Token::SquareBracketBlock => {
                     match input.parse_nested_block(semantic_type::parse)? {
                         semantic_type::Attribute::Href => compound.has_href = true,
-                        semantic_type::Attribute::Type(selector) => {
+                        semantic_type::Attribute::Value(selector) => {
                             compound.semantic_types.push(selector)
                         }
                     }

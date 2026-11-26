@@ -82,8 +82,8 @@ pub(super) fn open(reader: &mut Reader) -> Result<()> {
         .state(key.book)
         .ok_or("That book is unavailable")?;
     let target = Snapshot::capture(book, key.locator)?;
-    let cross = super::note_verify::is_cross_chapter(&target);
-    if !cross {
+    let verify_async = super::note_verify::is_reflow_highlight(&target);
+    if !verify_async {
         target.verify_source(reader)?;
     }
     let mut editor = Multiline::new(target.note().unwrap_or(""), crate::library::MAX_NOTE_BYTES);
@@ -99,7 +99,7 @@ pub(super) fn open(reader: &mut Reader) -> Result<()> {
         desired: None,
     });
     reader.notice = None;
-    if cross {
+    if verify_async {
         if let Err(error) = reader.start_note_verification(super::note_verify::Intent::Open) {
             reader.bookmark_browser.pending_note_edit = None;
             return Err(error);
@@ -226,7 +226,7 @@ pub(super) fn commit_verified(reader: &mut Reader) -> Result<()> {
     commit_inner(reader, true)
 }
 
-fn commit_inner(reader: &mut Reader, verified_cross: bool) -> Result<()> {
+fn commit_inner(reader: &mut Reader, verified: bool) -> Result<()> {
     let pending = reader
         .bookmark_browser
         .pending_note_edit
@@ -251,11 +251,11 @@ fn commit_inner(reader: &mut Reader, verified_cross: bool) -> Result<()> {
     {
         return Err("The open book changed; review the note again".into());
     }
-    let cross = super::note_verify::is_cross_chapter(&pending.target);
-    if cross && !verified_cross {
+    let verify_async = super::note_verify::is_reflow_highlight(&pending.target);
+    if verify_async && !verified {
         return reader.start_note_verification(super::note_verify::Intent::Save);
     }
-    if !cross {
+    if !verify_async {
         pending.target.verify_source(reader)?;
     }
     let id = pending.book;

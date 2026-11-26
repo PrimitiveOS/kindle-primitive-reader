@@ -4,7 +4,14 @@ use super::*;
 
 pub(super) enum Attribute {
     Href,
-    Type(Selector),
+    Value(Selector),
+}
+#[derive(Clone, Copy)]
+enum Field {
+    Type,
+    Class,
+    Id,
+    Href,
 }
 #[derive(Clone, Copy)]
 enum Operation {
@@ -17,13 +24,29 @@ enum Operation {
     Substring,
 }
 pub(super) struct Selector {
+    field: Field,
     operation: Operation,
     value: String,
     insensitive: bool,
 }
 impl Selector {
+    pub(super) fn ambiguous(&self, element: &Element) -> bool {
+        let mask = match self.field {
+            Field::Class => 1,
+            Field::Id => 2,
+            Field::Href => 4,
+            Field::Type => 0,
+        };
+        element.selector_ambiguous & mask != 0
+    }
     pub(super) fn matches(&self, element: &Element) -> bool {
-        let Some(value) = element.type_attribute.as_deref() else {
+        let value = match self.field {
+            Field::Type => element.type_attribute.as_deref(),
+            Field::Class => element.selector_class_attribute.as_deref(),
+            Field::Id => element.selector_id_attribute.as_deref(),
+            Field::Href => element.selector_href_attribute.as_deref(),
+        };
+        let Some(value) = value else {
             return false;
         };
         if matches!(self.operation, Operation::Present) {
@@ -76,9 +99,13 @@ pub(super) fn parse(input: &mut Parser<'_>) -> CssResult<Attribute> {
     if name.eq_ignore_ascii_case("href") && input.is_exhausted() {
         return Ok(Attribute::Href);
     }
-    if name != "type" {
-        return Err(ParseError::unexpected_token());
-    }
+    let field = match name.as_str() {
+        "type" => Field::Type,
+        "class" => Field::Class,
+        "id" => Field::Id,
+        value if value.eq_ignore_ascii_case("href") => Field::Href,
+        _ => return Err(ParseError::unexpected_token()),
+    };
     let operation = if input.is_exhausted() {
         Operation::Present
     } else {
@@ -106,7 +133,8 @@ pub(super) fn parse(input: &mut Parser<'_>) -> CssResult<Attribute> {
         }
     }
     input.expect_exhausted()?;
-    Ok(Attribute::Type(Selector {
+    Ok(Attribute::Value(Selector {
+        field,
         operation,
         value,
         insensitive,

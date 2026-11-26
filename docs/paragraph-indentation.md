@@ -68,6 +68,18 @@ unsupported. Unsupported list alternatives invalidate the function rather
 than receiving CSS's forgiving-list behavior. This is an unverified candidate;
 existing selector and source-position bounds apply.
 
+The bounded attribute-selector candidate also recognizes `class`, `id` and
+`href` presence and value operators alongside the existing `type` support.
+It reuses Reader's CRE-compatible local-name and comparison behavior. Other
+arbitrary attributes and CSS namespace bindings remain unsupported. The
+source extractor retains these attribute values for selector matching without
+changing the publication text or saved anchors. Multiple attributes sharing
+the same local name are treated as ambiguous by the new value selectors. Any
+compound consulting an ambiguous value is declined, including through nested
+negation or alternatives. Existing `[href]` presence and link handling retain their prior
+behavior. CRE's empty prefix/suffix comparisons can match an empty operand,
+which differs from standard CSS substring semantics. Runtime validation is pending.
+
 In anonymous EPUB 061, the first paragraph in spine item 57 follows a second-level heading. A grouped publisher rule resets its indent to zero. The first three selection rectangles previously began at x = 56, 24 and 24. They now begin at x = 24, 24 and 24. The 311-byte paragraph matched its source exactly, with 5,947 of 5,947 nonspace characters mapped across the chapter. The authored comparison below shows an opening paragraph and its indented continuation in two sections. [Fixture](../tests/fixtures/paragraph-opener.xhtml)
 
 ![Opening paragraphs align with their headings and the next paragraph starts farther in](screenshots/paragraph-opener.png)

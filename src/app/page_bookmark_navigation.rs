@@ -156,7 +156,7 @@ impl Search {
 
 /// Verify the winning highlight in the worker before its location is used.
 /// Bookmarks and fixed-document marks keep their existing navigation behavior.
-fn verify_winning_quote(
+pub(super) fn verify_winning_quote(
     recipe: &SearchLayoutRecipe,
     probe: &crate::Probe,
     mark: &Highlight,

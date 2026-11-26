@@ -162,7 +162,11 @@ impl Default for Extraction {
 pub(crate) struct Element {
     pub tag: String,
     pub classes: String,
+    pub(crate) selector_class_attribute: Option<String>,
     pub has_href: bool,
+    pub(crate) selector_href_attribute: Option<String>,
+    pub(crate) selector_id_attribute: Option<String>,
+    pub(crate) selector_ambiguous: u8,
     /// Pinned CRE selectors identify attributes by local name, ignoring prefixes.
     pub type_attribute: Option<String>,
     pub list_kind: Option<crate::list_marker::MarkerKind>,
@@ -374,10 +378,12 @@ fn simple_ruby(node: Node<'_, '_>, limit: usize) -> Option<(Vec<RubyDraft>, Vec<
 fn fragment_ids<'a>(
     node: Node<'a, '_>,
     navigation: &'a HashMap<NodeId, String>,
+    legacy_names: &'a HashMap<NodeId, String>,
 ) -> impl Iterator<Item = &'a str> {
     node.attribute("id")
         .into_iter()
         .chain(navigation.get(&node.id()).map(String::as_str))
+        .chain(legacy_names.get(&node.id()).map(String::as_str))
 }
 
 impl Source {
@@ -704,6 +710,69 @@ impl Source {
                 }
             }
         }
+        // HTML's legacy <a name> shares the destination namespace with IDs.
+        // Keep all existing ID/Kindle mappings authoritative, and decline
+        // duplicate names rather than inventing an ambiguous destination.
+        let mut existing_ids = HashSet::new();
+        let mut name_counts: HashMap<&str, usize> = HashMap::new();
+        let mut legacy_names = HashMap::new();
+        let mut budget = 0usize;
+        let mut complete = true;
+        if body
+            .descendants()
+            .any(|node| node.has_tag_name("a") && node.has_attribute("name"))
+        {
+            for id in root
+                .descendants()
+                .filter(Node::is_element)
+                .filter_map(|node| node.attribute("id"))
+                .chain(navigation_ids.values().map(String::as_str))
+            {
+                budget = budget.saturating_add(id.len());
+                if budget > 128 * 1024 || existing_ids.len() >= 8_192 {
+                    complete = false;
+                    break;
+                }
+                existing_ids.insert(id);
+            }
+            for name in body
+                .descendants()
+                .filter(|node| node.has_tag_name("a"))
+                .filter_map(|node| node.attribute("name"))
+            {
+                budget = budget.saturating_add(name.len());
+                if budget > 128 * 1024 || name_counts.len() >= 8_192 {
+                    complete = false;
+                    break;
+                }
+                *name_counts.entry(name).or_default() += 1;
+            }
+        }
+        let mut legacy_bytes = 0usize;
+        for node in body
+            .descendants()
+            .filter(|node| complete && node.has_tag_name("a"))
+        {
+            let Some(name) = node.attribute("name") else {
+                continue;
+            };
+            if name.is_empty()
+                || name.len() > 512
+                || name.chars().any(char::is_control)
+                // MOBI's separate shadow projection may add these later.
+                // Do not displace a previously resolvable synthetic target.
+                || name.starts_with("mobi-shadow-text-")
+                || existing_ids.contains(name)
+                || name_counts.get(name) != Some(&1)
+            {
+                continue;
+            }
+            if legacy_names.len() == 8_192 || legacy_bytes.saturating_add(name.len()) > 128 * 1024 {
+                break;
+            }
+            legacy_bytes += name.len();
+            legacy_names.insert(node.id(), name.to_owned());
+        }
         let mut elements: Vec<Element> = Vec::new();
         let mut element_ids = HashMap::new();
         let mut element_origins = Vec::new();
@@ -786,15 +855,41 @@ impl Source {
             } else {
                 content_language(node, inherited)
             });
+            // New value selectors follow CRE's local-name matching only when
+            // that local name is unambiguous. Existing class/id/href behavior
+            // keeps its original attribute lookup.
+            let selector_attribute = |name: &str| {
+                let mut matches = node
+                    .attributes()
+                    .filter(|attribute| attribute.name() == name);
+                let Some(attribute) = matches.next() else {
+                    return (None, false);
+                };
+                let value = attribute.value().to_owned();
+                if matches.next().is_some() {
+                    (None, true)
+                } else {
+                    (Some(value), false)
+                }
+            };
+            let (selector_class_attribute, ambiguous_class) = selector_attribute("class");
+            let (selector_id_attribute, ambiguous_id) = selector_attribute("id");
+            let (selector_href_attribute, ambiguous_href) = selector_attribute("href");
             elements.push(Element {
                 tag: node.tag_name().name().to_owned(),
                 list_kind: crate::list_marker::MarkerKind::html(node),
                 has_href: node.has_attribute("href"),
+                selector_href_attribute,
+                selector_id_attribute,
+                selector_ambiguous: u8::from(ambiguous_class)
+                    | (u8::from(ambiguous_id) << 1)
+                    | (u8::from(ambiguous_href) << 2),
                 type_attribute: node
                     .attributes()
                     .find(|a| a.name() == "type")
                     .map(|a| a.value().to_owned()),
                 classes: node.attribute("class").unwrap_or_default().to_owned(),
+                selector_class_attribute,
                 id: node.attribute("id").map(str::to_owned),
                 inline_style: if selector_only {
                     None
@@ -945,7 +1040,7 @@ impl Source {
                         pseudo_edges.open(raw.end, at, host);
                     }
                 }
-                for id in fragment_ids(descendant, &navigation_ids) {
+                for id in fragment_ids(descendant, &navigation_ids, &legacy_names) {
                     ids.push((
                         id,
                         text.len()
@@ -1199,7 +1294,7 @@ impl Source {
             }
             if !text.is_empty() || !images.is_empty() {
                 for parent in node.ancestors().skip(1) {
-                    for id in fragment_ids(parent, &navigation_ids) {
+                    for id in fragment_ids(parent, &navigation_ids, &legacy_names) {
                         if let std::collections::btree_map::Entry::Vacant(entry) =
                             fragments.entry(id.to_owned())
                         {
@@ -1292,7 +1387,7 @@ impl Source {
             if !element_ids.contains_key(&anchor.id()) {
                 continue;
             }
-            for id in fragment_ids(anchor, &navigation_ids) {
+            for id in fragment_ids(anchor, &navigation_ids, &legacy_names) {
                 if fragments.contains_key(id) {
                     continue;
                 }
