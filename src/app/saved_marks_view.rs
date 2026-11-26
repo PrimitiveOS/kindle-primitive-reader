@@ -56,7 +56,9 @@ impl Reader {
     pub(super) fn list_geometry(&self) -> Geometry {
         if self.screen == Screen::Matches {
             self.match_geometry()
-        } else if self.screen.is_bookmark_list() {
+        } else if self.screen.is_bookmark_list()
+            || self.screen == Screen::BookmarkBrowser(super::bookmark_browser::Page::Results)
+        {
             Geometry::dense(self.controls.bookmark_density).in_navigation(self.navigation_layout())
         } else if matches!(self.screen, Screen::ReadingProfile(_)) {
             // Profile details need only the standard navigation and notice footer.
@@ -99,6 +101,9 @@ impl Reader {
             let is_mark = matches!(
                 action.action,
                 Action::Bookmark(_) | Action::Highlight(_) | Action::PdfHighlight(_)
+            ) || matches!(
+                action.action,
+                Action::BookmarkBrowser(super::bookmark_browser::Command::Inspect(_))
             );
             let &RowTypography {
                 title_size,

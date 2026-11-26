@@ -234,3 +234,25 @@ cargo test --locked --lib epub_xml::
 ```
 
 The format implementation was checked against [calibre's Kindle 8 reader](https://github.com/kovidgoyal/calibre/blob/a03eefa6b684af0c08c44b06c9f2d94345c41255/src/calibre/ebooks/mobi/reader/mobi8.py) and [libmobi's raw markup processing](https://github.com/bfabiszewski/libmobi/blob/906274205c11944b628da1c553b255acb1af7c55/src/parse_rawml.c).
+
+## Palm eReader PDB candidate
+
+The picker also recognizes a deliberately narrow `PNRd/PPrs` Palm eReader PDB
+candidate: unprotected compression-2 text records in the expected 132-byte
+header and Windows-1252 encoding, without image, link, footnote or sidebar
+records. It uses the existing bounded PalmDOC decompressor, with a 32 KiB limit
+per record and 12 MiB total. Only plain text without PML backslash commands or
+unsupported control characters is accepted; the source filename can supply
+the title. Any chapter index and other metadata are not imported. Protected,
+zlib-compressed, PML-formatted and auxiliary-content eReader books remain
+unsupported rather than being shown with missing markup or content. These
+files were previously rejected, so existing PalmDOC and MOBI output and saved
+identities remain unchanged. Pinned KOReader recognizes eReader PDBs, but
+this smaller subset has not been compared with it or tested on real files, the
+simulator or Kindle. [Pinned eReader recognition](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/pdbfmt.cpp#L724-L729)
+
+Full eReader compatibility remains open: implement bounded PML tokenization
+and styling, chapter destinations, links, images, footnotes and sidebars;
+consider unprotected zlib text; preserve the plain subset's saved positions
+through a verified source mapping; and compare malformed, protected and real
+books against KOReader before expanding the supported claim.

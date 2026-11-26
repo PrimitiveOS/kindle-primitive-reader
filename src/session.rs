@@ -310,7 +310,10 @@ impl SearchLayoutRecipe {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
-            folder_snapshot: self.folder_snapshot.clone(),
+            folder_snapshot: self
+                .folder_snapshot
+                .as_ref()
+                .map(|_| std::sync::Arc::new(proof.clone())),
         };
         let flows = with_storage(|| {
             self.verify_folder_proof(proof, cancelled)
@@ -407,7 +410,10 @@ impl SearchLayoutRecipe {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
-            folder_snapshot: self.folder_snapshot.clone(),
+            folder_snapshot: self
+                .folder_snapshot
+                .as_ref()
+                .map(|_| std::sync::Arc::new(proof.clone())),
         };
         Ok(with_storage(|| {
             check().map_err(io::Error::other)?;

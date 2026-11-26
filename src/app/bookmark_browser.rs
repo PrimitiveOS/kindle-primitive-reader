@@ -229,6 +229,93 @@ pub(super) struct MarkKey {
     locator: Locator,
 }
 
+/// Exact mark snapshot retained while an asynchronous folder open is pending.
+pub(super) struct DeferredMark {
+    key: MarkKey,
+    mark: DeferredMarkValue,
+}
+
+enum DeferredMarkValue {
+    Bookmark(Bookmark),
+    Highlight(Highlight),
+}
+
+impl DeferredMark {
+    fn capture(library: &Library, key: MarkKey) -> Result<Self> {
+        let state = library.state(key.book).ok_or("That book is unavailable")?;
+        let mark = match key.locator {
+            Locator::Bookmark(index) => DeferredMarkValue::Bookmark(
+                state
+                    .bookmarks
+                    .get(index)
+                    .ok_or("That bookmark is unavailable")?
+                    .clone(),
+            ),
+            Locator::Reflow(index) => DeferredMarkValue::Highlight(
+                state
+                    .highlights
+                    .get(index)
+                    .ok_or("That highlight is unavailable")?
+                    .clone(),
+            ),
+            Locator::Fixed(_) => return Err("This mark cannot be opened in a folder book".into()),
+        };
+        Ok(Self { key, mark })
+    }
+
+    pub(super) fn matches(&self, library: &Library) -> bool {
+        library
+            .state(self.key.book)
+            .is_some_and(|state| match (&self.mark, self.key.locator) {
+                (DeferredMarkValue::Bookmark(mark), Locator::Bookmark(index)) => {
+                    state.bookmarks.get(index) == Some(mark)
+                }
+                (DeferredMarkValue::Highlight(mark), Locator::Reflow(index)) => {
+                    state.highlights.get(index) == Some(mark)
+                }
+                _ => false,
+            })
+    }
+
+    pub(super) fn verify_and_seek(
+        &self,
+        library: &Library,
+        id: u64,
+        reading: &mut crate::session::Reading,
+    ) -> Result<()> {
+        if id != self.key.book || !self.matches(library) {
+            return Err("The saved mark changed while opening".into());
+        }
+        match &self.mark {
+            DeferredMarkValue::Bookmark(mark) => {
+                if let Some(anchor) = &mark.position.anchor {
+                    let chapter = reading
+                        .probe
+                        .chapter_index(&anchor.chapter)
+                        .ok_or("That chapter is unavailable")?;
+                    reading.jump_to_anchor(chapter, anchor)?;
+                } else {
+                    reading.go_to_page(mark.position.chapter, mark.position.page)?;
+                }
+            }
+            DeferredMarkValue::Highlight(mark) => {
+                let selection =
+                    reading.anchored_quote(&mark.selection.start, &mark.selection.end)?;
+                if selection != mark.selection {
+                    return Err("The saved highlight changed in this book".into());
+                }
+                let anchor = &mark.selection.start;
+                let chapter = reading
+                    .probe
+                    .chapter_index(&anchor.chapter)
+                    .ok_or("That chapter is unavailable")?;
+                reading.jump_to_anchor(chapter, anchor)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 struct Mark<'a> {
     quote: &'a str,
     note: Option<&'a str>,
@@ -1646,7 +1733,16 @@ impl Reader {
     pub(super) fn view_bookmark_in_book_now(&mut self, key: MarkKey) -> Result<()> {
         if self.open_book_id() != Some(key.book) {
             let entry = self.locate_tracked(key.book)?;
+            let deferred = if crate::epub_members::is_folder_book(&entry.path) {
+                Some(DeferredMark::capture(&self.library, key)?)
+            } else {
+                None
+            };
             self.open_book_now(entry)?;
+            if self.folder_open.is_some() {
+                self.attach_folder_open_mark(deferred.ok_or("That mark is unavailable")?)?;
+                return Ok(());
+            }
             if self.screen == Screen::PdfPassword {
                 self.bookmark_browser.after_password = Some(key);
                 return Ok(());

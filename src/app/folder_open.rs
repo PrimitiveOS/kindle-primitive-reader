@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 pub(super) struct Pending {
     entry: LibraryBook,
     check_archive: bool,
+    mark: Option<super::bookmark_browser::DeferredMark>,
     screen: Screen,
     receiver: mpsc::Receiver<Option<Arc<FolderProof>>>,
     cancelled: Arc<AtomicBool>,
@@ -44,6 +45,17 @@ fn controls(reader: &Reader) -> (Rect, Rect) {
 }
 
 impl Reader {
+    pub(super) fn attach_folder_open_mark(
+        &mut self,
+        mark: super::bookmark_browser::DeferredMark,
+    ) -> crate::Result<()> {
+        self.folder_open
+            .as_mut()
+            .ok_or("The folder open was cancelled")?
+            .mark = Some(mark);
+        Ok(())
+    }
+
     pub(super) fn cancel_folder_open(&mut self) {
         if self.folder_open.take().is_some() {
             self.metadata_archive.abandon_archive_consumption();
@@ -113,6 +125,7 @@ impl Reader {
         self.folder_open = Some(Pending {
             entry: entry.clone(),
             check_archive,
+            mark: None,
             screen: self.screen,
             receiver,
             cancelled,
@@ -178,16 +191,30 @@ impl Reader {
             return None;
         }
         let entry = pending.entry.clone();
+        let mark = pending.mark.take();
+        if mark
+            .as_ref()
+            .is_some_and(|mark| !mark.matches(&self.library))
+        {
+            self.metadata_archive.abandon_archive_consumption();
+            return Some(self.report("The saved mark changed while opening"));
+        }
         if let Some(proof) = proof {
             let id = proof.legacy_identity();
             if self.library.has_raw_whitespace_state(id) {
                 self.pending_folder_snapshot = Some((entry.path.clone(), id, proof));
             }
         }
+        if mark.is_some() && self.pending_folder_snapshot.is_none() {
+            self.metadata_archive.abandon_archive_consumption();
+            return Some(self.report("The folder book could not be verified; the mark was kept"));
+        }
+        self.pending_folder_mark = mark;
         self.folder_open_bypass = true;
         let result = self.open_with_password_mode(entry, None, pending.check_archive);
         self.folder_open_bypass = false;
         self.pending_folder_snapshot = None;
+        self.pending_folder_mark = None;
         Some(match result {
             Ok(()) => Change::Full,
             Err(error) => self.report(error),

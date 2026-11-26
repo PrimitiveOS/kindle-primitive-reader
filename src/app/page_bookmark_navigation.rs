@@ -143,10 +143,6 @@ fn worker(
             let _ = tx.send(Message::FolderUnavailable);
             return;
         };
-        if anchor.raw_caret.is_some() {
-            let _ = tx.send(Message::FolderUnavailable);
-            return;
-        }
         let Ok(probe) = recipe.folder_chapter(proof, current.chapter, &cancelled) else {
             if !cancelled.load(Ordering::Relaxed) {
                 let _ = tx.send(Message::FolderUnavailable);
@@ -214,12 +210,6 @@ fn worker(
                 continue;
             };
             let page = match &target.anchor {
-                Some(anchor) if folder.is_some() && anchor.raw_caret.is_some() => {
-                    if !cancelled.load(Ordering::Relaxed) {
-                        let _ = tx.send(Message::FolderUnavailable);
-                    }
-                    return;
-                }
                 Some(anchor) if Some(anchor.book) == publication => match probe.page_for(anchor) {
                     Some(page) => page,
                     None => continue,

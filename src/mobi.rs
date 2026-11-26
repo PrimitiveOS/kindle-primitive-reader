@@ -176,6 +176,9 @@ pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     if bytes.len() > MAX_MOBI_BYTES {
         return Err(MobiError::TooLarge);
     }
+    if bytes.get(60..68) == Some(b"PNRdPPrs") {
+        return decode_plain_ereader(bytes);
+    }
     let is_mobi = match bytes.get(60..68) {
         Some(b"BOOKMOBI") => true,
         Some(b"TEXtREAd") => false,
@@ -257,6 +260,74 @@ pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
         contents,
         shadow,
         resources,
+    })
+}
+
+/// Strict first subset of Palm eReader PDB: unencrypted PalmDOC-compressed
+/// plain text only. PML commands and auxiliary content require a separate
+/// reader and must not be displayed as if they were ordinary book text.
+fn decode_plain_ereader(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
+    let records = record_offsets(bytes)?;
+    let header = bytes
+        .get(records[0]..records[1])
+        .ok_or(MobiError::InvalidHeader)?;
+    if header.len() < 132 || u16_at(header, 6)? != 0x6240 {
+        return Err(MobiError::InvalidHeader);
+    }
+    let compression = u16_at(header, 0)?;
+    if matches!(compression, 260 | 272) {
+        return Err(MobiError::Protected);
+    }
+    if compression != 2 {
+        return Err(MobiError::UnsupportedCompression(compression));
+    }
+    // Do not silently lose linked or auxiliary reading content.
+    if [20, 22, 28, 30]
+        .into_iter()
+        .any(|at| u16_at(header, at).ok() != Some(0))
+    {
+        return Err(MobiError::UnsupportedContainer);
+    }
+    let end = usize::from(u16_at(header, 12)?);
+    if end <= 1 || end >= records.len() {
+        return Err(MobiError::InvalidHeader);
+    }
+    let mut raw = Vec::new();
+    for pair in records[1..=end].windows(2) {
+        let payload = bytes
+            .get(pair[0]..pair[1])
+            .ok_or(MobiError::InvalidHeader)?;
+        let remaining = MAX_TEXT_BYTES.saturating_sub(raw.len());
+        if remaining == 0 {
+            return Err(MobiError::TextTooLarge);
+        }
+        decode_palmdoc_record(payload, remaining.min(MAX_RECORD_BYTES), &mut raw)?;
+    }
+    if raw.is_empty()
+        || raw
+            .iter()
+            .any(|&byte| byte == b'\\' || (byte < 32 && !matches!(byte, b'\t' | b'\n' | b'\r')))
+    {
+        return Err(MobiError::InvalidText);
+    }
+    let text = decode_text(raw, Encoding::Cp1252)?;
+    if text
+        .chars()
+        .any(|ch| ch.is_control() && !ch.is_whitespace())
+    {
+        return Err(MobiError::InvalidText);
+    }
+    Ok(MobiDocument {
+        metadata: Default::default(),
+        language: None,
+        title: read_label(&bytes[..32], Encoding::Cp1252),
+        author: None,
+        xhtml: plain_xhtml(&text)?,
+        additions: Vec::new(),
+        presentation: Presentation::default(),
+        contents: Default::default(),
+        shadow: None,
+        resources: BTreeMap::new(),
     })
 }
 

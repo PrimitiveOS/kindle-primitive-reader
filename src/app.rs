@@ -1047,6 +1047,7 @@ pub struct Reader {
         u64,
         std::sync::Arc<crate::session::screen_pages::folder_sources::FolderProof>,
     )>,
+    pending_folder_mark: Option<bookmark_browser::DeferredMark>,
     page_bookmark_worker_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     skim: Option<skim::Session>,
     staged_viewport: Option<(
@@ -1326,6 +1327,7 @@ impl Reader {
             folder_open_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             folder_open_bypass: false,
             pending_folder_snapshot: None,
+            pending_folder_mark: None,
             page_bookmark_worker_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
@@ -2071,6 +2073,9 @@ impl Reader {
         if opening.is_some() && reading.config.viewport != self.opening_display_viewport() {
             reading = reading.prepare_viewport(self.opening_display_viewport())?;
         }
+        if let Some(mark) = &self.pending_folder_mark {
+            mark.verify_and_seek(&self.library, id, &mut reading)?;
+        }
         if let Some(anchor) = &strict_odt_anchor
             && reading.probe.restore_anchor(anchor).is_none()
         {
@@ -2166,6 +2171,9 @@ impl Reader {
                 .cache_author(active.id, active.reading.probe.author.as_deref());
         }
         self.library.request_live_metadata(id);
+        if self.pending_folder_mark.is_some() {
+            self.record_position();
+        }
         self.start_folder_activation();
         Ok(())
     }
@@ -9654,7 +9662,9 @@ impl Reader {
         };
         if self.screen == Screen::Matches {
             self.draw_match_rows(canvas, &group);
-        } else if self.screen.is_bookmark_list() {
+        } else if self.screen.is_bookmark_list()
+            || self.screen == Screen::BookmarkBrowser(bookmark_browser::Page::Results)
+        {
             self.draw_saved_mark_rows(canvas, &group, &items);
         } else if self.screen == Screen::ReadingFonts {
             self.draw_reading_font_rows(canvas, &group, &items);
