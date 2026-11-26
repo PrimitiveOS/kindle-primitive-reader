@@ -340,15 +340,25 @@ impl Search {
             let visible = rendered
                 .get(left..right)
                 .ok_or("The visible search window is out of order")?;
-            let ranges: Vec<Range<usize>> = match &self.query {
-                ReflowQuery::Literal(query) => query
-                    .matches_until(visible, self.limit - self.hits, || {
+            let ranges: Vec<Range<usize>> = match (&self.query, window.is_some()) {
+                (ReflowQuery::Literal(query), true) => query.matches_intersecting(
+                    rendered,
+                    left..right,
+                    self.limit - self.hits,
+                    || cancel.load(Ordering::Relaxed),
+                ),
+                (ReflowQuery::Literal(query), false) => {
+                    query.matches_until(visible, self.limit - self.hits, || {
                         cancel.load(Ordering::Relaxed)
                     })
-                    .into_iter()
-                    .map(|range| range.start + left..range.end + left)
-                    .collect(),
-                ReflowQuery::Pattern(expression) => expression.ranges(
+                }
+                (ReflowQuery::Pattern(expression), true) => expression.ranges_intersecting(
+                    rendered,
+                    left..right,
+                    self.limit - self.hits,
+                    cancel,
+                )?,
+                (ReflowQuery::Pattern(expression), false) => expression.ranges(
                     rendered,
                     left..right,
                     self.limit - self.hits,
@@ -528,6 +538,56 @@ impl Query {
                     }
                     range
                 })
+                .collect()
+        }
+    }
+
+    /// Find complete source matches that touch a visible window. The result
+    /// budget applies after filtering, so earlier off-page matches cannot hide
+    /// the destination page's matches.
+    fn matches_intersecting(
+        &self,
+        source: &str,
+        window: Range<usize>,
+        limit: usize,
+        cancelled: impl Fn() -> bool,
+    ) -> Vec<Range<usize>> {
+        if window.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        if self.use_original(source) {
+            source
+                .match_indices(&self.text)
+                .take_while(|(start, _)| *start < window.end && !cancelled())
+                .map(|(start, found)| start..start + found.len())
+                .filter(|range| range.end > window.start)
+                .take(limit)
+                .collect()
+        } else {
+            let Some(folded) = FoldedText::build(
+                source,
+                self.match_case,
+                self.ignore_accents,
+                self.typography,
+                &cancelled,
+            ) else {
+                return Vec::new();
+            };
+            folded
+                .matches_while(&self.text, || !cancelled())
+                .take_while(|range| range.start < window.end)
+                .map(|mut range| {
+                    if self.ignore_accents {
+                        range.end += source[range.end..]
+                            .chars()
+                            .take_while(|&ch| accent_mark(ch))
+                            .map(char::len_utf8)
+                            .sum::<usize>();
+                    }
+                    range
+                })
+                .filter(|range| range.end > window.start)
+                .take(limit)
                 .collect()
         }
     }

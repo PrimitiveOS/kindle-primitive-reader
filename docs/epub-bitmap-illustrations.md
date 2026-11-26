@@ -99,10 +99,22 @@ GIF limits still apply. A SHA-256 identity is stored for each rendered image
 instead of copying the potentially large URI into every repeated image record.
 Opening the original image rechecks the chapter source digest and decodes the
 matching source URI again. Publisher XHTML, text and saved anchors remain
-unchanged. SVG data URIs, noncanonical encodings, animated GIF playback and
-network images remain outside this subset. Peak decoder memory and real-book,
+unchanged. Noncanonical encodings, animated GIF playback and network images
+remain outside this subset. Peak decoder memory and real-book,
 simulator and Kindle behavior remain unverified. Pinned KOReader recognizes
 data-image references in its [document engine](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvtinydom.cpp#L16164-L16165).
+
+Reflow HTML/XHTML image elements can also attempt self-contained SVG data URIs
+using exact `data:image/svg+xml,` percent-encoded UTF-8 or canonical
+`data:image/svg+xml;base64,` encoding. Both encoded and decoded payloads are
+limited to 256 KiB and pass through the existing bounded standalone static-SVG
+validator and rasterizer. Malformed percent escapes, URI fragments, other MIME
+parameters, external or relative dependencies and unsupported SVG features are
+rejected. Supported embedded PNG/JPEG/GIF data images remain subject to the
+standalone SVG image budgets. The source XHTML, resource identity and saved
+anchors are unchanged; opening an illustration again verifies its source digest.
+KOReader parity, malformed-input behavior, renderer peak memory, real-book,
+simulator and Kindle verification remain open.
 
 Standalone SVG embedded-image fallback uses the same 256 KiB input, eight
 unique images, pixel and 8 MiB aggregate raster limits, plus the existing GIF

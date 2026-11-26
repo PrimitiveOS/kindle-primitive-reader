@@ -3245,10 +3245,10 @@ impl<'i> DeclarationParser<'i> for Properties {
                             Size::Reference(3.0)
                         }
                         Token::Ident(name) if name.eq_ignore_ascii_case("smaller") => {
-                            Size::Parent(1.0 / 1.2)
+                            Size::Parent(0.8)
                         }
                         Token::Ident(name) if name.eq_ignore_ascii_case("larger") => {
-                            Size::Parent(1.2)
+                            Size::Parent(1.25)
                         }
                         Token::Percentage { unit_value, .. } => Size::Parent(unit_value),
                         Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("em") => {

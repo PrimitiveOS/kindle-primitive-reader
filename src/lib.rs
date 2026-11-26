@@ -2145,6 +2145,20 @@ impl Probe {
             if !self.source.matches_input(&xhtml) {
                 return Err("This chapter changed after it was opened".into());
             }
+            if image.href.starts_with("data:image/svg+xml") {
+                let svg = svg_image::svg_data_document(&image.href)?;
+                let gray = svg_image::rasterize(
+                    &svg,
+                    svg_image::MAX_SVG_SIDE,
+                    svg_image::MAX_SVG_SIDE,
+                    svg_image::MAX_SVG_PIXELS,
+                )?;
+                return comic::ImagePage::from_grayscale(
+                    gray.width(),
+                    gray.height(),
+                    gray.into_raw(),
+                );
+            }
             let bytes = svg_image::svg_data_image(&image.href, svg_image::MAX_SVG_BYTES)?;
             return parley_layout::original_illustration(&bytes);
         }

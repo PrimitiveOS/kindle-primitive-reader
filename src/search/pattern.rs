@@ -100,7 +100,32 @@ impl Expression {
         limit: usize,
         previous: bool,
         cancel: &AtomicBool,
+        remaining: usize,
+    ) -> Result<Vec<Range<usize>>> {
+        self.ranges_in_mode(source, window, limit, previous, cancel, remaining, false)
+    }
+
+    /// Find whole matches intersecting the window, retaining full regex
+    /// context and the same per-block work budget as ordinary searches.
+    pub(super) fn ranges_intersecting(
+        &self,
+        source: &str,
+        window: Range<usize>,
+        limit: usize,
+        cancel: &AtomicBool,
+    ) -> Result<Vec<Range<usize>>> {
+        self.ranges_in_mode(source, window, limit, false, cancel, MAX_STEPS, true)
+    }
+
+    fn ranges_in_mode(
+        &self,
+        source: &str,
+        window: Range<usize>,
+        limit: usize,
+        previous: bool,
+        cancel: &AtomicBool,
         mut remaining: usize,
+        intersecting: bool,
     ) -> Result<Vec<Range<usize>>> {
         if limit == 0 || window.is_empty() || cancel.load(Ordering::Relaxed) {
             return Ok(Vec::new());
@@ -118,7 +143,7 @@ impl Expression {
                 e.folded_end + (pos - e.source_end)
             })
         };
-        let mut offset = byte(window.start);
+        let mut offset = if intersecting { 0 } else { byte(window.start) };
         let boundary = byte(window.end);
         let mut hits = Vec::new();
         while offset < boundary && !cancel.load(Ordering::Relaxed) {
@@ -149,19 +174,21 @@ impl Expression {
             {
                 return Err("Invalid pattern result".into());
             }
-            if end <= boundary {
+            if intersecting || end <= boundary {
                 let from = projected
                     .source_offset(start, true)
                     .ok_or("Invalid pattern start")?;
                 let to = projected
                     .source_offset(end, false)
                     .ok_or("Invalid pattern end")?;
-                if previous {
-                    hits.clear();
-                }
-                hits.push(from..to);
-                if !previous && hits.len() == limit {
-                    break;
+                if !intersecting || (from < window.end && to > window.start) {
+                    if previous {
+                        hits.clear();
+                    }
+                    hits.push(from..to);
+                    if !previous && hits.len() == limit {
+                        break;
+                    }
                 }
             }
             offset = end;

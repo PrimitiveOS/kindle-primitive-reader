@@ -5086,6 +5086,13 @@ fn load_image(
     } else {
         Book::resolve(chapter_href, image_href).ok()?
     };
+    if embedded && image_href.starts_with("data:image/svg+xml") {
+        let svg = svg_image::svg_data_document(image_href).ok()?;
+        let art =
+            svg_image::rasterize_with_size(&svg, width, height, MAX_IMAGE_PIXELS, styled_size)
+                .ok()?;
+        return cache_vector(path, art);
+    }
     if !embedded && svg_image::is_package_svg(&path) {
         if image_href
             .split_once('#')

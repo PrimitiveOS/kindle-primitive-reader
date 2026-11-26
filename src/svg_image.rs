@@ -325,6 +325,49 @@ pub(crate) fn svg_data_image(href: &str, limit: usize) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Decode a bounded self-contained SVG data URI; the normal standalone SVG
+/// validator and renderer must still inspect the returned bytes.
+pub(crate) fn svg_data_document(href: &str) -> Result<Vec<u8>> {
+    let suffix = href
+        .strip_prefix("data:image/svg+xml")
+        .ok_or("The SVG data image type is unsupported")?;
+    let bytes = if let Some(encoded) = suffix.strip_prefix(";base64,") {
+        if encoded.len() > MAX_SVG_BYTES {
+            return Err("The SVG data image exceeds its encoded size limit".into());
+        }
+        let bytes = STANDARD.decode(encoded)?;
+        if STANDARD.encode(&bytes) != encoded {
+            return Err("The SVG data image is not canonical base64".into());
+        }
+        bytes
+    } else if let Some(encoded) = suffix.strip_prefix(',') {
+        if encoded.len() > MAX_SVG_BYTES || encoded.contains('#') {
+            return Err("The SVG data image exceeds its limit or has a fragment".into());
+        }
+        let raw = encoded.as_bytes();
+        let mut offset = 0;
+        while offset < raw.len() {
+            if raw[offset] == b'%' {
+                if !raw.get(offset + 1).is_some_and(u8::is_ascii_hexdigit)
+                    || !raw.get(offset + 2).is_some_and(u8::is_ascii_hexdigit)
+                {
+                    return Err("The SVG data image has invalid percent encoding".into());
+                }
+                offset += 3;
+            } else {
+                offset += 1;
+            }
+        }
+        percent_encoding::percent_decode_str(encoded).collect()
+    } else {
+        return Err("The SVG data image encoding is unsupported".into());
+    };
+    if bytes.len() > MAX_SVG_BYTES || std::str::from_utf8(&bytes).is_err() {
+        return Err("The SVG data image is not bounded UTF-8".into());
+    }
+    Ok(bytes)
+}
+
 /// Use a bounded identity in per-illustration records, avoiding a copy of a
 /// potentially large data URI for every repeated image on the page.
 pub(crate) fn data_image_key(href: &str) -> Option<String> {

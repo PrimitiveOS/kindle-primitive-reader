@@ -27,8 +27,10 @@ Publisher `font-size` keywords from `xx-small` through `xxx-large` have an
 unverified implementation candidate using the pinned CREngine's 1/256
 factors against the reader's default font size. They pass through the existing size cascade, including
 supported pseudo-elements and Reader's font-size bounds. Previously supported
-numeric, `smaller`, and `larger` values are unchanged. This does not alter
-source text or saved positions. [CREngine keyword factors](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L665-L706) · [CREngine default-font resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L2557-L2559)
+numeric values are unchanged. The relative keywords `smaller` and `larger`
+now use CREngine's 80% and 125% of the parent size, respectively; this can
+repaginate books that use them, while source anchors remain unchanged. This does not alter
+source text or saved positions. [CREngine keyword factors](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L665-L716) · [CREngine default-font resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L2557-L2559)
 
 **Normal line height** offers KOReader's 0.90–1.50 choices in 0.05 steps.
 The choices are mutually exclusive and can be saved for one book or as a
