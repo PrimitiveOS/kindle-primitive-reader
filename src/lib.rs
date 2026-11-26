@@ -1171,6 +1171,8 @@ chapter_probe! {
     screen_page_sources: Option<session::screen_pages::ScreenPageSources>,
     #[cfg(feature = "kindle")]
     raw_layout_sources: Option<session::screen_pages::ScreenPageSources>,
+    #[cfg(feature = "kindle")]
+    foreground_font_sources: Option<Vec<session::screen_pages::FileStamp>>,
     settings: Settings,
     spine_rtl: bool,
     #[cfg(feature = "kindle")]
@@ -1768,6 +1770,8 @@ impl Probe {
             screen_page_sources: None,
             #[cfg(feature = "kindle")]
             raw_layout_sources: None,
+            #[cfg(feature = "kindle")]
+            foreground_font_sources: None,
             settings,
             #[cfg(feature = "kindle")]
             custom_hyphenation_allowed,

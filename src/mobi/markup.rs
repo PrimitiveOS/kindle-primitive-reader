@@ -63,7 +63,7 @@ pub(super) fn destinations(
     }
     targets.extend(contents.items.iter().map(|item| item.position));
     match encoding {
-        Encoding::Cp1252 | Encoding::Cp1251 => {
+        Encoding::Cp1252 | Encoding::CodePage(_) => {
             let mut indices = targets.into_iter().peekable();
             text.char_indices()
                 .enumerate()

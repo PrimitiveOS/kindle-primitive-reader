@@ -4,10 +4,12 @@ use super::{
 };
 use crate::library::Bookmark;
 use crate::session::screen_pages::FileStamp;
+use crate::session::screen_pages::folder_sources::FolderProof;
 use crate::session::{Reading, SearchLayoutRecipe};
 use primitive_app::Change;
 use primitive_ui::{BODY, CAPTION, Canvas, Input, Rect};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -27,9 +29,15 @@ struct Entry {
 }
 type Snapshot = Arc<Vec<Entry>>;
 type Candidate = (usize, ReadingPosition);
+struct FolderResult {
+    proof: Arc<FolderProof>,
+    prepared: Option<crate::session::PreparedFolderChapter>,
+}
 enum Message {
     Progress(usize),
-    Done(Option<Candidate>),
+    Done(Option<Candidate>, Option<FolderResult>),
+    FolderVerified(bool),
+    FolderUnavailable,
     Failed,
 }
 struct WorkerGuard(Arc<AtomicBool>);
@@ -44,17 +52,24 @@ enum Phase {
     Snapshot,
     Worker,
     Validate,
+    StartFolderFinal,
+    FolderFinal,
 }
 
 pub(super) struct Search {
     book: u64,
     screen: Screen,
     original: HistoryLocation,
+    original_last_visible: usize,
     direction: Direction,
     publication: Option<u64>,
     fixed_pages: Option<usize>,
     fixed_stamp: Option<FileStamp>,
     recipe: Option<Arc<SearchLayoutRecipe>>,
+    folder_marker: Option<PathBuf>,
+    folder_proof: Option<Arc<FolderProof>>,
+    folder_prepared: Option<crate::session::PreparedFolderChapter>,
+    staged: Option<Reading>,
     total: usize,
     chapter_total: usize,
     chapter_cursor: usize,
@@ -92,14 +107,63 @@ impl Search {
 
 fn worker(
     recipe: Option<Arc<SearchLayoutRecipe>>,
+    folder_marker: Option<PathBuf>,
+    book: u64,
     publication: Option<u64>,
     fixed_pages: Option<usize>,
     direction: Direction,
     current: ReadingPosition,
+    current_last_visible: usize,
     snapshot: Snapshot,
     cancelled: Arc<AtomicBool>,
     tx: mpsc::SyncSender<Message>,
 ) {
+    let folder = if let Some(marker) = &folder_marker {
+        let proof = with_storage(|| FolderProof::capture(marker, &cancelled));
+        match proof {
+            Ok(proof) if !proof.contains_hidden_members() && proof.legacy_identity() == book => {
+                Some(Arc::new(proof))
+            }
+            _ => {
+                if !cancelled.load(Ordering::Relaxed) {
+                    let _ = tx.send(Message::FolderUnavailable);
+                }
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let origin_probe = if let Some(proof) = &folder {
+        let Some(recipe) = &recipe else {
+            let _ = tx.send(Message::FolderUnavailable);
+            return;
+        };
+        let Some(anchor) = &current.anchor else {
+            let _ = tx.send(Message::FolderUnavailable);
+            return;
+        };
+        if anchor.raw_caret.is_some() {
+            let _ = tx.send(Message::FolderUnavailable);
+            return;
+        }
+        let Ok(probe) = recipe.folder_chapter(proof, current.chapter, &cancelled) else {
+            if !cancelled.load(Ordering::Relaxed) {
+                let _ = tx.send(Message::FolderUnavailable);
+            }
+            return;
+        };
+        if probe
+            .page_for(anchor)
+            .is_none_or(|page| page < current.page || page > current_last_visible)
+        {
+            let _ = tx.send(Message::FolderUnavailable);
+            return;
+        }
+        Some(probe)
+    } else {
+        None
+    };
     let mut order: Vec<usize> = snapshot
         .iter()
         .enumerate()
@@ -113,8 +177,8 @@ fn worker(
         })
         .collect();
     order.sort_unstable_by_key(|&index| (snapshot[index].chapter.unwrap_or(usize::MAX), index));
-    let mut cached_chapter = None;
-    let mut cached_probe = None;
+    let mut cached_chapter = origin_probe.as_ref().map(|_| current.chapter);
+    let mut cached_probe = origin_probe;
     let mut best: Option<((usize, usize, usize, usize), Candidate)> = None;
     for (processed, index) in order.into_iter().enumerate() {
         if cancelled.load(Ordering::Relaxed) {
@@ -128,7 +192,12 @@ fn worker(
         let mut target = entry.bookmark.position.clone();
         let key = if let Some(recipe) = &recipe {
             if cached_chapter != Some(chapter) {
-                match recipe.chapter(chapter, &cancelled) {
+                let result = if let Some(proof) = &folder {
+                    recipe.folder_chapter(proof, chapter, &cancelled)
+                } else {
+                    recipe.chapter(chapter, &cancelled)
+                };
+                match result {
                     Ok(probe) => {
                         cached_probe = Some(probe);
                         cached_chapter = Some(chapter);
@@ -145,6 +214,12 @@ fn worker(
                 continue;
             };
             let page = match &target.anchor {
+                Some(anchor) if folder.is_some() && anchor.raw_caret.is_some() => {
+                    if !cancelled.load(Ordering::Relaxed) {
+                        let _ = tx.send(Message::FolderUnavailable);
+                    }
+                    return;
+                }
                 Some(anchor) if Some(anchor.book) == publication => match probe.page_for(anchor) {
                     Some(page) => page,
                     None => continue,
@@ -186,7 +261,30 @@ fn worker(
         }
     }
     if !cancelled.load(Ordering::Relaxed) {
-        let _ = tx.send(Message::Done(best.map(|(_, value)| value)));
+        let best = best.map(|(_, value)| value);
+        let folder = if let Some(proof) = folder {
+            let prepared = if let Some((_, target)) = &best {
+                drop(cached_probe.take());
+                let prepared = recipe.as_ref().and_then(|recipe| {
+                    recipe
+                        .prepare_folder_chapter(&proof, target.chapter, &cancelled)
+                        .ok()
+                });
+                let Some(prepared) = prepared else {
+                    if !cancelled.load(Ordering::Relaxed) {
+                        let _ = tx.send(Message::Failed);
+                    }
+                    return;
+                };
+                Some(prepared)
+            } else {
+                None
+            };
+            Some(FolderResult { proof, prepared })
+        } else {
+            None
+        };
+        let _ = tx.send(Message::Done(best, folder));
     }
 }
 
@@ -224,56 +322,83 @@ impl Reader {
         }
         let book = self.open_book_id().ok_or("No open document")?;
         let original = self.current_history_location().ok_or("No open document")?;
+        let original_last_visible = self
+            .active
+            .as_ref()
+            .map_or(original.position.page, |active| {
+                active.reading.last_visible_page()
+            });
         let total = self
             .library
             .state(book)
             .ok_or("This book is unavailable")?
             .bookmarks
             .len();
-        let (publication, chapter_total, recipe, fixed_pages, fixed_stamp) = if let Some(fixed) =
-            &self.fixed
-        {
-            let stamp = with_storage(|| {
-                let path = self.library.absolute_path(&fixed.entry.path)?;
-                FileStamp::read(&path).ok_or_else(|| {
-                    std::io::Error::other("This book cannot be verified for bookmark navigation")
+        let (publication, chapter_total, recipe, fixed_pages, fixed_stamp, folder_marker) =
+            if let Some(fixed) = &self.fixed {
+                let stamp = with_storage(|| {
+                    let path = self.library.absolute_path(&fixed.entry.path)?;
+                    FileStamp::read(&path).ok_or_else(|| {
+                        std::io::Error::other(
+                            "This book cannot be verified for bookmark navigation",
+                        )
+                    })
                 })
-            })
-            .map_err(|_| {
-                self.controls
-                    .interface_language
-                    .skim_text("This book cannot be verified for bookmark navigation")
-                    .to_owned()
-            })?;
-            (None, 0, None, Some(fixed.reading.count()), Some(stamp))
-        } else {
-            let reading = &self.active.as_ref().ok_or("No open document")?.reading;
-            let recipe = reading.config.search_layout_recipe(&reading.probe);
-            if !recipe.has_verified_sources() {
-                return Err(self
-                    .controls
-                    .interface_language
-                    .skim_text("This book cannot be verified for bookmark navigation")
-                    .into());
-            }
-            (
-                Some(reading.probe.book),
-                reading.probe.chapter_count(),
-                Some(Arc::new(recipe)),
-                None,
-                None,
-            )
-        };
+                .map_err(|_| {
+                    self.controls
+                        .interface_language
+                        .skim_text("This book cannot be verified for bookmark navigation")
+                        .to_owned()
+                })?;
+                (
+                    None,
+                    0,
+                    None,
+                    Some(fixed.reading.count()),
+                    Some(stamp),
+                    None,
+                )
+            } else {
+                let reading = &self.active.as_ref().ok_or("No open document")?.reading;
+                let recipe = reading.config.search_layout_recipe(&reading.probe);
+                let folder_marker = crate::epub_members::is_folder_book(&reading.config.book)
+                    .then(|| reading.config.book.clone());
+                let verified = if folder_marker.is_some() {
+                    recipe.has_verified_fonts()
+                } else {
+                    recipe.has_verified_sources()
+                };
+                if !verified {
+                    return Err(self
+                        .controls
+                        .interface_language
+                        .skim_text("This book cannot be verified for bookmark navigation")
+                        .into());
+                }
+                (
+                    Some(reading.probe.book),
+                    reading.probe.chapter_count(),
+                    Some(Arc::new(recipe)),
+                    None,
+                    None,
+                    folder_marker,
+                )
+            };
         let now = Instant::now();
         self.page_bookmark_search = Some(Search {
             book,
             screen: self.screen,
             original,
+            original_last_visible,
             direction,
             publication,
             fixed_pages,
             fixed_stamp,
             recipe,
+            folder_marker,
+            folder_proof: None,
+            folder_prepared: None,
+            staged: None,
             total,
             chapter_total,
             chapter_cursor: 0,
@@ -501,12 +626,15 @@ impl Reader {
                     let snapshot = Arc::new(std::mem::take(&mut search.entries));
                     let snapshot_worker = Arc::clone(&snapshot);
                     let recipe = search.recipe.clone();
+                    let folder_marker = search.folder_marker.clone();
+                    let book = search.book;
                     let cancelled = Arc::clone(&search.cancelled);
                     let (tx, rx) = mpsc::sync_channel(2);
                     let publication = search.publication;
                     let fixed_pages = search.fixed_pages;
                     let direction = search.direction;
                     let current = search.original.position.clone();
+                    let current_last_visible = search.original_last_visible;
                     if self.page_bookmark_worker_busy.swap(true, Ordering::AcqRel) {
                         failure = Some("Previous bookmark search is still stopping");
                     } else {
@@ -517,10 +645,13 @@ impl Reader {
                                 let _guard = WorkerGuard(busy);
                                 worker(
                                     recipe,
+                                    folder_marker,
+                                    book,
                                     publication,
                                     fixed_pages,
                                     direction,
                                     current,
+                                    current_last_visible,
                                     snapshot_worker,
                                     cancelled,
                                     tx,
@@ -553,8 +684,12 @@ impl Reader {
                         .try_recv();
                     match event {
                         Ok(Message::Progress(value)) => search.progress = value,
-                        Ok(Message::Done(best)) => {
+                        Ok(Message::Done(best, folder)) => {
                             search.best = best;
+                            if let Some(folder) = folder {
+                                search.folder_proof = Some(folder.proof);
+                                search.folder_prepared = folder.prepared;
+                            }
                             search.receiver = None;
                             search.cursor = 0;
                             search.phase = Phase::Validate;
@@ -562,6 +697,14 @@ impl Reader {
                         }
                         Ok(Message::Failed) => {
                             failure = Some("A bookmarked chapter could not be checked");
+                            break;
+                        }
+                        Ok(Message::FolderVerified(_)) => {
+                            failure = Some("Bookmark search stopped");
+                            break;
+                        }
+                        Ok(Message::FolderUnavailable) => {
+                            failure = Some("Folder book changed or cannot be safely checked");
                             break;
                         }
                         Err(mpsc::TryRecvError::Empty) => break,
@@ -589,7 +732,98 @@ impl Reader {
                 }
                 search.cursor = end;
                 if end == search.total && failure.is_none() {
-                    finished = true;
+                    if search.folder_marker.is_some() {
+                        if search.folder_proof.is_none() {
+                            failure = Some("Folder book changed or cannot be safely checked");
+                        } else if let Some((_, target)) = &search.best {
+                            let Some(prepared) = search.folder_prepared.take() else {
+                                return Some(report_status(
+                                    self,
+                                    "Folder book changed or cannot be safely checked",
+                                ));
+                            };
+                            match self.stage_folder_page_bookmark(
+                                target,
+                                search.recipe.as_deref(),
+                                prepared,
+                            ) {
+                                Ok(staged) => search.staged = Some(staged),
+                                Err(error) => return Some(self.report(error)),
+                            }
+                            search.phase = Phase::StartFolderFinal;
+                        } else {
+                            search.phase = Phase::StartFolderFinal;
+                        }
+                    } else {
+                        finished = true;
+                    }
+                }
+            }
+            Phase::StartFolderFinal => {
+                if !self.page_bookmark_worker_busy.swap(true, Ordering::AcqRel) {
+                    let (Some(recipe), Some(proof)) =
+                        (search.recipe.clone(), search.folder_proof.clone())
+                    else {
+                        self.page_bookmark_worker_busy
+                            .store(false, Ordering::Release);
+                        return Some(report_status(
+                            self,
+                            "Folder book changed or cannot be safely checked",
+                        ));
+                    };
+                    let cancelled = Arc::clone(&search.cancelled);
+                    let busy = Arc::clone(&self.page_bookmark_worker_busy);
+                    let (tx, rx) = mpsc::sync_channel(1);
+                    match std::thread::Builder::new()
+                        .name("reader-folder-final".into())
+                        .spawn(move || {
+                            let _guard = WorkerGuard(busy);
+                            let valid = recipe.verify_folder_proof(&proof, &cancelled).is_ok();
+                            if !cancelled.load(Ordering::Relaxed) {
+                                let _ = tx.send(Message::FolderVerified(valid));
+                            }
+                        }) {
+                        Ok(_) => {
+                            search.receiver = Some(rx);
+                            search.phase = Phase::FolderFinal;
+                        }
+                        Err(_) => {
+                            self.page_bookmark_worker_busy
+                                .store(false, Ordering::Release);
+                            failure = Some("Unable to start bookmark search");
+                        }
+                    }
+                }
+            }
+            Phase::FolderFinal => {
+                let Some(receiver) = &search.receiver else {
+                    return Some(report_status(self, "Bookmark search stopped"));
+                };
+                match receiver.try_recv() {
+                    Ok(Message::FolderVerified(true)) => {
+                        let Some(active) = &self.active else {
+                            return Some(report_status(self, "The book changed; try again"));
+                        };
+                        if search.recipe.as_deref()
+                            != Some(
+                                &active
+                                    .reading
+                                    .config
+                                    .search_layout_recipe(&active.reading.probe),
+                            )
+                        {
+                            failure = Some("The book or reading settings changed; try again");
+                        } else {
+                            finished = true;
+                        }
+                    }
+                    Ok(Message::FolderVerified(false)) => {
+                        failure = Some("Folder book changed or cannot be safely checked")
+                    }
+                    Ok(_) | Err(mpsc::TryRecvError::Disconnected) => {
+                        failure = Some("Bookmark search stopped")
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
                 }
             }
         }
@@ -604,19 +838,31 @@ impl Reader {
                 };
                 return Some(self.report(self.controls.interface_language.skim_text(message)));
             };
-            let result = self.commit_verified_page_bookmark(
-                &target,
-                &search.original,
-                search.recipe.as_deref(),
-                search.fixed_stamp.as_ref(),
-            );
+            let result = if search.folder_marker.is_some() {
+                match search.staged.take() {
+                    Some(staged) => self.commit_staged_folder_bookmark(
+                        staged,
+                        &target,
+                        &search.original,
+                        search.recipe.as_deref(),
+                    ),
+                    None => Err("Folder book changed or cannot be safely checked".into()),
+                }
+            } else {
+                self.commit_verified_page_bookmark(
+                    &target,
+                    &search.original,
+                    search.recipe.as_deref(),
+                    search.fixed_stamp.as_ref(),
+                )
+            };
             return Some(match result {
                 Ok(()) => Change::Full,
                 Err(error) => self.report(error),
             });
         }
         search.deadline = now
-            + if matches!(search.phase, Phase::Worker) {
+            + if matches!(search.phase, Phase::Worker | Phase::FolderFinal) {
                 Duration::from_millis(200)
             } else {
                 TICK
@@ -627,6 +873,66 @@ impl Reader {
         }
         self.page_bookmark_search = Some(search);
         repaint.then_some(Change::Partial)
+    }
+
+    fn stage_folder_page_bookmark(
+        &self,
+        target: &ReadingPosition,
+        expected_recipe: Option<&SearchLayoutRecipe>,
+        prepared: crate::session::PreparedFolderChapter,
+    ) -> crate::Result<Reading> {
+        let reading = &self.active.as_ref().ok_or("No open book")?.reading;
+        let staged = Reading::restore_prepared_folder(
+            reading.config.clone(),
+            target.chapter,
+            target.page,
+            target.anchor.as_ref(),
+            prepared,
+        )?;
+        let recipe = staged.config.search_layout_recipe(&staged.probe);
+        if staged.chapter != target.chapter
+            || staged.page > target.page
+            || staged.last_visible_page() < target.page
+            || target
+                .anchor
+                .as_ref()
+                .is_some_and(|anchor| staged.probe.page_for(anchor) != Some(target.page))
+            || expected_recipe != Some(&recipe)
+        {
+            return Err("The bookmarked page changed; try again".into());
+        }
+        Ok(staged)
+    }
+
+    fn commit_staged_folder_bookmark(
+        &mut self,
+        staged: Reading,
+        target: &ReadingPosition,
+        original: &HistoryLocation,
+        expected_recipe: Option<&SearchLayoutRecipe>,
+    ) -> crate::Result<()> {
+        let reading = &mut self.active.as_mut().ok_or("No open book")?.reading;
+        if expected_recipe != Some(&reading.config.search_layout_recipe(&reading.probe))
+            || staged.chapter != target.chapter
+            || staged.page > target.page
+            || staged.last_visible_page() < target.page
+            || target
+                .anchor
+                .as_ref()
+                .is_some_and(|anchor| staged.probe.page_for(anchor) != Some(target.page))
+        {
+            return Err("The bookmarked page changed; try again".into());
+        }
+        *reading = staged;
+        self.selection = None;
+        self.result_selection = None;
+        self.search_result = None;
+        self.show(Screen::Book);
+        self.record_position();
+        if self.current_history_location().as_ref() != Some(original) {
+            self.push_history(original.clone());
+        }
+        Ok(())
     }
 
     fn commit_verified_page_bookmark(

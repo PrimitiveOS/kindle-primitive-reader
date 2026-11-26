@@ -228,6 +228,7 @@ pub(crate) struct SearchLayoutRecipe {
     foreground_sources: Option<screen_pages::ScreenPageSources>,
     current_sources: Option<screen_pages::ScreenPageSources>,
     font_sources: Option<Vec<screen_pages::FileStamp>>,
+    current_font_sources: Option<Vec<screen_pages::FileStamp>>,
     settings: Settings,
     scroll: bool,
     facing_pages: bool,
@@ -235,7 +236,87 @@ pub(crate) struct SearchLayoutRecipe {
     hidden_flows: crate::library::hidden_flows::HiddenFlows,
 }
 
+/// An owned worker result whose chapter and flow map share one folder snapshot.
+pub(crate) struct PreparedFolderChapter {
+    chapter: crate::PreparedParleyChapter,
+    flows: hidden_flows::Resolved,
+}
+
 impl SearchLayoutRecipe {
+    pub(crate) fn has_verified_fonts(&self) -> bool {
+        self.font_sources.is_some() && self.font_sources == self.current_font_sources
+    }
+
+    pub(crate) fn prepare_folder_chapter(
+        &self,
+        proof: &screen_pages::folder_sources::FolderProof,
+        index: usize,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<PreparedFolderChapter> {
+        let probe = self.folder_chapter(proof, index, cancelled)?;
+        let config = BookConfig {
+            viewport: self.viewport,
+            user_styles: self.user_styles.clone(),
+            user_hyphenation: std::rc::Rc::new(self.user_hyphenation.clone()),
+            engine: self.engine,
+            book: self.book.clone(),
+            fonts: self.fonts.clone(),
+            settings: self.settings,
+            scroll: self.scroll,
+            facing_pages: self.facing_pages,
+            hide_nonlinear: self.hide_nonlinear,
+            hidden_flows: std::rc::Rc::new(self.hidden_flows.clone()),
+            chapter_offsets: Default::default(),
+            quote_prefixes: Default::default(),
+            screen_pages: Default::default(),
+            eager_layouts: Default::default(),
+        };
+        let flows = with_storage(|| {
+            self.verify_folder_proof(proof, cancelled)
+                .map_err(io::Error::other)?;
+            let flows =
+                hidden_flows::Resolved::new_with_folder(&config, &probe, index, proof, cancelled)
+                    .map_err(io::Error::other)?;
+            self.verify_folder_proof(proof, cancelled)
+                .map_err(io::Error::other)?;
+            Ok(flows)
+        })?;
+        Ok(PreparedFolderChapter {
+            chapter: probe
+                .into_prepared_parley()
+                .ok_or("This chapter needs another renderer")?,
+            flows,
+        })
+    }
+
+    /// Verify a folder proof and the ordered fonts without reshaping. Run on a
+    /// worker because enumerating the bounded folder inventory can take time.
+    pub(crate) fn verify_folder_proof(
+        &self,
+        proof: &screen_pages::folder_sources::FolderProof,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<()> {
+        if !crate::epub_members::is_folder_book(&self.book) {
+            return Err("This book is not a folder EPUB".into());
+        }
+        if !self.has_verified_fonts() {
+            return Err("Reading fonts changed; reopen the book".into());
+        }
+        let expected = self
+            .font_sources
+            .as_ref()
+            .ok_or("Reading fonts cannot be verified")?;
+        Ok(with_storage(|| {
+            proof.revalidate(&self.book, cancelled)?;
+            if screen_pages::ScreenPageSources::read_fonts(&self.fonts).as_ref() != Some(expected) {
+                return Err(io::Error::other(
+                    "Reading fonts changed during bookmark search",
+                ));
+            }
+            Ok(())
+        })?)
+    }
+
     /// Lay out an immutable extracted EPUB snapshot on a worker while keeping
     /// the ordinary canonical path. Raw folder positions are not enabled here.
     pub(crate) fn folder_chapter(
@@ -247,6 +328,9 @@ impl SearchLayoutRecipe {
         use std::sync::atomic::Ordering;
         if !crate::epub_members::is_folder_book(&self.book) {
             return Err("This book is not a folder EPUB".into());
+        }
+        if !self.has_verified_fonts() {
+            return Err("Reading fonts changed; reopen the book".into());
         }
         let expected_fonts = self
             .font_sources
@@ -389,6 +473,23 @@ impl FacingGeometry {
 }
 
 impl BookConfig {
+    fn folder_snapshot_chapter(
+        &self,
+        proof: &screen_pages::folder_sources::FolderProof,
+        index: usize,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<Probe> {
+        let check = || -> Result<()> {
+            if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                Err("Folder verification cancelled".into())
+            } else {
+                Ok(())
+            }
+        };
+        let book = Book::open_folder_snapshot(proof.members())?;
+        self.layout_chapter_cancellable(book, index, None, &check)
+    }
+
     pub(crate) fn search_layout_recipe(&self, probe: &Probe) -> SearchLayoutRecipe {
         SearchLayoutRecipe {
             viewport: self.viewport,
@@ -399,7 +500,8 @@ impl BookConfig {
             fonts: self.fonts.clone(),
             foreground_sources: probe.raw_layout_sources.clone(),
             current_sources: screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts),
-            font_sources: screen_pages::ScreenPageSources::read_fonts(&self.fonts),
+            font_sources: probe.foreground_font_sources.clone(),
+            current_font_sources: screen_pages::ScreenPageSources::read_fonts(&self.fonts),
             settings: self.settings,
             scroll: self.scroll,
             facing_pages: self.facing_pages,
@@ -518,6 +620,8 @@ impl BookConfig {
         check_cancelled: &dyn Fn() -> Result<()>,
     ) -> Result<Probe> {
         check_cancelled()?;
+        let folder_snapshot = book.folder_snapshot();
+        let font_sources = screen_pages::ScreenPageSources::read_fonts(&self.fonts);
         let raw_sources = crate::parley_layout::RAW_LAYOUT_ENABLED
             .then(|| screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts))
             .flatten();
@@ -583,7 +687,13 @@ impl BookConfig {
                 // A vertical source needs the full viewport even when the
                 // narrow attempt already fell back to horizontal rendering.
                 if opened.is_none() {
-                    opened = Some(Book::open(&self.book).map_err(|e| e.to_string())?);
+                    opened = Some(
+                        match &folder_snapshot {
+                            Some(members) => Book::open_folder_snapshot(members.clone()),
+                            None => Book::open(&self.book),
+                        }
+                        .map_err(|e| e.to_string())?,
+                    );
                 }
                 Probe::layout_opened_book_cancellable(
                     &mut opened,
@@ -600,6 +710,11 @@ impl BookConfig {
             }
         }?;
         check_cancelled()?;
+        if font_sources.is_some()
+            && font_sources == screen_pages::ScreenPageSources::read_fonts(&self.fonts)
+        {
+            probe.foreground_font_sources = font_sources;
+        }
         if raw_sources.is_some()
             && raw_sources == screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts)
         {
@@ -746,6 +861,7 @@ impl Reading {
             anchor,
             scroll_history_top,
             layout,
+            None,
         )
     }
 
@@ -768,7 +884,31 @@ impl Reading {
             probe: prepared.into_probe(),
             marker: None,
         };
-        Self::restore_from_layout(config, chapter, fallback_page, anchor, None, layout)
+        Self::restore_from_layout(config, chapter, fallback_page, anchor, None, layout, None)
+    }
+
+    /// Restore a chapter and its flow map prepared against the same immutable
+    /// folder snapshot. Caller must revalidate the proof before installation.
+    pub(crate) fn restore_prepared_folder(
+        config: BookConfig,
+        chapter: usize,
+        fallback_page: usize,
+        anchor: Option<&Anchor>,
+        prepared: PreparedFolderChapter,
+    ) -> Result<Self> {
+        let layout = ChapterLayout {
+            probe: prepared.chapter.into_probe(),
+            marker: None,
+        };
+        Self::restore_from_layout(
+            config,
+            chapter,
+            fallback_page,
+            anchor,
+            None,
+            layout,
+            Some(prepared.flows),
+        )
     }
 
     fn restore_from_layout(
@@ -778,6 +918,7 @@ impl Reading {
         anchor: Option<&Anchor>,
         scroll_history_top: Option<f32>,
         layout: ChapterLayout,
+        prepared_flows: Option<hidden_flows::Resolved>,
     ) -> Result<Self> {
         let start = Instant::now();
         let ChapterLayout {
@@ -800,7 +941,10 @@ impl Reading {
                 marker.need.settings.typography = *typography;
             }
         }
-        let custom_flows = hidden_flows::Resolved::new(&config, &probe, chapter)?;
+        let custom_flows = match prepared_flows {
+            Some(flows) => flows,
+            None => hidden_flows::Resolved::new(&config, &probe, chapter)?,
+        };
         if config.hidden_flows.enabled || custom_flows.has_automatic_notes() {
             probe.flow_pages = Some(custom_flows.map(chapter, probe.page_count()));
         }

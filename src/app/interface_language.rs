@@ -3627,6 +3627,9 @@ impl InterfaceLanguage {
             "No earlier page bookmark" => "Không có dấu trang trước đó",
             "No later page bookmark" => "Không có dấu trang tiếp theo",
             "Finding page bookmark" => "Đang tìm dấu trang",
+            "Folder book changed or cannot be safely checked" => {
+                "Sách thư mục đã đổi hoặc không thể kiểm tra an toàn"
+            }
             "The book or bookmarks changed; try again" => "Sách hoặc dấu trang đã đổi; hãy thử lại",
             "The book changed; try again" => "Sách đã thay đổi; hãy thử lại",
             "The book or reading settings changed; try again" => {

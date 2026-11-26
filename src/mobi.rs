@@ -135,7 +135,7 @@ impl std::error::Error for MobiError {}
 enum Encoding {
     Utf8,
     Cp1252,
-    Cp1251,
+    CodePage(&'static encoding_rs::Encoding),
     Auto,
 }
 
@@ -356,9 +356,10 @@ fn mobi_header(record: &[u8]) -> Result<MobiHeader, MobiError> {
     }
     let encoding = match u32_at(header, 28)? {
         1252 => Encoding::Cp1252,
-        1251 => Encoding::Cp1251,
         65001 => Encoding::Utf8,
-        other => return Err(MobiError::UnsupportedEncoding(other)),
+        other => Encoding::CodePage(
+            extended_code_page(other).ok_or(MobiError::UnsupportedEncoding(other))?,
+        ),
     };
     Ok(MobiHeader {
         encoding,
@@ -518,12 +519,29 @@ fn decode_palmdoc_record(
     Ok(())
 }
 
+// These WHATWG decoders are all single-byte. Existing 1252 remains on its
+// original path so its legacy mappings and saved source positions do not move.
+pub(crate) fn extended_code_page(code: u32) -> Option<&'static encoding_rs::Encoding> {
+    Some(match code {
+        874 => encoding_rs::WINDOWS_874,
+        1250 => encoding_rs::WINDOWS_1250,
+        1251 => encoding_rs::WINDOWS_1251,
+        1253 => encoding_rs::WINDOWS_1253,
+        1254 => encoding_rs::WINDOWS_1254,
+        1255 => encoding_rs::WINDOWS_1255,
+        1256 => encoding_rs::WINDOWS_1256,
+        1257 => encoding_rs::WINDOWS_1257,
+        1258 => encoding_rs::WINDOWS_1258,
+        _ => return None,
+    })
+}
+
 fn decode_text(bytes: Vec<u8>, encoding: Encoding) -> Result<String, MobiError> {
     match encoding {
         Encoding::Utf8 => String::from_utf8(bytes).map_err(|_| MobiError::InvalidText),
         Encoding::Cp1252 => Ok(bytes.into_iter().map(cp1252).collect()),
-        Encoding::Cp1251 => {
-            let text = encoding_rs::WINDOWS_1251
+        Encoding::CodePage(code_page) => {
+            let text = code_page
                 .decode_without_bom_handling_and_without_replacement(&bytes)
                 .ok_or(MobiError::InvalidText)?;
             // filepos values count original bytes, so retain only a decoding
@@ -544,9 +562,13 @@ pub(crate) fn navigation_label(bytes: &[u8], encoding: usize) -> Result<String, 
     let encoding = match encoding {
         65001 => Encoding::Utf8,
         1252 => Encoding::Cp1252,
-        1251 => Encoding::Cp1251,
         v if v == u32::MAX as usize => Encoding::Cp1252,
-        _ => return Err(MobiError::InvalidHeader),
+        v => Encoding::CodePage(
+            u32::try_from(v)
+                .ok()
+                .and_then(extended_code_page)
+                .ok_or(MobiError::InvalidHeader)?,
+        ),
     };
     let text = decode_text(bytes.to_vec(), encoding)?;
     if text.chars().any(|c| c.is_control() && !c.is_whitespace()) {

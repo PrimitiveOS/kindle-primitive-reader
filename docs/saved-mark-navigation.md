@@ -44,9 +44,17 @@ and storage return cancel the search. A retry reports if a canceled worker is
 still stopping, so it cannot start overlapping layout workers. The temporary 512-bookmark and
 eight-chapter limits no longer apply. To bound memory, snapshot data and the
 worker's sort indices have a 4 MiB estimated budget; searches exceeding it fail
-without moving. Reflow books without actual matching file source stamps,
-including folder-backed books, currently fail closed; a bounded folder-source
-fingerprint remains open. Fixed documents are checked for file changes during
+without moving. Regular reflow books without actual matching file source stamps
+fail closed. Eligible extracted EPUB folders use a shared immutable snapshot and
+full folder proof: at most 512 entries and 16 MiB of member data, no symlinks
+or hidden members, and a legacy identity matching the open book. The original
+visible anchor must resolve against that snapshot, and font stamps must match
+the original foreground layout. Candidate layouts and flow maps come from the
+snapshot; a final background proof and font recheck precedes installing the
+staged Reading. Folder raw anchors and unsupported renderers fail closed;
+hidden/nonlinear flow preparation is limited to 32 chapters. Capturing a full
+strong proof at original book open, which could safely permit hidden members,
+remains open. Fixed documents are checked for file changes during
 the search but the current provider does not establish a file stamp from the
 time the book was opened. File-stamp race behavior, the progress presentation,
 and Kindle performance remain unvalidated.

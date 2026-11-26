@@ -241,6 +241,19 @@ impl Book {
     }
 
     #[cfg(feature = "kindle")]
+    pub(crate) fn folder_snapshot(
+        &self,
+    ) -> Option<std::sync::Arc<std::collections::BTreeMap<String, std::sync::Arc<[u8]>>>> {
+        match &self.content {
+            Content::Archive {
+                archive: Archive::Snapshot(members),
+                ..
+            } => Some(members.clone()),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "kindle")]
     pub(crate) fn quote_file_stamp(&self) -> Option<&crate::session::screen_pages::FileStamp> {
         if !self.is_reflowable_epub() {
             return None;

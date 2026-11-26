@@ -14,10 +14,35 @@ pub(super) struct Resolved {
 
 impl Resolved {
     pub(super) fn new(config: &BookConfig, current: &Probe, chapter: usize) -> Result<Self> {
+        Self::new_inner(config, current, chapter, None)
+    }
+
+    pub(super) fn new_with_folder(
+        config: &BookConfig,
+        current: &Probe,
+        chapter: usize,
+        proof: &super::screen_pages::folder_sources::FolderProof,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<Self> {
+        if current.chapter_count() > 32 && (config.hidden_flows.enabled || config.hide_nonlinear) {
+            return Err("This folder EPUB exceeds the snapshot flow limit".into());
+        }
+        Self::new_inner(config, current, chapter, Some((proof, cancelled)))
+    }
+
+    fn new_inner(
+        config: &BookConfig,
+        current: &Probe,
+        chapter: usize,
+        folder: Option<(
+            &super::screen_pages::folder_sources::FolderProof,
+            &std::sync::atomic::AtomicBool,
+        )>,
+    ) -> Result<Self> {
         let mut result = Self::default();
         if !config.hidden_flows.enabled {
             if config.hide_nonlinear && config.can_separate_note_flows() {
-                let layouts = automatic_note_layouts(config, current, chapter)?;
+                let layouts = automatic_note_layouts(config, current, chapter, folder)?;
                 let mut id = 0;
                 let mut spine_flow = None;
                 if !layouts.is_empty() {
@@ -67,11 +92,21 @@ impl Resolved {
             }
         }
         for (index, points) in groups {
+            if folder
+                .is_some_and(|(_, cancelled)| cancelled.load(std::sync::atomic::Ordering::Relaxed))
+            {
+                return Err("Folder verification cancelled".into());
+            }
             let loaded;
             let probe = if index == chapter {
                 current
             } else {
-                loaded = match config.chapter(index) {
+                let candidate = if let Some((proof, cancelled)) = folder {
+                    config.folder_snapshot_chapter(proof, index, cancelled)
+                } else {
+                    config.chapter(index)
+                };
+                loaded = match candidate {
                     Ok(probe) => probe,
                     Err(_) => {
                         result
@@ -195,9 +230,19 @@ fn automatic_note_layouts(
     config: &BookConfig,
     current: &Probe,
     chapter: usize,
+    folder: Option<(
+        &super::screen_pages::folder_sources::FolderProof,
+        &std::sync::atomic::AtomicBool,
+    )>,
 ) -> Result<BTreeMap<usize, (usize, Vec<Range<usize>>)>> {
     let result = with_storage(|| {
-        let mut book = Some(Book::open(&config.book).map_err(io::Error::other)?);
+        let mut book = Some(
+            match folder {
+                Some((proof, _)) => Book::open_folder_snapshot(proof.members()),
+                None => Book::open(&config.book),
+            }
+            .map_err(io::Error::other)?,
+        );
         if book.as_ref().is_none_or(|book| !book.is_reflowable_epub()) {
             return Ok(BTreeMap::new());
         }
@@ -205,6 +250,14 @@ fn automatic_note_layouts(
         let mut fonts = None::<parley::FontContext>;
         let mut layouts = BTreeMap::new();
         for index in 0..current.chapter_count() {
+            if folder
+                .is_some_and(|(_, cancelled)| cancelled.load(std::sync::atomic::Ordering::Relaxed))
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Folder verification cancelled",
+                ));
+            }
             if current.chapter_is_nonlinear(index) {
                 continue;
             }
