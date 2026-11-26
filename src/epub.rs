@@ -230,6 +230,17 @@ impl Book {
     }
 
     #[cfg(feature = "kindle")]
+    pub(crate) fn open_folder_snapshot(
+        members: std::sync::Arc<std::collections::BTreeMap<String, std::sync::Arc<[u8]>>>,
+    ) -> Result<Self> {
+        let mut book = Self::from_archive(Archive::Snapshot(members))?;
+        book.quote_prefixes = Some(Box::new(
+            crate::book_style::pseudo::quotes::Checkpoints::snapshot(),
+        ));
+        Ok(book)
+    }
+
+    #[cfg(feature = "kindle")]
     pub(crate) fn quote_file_stamp(&self) -> Option<&crate::session::screen_pages::FileStamp> {
         if !self.is_reflowable_epub() {
             return None;
@@ -586,6 +597,10 @@ impl Book {
                 archive: Archive::Folder(_),
                 ..
             } => true,
+            Content::Archive {
+                archive: Archive::Snapshot(members),
+                ..
+            } => members.keys().any(|path| has_font_extension(path)),
             Content::Loose {
                 fonts, resources, ..
             } => {

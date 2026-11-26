@@ -92,6 +92,18 @@ pub(crate) fn open_edition(bytes: &[u8]) -> Result<Edition> {
     {
         return Ok(Edition::Kf8(edition));
     }
+    // Before this compatibility extension, a primary declaring Windows-1251
+    // reached the KF8 fallback. Preserve that edition and its saved identities
+    // whenever it previously opened, then try the new legacy path on failure.
+    let primary_1251 = mobi::record_offsets(bytes)
+        .ok()
+        .and_then(|offsets| bytes.get(*offsets.first()?..*offsets.get(1)?))
+        .is_some_and(|header| mobi::u32_at(header, 28).ok() == Some(1251));
+    if primary_1251
+        && let Ok(edition) = hybrid_fallback(bytes, MobiError::UnsupportedEncoding(1251))
+    {
+        return Ok(Edition::Kf8(edition));
+    }
     match mobi::decode_legacy(bytes) {
         Ok(edition) => Ok(Edition::Legacy(edition)),
         Err(MobiError::Kf8) => decode(bytes).map(Edition::Kf8),

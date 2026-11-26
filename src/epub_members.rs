@@ -20,6 +20,8 @@ pub(crate) fn is_folder_book(path: &Path) -> bool {
 pub(crate) enum Members {
     Zip(epub_zip::Archive),
     Folder(PathBuf),
+    #[cfg(feature = "kindle")]
+    Snapshot(std::sync::Arc<std::collections::BTreeMap<String, std::sync::Arc<[u8]>>>),
 }
 
 impl Members {
@@ -53,6 +55,10 @@ impl Members {
                 Ok(zip.zip.by_index_raw(index)?.size())
             }
             Self::Folder(root) => Ok(folder_file(root, name)?.metadata()?.len()),
+            #[cfg(feature = "kindle")]
+            Self::Snapshot(members) => {
+                Ok(members.get(name).ok_or("A chapter is unavailable")?.len() as u64)
+            }
         }
     }
 
@@ -70,6 +76,17 @@ impl Members {
                 let file = folder_file(root, name)?;
                 let size = file.metadata()?.len();
                 read_member(file, name, size, limit)
+            }
+            #[cfg(feature = "kindle")]
+            Self::Snapshot(members) => {
+                if !is_archive_path(name) {
+                    return Err("Invalid extracted EPUB member path".into());
+                }
+                let bytes = members.get(name).ok_or("An EPUB resource is unavailable")?;
+                if bytes.len() > limit {
+                    return Err(format!("The EPUB resource exceeds its size limit: {name}").into());
+                }
+                Ok(bytes.to_vec())
             }
         }
     }

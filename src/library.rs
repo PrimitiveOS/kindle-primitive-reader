@@ -3436,13 +3436,13 @@ fn load_library_state(path: &Path) -> io::Result<(SavedLibrary, Option<[u8; 32]>
     Ok((saved, Some(state_hash(&bytes))))
 }
 
-fn fingerprint_update(hash: u64, bytes: &[u8]) -> u64 {
+pub(crate) fn fingerprint_update(hash: u64, bytes: &[u8]) -> u64 {
     bytes.iter().fold(hash, |hash, &byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
     })
 }
 
-fn fingerprint_prefix(size: u64, tag: &[u8]) -> u64 {
+pub(crate) fn fingerprint_prefix(size: u64, tag: &[u8]) -> u64 {
     fingerprint_update(
         fingerprint_update(0xcbf29ce484222325, &size.to_le_bytes()),
         tag,

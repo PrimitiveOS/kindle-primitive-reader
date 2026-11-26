@@ -2,7 +2,7 @@
 pub(crate) mod background;
 pub(crate) mod eager;
 pub(crate) mod embedded_fonts;
-pub(super) mod folder_sources;
+pub(crate) mod folder_sources;
 
 use std::cell::{Cell, RefCell};
 use std::fs;
@@ -46,11 +46,12 @@ impl ScreenPageSources {
         }
         Some(Self {
             book: FileStamp::read(book)?,
-            fonts: fonts
-                .iter()
-                .map(|path| FileStamp::read(path))
-                .collect::<Option<_>>()?,
+            fonts: Self::read_fonts(fonts)?,
         })
+    }
+
+    pub(super) fn read_fonts(fonts: &[PathBuf]) -> Option<Vec<FileStamp>> {
+        fonts.iter().map(|path| FileStamp::read(path)).collect()
     }
 }
 

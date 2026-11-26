@@ -135,6 +135,7 @@ impl std::error::Error for MobiError {}
 enum Encoding {
     Utf8,
     Cp1252,
+    Cp1251,
     Auto,
 }
 
@@ -355,6 +356,7 @@ fn mobi_header(record: &[u8]) -> Result<MobiHeader, MobiError> {
     }
     let encoding = match u32_at(header, 28)? {
         1252 => Encoding::Cp1252,
+        1251 => Encoding::Cp1251,
         65001 => Encoding::Utf8,
         other => return Err(MobiError::UnsupportedEncoding(other)),
     };
@@ -520,6 +522,17 @@ fn decode_text(bytes: Vec<u8>, encoding: Encoding) -> Result<String, MobiError> 
     match encoding {
         Encoding::Utf8 => String::from_utf8(bytes).map_err(|_| MobiError::InvalidText),
         Encoding::Cp1252 => Ok(bytes.into_iter().map(cp1252).collect()),
+        Encoding::Cp1251 => {
+            let text = encoding_rs::WINDOWS_1251
+                .decode_without_bom_handling_and_without_replacement(&bytes)
+                .ok_or(MobiError::InvalidText)?;
+            // filepos values count original bytes, so retain only a decoding
+            // with precisely one Unicode scalar for every source byte.
+            if text.chars().count() != bytes.len() {
+                return Err(MobiError::InvalidText);
+            }
+            Ok(text.into_owned())
+        }
         Encoding::Auto => match String::from_utf8(bytes) {
             Ok(text) => Ok(text),
             Err(error) => Ok(error.into_bytes().into_iter().map(cp1252).collect()),
@@ -531,6 +544,7 @@ pub(crate) fn navigation_label(bytes: &[u8], encoding: usize) -> Result<String, 
     let encoding = match encoding {
         65001 => Encoding::Utf8,
         1252 => Encoding::Cp1252,
+        1251 => Encoding::Cp1251,
         v if v == u32::MAX as usize => Encoding::Cp1252,
         _ => return Err(MobiError::InvalidHeader),
     };

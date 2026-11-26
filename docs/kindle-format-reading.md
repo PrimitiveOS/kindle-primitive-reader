@@ -4,7 +4,7 @@ Reader imports DRM-free legacy MOBI with publisher contents, illustrations and i
 
 | Reading feature | Implementation |
 | --- | --- |
-| Text records | Read uncompressed, PalmDOC and HUFF/CDIC records, including multibyte overlap and trailing-data records. Legacy text supports UTF-8 and Windows-1252. KF8 markup uses UTF-8. |
+| Text records | Read uncompressed, PalmDOC and HUFF/CDIC records, including multibyte overlap and trailing-data records. Legacy text supports UTF-8, Windows-1252 and the strict Windows-1251 candidate described below. KF8 markup uses UTF-8. |
 | KF8 chapters | Reassemble skeletons and fragments in reading order. Use the FDST table to locate auxiliary flows when the PalmDOC header declares the length of the main markup flow. |
 | Text and links | Accept standalone HTML with or without the XHTML namespace and ordinary XHTML document type declarations. Resolve Kindle fragment offsets against the original source bytes, including text with standard HTML character references. |
 | Illustrations and style | Resolve local JPEG and PNG illustrations and first-frame GIFs. Recover supported raster covers from SVG wrappers and load local KindleGen stylesheet flows. The reading engine applies supported publisher styles. |
@@ -12,6 +12,17 @@ Reader imports DRM-free legacy MOBI with publisher contents, illustrations and i
 | Import bounds | The container limit is 32 MiB and the uncompressed text limit is 12 MiB. Separate budgets apply to XML nodes, record counts, images, rendered sections and the accumulated resource bytes. |
 
 A hybrid opens its legacy edition when Reader can read it. If that edition uses an unsupported encoding or compression, Reader can open a reflowable KF8 edition identified by its EXTH 121 record and the corresponding boundary. It resolves illustrations against the shared primary resource records. When a previous Reader release could only read the KF8 half of a hybrid, the same edition and its saved locations remain available. Fixed-layout KF8 is still unsupported. Reader reports protected books at opening.
+
+As a compatibility candidate, an otherwise unsupported legacy MOBI declaring
+Windows-1251 can be opened with strict decoding. Reader requires each input
+byte to decode to exactly one Unicode scalar, so legacy `filepos` navigation
+continues to count original bytes. Invalid decoding is rejected; multi-byte and
+other code pages remain unsupported. A hybrid that previously opened its KF8
+secondary edition continues to use it before Reader attempts the new primary
+encoding. The pinned libmobi recognizes only UTF-8 and Windows-1252 in its MOBI
+header, so this is an extension rather than a libmobi parity claim. KOReader's
+handling of this variant, real books, simulator and Kindle behavior remain
+unverified. [Pinned libmobi encoding](https://github.com/bfabiszewski/libmobi/blob/85dcfe803fc2a21020ddcf15c3eb66b93d388add/src/read.c#L292-L309)
 
 Book information can preview a PNG, JPEG or GIF declared by EXTH 201 in the
 primary MOBI header, when the record and image dimensions meet Reader's

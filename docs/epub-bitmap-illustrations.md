@@ -30,3 +30,14 @@ limit. Animated, extended and otherwise unsupported WebP variants are not
 accepted. The decoder's internal memory behavior, malformed inputs, real-book
 appearance, and exact KOReader cover behavior remain unverified; this candidate
 has not yet been behaviorally tested in simulation or on Kindle.
+
+As a separate candidate, EPUB chapter illustrations may now use simple still
+VP8 or VP8L WebP. The image display and original-size inspection paths convert
+the supported payload to bounded grayscale PNG locally, while the original
+archive bytes, package path, XHTML and source anchors remain unchanged. The
+existing WebP decoder limits the compressed input to 4 MiB and the decoded
+pixel count to 4 million; converted PNGs over 4 MiB are rejected. Extended,
+animated, malformed or otherwise unsupported WebP images remain unavailable.
+The decoder's internal allocation behavior, exact KOReader comparison, and the
+appearance and performance on real EPUBs, in simulation and on Kindle remain
+unverified. This does not add WebP references inside the SVG renderer.

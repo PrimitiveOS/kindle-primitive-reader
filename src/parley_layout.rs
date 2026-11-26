@@ -5042,7 +5042,10 @@ fn load_image(
         .ok()?;
         return cache_vector(path, art);
     }
-    let bytes = book.resource(&path).ok()?;
+    let mut bytes = book.resource(&path).ok()?;
+    if let Some(converted) = supported_webp_as_png(&bytes).ok()? {
+        bytes = converted;
+    }
     let (w, h) = crate::epub_raster_dimensions(&bytes).ok()?;
     // A decode is transient. The cache retains only the display-sized grayscale preview.
     if u64::from(w) * u64::from(h) > MAX_IMAGE_PIXELS as u64 {
@@ -5061,7 +5064,22 @@ fn load_image(
     Some((path, grayscale_image(image), display))
 }
 
+// Keep the original package bytes and href unchanged; conversion is local to
+// the illustration consumer and uses the bounded still-WebP decoder.
+fn supported_webp_as_png(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
+    if !bytes.starts_with(b"RIFF") || bytes.get(8..12) != Some(b"WEBP") {
+        return Ok(None);
+    }
+    let converted = crate::comic::ImagePage::webp_as_png(bytes)?;
+    if converted.len() as u64 > crate::comic::MAX_WEBP_BYTES {
+        return Err("The converted WebP illustration exceeds Reader's size limit".into());
+    }
+    Ok(Some(converted))
+}
+
 pub(crate) fn original_illustration(bytes: &[u8]) -> Result<ImagePage> {
+    let converted = supported_webp_as_png(bytes)?;
+    let bytes = converted.as_deref().unwrap_or(bytes);
     if crate::gif_image::has_signature(bytes) {
         return ImagePage::decode_gif(bytes);
     }

@@ -2,11 +2,13 @@
 //! the asynchronous lifecycle and storage-epoch handoff are connected.
 #![allow(dead_code)]
 
+use std::collections::BTreeMap;
 use std::fs::{self, File, Metadata};
 use std::io::{self, Read};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
@@ -51,10 +53,12 @@ struct Entry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct FolderProof {
+pub(crate) struct FolderProof {
     root: PathBuf,
     inventory: Vec<Entry>,
     digest: [u8; 32],
+    legacy_identity: u64,
+    members: Arc<BTreeMap<String, Arc<[u8]>>>,
 }
 
 fn check(cancel: &AtomicBool) -> io::Result<()> {
@@ -267,7 +271,7 @@ fn inventory(root: &File, cancel: &AtomicBool) -> io::Result<Vec<Entry>> {
 
 impl FolderProof {
     /// Caller must hold the storage lease throughout capture and layout.
-    pub(super) fn capture(marker: &Path, cancel: &AtomicBool) -> io::Result<Self> {
+    pub(crate) fn capture(marker: &Path, cancel: &AtomicBool) -> io::Result<Self> {
         if !crate::epub_members::is_folder_book(marker) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -283,6 +287,9 @@ impl FolderProof {
         let mut digest = Context::new(&SHA256);
         digest.update(b"PrimitiveOS folder EPUB proof v1\0");
         let mut buffer = [0u8; BUFFER_SIZE];
+        let mut members = BTreeMap::new();
+        let mut legacy = Vec::new();
+        let mut legacy_total = 0u64;
         for entry in &before {
             check(cancel)?;
             digest.update(&(entry.path.len() as u64).to_le_bytes());
@@ -299,6 +306,10 @@ impl FolderProof {
                 ));
             }
             let mut count = 0u64;
+            let mut bytes = Vec::with_capacity(entry.stamp.len as usize);
+            let include_legacy = !entry.path.split('/').any(|part| part.starts_with('.'));
+            let mut member_id =
+                crate::library::fingerprint_prefix(entry.stamp.len, entry.path.as_bytes());
             loop {
                 check(cancel)?;
                 let n = file.read(&mut buffer)?;
@@ -312,16 +323,38 @@ impl FolderProof {
                         io::Error::other("Folder EPUB member changed during verification")
                     })?;
                 digest.update(&buffer[..n]);
+                bytes.extend_from_slice(&buffer[..n]);
+                if include_legacy {
+                    member_id = crate::library::fingerprint_update(member_id, &buffer[..n]);
+                }
             }
             if count != entry.stamp.len || Stamp::read(&file.metadata()?)? != entry.stamp {
                 return Err(io::Error::other(
                     "Folder EPUB member changed during verification",
                 ));
             }
+            if include_legacy {
+                legacy_total = legacy_total.checked_add(entry.stamp.len).ok_or_else(|| {
+                    io::Error::other("Folder EPUB exceeds verification byte limit")
+                })?;
+                legacy.push((PathBuf::from(&entry.path), member_id));
+            }
+            members.insert(entry.path.clone(), Arc::<[u8]>::from(bytes));
         }
         if inventory(&root_handle, cancel)? != before {
             return Err(io::Error::other("Folder EPUB changed during verification"));
         }
+        legacy.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let mut signature = Vec::with_capacity(legacy.len() * 8);
+        for (_, id) in legacy {
+            signature.extend_from_slice(&id.to_le_bytes());
+        }
+        let legacy_identity = crate::library::fingerprint(
+            &signature[..],
+            legacy_total,
+            b"EPUB directory",
+            signature.len() as u64,
+        )?;
         Ok(Self {
             root,
             inventory: before,
@@ -330,12 +363,28 @@ impl FolderProof {
                 .as_ref()
                 .try_into()
                 .map_err(io::Error::other)?,
+            legacy_identity,
+            members: Arc::new(members),
         })
+    }
+
+    pub(crate) fn legacy_identity(&self) -> u64 {
+        self.legacy_identity
+    }
+
+    pub(crate) fn contains_hidden_members(&self) -> bool {
+        self.inventory.iter().any(|entry| {
+            !entry.path.is_empty() && entry.path.split('/').any(|part| part.starts_with('.'))
+        })
+    }
+
+    pub(crate) fn members(&self) -> Arc<BTreeMap<String, Arc<[u8]>>> {
+        Arc::clone(&self.members)
     }
 
     /// Recheck every member before consuming a proof. This must run in a
     /// cancellable worker, not as an unbounded foreground source lookup.
-    pub(super) fn revalidate(&self, marker: &Path, cancel: &AtomicBool) -> io::Result<()> {
+    pub(crate) fn revalidate(&self, marker: &Path, cancel: &AtomicBool) -> io::Result<()> {
         if !crate::epub_members::is_folder_book(marker)
             || marker
                 .parent()
