@@ -19,14 +19,22 @@ The adjacent-owner and retained-carriage-return behavior follows the
 
 Native `<pre>` defaults to preserved, non-wrapping whitespace before the CSS
 cascade; explicit author or user `white-space` declarations still take priority.
-For a bounded horizontal LTR ASCII passage with publisher styles disabled, no
-user CSS, one text owner, no complex layout or indent, and an actual consistently
-measured space glyph, Reader can apply default eight-space tab stops without
-changing source characters or caret offsets. It applies the same cluster advances
-to line fitting, drawing and hit-testing, and keeps the old path if a line would
-overflow or the mapping cannot be proved. Publisher/user `tab-size` overrides,
-wrapped lines, RTL text, mixed styles and complex layouts are not yet supported
-by this path. This tab behavior and the native `<pre>` default require later
+For a bounded horizontal LTR ASCII passage with publisher styles disabled, one
+text owner, a single shaped font run without substitution or positioning tables,
+no complex layout or indent, a measurable zero glyph and an actual consistently
+measured space glyph, Reader can apply tab
+stops without changing source characters or caret offsets. The default is eight
+spaces. Strictly validated user CSS may set
+an inherited numeric `tab-size` from 0 to 32, or use `inherit`, `initial`, and
+`unset`; unsupported values and pseudo-element declarations are rejected. The
+stop threshold uses the font's nominal zero-glyph advance. The same cluster advances
+drive line fitting, drawing and hit-testing. Reader keeps the old path if a line
+would overflow or the mapping cannot be proved. Publisher
+`tab-size` overrides, lengths, font-feature overrides, wrapped lines, RTL text,
+mixed styles and complex layouts are not yet supported by this path. Many fonts
+have substitution or positioning tables and therefore fall back; matching the
+exact standalone zero shaping with the active language and features remains
+future work. This tab behavior and the native `<pre>` default require later
 simulator and device validation.
 
 A snapshot is captured for direct text and a bounded set of inline elements

@@ -8,6 +8,16 @@ carry the repository's required notice and remain subject to the existing
 distribution and license review. The patch uses the existing Skrifa 0.44.0
 dependency version for the selected font instance.
 
+Reader can opt into bounded numeric tab stops for simple, unwrapped LTR ASCII
+text with one font run, no substitution/positioning tables and a measurable
+nominal zero-glyph metric. The original
+characters and byte offsets remain unchanged, while line measurement, drawing
+and hit-testing share the adjusted cluster spacing. Reader
+uses this only for strictly validated user CSS with publisher styling disabled
+and without font-variant or ligature overrides;
+unsupported content retains the previous behavior. Behavioral validation is
+still pending.
+
 The ranged builder's optional callback receives the original UTF-8 offset of
 an isolated U+00AD. When eligible, the line breaker admits that boundary only
 if the selected face's hyphen advance fits. The committed line paints that

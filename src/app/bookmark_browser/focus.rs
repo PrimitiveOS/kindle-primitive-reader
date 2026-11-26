@@ -4,7 +4,6 @@ use crate::library::{Bookmark, Highlight};
 use crate::session::SearchLayoutRecipe;
 use primitive_app::Change;
 use primitive_ui::{BODY, CAPTION, Canvas, Input, Rect};
-use std::collections::BTreeSet;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -13,10 +12,10 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 const MAX_MARKS: usize = 512;
-const MAX_CHAPTERS: usize = 8;
 const MAX_ROWS: usize = 4096;
 const MAX_SNAPSHOT: usize = 2 * 1024 * 1024;
 const TICK: Duration = Duration::from_millis(80);
+const PAINT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 enum Mark {
@@ -27,6 +26,10 @@ struct Entry {
     ordinal: usize,
     chapter: usize,
     mark: Mark,
+}
+enum Message {
+    Progress { checked: usize, total: usize },
+    Done(Result<Option<usize>, ()>),
 }
 struct Guard(Arc<AtomicBool>);
 impl Drop for Guard {
@@ -41,7 +44,10 @@ pub(in crate::app) struct Focus {
     recipe: Arc<SearchLayoutRecipe>,
     rows: Vec<RowKey>,
     entries: Arc<Vec<Entry>>,
-    rx: mpsc::Receiver<Result<Option<usize>, ()>>,
+    rx: mpsc::Receiver<Message>,
+    checked: usize,
+    total: usize,
+    next_paint: Instant,
     cancel: Arc<AtomicBool>,
     deadline: Instant,
 }
@@ -103,7 +109,6 @@ impl Reader {
             return false;
         };
         let mut entries = Vec::new();
-        let mut chapters = BTreeSet::new();
         let mut bytes = 0usize;
         for (ordinal, row) in self.bookmark_browser.rows.iter().enumerate() {
             let RowKey::Mark(key) = row else {
@@ -160,13 +165,12 @@ impl Reader {
                 Some(size) if size <= MAX_SNAPSHOT => size,
                 _ => return false,
             };
-            chapters.insert(chapter);
             entries.push(Entry {
                 ordinal,
                 chapter,
                 mark,
             });
-            if entries.len() > MAX_MARKS || chapters.len() > MAX_CHAPTERS {
+            if entries.len() > MAX_MARKS {
                 return false;
             }
         }
@@ -186,6 +190,7 @@ impl Reader {
         let worker_recipe = recipe.clone();
         let worker_entries = entries.clone();
         let current = origin.position.clone();
+        let chapter_total = active.reading.probe.chapter_count();
         let (tx, rx) = mpsc::sync_channel(1);
         let spawn = std::thread::Builder::new()
             .name("bookmark-focus".into())
@@ -203,8 +208,22 @@ impl Reader {
                         worker_entries.iter().map(|entry| entry.chapter).collect();
                     chapters.sort_unstable();
                     chapters.dedup();
+                    chapters.retain(|chapter| *chapter < chapter_total);
+                    // KOReader focuses near the current page in its filtered list.
+                    // Prefer the current and subsequent chapters; only if none
+                    // resolves, visit preceding chapters from nearest to farthest.
+                    chapters.sort_unstable_by_key(|&chapter| {
+                        (chapter < current.chapter, chapter.abs_diff(current.chapter))
+                    });
+                    let total = chapters.len();
                     let mut best: Option<((bool, usize, usize, usize), usize)> = None;
-                    for chapter in chapters {
+                    for (checked, chapter) in chapters.into_iter().enumerate() {
+                        // A preceding page in the current chapter beats every
+                        // earlier chapter once all later chapters are exhausted.
+                        if chapter < current.chapter && best.is_some() {
+                            break;
+                        }
+                        let _ = tx.try_send(Message::Progress { checked, total });
                         if worker_cancel.load(Ordering::Relaxed) {
                             return Err(());
                         }
@@ -274,12 +293,20 @@ impl Reader {
                                 best = Some((key, entry.ordinal));
                             }
                         }
+                        // The nearest eligible chapter has been exhausted; any
+                        // unvisited chapter is strictly farther in reading order.
+                        if best
+                            .as_ref()
+                            .is_some_and(|(key, _)| !key.0 || chapter < current.chapter)
+                        {
+                            break;
+                        }
                     }
                     Ok(best.map(|(_, ordinal)| ordinal))
                 };
                 let result = run();
                 if !worker_cancel.load(Ordering::Relaxed) {
-                    let _ = tx.send(result);
+                    let _ = tx.send(Message::Done(result));
                 }
             });
         if spawn.is_err() {
@@ -294,6 +321,9 @@ impl Reader {
             rows,
             entries,
             rx,
+            checked: 0,
+            total: 0,
+            next_paint: Instant::now() + PAINT,
             cancel: cancelled,
             deadline: Instant::now() + TICK,
         });
@@ -301,9 +331,9 @@ impl Reader {
     }
 
     pub(in crate::app) fn draw_bookmark_focus(&self, canvas: &mut Canvas) {
-        if self.bookmark_focus.is_none() {
+        let Some(focus) = &self.bookmark_focus else {
             return;
-        }
+        };
         let (panel, cancel) = panel(self);
         canvas.popup(panel);
         let vi = !self.controls.interface_language.is_english();
@@ -316,13 +346,20 @@ impl Reader {
             },
             BODY.bold(),
         );
+        let status = if focus.total == 0 {
+            if vi {
+                "Đang chuẩn bị".to_owned()
+            } else {
+                "Preparing".to_owned()
+            }
+        } else if vi {
+            format!("Đã kiểm tra {} / {} chương", focus.checked, focus.total)
+        } else {
+            format!("Checked {} of {} chapters", focus.checked, focus.total)
+        };
         canvas.text(
             Rect::new(panel.x + 36, panel.y + 100, panel.w - 72, 64),
-            if vi {
-                "Đang kiểm tra các chương"
-            } else {
-                "Checking chapters"
-            },
+            &status,
             CAPTION,
         );
         canvas.button(cancel, if vi { "Hủy" } else { "Cancel" }, false, false);
@@ -349,7 +386,18 @@ impl Reader {
             return None;
         }
         let result = match focus.rx.try_recv() {
-            Ok(result) => result,
+            Ok(Message::Done(result)) => result,
+            Ok(Message::Progress { checked, total }) => {
+                focus.checked = checked.min(total);
+                focus.total = total;
+                focus.deadline = now + TICK;
+                let repaint = now >= focus.next_paint;
+                if repaint {
+                    focus.next_paint = now + PAINT;
+                }
+                self.bookmark_focus = Some(focus);
+                return repaint.then_some(Change::Partial);
+            }
             Err(mpsc::TryRecvError::Empty) => {
                 focus.deadline = now + TICK;
                 self.bookmark_focus = Some(focus);

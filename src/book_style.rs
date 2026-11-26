@@ -647,8 +647,10 @@ pub(crate) struct Style {
     pub writing_mode: WritingMode,
     /// Whether spacing-sensitive rendering is requested by HTML pre or CSS.
     pub preformatted_spaces: bool,
-    /// Only built-in defaults are active, so no unsupported user tab-size can apply.
+    /// Publisher CSS is disabled and user CSS is strictly validated.
     pub(crate) simple_default_tab_stops: bool,
+    /// Inherited numeric CSS tab size, measured in the block's spaces.
+    pub(crate) tab_size_spaces: f32,
 }
 
 impl Default for Style {
@@ -728,6 +730,7 @@ impl Default for Style {
             writing_mode: WritingMode::Horizontal,
             preformatted_spaces: false,
             simple_default_tab_stops: false,
+            tab_size_spaces: 8.0,
         }
     }
 }
@@ -748,7 +751,6 @@ impl Style {
 #[derive(Default)]
 pub(crate) struct BookStyle {
     author_inline: bool,
-    user_css_present: bool,
     rules: Vec<Rule>,
     base_rules: Vec<Rule>,
     user_rules: Vec<Rule>,
@@ -762,7 +764,6 @@ pub(crate) struct BookStyle {
 impl BookStyle {
     pub fn with_user_css(mut self, snapshot: &crate::user_styles::Snapshot) -> crate::Result<Self> {
         self.layout_tweaks = snapshot.layout_tweaks();
-        self.user_css_present = !snapshot.css().is_empty();
         // The built-in paragraph presets have a measured geometry path.
         // Keep arbitrary user CSS under its existing validation rules.
         for css in self.layout_tweaks.paragraph_rules() {
@@ -1125,7 +1126,7 @@ impl BookStyle {
             cjk_tailored: self.layout_tweaks.cjk_tailored,
             ignore_table_hints: !self.author_inline || self.layout_tweaks.ignore_table_hints,
             native_table_widths: self.layout_tweaks.native_table_widths,
-            simple_default_tab_stops: !self.author_inline && !self.user_css_present,
+            simple_default_tab_stops: !self.author_inline,
             ..Style::default()
         };
         let mut pseudo_rules = pseudo::Rules::new(self);
@@ -1449,6 +1450,7 @@ impl BookStyle {
                         style.preformatted_spaces = mode.preserves_spaces();
                         style.white_space = *mode;
                     }
+                    Property::TabSize(value) => style.tab_size_spaces = *value,
                     Property::Border(side, value)
                         if matches!(
                             element.tag.as_str(),
@@ -2377,7 +2379,8 @@ const LAST_LINE_ALIGNMENT: usize = 64;
 const TEXT_TRANSFORM: usize = 65;
 const OPTICAL_SIZING: usize = 66;
 const RUBY_POSITION: usize = 67;
-const CASCADE_PROPERTY_COUNT: usize = 68;
+const TAB_SIZE: usize = 68;
+const CASCADE_PROPERTY_COUNT: usize = 69;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2455,6 +2458,7 @@ fn choose<'a>(
             Property::LineBreak(_, _) => 7,
             Property::WordBreak(_) => 8,
             Property::WhiteSpace(_) => 53,
+            Property::TabSize(_) => TAB_SIZE,
             Property::Hyphens(_) => 9,
             Property::WritingMode(_) => 10,
             Property::Width(ImageLength::FitContent) if !accept_fit => continue,
@@ -2587,6 +2591,7 @@ enum Property {
     ),
     Direction(parley::BaseDirection),
     LetterSpacing(CssLength),
+    TabSize(f32),
     LineBreak(Option<LineBreak>, bool),
     WordBreak(WordBreak),
     WhiteSpace(WhiteSpace),
@@ -3151,6 +3156,13 @@ impl<'i> DeclarationParser<'i> for Properties {
                         _ => return Err(ParseError::unexpected_token()),
                     },
                 ),
+                "tab-size" => {
+                    let value = input.expect_number()?;
+                    if !value.is_finite() || !(0.0..=32.0).contains(&value) {
+                        return Err(ParseError::unexpected_token());
+                    }
+                    Property::TabSize(value)
+                }
                 "word-break" => {
                     Property::WordBreak(match input.expect_ident()?.to_ascii_lowercase().as_str() {
                         "normal" => WordBreak::Normal,

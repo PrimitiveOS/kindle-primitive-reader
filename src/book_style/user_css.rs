@@ -49,6 +49,7 @@ impl Reset {
                         | RUBY_POSITION
                         | DIRECTION
                         | LETTER_SPACING
+                        | TAB_SIZE
                         | VARIANT_CAPS
                         | VARIANT_NUMERIC
                         | VARIANT_EAST_ASIAN
@@ -85,6 +86,7 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "font-optical-sizing" => vec![OPTICAL_SIZING],
         "direction" => vec![DIRECTION],
         "letter-spacing" => vec![LETTER_SPACING],
+        "tab-size" => vec![TAB_SIZE],
         "font-variant" => vec![
             COMMON_LIGATURES,
             LIGATURE_EXTRAS,
@@ -170,6 +172,7 @@ pub(super) fn apply_reset(
         VARIANT_POSITION => style.variant_position = value.variant_position,
         VARIANT_HISTORICAL => style.variant_historical = value.variant_historical,
         LETTER_SPACING => style.letter_spacing = value.letter_spacing,
+        TAB_SIZE => style.tab_size_spaces = value.tab_size_spaces,
         DIRECTION => {
             style.direction = if reset.parent(DIRECTION) {
                 parent.direction

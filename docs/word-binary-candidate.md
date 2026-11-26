@@ -23,8 +23,10 @@ The Word analysis currently attempts only the original, nonextended Word 97
 FIB. It rejects templates, glossary documents, encryption, declared pictures,
 auxiliary stories, fields and complex-property CLX records. The main text is
 limited to 4 million UTF-16 code units, with at most 8,192 non-overlapping
-pieces; compressed pieces are restricted to ASCII and uncompressed pieces to
-valid UTF-16. Unsupported controls are rejected instead of guessed.
+pieces; compressed characters use the MS-DOC FcCompressed byte-to-Unicode
+mapping and uncompressed pieces require valid UTF-16. Unsupported controls are
+rejected instead of guessed. The new non-ASCII compressed path has not been
+compared with real documents, KOReader or Kindle.
 
 Before text can be converted, a restrictive visibility gate requires complete
 character and paragraph FKP coverage, nonoverlapping property pages and text,
@@ -48,6 +50,7 @@ Primary references: [MS-CFB header](https://learn.microsoft.com/en-us/openspecs/
 [MS-CFB mini FAT](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cfb/c5d235f7-b73c-4ec5-bf8d-5c08306cd023),
 [Word FIB](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/26fb6c06-4e5c-4778-ab4e-edbf26a545bb),
 [text retrieval](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/01d5d8c4-cf9c-4ef9-80fd-439e763cfe01),
+[compressed characters](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/aa2e55a2-f4f2-4795-bab5-6d9d7a0ed249),
 [character formatting](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/be58bf9c-d1d3-40cc-91ee-36452d7939b2),
 [default character style](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/7022285b-9621-42e9-ad4d-4e02c115ef18),
 [character FKP](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/f5f10f04-d4cc-4ebd-86df-0de6d227675c)

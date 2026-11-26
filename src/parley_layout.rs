@@ -4569,11 +4569,18 @@ fn shape_paragraph(
         );
     }
     let Some(width) = width else { return layout };
-    // Default CSS tab stops, only where no publisher or user declaration can
-    // override them. The vendored method commits nothing unless every shaped
-    // atom maps exactly and each unwrapped line fits this viewport.
+    // Numeric tab stops are admitted only without publisher styles, using
+    // strictly validated user CSS. Commit nothing unless every shaped atom
+    // maps exactly and each unwrapped line fits this viewport.
     if !settings.publisher_styles
         && style.simple_default_tab_stops
+        && style.common_ligatures
+        && style.ligature_extras == LigatureExtras::default()
+        && style.variant_caps == VariantCaps::Normal
+        && style.variant_numeric == VariantNumeric::default()
+        && style.variant_east_asian == VariantEastAsian::default()
+        && style.variant_position == VariantPosition::Normal
+        && !style.variant_historical
         && style.preformatted_spaces
         && matches!(
             style.white_space,
@@ -4604,7 +4611,7 @@ fn shape_paragraph(
             .iter()
             .all(|run| run.element == block.element)
     {
-        let _ = layout.set_simple_default_tab_stops(&block.text, width as f32);
+        let _ = layout.set_simple_tab_stops(&block.text, width as f32, style.tab_size_spaces);
     }
     let exact = pass.exact_break();
     if contour.is_some() || exact.is_some() || matches!(pass, first_line::Pass::Measure) {

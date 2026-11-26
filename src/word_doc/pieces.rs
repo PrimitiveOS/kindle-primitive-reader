@@ -28,6 +28,38 @@ fn slice(bytes: &[u8], at: usize, length: usize) -> Result<&[u8], String> {
         .ok_or_else(|| "Word range is outside its stream".into())
 }
 
+/// MS-DOC FcCompressed: an eight-bit Unicode value with specified exceptions.
+/// This is not a locale-selected code page.
+fn compressed_unit(byte: u8) -> u16 {
+    match byte {
+        0x82 => 0x201a,
+        0x83 => 0x0192,
+        0x84 => 0x201e,
+        0x85 => 0x2026,
+        0x86 => 0x2020,
+        0x87 => 0x2021,
+        0x88 => 0x02c6,
+        0x89 => 0x2030,
+        0x8a => 0x0160,
+        0x8b => 0x2039,
+        0x8c => 0x0152,
+        0x91 => 0x2018,
+        0x92 => 0x2019,
+        0x93 => 0x201c,
+        0x94 => 0x201d,
+        0x95 => 0x2022,
+        0x96 => 0x2013,
+        0x97 => 0x2014,
+        0x98 => 0x02dc,
+        0x99 => 0x2122,
+        0x9a => 0x0161,
+        0x9b => 0x203a,
+        0x9c => 0x0153,
+        0x9f => 0x0178,
+        _ => u16::from(byte),
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct Piece {
     /// Character position interval in UTF-16 code units.
@@ -190,12 +222,7 @@ pub(super) fn analyze(mut compound: Compound) -> Result<Analyzed, String> {
         let payload = slice(&word, start, bytes_len)?;
         let first_unit = units.len();
         if compressed {
-            // The compressed non-ASCII mapping depends on Word's character
-            // properties. Until those are proven, accept ASCII only.
-            if payload.iter().any(|b| *b >= 128) {
-                return Err("Unsupported compressed Word character mapping".into());
-            }
-            units.extend(payload.iter().map(|&b| u16::from(b)));
+            units.extend(payload.iter().copied().map(compressed_unit));
         } else {
             units.extend(
                 payload
