@@ -4569,6 +4569,43 @@ fn shape_paragraph(
         );
     }
     let Some(width) = width else { return layout };
+    // Default CSS tab stops, only where no publisher or user declaration can
+    // override them. The vendored method commits nothing unless every shaped
+    // atom maps exactly and each unwrapped line fits this viewport.
+    if !settings.publisher_styles
+        && style.simple_default_tab_stops
+        && style.preformatted_spaces
+        && matches!(
+            style.white_space,
+            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::BreakSpaces
+        )
+        && matches!(
+            settings.alignment,
+            crate::TextAlignment::Publisher | crate::TextAlignment::Start
+        )
+        && style
+            .alignment
+            .is_none_or(|alignment| matches!(alignment, Alignment::Start | Alignment::Left))
+        && style.last_line_alignment.is_none()
+        && matches!(pass, first_line::Pass::Ordinary)
+        && contour.is_none()
+        && images.is_empty()
+        && block.images.is_empty()
+        && ruby.is_empty()
+        && block.ruby.is_empty()
+        && block.generated.is_empty()
+        && block.bidi_controls.is_empty()
+        && block.first_letter.is_none()
+        && style.first_line.is_none()
+        && indent.common == 0
+        && indent.amount == 0.0
+        && block
+            .styled_text
+            .iter()
+            .all(|run| run.element == block.element)
+    {
+        let _ = layout.set_simple_default_tab_stops(&block.text, width as f32);
+    }
     let exact = pass.exact_break();
     if contour.is_some() || exact.is_some() || matches!(pass, first_line::Pass::Measure) {
         let mut breaker = layout.break_lines();

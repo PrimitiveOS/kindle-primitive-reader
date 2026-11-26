@@ -118,6 +118,7 @@ mod tcr;
 mod text_flow;
 mod tiff_image;
 mod typography_language;
+mod word_doc;
 pub use typography_language::{TypographyLanguages, TypographyLocale};
 mod user_hyphenation;
 mod user_styles;

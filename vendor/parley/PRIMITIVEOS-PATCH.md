@@ -2,8 +2,11 @@
 
 This directory contains Parley 0.12.0, from the published Rust crate and
 [upstream revision 6e1143dda817360dd3a2a64f9133c6e5dfabd881](https://github.com/linebender/parley/tree/6e1143dda817360dd3a2a64f9133c6e5dfabd881/parley).
-The upstream MIT and Apache-2.0 license files apply. The patch uses the existing
-Skrifa 0.44.0 dependency version for the selected font instance.
+The upstream MIT and Apache-2.0 license files and notices remain in place for
+the upstream code. Project additions, including the tab-stop implementation,
+carry the repository's required notice and remain subject to the existing
+distribution and license review. The patch uses the existing Skrifa 0.44.0
+dependency version for the selected font instance.
 
 The ranged builder's optional callback receives the original UTF-8 offset of
 an isolated U+00AD. When eligible, the line breaker admits that boundary only

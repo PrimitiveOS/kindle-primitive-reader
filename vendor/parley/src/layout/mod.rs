@@ -10,6 +10,7 @@ mod line_break;
 mod optical_margins;
 mod run;
 mod spacing;
+mod tab_stops;
 pub(crate) mod style_metrics;
 mod whitespace;
 mod word_spacing;

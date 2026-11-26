@@ -57,6 +57,7 @@ pub(crate) enum Format {
     Html,
     Htmlz,
     Archive,
+    Doc,
     Docx,
     Docm,
     Odt,
@@ -76,6 +77,7 @@ impl Format {
             "txt" | "log" => Some(Self::Text),
             "htm" | "html" | "xht" | "xhtml" | "xml" => Some(Self::Html),
             "htmlz" => Some(Self::Htmlz),
+            "doc" => Some(Self::Doc),
             "docx" => Some(Self::Docx),
             "docm" => Some(Self::Docm),
             "odt" => Some(Self::Odt),
@@ -174,6 +176,7 @@ impl Document {
             Format::Fb2 => MAX_FB2_INPUT,
             Format::Htmlz => MAX_HTMLZ_INPUT,
             Format::Archive => MAX_HTMLZ_INPUT,
+            Format::Doc => crate::word_doc::MAX_INPUT,
             Format::Docx | Format::Docm => crate::docx::MAX_INPUT,
             Format::Odt => crate::odt::MAX_INPUT,
             Format::Rtf => crate::rtf::MAX_INPUT,
@@ -198,6 +201,11 @@ impl Document {
         }
         if format == Format::Htmlz {
             return read_htmlz(file, metadata.len(), fallback_title);
+        }
+        if format == Format::Doc {
+            let bytes = read_bounded(file, limit)?;
+            let xhtml = crate::word_doc::convert(&bytes)?;
+            return html_document(&xhtml, fallback_title);
         }
         if format == Format::Docx {
             return crate::docx::open(BufReader::new(file), metadata.len(), fallback_title);
@@ -294,6 +302,7 @@ impl Document {
             Format::Fb2 => fb2_document(input, fallback_title),
             Format::Htmlz
             | Format::Archive
+            | Format::Doc
             | Format::Docx
             | Format::Docm
             | Format::Odt

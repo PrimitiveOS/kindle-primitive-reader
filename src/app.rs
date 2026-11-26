@@ -1036,6 +1036,8 @@ pub struct Reader {
     book_map_raw_history: Option<reflow_book_map_history::Verification>,
     book_map_raw_counts: Option<reflow_book_map_raw_counts::Verification>,
     page_bookmark_search: Option<page_bookmark_navigation::Search>,
+    bookmark_focus: Option<bookmark_browser::focus::Focus>,
+    bookmark_focus_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     folder_resume_gate: Option<folder_lifecycle::Gate>,
     folder_activation: Option<folder_activation::Activation>,
     folder_activation_retry: Option<Instant>,
@@ -1322,6 +1324,8 @@ impl Reader {
             book_map_raw_history: None,
             book_map_raw_counts: None,
             page_bookmark_search: None,
+            bookmark_focus: None,
+            bookmark_focus_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             folder_resume_gate: None,
             folder_activation: None,
             folder_activation_retry: None,
@@ -2200,6 +2204,7 @@ impl Reader {
     fn show(&mut self, screen: Screen) {
         self.defer_folder_activation();
         self.page_bookmark_search = None;
+        self.bookmark_focus = None;
         self.bookmark_browser.clear_confirmation();
         self.menu_search.clear_overlays();
         self.embedded_font_report = None;
@@ -10202,6 +10207,7 @@ impl App for Reader {
         self.draw_menu_search_preview(canvas);
         self.draw_bookmark_confirmation(canvas);
         self.draw_page_bookmark_search(canvas);
+        self.draw_bookmark_focus(canvas);
         self.draw_folder_resume_gate(canvas);
         self.draw_folder_open(canvas);
     }
@@ -10248,6 +10254,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.bookmark_focus_input(input) {
+            return change;
+        }
         if let Some(change) = self.folder_open_input(input) {
             return change;
         }
@@ -10391,6 +10400,9 @@ impl App for Reader {
     }
 
     fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        if self.bookmark_focus.is_some() {
+            return Change::None;
+        }
         if self.folder_open.is_some() {
             return Change::None;
         }
@@ -10534,6 +10546,14 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if input == Input::Sleep {
+            self.bookmark_focus = None;
+        }
+        if !matches!(input, Input::Sleep | Input::Wake)
+            && let Some(change) = self.bookmark_focus_input(input)
+        {
+            return change;
+        }
         if let Some(change) = self.folder_open_input(input) {
             return change;
         }
@@ -11428,6 +11448,11 @@ impl App for Reader {
                     .and_then(reflow_book_map_raw_counts::Verification::deadline),
             )
             .chain(
+                self.bookmark_focus
+                    .as_ref()
+                    .map(bookmark_browser::focus::Focus::deadline),
+            )
+            .chain(
                 self.page_bookmark_search
                     .as_ref()
                     .map(page_bookmark_navigation::Search::deadline),
@@ -11479,6 +11504,9 @@ impl App for Reader {
         }
         self.retry_folder_activation(now);
         if let Some(change) = self.poll_folder_activation(now) {
+            return change;
+        }
+        if let Some(change) = self.poll_bookmark_focus(now) {
             return change;
         }
         if let Some(change) = self.poll_page_bookmark_search(now) {
@@ -11741,6 +11769,7 @@ impl App for Reader {
         self.book_map_raw_history = None;
         self.book_map_raw_counts = None;
         self.page_bookmark_search = None;
+        self.bookmark_focus = None;
         self.embedded_font_report = None;
         self.eager_typography.cancel();
         self.screen_page_worker.cancel();
@@ -11758,6 +11787,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.bookmark_focus = None;
         self.cancel_folder_open();
         self.folder_activation = None;
         self.folder_activation_retry = None;

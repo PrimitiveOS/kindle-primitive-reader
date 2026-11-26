@@ -17,6 +17,18 @@ simulator or on Kindle and must not be treated as validated or released.
 The adjacent-owner and retained-carriage-return behavior follows the
 [CSS Text white-space processing rules](https://www.w3.org/TR/2024/CRD-css-text-3-20240930/#white-space-processing).
 
+Native `<pre>` defaults to preserved, non-wrapping whitespace before the CSS
+cascade; explicit author or user `white-space` declarations still take priority.
+For a bounded horizontal LTR ASCII passage with publisher styles disabled, no
+user CSS, one text owner, no complex layout or indent, and an actual consistently
+measured space glyph, Reader can apply default eight-space tab stops without
+changing source characters or caret offsets. It applies the same cluster advances
+to line fitting, drawing and hit-testing, and keeps the old path if a line would
+overflow or the mapping cannot be proved. Publisher/user `tab-size` overrides,
+wrapped lines, RTL text, mixed styles and complex layouts are not yet supported
+by this path. This tab behavior and the native `<pre>` default require later
+simulator and device validation.
+
 A snapshot is captured for direct text and a bounded set of inline elements
 when the concatenated text normalizes to the canonical block exactly. Inline
 links retain their existing canonical target ranges; raw glyph hits map back to

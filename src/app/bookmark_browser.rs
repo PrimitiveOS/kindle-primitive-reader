@@ -2,6 +2,7 @@
 mod bulk_marks;
 mod confirmation;
 mod edit_note;
+pub(super) mod focus;
 mod metadata;
 mod metadata_view;
 use super::{
@@ -1015,6 +1016,9 @@ impl Reader {
                 }
             }
             Command::FocusCurrentPage => {
+                if self.start_bookmark_focus() {
+                    return Ok(());
+                }
                 // Use only filtered, already displayed rows of the open book.
                 // Sorting the result list must not affect the target.
                 let target = (|| {

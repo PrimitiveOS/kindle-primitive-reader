@@ -647,6 +647,8 @@ pub(crate) struct Style {
     pub writing_mode: WritingMode,
     /// Whether spacing-sensitive rendering is requested by HTML pre or CSS.
     pub preformatted_spaces: bool,
+    /// Only built-in defaults are active, so no unsupported user tab-size can apply.
+    pub(crate) simple_default_tab_stops: bool,
 }
 
 impl Default for Style {
@@ -725,6 +727,7 @@ impl Default for Style {
             hyphens: Hyphens::Auto,
             writing_mode: WritingMode::Horizontal,
             preformatted_spaces: false,
+            simple_default_tab_stops: false,
         }
     }
 }
@@ -745,6 +748,7 @@ impl Style {
 #[derive(Default)]
 pub(crate) struct BookStyle {
     author_inline: bool,
+    user_css_present: bool,
     rules: Vec<Rule>,
     base_rules: Vec<Rule>,
     user_rules: Vec<Rule>,
@@ -758,6 +762,7 @@ pub(crate) struct BookStyle {
 impl BookStyle {
     pub fn with_user_css(mut self, snapshot: &crate::user_styles::Snapshot) -> crate::Result<Self> {
         self.layout_tweaks = snapshot.layout_tweaks();
+        self.user_css_present = !snapshot.css().is_empty();
         // The built-in paragraph presets have a measured geometry path.
         // Keep arbitrary user CSS under its existing validation rules.
         for css in self.layout_tweaks.paragraph_rules() {
@@ -1120,6 +1125,7 @@ impl BookStyle {
             cjk_tailored: self.layout_tweaks.cjk_tailored,
             ignore_table_hints: !self.author_inline || self.layout_tweaks.ignore_table_hints,
             native_table_widths: self.layout_tweaks.native_table_widths,
+            simple_default_tab_stops: !self.author_inline && !self.user_css_present,
             ..Style::default()
         };
         let mut pseudo_rules = pseudo::Rules::new(self);
@@ -1145,7 +1151,13 @@ impl BookStyle {
             if element.tag == "a" {
                 style.link_ink = self.layout_tweaks.link_ink.map(|ink| ink as u8);
             }
-            style.preformatted_spaces |= element.tag == "pre";
+            if element.tag == "pre" {
+                // Native HTML default; later publisher or user declarations
+                // still override all three whitespace properties together.
+                style.white_space = WhiteSpace::Pre;
+                style.preformatted_spaces = true;
+                style.inline_nowrap = true;
+            }
             // Display is not inherited. Visibility is inherited independently of
             // ancestor suppression, so a visible descendant can restore paint.
             style.display = Display::native(&element.tag);

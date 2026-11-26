@@ -177,3 +177,6 @@ removal also removes their attached notes. The actual operation still
 revalidates the reviewed target snapshots and rolls back in-memory changes if
 persistence fails. These confirmation layouts and interactions still require
 simulation and Kindle validation.
+
+
+**Show current page** can focus the nearest matching mark in another chapter for a verified archive-backed reflow book. It checks the current position and candidate chapters in a cancellable background task, then rechecks the book, settings, results and saved marks before focusing the result. It does not move the reading position. To bound memory and work, this initial path handles at most 512 current-book marks, eight candidate chapters, 4,096 visible result rows and 2 MiB of mark snapshots. Larger result sets, unavailable source verification, and folder books retain the existing current-chapter focus. Cross-chapter highlights are not candidates yet. This implementation requires simulator and device validation.
