@@ -9,6 +9,7 @@ pub(crate) mod borders;
 pub(crate) mod flow;
 #[cfg(test)]
 mod flow_tests;
+mod media;
 mod semantic_type;
 use crate::float_layout::{Clear, Side};
 use flow::{Display, Visibility};
@@ -1672,10 +1673,7 @@ impl BookStyle {
         *remaining -= text.len();
         let mut parser = Parser::new(text.trim_start_matches('\u{feff}'));
         let mut imports_allowed = true;
-        for rule in StyleSheetParser::new(&mut parser, &mut SheetParser)
-            .take(MAX_RULES)
-            .flatten()
-        {
+        for rule in media::publisher_items(&mut parser) {
             match rule {
                 SheetItem::Import(href)
                     if imports_allowed && depth < MAX_IMPORT_DEPTH && *imports < MAX_IMPORTS =>
@@ -1729,6 +1727,7 @@ impl BookStyle {
                         faces.push(face);
                     }
                 }
+                SheetItem::MediaBoundary => imports_allowed = false,
                 _ => {}
             }
         }
@@ -2310,6 +2309,7 @@ enum SheetItem {
     Rule(Rule),
     Font(Vec<Declaration>),
     Import(String),
+    MediaBoundary,
 }
 
 enum SheetPrelude {

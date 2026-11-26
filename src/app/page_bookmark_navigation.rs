@@ -103,6 +103,7 @@ pub(super) struct Search {
     bookmarks_total: usize,
     marks_total: usize,
     include_highlights: bool,
+    preview: bool,
     chapter_total: usize,
     chapter_cursor: usize,
     chapter_paths: HashMap<String, usize>,
@@ -344,7 +345,7 @@ fn panel(reader: &Reader) -> (Rect, Rect) {
         width,
         height,
     );
-    let button = Rect::new(panel.x + (width - 240) / 2, panel.bottom() - 120, 240, 90);
+    let button = Rect::new(panel.x + (width - 240) / 2, panel.bottom() - 120, 240, 100);
     (panel, button)
 }
 
@@ -367,6 +368,27 @@ impl Reader {
         direction: Direction,
         include_highlights: bool,
         boundary: bool,
+    ) -> crate::Result<()> {
+        self.start_mark_search(direction, include_highlights, boundary, false)
+    }
+
+    pub(super) fn start_skim_mark_search(
+        &mut self,
+        direction: Direction,
+        boundary: bool,
+    ) -> crate::Result<()> {
+        if self.screen != Screen::Skim || self.skim.is_none() {
+            return Err("Skim is not open".into());
+        }
+        self.start_mark_search(direction, true, boundary, true)
+    }
+
+    fn start_mark_search(
+        &mut self,
+        direction: Direction,
+        include_highlights: bool,
+        boundary: bool,
+        preview: bool,
     ) -> crate::Result<()> {
         if self.page_bookmark_worker_busy.load(Ordering::Acquire) {
             return Err(self
@@ -465,6 +487,7 @@ impl Reader {
             bookmarks_total,
             marks_total,
             include_highlights,
+            preview,
             chapter_total,
             chapter_cursor: 0,
             chapter_paths: HashMap::new(),
@@ -1002,6 +1025,7 @@ impl Reader {
                         &target,
                         &search.original,
                         search.recipe.as_deref(),
+                        search.preview,
                     ),
                     None => Err("Folder book changed or cannot be safely checked".into()),
                 }
@@ -1011,10 +1035,11 @@ impl Reader {
                     &search.original,
                     search.recipe.as_deref(),
                     search.fixed_stamp.as_ref(),
+                    search.preview,
                 )
             };
             return Some(match result {
-                Ok(()) => Change::Full,
+                Ok(change) => change,
                 Err(error) => self.report(error),
             });
         }
@@ -1067,7 +1092,11 @@ impl Reader {
         target: &ReadingPosition,
         original: &HistoryLocation,
         expected_recipe: Option<&SearchLayoutRecipe>,
-    ) -> crate::Result<()> {
+        preview: bool,
+    ) -> crate::Result<Change> {
+        if preview && (self.screen != Screen::Skim || self.skim.is_none()) {
+            return Err("Skim is not open".into());
+        }
         let reading = &mut self.active.as_mut().ok_or("No open book")?.reading;
         if expected_recipe != Some(&reading.config.search_layout_recipe(&reading.probe))
             || staged.chapter != target.chapter
@@ -1084,12 +1113,15 @@ impl Reader {
         self.selection = None;
         self.result_selection = None;
         self.search_result = None;
+        if preview {
+            return Ok(self.skim_finish_shortcut(Some(original.position.clone())));
+        }
         self.show(Screen::Book);
         self.record_position();
         if self.current_history_location().as_ref() != Some(original) {
             self.push_history(original.clone());
         }
-        Ok(())
+        Ok(Change::Full)
     }
 
     fn commit_verified_page_bookmark(
@@ -1098,7 +1130,11 @@ impl Reader {
         original: &HistoryLocation,
         expected_recipe: Option<&SearchLayoutRecipe>,
         expected_fixed: Option<&FileStamp>,
-    ) -> crate::Result<()> {
+        preview: bool,
+    ) -> crate::Result<Change> {
+        if preview && (self.screen != Screen::Skim || self.skim.is_none()) {
+            return Err("Skim is not open".into());
+        }
         if let Some(fixed) = &self.fixed {
             let current = with_storage(|| {
                 let path = self.library.absolute_path(&fixed.entry.path)?;
@@ -1107,7 +1143,16 @@ impl Reader {
             if current.as_ref() != expected_fixed {
                 return Err("The bookmarked page changed; try again".into());
             }
-            return self.follow_fixed(target.page, None);
+            if preview {
+                self.fixed
+                    .as_mut()
+                    .ok_or("No open book")?
+                    .reading
+                    .jump_to(target.page, None)?;
+                return Ok(self.skim_finish_shortcut(Some(original.position.clone())));
+            }
+            self.follow_fixed(target.page, None)?;
+            return Ok(Change::Full);
         }
         let reading = &mut self.active.as_mut().ok_or("No open book")?.reading;
         let restored = Reading::restore_with_scroll_top(
@@ -1138,11 +1183,14 @@ impl Reader {
         self.selection = None;
         self.result_selection = None;
         self.search_result = None;
+        if preview {
+            return Ok(self.skim_finish_shortcut(Some(original.position.clone())));
+        }
         self.show(Screen::Book);
         self.record_position();
         if self.current_history_location().as_ref() != Some(original) {
             self.push_history(original.clone());
         }
-        Ok(())
+        Ok(Change::Full)
     }
 }

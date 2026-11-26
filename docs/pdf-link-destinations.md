@@ -9,6 +9,16 @@ Other unsupported or malformed position values retain the existing page-only
 fallback. Out-of-range or negative page numbers remain unavailable rather than
 being redirected to a different page.
 
+The local candidate also retains a resolved `/XYZ` point or `/FitR` rectangle
+position from a PDF Contents entry. Selecting that entry uses the existing
+positioned PDF jump, including the destination page's crop and intrinsic
+rotation; a missing or unsupported position still opens the page as before.
+This does not implement automatic `/FitR` zoom, nullable `/XYZ` coordinates,
+or positional DjVu and fixed-layout EPUB outlines. Page labels, saved
+bookmarks and source PDF bytes are unchanged. The Contents routing and its
+interaction with zoom, rotation, reading history and scrolling remain
+behaviorally unverified on the simulator and Kindle.
+
 Pinned KOReader uses MuPDF's link resolver. The reference accepts indexed local
 pages and parses and transforms `/FitR` rectangles. Reader's source test covers
 explicit and named rectangles, rotation, crop, invalid page numbers and an

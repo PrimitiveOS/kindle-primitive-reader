@@ -1,7 +1,5 @@
 //! Transient page preview over the current reading view.
 
-use std::collections::HashMap;
-
 use primitive_app::{App, Change};
 #[cfg(test)]
 use primitive_app::{HEIGHT, WIDTH};
@@ -9,10 +7,7 @@ use primitive_ui::{Canvas, Icon, Input, Rect, TextStyle};
 
 use super::bar_icons::{BOOKMARK, FIRST_PAGE, LAST_PAGE};
 use super::chapter_navigation::Direction;
-use super::{
-    Action, HistoryLocation, Reader, ReadingPosition, Screen, fixed_page_label,
-    reflow_mark_location,
-};
+use super::{Action, HistoryLocation, Reader, ReadingPosition, Screen, fixed_page_label};
 use crate::fixed_session::FixedJump;
 use crate::reading_controls::SkimPosition;
 use crate::session::ReadingViewport;
@@ -727,111 +722,16 @@ impl Reader {
     }
 
     fn skim_mark(&mut self, direction: Direction, boundary: bool) -> Change {
-        let before = self.current_position();
-        let Some(target) = self.skim_mark_destination(direction, boundary) else {
-            return self.report(match direction {
-                Direction::Previous => "No earlier saved mark",
-                Direction::Next => "No later saved mark",
-            });
-        };
-        match self.skim_apply_location(&target.into()) {
-            Ok(()) => self.skim_finish_shortcut(before),
+        if self.skim_turn_pending() {
+            return self.report("Wait for the page to finish turning");
+        }
+        match self.start_skim_mark_search(direction, boundary) {
+            Ok(()) => Change::Partial,
             Err(error) => self.report(error),
         }
     }
 
-    fn skim_mark_destination(
-        &self,
-        direction: Direction,
-        boundary: bool,
-    ) -> Option<ReadingPosition> {
-        let current = self.current_position()?;
-        let state = self.library.state(self.open_book_id()?)?;
-        let reflow = self.active.as_ref();
-        let saved_positions = state
-            .bookmarks
-            .iter()
-            .map(|bookmark| bookmark.position.clone());
-        let reflow_marks = state.highlights.iter().filter_map(|mark| {
-            let anchor = &mark.selection.start;
-            Some(ReadingPosition {
-                chapter: reflow?.reading.probe.chapter_index(&anchor.chapter)?,
-                page: 0,
-                anchor: Some(anchor.clone()),
-            })
-        });
-        let fixed_marks = state
-            .pdf_highlights
-            .iter()
-            .filter(|mark| {
-                self.fixed
-                    .as_ref()
-                    .is_some_and(|book| mark.page < book.reading.count())
-            })
-            .map(|mark| ReadingPosition {
-                chapter: 0,
-                page: mark.page,
-                anchor: None,
-            });
-        let mut layouts = HashMap::new();
-        let candidates = saved_positions
-            .chain(reflow_marks)
-            .chain(fixed_marks)
-            .filter_map(|mut position| {
-                let key = if let Some(book) = reflow {
-                    let chapter = position
-                        .anchor
-                        .as_ref()
-                        .and_then(|anchor| book.reading.probe.chapter_index(&anchor.chapter))
-                        .unwrap_or(position.chapter);
-                    if chapter >= book.reading.probe.chapter_count()
-                        || (direction == Direction::Previous && chapter > current.chapter)
-                        || (direction == Direction::Next && chapter < current.chapter)
-                    {
-                        return None;
-                    }
-                    reflow_mark_location(
-                        book,
-                        chapter,
-                        position.page,
-                        position.anchor.as_ref(),
-                        &mut layouts,
-                    )
-                } else {
-                    let fixed = self.fixed.as_ref()?;
-                    if position.chapter != 0
-                        || position.anchor.is_some()
-                        || position.page >= fixed.reading.count()
-                    {
-                        return None;
-                    }
-                    (0, position.page, 0, 0)
-                };
-                let page = (key.0, key.1);
-                let current_page = (current.chapter, current.page);
-                let is_beyond = match direction {
-                    Direction::Previous => page < current_page,
-                    Direction::Next => page > current_page,
-                };
-                if !is_beyond {
-                    return None;
-                }
-                position.chapter = key.0;
-                position.page = key.1;
-                Some((key, position))
-            });
-        match (direction, boundary) {
-            (Direction::Previous, false) | (Direction::Next, true) => {
-                candidates.max_by_key(|(key, _)| *key)
-            }
-            (Direction::Next, false) | (Direction::Previous, true) => {
-                candidates.min_by_key(|(key, _)| *key)
-            }
-        }
-        .map(|(_, position)| position)
-    }
-
-    fn skim_finish_shortcut(&mut self, before: Option<ReadingPosition>) -> Change {
+    pub(super) fn skim_finish_shortcut(&mut self, before: Option<ReadingPosition>) -> Change {
         if self.current_position() == before {
             return Change::Partial;
         }

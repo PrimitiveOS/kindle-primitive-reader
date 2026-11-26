@@ -1,8 +1,6 @@
 //! Check the book's declared font resources independently of the active chapter and switch.
-use super::{
-    Book, BookStyle, FontContext, FontFace, Parser, SheetItem, SheetParser, StyleSheetParser,
-};
-use super::{MAX_CSS_BYTES, MAX_FACE_RULES, MAX_RULES};
+use super::{Book, BookStyle, FontContext, FontFace, Parser, SheetItem};
+use super::{MAX_CSS_BYTES, MAX_FACE_RULES};
 use crate::source::{Source, Stylesheet};
 use std::{collections::HashSet, sync::Arc};
 
@@ -55,8 +53,8 @@ impl Inventory {
         }
         self.css_bytes += text.len();
         let mut input = Parser::new(text);
-        for item in StyleSheetParser::new(&mut input, &mut SheetParser).take(MAX_RULES) {
-            if let Ok(SheetItem::Font(declarations)) = item
+        for item in super::media::publisher_items(&mut input) {
+            if let SheetItem::Font(declarations) = item
                 && let Some(face) = FontFace::from_rule(base, declarations)
             {
                 self.faces.push(face);

@@ -276,7 +276,20 @@ impl Reader {
                         Target::Alternative(target) => {
                             Action::AlternativeContentsEntry(target.clone())
                         }
-                        Target::Fixed(page) => Action::FixedPage(*page),
+                        Target::Fixed(page) => {
+                            let positioned = self
+                                .fixed
+                                .as_ref()
+                                .and_then(|fixed| fixed.reading.outline().get(heading.source_index))
+                                .is_some_and(|entry| {
+                                    entry.page == Some(*page) && entry.destination_point.is_some()
+                                });
+                            if positioned {
+                                Action::FixedOutline(heading.source_index)
+                            } else {
+                                Action::FixedPage(*page)
+                            }
+                        }
                         Target::Custom(index) => Action::Custom(CustomAction::Open(*index)),
                         Target::None => Action::Heading,
                     };

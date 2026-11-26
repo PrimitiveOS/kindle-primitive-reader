@@ -847,6 +847,7 @@ enum Action {
     Overview,
     Skim,
     FixedPage(usize),
+    FixedOutline(usize),
     Heading,
     RotatePage,
     ReversePageDirection,
@@ -5147,6 +5148,19 @@ impl Reader {
             Action::ReflowScan => self.read_fixed_text(true)?,
             Action::FixedPage(page) => {
                 self.follow_fixed(page, None)?;
+            }
+            Action::FixedOutline(index) => {
+                let entry = self
+                    .fixed
+                    .as_ref()
+                    .ok_or("No open document")?
+                    .reading
+                    .outline()
+                    .get(index)
+                    .ok_or("That outline entry is unavailable")?;
+                let page = entry.page.ok_or("That outline entry is unavailable")?;
+                let target = entry.destination_point.map(FixedJump::LinkPoint);
+                self.follow_fixed(page, target)?;
             }
             Action::Heading | Action::MultiswipePreview(_) => {}
             Action::Bookmark(index) if self.fixed.is_some() => {

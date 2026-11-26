@@ -111,7 +111,12 @@ impl Contents {
                 }
                 _ => None,
             };
-            outline.rows.push(PdfOutlineItem { title, page, depth });
+            outline.rows.push(PdfOutlineItem {
+                title,
+                page,
+                depth,
+                destination_point: None,
+            });
         }
         outline
     }

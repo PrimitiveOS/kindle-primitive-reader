@@ -55,12 +55,14 @@ enum PageLabelStyle {
     Alphabetic { uppercase: bool },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PdfOutlineItem {
     pub title: String,
     /// Zero-based page index. A heading may have no destination in this document.
     pub page: Option<usize>,
     pub depth: usize,
+    /// Optional destination in the target page's upright, cropped point space.
+    pub destination_point: Option<Point>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -757,11 +759,17 @@ fn read_outline(document: &Document) -> Vec<PdfOutlineItem> {
         else {
             continue;
         };
-        let page = match destinations.target(&item).0 {
+        let (target, destination_point) = destinations.target(&item);
+        let page = match target {
             PdfLinkTarget::Page(page) => Some(page),
             PdfLinkTarget::External | PdfLinkTarget::Unavailable => None,
         };
-        rows.push(PdfOutlineItem { title, page, depth });
+        rows.push(PdfOutlineItem {
+            title,
+            page,
+            depth,
+            destination_point,
+        });
     }
     rows
 }
