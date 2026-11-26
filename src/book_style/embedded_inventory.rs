@@ -29,9 +29,10 @@ impl Inventory {
         }
         let remaining = MAX_CSS_BYTES - self.css_bytes;
         if let Ok(bytes) = book.resource_limited(&path, remaining)
-            && let Ok(text) = std::str::from_utf8(&bytes)
+            && let Some(text) =
+                super::css_encoding::decode(&bytes, super::MAX_SHEET_BYTES.min(remaining))
         {
-            self.read_styles(&path, text);
+            self.read_styles(&path, &text);
         }
     }
 

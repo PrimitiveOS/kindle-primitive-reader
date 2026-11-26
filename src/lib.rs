@@ -1790,6 +1790,7 @@ impl Probe {
                 publisher_styles: settings.publisher_styles,
                 base_stylesheet: settings.base_stylesheet,
                 user_styles: user_styles.clone(),
+                media_context: Some(book_style::MediaContext::from_settings(settings)),
             },
             lines,
             pages,

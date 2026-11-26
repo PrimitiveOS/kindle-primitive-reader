@@ -884,6 +884,9 @@ impl Reader {
                 publisher_styles: active.reading.config.settings.publisher_styles,
                 base_stylesheet: active.reading.config.settings.base_stylesheet,
                 user_styles: active.reading.config.user_styles.clone(),
+                media_context: Some(crate::book_style::MediaContext::from_settings(
+                    active.reading.probe.settings,
+                )),
             },
             raw_layout: crate::parley_layout::RAW_LAYOUT_ENABLED.then(|| {
                 active

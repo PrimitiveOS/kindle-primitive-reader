@@ -495,13 +495,14 @@ fn advance_chapter(
         profile.shaping_language,
         settings.typography.respect_embedded,
     )?;
-    let author = BookStyle::load_for_flow_with_base(
+    let author = BookStyle::load_for_flow_with_media(
         book,
         &href,
         &source,
         settings.publisher_styles,
         &profile.user,
         settings.base_stylesheet,
+        Some(crate::book_style::MediaContext::from_settings(settings)),
     )?;
     let targets = if book.spine_rtl {
         None

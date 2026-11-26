@@ -6,6 +6,7 @@ pub(crate) struct FlowConfig {
     pub publisher_styles: bool,
     pub base_stylesheet: crate::BaseStylesheet,
     pub user_styles: crate::user_styles::Snapshot,
+    pub media_context: Option<crate::book_style::MediaContext>,
 }
 
 impl Default for FlowConfig {
@@ -14,6 +15,7 @@ impl Default for FlowConfig {
             publisher_styles: true,
             base_stylesheet: crate::BaseStylesheet::Auto,
             user_styles: Default::default(),
+            media_context: None,
         }
     }
 }
@@ -25,13 +27,14 @@ impl FlowConfig {
         href: &str,
         source: &Source,
     ) -> crate::Result<ChapterFlow> {
-        let styles = BookStyle::load_for_flow_with_base(
+        let styles = BookStyle::load_for_flow_with_media(
             book,
             href,
             source,
             self.publisher_styles,
             &self.user_styles,
             self.base_stylesheet,
+            self.media_context,
         )?;
         ChapterFlow::new(
             source,

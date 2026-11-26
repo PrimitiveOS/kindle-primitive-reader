@@ -12,13 +12,88 @@ enum Prelude {
 struct PublisherParser<'a> {
     depth: u8,
     remaining: &'a mut usize,
+    context: Option<MediaContext>,
 }
 
-fn media_query(input: &mut Parser<'_>) -> CssResult<bool> {
-    media_query_known(input).map(|value| value.unwrap_or(false))
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MediaContext {
+    width: u32,
+    height: u32,
+    dpi: u16,
 }
 
-fn media_query_known(input: &mut Parser<'_>) -> CssResult<Option<bool>> {
+impl MediaContext {
+    pub(crate) fn from_settings(settings: crate::Settings) -> Self {
+        Self {
+            width: settings.text_width(),
+            height: settings.text_height(),
+            dpi: settings.render_dpi,
+        }
+    }
+}
+
+fn feature_query(input: &mut Parser<'_>, context: Option<MediaContext>) -> CssResult<Option<bool>> {
+    input.expect_parenthesis_block()?;
+    input.parse_nested_block(|input| {
+        let feature = input.expect_ident_cloned()?.to_ascii_lowercase();
+        input.expect_colon()?;
+        if feature == "orientation" {
+            let value = input.expect_ident_cloned()?.to_ascii_lowercase();
+            input.expect_exhausted()?;
+            return Ok(context.and_then(|context| match value.as_str() {
+                "portrait" => Some(context.height >= context.width),
+                "landscape" => Some(context.height < context.width),
+                _ => None,
+            }));
+        }
+        let pixels = match input.next()?.clone() {
+            Token::Dimension { value, unit, .. }
+                if unit.eq_ignore_ascii_case("px")
+                    && value.is_finite()
+                    && (0.0..=32767.0).contains(&value)
+                    && value.fract() == 0.0 =>
+            {
+                value as u32
+            }
+            Token::Number { value: 0.0, .. } => 0,
+            _ => return Err(ParseError::unexpected_token()),
+        };
+        input.expect_exhausted()?;
+        Ok(context.and_then(|context| {
+            let scaled = u64::from(pixels)
+                * 256
+                * u64::from(if context.dpi == 0 { 96 } else { context.dpi })
+                / 96;
+            let scaled = ((scaled + 127) / 256).max(u64::from(pixels != 0 && context.dpi != 0));
+            let (actual, relation) = match feature.as_str() {
+                "width" => (context.width, 0),
+                "min-width" => (context.width, 1),
+                "max-width" => (context.width, -1),
+                "height" => (context.height, 0),
+                "min-height" => (context.height, 1),
+                "max-height" => (context.height, -1),
+                _ => return None,
+            };
+            Some(match relation {
+                1 => u64::from(actual) >= scaled,
+                -1 => u64::from(actual) <= scaled,
+                _ => u64::from(actual) == scaled,
+            })
+        }))
+    })
+}
+
+fn media_query_known(
+    input: &mut Parser<'_>,
+    context: Option<MediaContext>,
+) -> CssResult<Option<bool>> {
+    let state = input.state();
+    if let Ok(value) = input.try_parse(|input| feature_query(input, context)) {
+        if input.expect_exhausted().is_ok() {
+            return Ok(value);
+        }
+    }
+    input.reset(&state);
     let Ok(first) = input.try_parse(Parser::expect_ident_cloned) else {
         // Feature-only or unknown branches are false independently; another
         // supported alternative in this comma-separated list may still match.
@@ -36,6 +111,23 @@ fn media_query_known(input: &mut Parser<'_>) -> CssResult<Option<bool>> {
         }
         _ => ("", first.clone()),
     };
+    if modifier != "not"
+        && input
+            .try_parse(|input| input.expect_ident_matching("and"))
+            .is_ok()
+    {
+        let value = input
+            .try_parse(|input| feature_query(input, context))
+            .ok()
+            .flatten();
+        if input.expect_exhausted().is_ok() {
+            let medium_matches = matches!(medium.as_str(), "screen" | "all");
+            return Ok(match medium.as_str() {
+                "screen" | "all" | "print" => value.map(|v| medium_matches && v),
+                _ => None,
+            });
+        }
+    }
     if input.expect_exhausted().is_err() {
         // Includes feature queries and unknown conjunctions. Never invert an
         // unsupported condition, even when the query starts with `not`.
@@ -58,7 +150,7 @@ pub(crate) fn stylesheet_known_nonmatching(value: &str) -> bool {
     }
     let mut parser = Parser::new(value);
     parser
-        .parse_comma_separated(media_query_known)
+        .parse_comma_separated(|input| media_query_known(input, None))
         .is_ok_and(|queries| {
             !queries.is_empty() && queries.iter().all(|query| *query == Some(false))
         })
@@ -134,7 +226,9 @@ impl<'i> AtRuleParser<'i> for PublisherParser<'_> {
 
     fn parse_prelude(&mut self, name: CowRcStr<'i>, input: &mut Parser<'i>) -> CssResult<Prelude> {
         if name.eq_ignore_ascii_case("media") {
-            let queries = input.parse_comma_separated(media_query)?;
+            let queries = input.parse_comma_separated(|input| {
+                media_query_known(input, self.context).map(|value| value.unwrap_or(false))
+            })?;
             return Ok(Prelude::Media(queries.into_iter().any(|value| value)));
         }
         if name.eq_ignore_ascii_case("supports") {
@@ -165,7 +259,9 @@ impl<'i> AtRuleParser<'i> for PublisherParser<'_> {
             if unsupported_qualifier {
                 return Err(ParseError::unexpected_token());
             }
-            let queries = input.parse_comma_separated(media_query)?;
+            let queries = input.parse_comma_separated(|input| {
+                media_query_known(input, self.context).map(|value| value.unwrap_or(false))
+            })?;
             return Ok(if queries.into_iter().any(|matches| matches) {
                 Prelude::Ordinary(SheetPrelude::Import(href))
             } else {
@@ -218,6 +314,7 @@ impl<'i> AtRuleParser<'i> for PublisherParser<'_> {
                     let mut parser = PublisherParser {
                         depth: self.depth + 1,
                         remaining: self.remaining,
+                        context: self.context,
                     };
                     for items in StyleSheetParser::new(input, &mut parser)
                         .take(MAX_RULES)
@@ -233,10 +330,18 @@ impl<'i> AtRuleParser<'i> for PublisherParser<'_> {
 }
 
 pub(super) fn publisher_items(input: &mut Parser<'_>) -> Vec<SheetItem> {
+    publisher_items_with_context(input, None)
+}
+
+pub(super) fn publisher_items_with_context(
+    input: &mut Parser<'_>,
+    context: Option<MediaContext>,
+) -> Vec<SheetItem> {
     let mut remaining = MAX_RULES;
     let mut parser = PublisherParser {
         depth: 0,
         remaining: &mut remaining,
+        context,
     };
     StyleSheetParser::new(input, &mut parser)
         .take(MAX_RULES)

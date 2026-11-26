@@ -15,6 +15,19 @@ Unsupported alternatives are false without suppressing another supported,
 matching alternative in the same comma-separated list. Strict user CSS remains unchanged.
 Source text, chapter revisions and saved positions are unchanged.
 
+Publisher rules and imports also support a single `width`, `min-width`,
+`max-width`, `height`, `min-height`, `max-height`, or `orientation` feature,
+alone or after `screen`/`all`/`print and`. Size values are bounded nonnegative
+integer CSS pixels (or unitless zero); orientation accepts `portrait` and
+`landscape`. The effective leaf's text viewport and Render DPI are captured
+for layout and reused by search, generated-quote flow, and note/Contents
+helpers. Unsupported features, multiple conditions and feature negation remain
+unmatched. Layout changes may repaginate without changing source positions.
+Publication-wide embedded-font diagnostics have no viewport and can omit
+faces declared only within these queries; the active layout still registers
+matching faces. This increment has received source review only and needs
+behavioral and device validation.
+
 HTML head `link` and `style` elements also exclude a stylesheet when their
 `media` attribute contains only known nonmatching simple media types, such as
 `print` or `not screen`. A missing or empty attribute, a matching alternative,

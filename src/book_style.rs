@@ -6,12 +6,13 @@
 mod base_stylesheet_tests;
 mod base_stylesheets;
 pub(crate) mod borders;
+mod css_encoding;
 pub(crate) mod flow;
 #[cfg(test)]
 mod flow_tests;
 mod font_shorthand;
 mod media;
-pub(crate) use media::stylesheet_known_nonmatching;
+pub(crate) use media::{MediaContext, stylesheet_known_nonmatching};
 mod semantic_type;
 use crate::float_layout::{Clear, Side};
 use flow::{Display, Visibility};
@@ -816,6 +817,7 @@ impl Style {
 #[derive(Default)]
 pub(crate) struct BookStyle {
     author_inline: bool,
+    media_context: Option<MediaContext>,
     rules: Vec<Rule>,
     base_rules: Vec<Rule>,
     user_rules: Vec<Rule>,
@@ -845,7 +847,7 @@ impl BookStyle {
 
     #[cfg(test)]
     pub fn load(book: &mut Book, chapter: &str, source: &Source, fonts: &mut FontContext) -> Self {
-        Self::load_author(book, chapter, source, fonts, true)
+        Self::load_author(book, chapter, source, fonts, true, None)
     }
 
     fn load_author(
@@ -854,8 +856,9 @@ impl BookStyle {
         source: &Source,
         fonts: &mut FontContext,
         embedded_fonts: bool,
+        context: Option<MediaContext>,
     ) -> Self {
-        let (mut styled, faces) = Self::load_sheets(book, chapter, source);
+        let (mut styled, faces) = Self::load_sheets_with_context(book, chapter, source, context);
         styled.families.extend(
             fonts
                 .collection
@@ -876,7 +879,14 @@ impl BookStyle {
         settings: crate::Settings,
     ) -> Self {
         let mut styled = if settings.publisher_styles {
-            Self::load_author(book, chapter, source, fonts, settings.embedded_fonts)
+            Self::load_author(
+                book,
+                chapter,
+                source,
+                fonts,
+                settings.embedded_fonts,
+                Some(MediaContext::from_settings(settings)),
+            )
         } else {
             Self::default()
         };
@@ -938,7 +948,32 @@ impl BookStyle {
         user: &crate::user_styles::Snapshot,
         selection: crate::BaseStylesheet,
     ) -> crate::Result<Self> {
-        let mut styled = Self::load_for_flow(book, chapter, source, publisher_styles, user)?;
+        Self::load_for_flow_with_media(
+            book,
+            chapter,
+            source,
+            publisher_styles,
+            user,
+            selection,
+            None,
+        )
+    }
+
+    pub(crate) fn load_for_flow_with_media(
+        book: &mut Book,
+        chapter: &str,
+        source: &Source,
+        publisher_styles: bool,
+        user: &crate::user_styles::Snapshot,
+        selection: crate::BaseStylesheet,
+        context: Option<MediaContext>,
+    ) -> crate::Result<Self> {
+        let mut styled = if publisher_styles {
+            Self::load_sheets_with_context(book, chapter, source, context).0
+        } else {
+            Self::default()
+        }
+        .with_user_css(user)?;
         let selection = if selection == crate::BaseStylesheet::Auto {
             book.automatic_stylesheet()
         } else {
@@ -949,8 +984,18 @@ impl BookStyle {
     }
 
     fn load_sheets(book: &mut Book, chapter: &str, source: &Source) -> (Self, Vec<FontFace>) {
+        Self::load_sheets_with_context(book, chapter, source, None)
+    }
+
+    fn load_sheets_with_context(
+        book: &mut Book,
+        chapter: &str,
+        source: &Source,
+        context: Option<MediaContext>,
+    ) -> (Self, Vec<FontFace>) {
         let mut styled = Self {
             author_inline: true,
+            media_context: context,
             ..Self::default()
         };
         let mut faces = Vec::new();
@@ -977,12 +1022,13 @@ impl BookStyle {
                     else {
                         continue;
                     };
-                    if let Ok(text) = std::str::from_utf8(&bytes) {
+                    if let Some(text) = css_encoding::decode(&bytes, MAX_SHEET_BYTES.min(remaining))
+                    {
                         active_imports.insert(path.clone());
                         styled.read_sheet(
                             book,
                             &path,
-                            text,
+                            &text,
                             &mut remaining,
                             &mut faces,
                             &names,
@@ -1783,7 +1829,7 @@ impl BookStyle {
         *remaining -= text.len();
         let mut parser = Parser::new(text.trim_start_matches('\u{feff}'));
         let mut imports_allowed = true;
-        for rule in media::publisher_items(&mut parser) {
+        for rule in media::publisher_items_with_context(&mut parser, self.media_context) {
             match rule {
                 SheetItem::Import(href)
                     if imports_allowed && depth < MAX_IMPORT_DEPTH && *imports < MAX_IMPORTS =>
@@ -1803,14 +1849,15 @@ impl BookStyle {
                     else {
                         continue;
                     };
-                    let Ok(css) = std::str::from_utf8(&bytes) else {
+                    let Some(css) = css_encoding::decode(&bytes, MAX_SHEET_BYTES.min(*remaining))
+                    else {
                         continue;
                     };
                     active_imports.insert(path.clone());
                     self.read_sheet(
                         book,
                         &path,
-                        css,
+                        &css,
                         remaining,
                         faces,
                         names,

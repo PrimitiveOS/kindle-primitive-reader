@@ -269,13 +269,16 @@ pub(super) fn source_offsets(
             .chapter_source(&href, &xml)
             .map_err(io::Error::other)?;
         let config = &reading.config;
-        let styles = BookStyle::load_for_flow_with_base(
+        let styles = BookStyle::load_for_flow_with_media(
             publication,
             &href,
             &source,
             config.settings.publisher_styles,
             &config.user_styles,
             config.settings.base_stylesheet,
+            Some(crate::book_style::MediaContext::from_settings(
+                reading.probe.settings,
+            )),
         )
         .map_err(io::Error::other)?
         .compute(&source.elements);
