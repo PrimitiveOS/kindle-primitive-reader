@@ -62,6 +62,7 @@ pub mod koreader_import;
 pub mod koreader_sidecar;
 pub mod library;
 mod list_marker;
+mod long_chapter_plan;
 mod loose;
 mod mark_time;
 pub mod mobi;

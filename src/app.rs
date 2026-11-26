@@ -25,6 +25,7 @@ mod page_overlap_tests;
 pub(crate) mod publisher_pages;
 mod reading_history;
 mod reading_notifications;
+mod resume_recovery;
 mod saved_marks_view;
 pub(crate) mod scrolling;
 mod search_presentation;
@@ -1131,6 +1132,7 @@ pub struct Reader {
     style_view: style_tweaks::View,
     active: Option<ActiveBook>,
     logical_recovery: Option<logical_font::Recovery>,
+    resume_recovery: Option<resume_recovery::Recovery>,
     illustration: Option<FixedReading>,
     fixed: Option<ActiveFixed>,
     ocr_assets: Option<OcrAssets>,
@@ -1425,6 +1427,7 @@ impl Reader {
             style_view: Default::default(),
             active: None,
             logical_recovery: None,
+            resume_recovery: None,
             illustration: None,
             fixed: None,
             ocr_assets,
@@ -1566,6 +1569,9 @@ impl Reader {
         let publication = with_storage(|| Ok(self.library.publication_for_chapter(&entry)))?;
         if let Some((marker, chapter, path)) = publication {
             self.open_with_password(marker, None)?;
+            if self.resume_recovery.take().is_some() {
+                return Err("Open the publication itself to recover its saved position".into());
+            }
             if self.folder_open.is_some() {
                 if let Err(error) = self.attach_folder_open_chapter(chapter, path) {
                     self.cancel_folder_open();
@@ -1622,7 +1628,7 @@ impl Reader {
         if check_archive && password.is_none() {
             self.metadata_archive.abandon_archive_consumption();
         }
-        let opened = self.open_with_archive_check(entry, password, check_archive);
+        let opened = self.open_with_archive_check(entry, password, check_archive, None);
         if self.folder_open.is_some() {
             return opened;
         }
@@ -1635,7 +1641,9 @@ impl Reader {
         {
             self.start_annotation_discovery();
         }
-        if opened.is_ok() {
+        if self.resume_recovery.is_some() {
+            self.metadata_archive.abandon_archive_consumption();
+        } else if opened.is_ok() {
             self.complete_archive_consumption();
         } else if self.screen != Screen::PdfPassword {
             self.metadata_archive.abandon_archive_consumption();
@@ -1663,7 +1671,9 @@ impl Reader {
         mut entry: LibraryBook,
         password: Option<&str>,
         check_archive: bool,
+        resume: Option<&resume_recovery::Recovery>,
     ) -> Result<()> {
+        self.resume_recovery = None;
         self.cancel_detached_note();
         self.cancel_annotation_preview();
         self.eager_typography.cancel();
@@ -1801,6 +1811,22 @@ impl Reader {
                 fixed_preferences = state.fixed_preferences;
                 state.position.clone()
             });
+        if let Some(recovery) = resume
+            && (recovery.id != id
+                || recovery.entry.path != entry.path
+                || entry.format != DocumentFormat::Epub
+                || crate::epub_members::is_folder_book(&entry.path)
+                || self.library.has_raw_whitespace_state(id)
+                || self.pending_folder_snapshot.is_some()
+                || self.pending_folder_mark.is_some()
+                || self.pending_folder_chapter.is_some()
+                || position.as_ref() != Some(&recovery.position)
+                || crate::session::screen_pages::FileStamp::read(&absolute).as_ref()
+                    != Some(&recovery.stamp))
+        {
+            return Err("The book or saved position changed; try opening it again".into());
+        }
+        let position = if resume.is_some() { None } else { position };
         let raw_resume = position
             .as_ref()
             .and_then(|saved| saved.anchor.as_ref())
@@ -1999,7 +2025,7 @@ impl Reader {
                 .filter(|(path, expected, _)| path == &entry.path && *expected == id)
                 .map(|(_, _, proof)| proof.clone()),
             engine: Engine::Parley,
-            book: absolute,
+            book: absolute.clone(),
             fonts,
             settings,
             scroll,
@@ -2020,7 +2046,7 @@ impl Reader {
             .library
             .state(id)
             .map_or(&initial_preferences, |state| &state.preferences);
-        let is_new = position.is_none();
+        let is_new = position.is_none() && resume.is_none();
         let metadata = self.opening_text_metadata(&config, is_new);
         let opening = self
             .opening_profile_plan(
@@ -2031,11 +2057,12 @@ impl Reader {
                 metadata.as_ref(),
                 local_minute,
             )
+            .filter(|_| resume.is_none())
             .map(|mut plan| {
                 plan.text = Some((saved_preferences.clone(), top_status_header));
                 plan
             });
-        let (automatic, profile_warning) = if opening.is_some() {
+        let (automatic, profile_warning) = if opening.is_some() || resume.is_some() {
             (None, None)
         } else {
             match self.prepare_opening_text_profiles(
@@ -2051,7 +2078,7 @@ impl Reader {
                 Err(error) => (None, Some(error)),
             }
         };
-        let queued = if opening.is_none() {
+        let queued = if opening.is_none() && resume.is_none() {
             self.legacy_opening_queue(
                 id,
                 &config.book,
@@ -2063,6 +2090,9 @@ impl Reader {
         } else {
             Vec::new()
         };
+        if resume.is_some() && config.settings.validate().is_err() {
+            return Err("The reading settings changed; no position was replaced".into());
+        }
         if automatic.is_none()
             && config.settings.logical_font_size.is_some()
             && config.settings.validate().is_err()
@@ -2119,17 +2149,22 @@ impl Reader {
             (reading, Some(preferences))
         } else {
             let reading = if let Some(position) = &position {
-                Reading::restore(
+                match Reading::restore(
                     config.clone(),
                     position.chapter,
                     position.page,
                     position.anchor.as_ref(),
-                )
-                .map_err(|error| {
-                    format!("The saved reading position could not be opened. The saved position was kept; check the book and reading settings, then try again. {error}")
-                })?
+                ) {
+                    Ok(reading) => reading,
+                    Err(error) => {
+                        if self.offer_resume_recovery(&entry, id, position, &config) {
+                            return Ok(());
+                        }
+                        return Err(format!("The saved reading position could not be opened. The saved position was kept; check the book and reading settings, then try again. {error}").into());
+                    }
+                }
             } else {
-                Reading::open(config)?
+                Reading::open(config.clone())?
             };
             (reading, unseen.then_some(initial_preferences))
         };
@@ -2137,6 +2172,11 @@ impl Reader {
             && (!reading.probe.saved_anchor_is_valid(anchor)
                 || reading.anchor().as_ref() != Some(anchor))
         {
+            if let Some(saved) = &position
+                && self.offer_resume_recovery(&entry, id, saved, &config)
+            {
+                return Ok(());
+            }
             return Err("The saved reading position could not be resolved. The saved position was kept; check the book and reading settings, then try again.".into());
         }
         reading.set_status_header_height(crate::reading_controls::TopHeader::height(
@@ -2150,6 +2190,11 @@ impl Reader {
             && (!reading.probe.saved_anchor_is_valid(anchor)
                 || reading.anchor().as_ref() != Some(anchor))
         {
+            if let Some(saved) = &position
+                && self.offer_resume_recovery(&entry, id, saved, &config)
+            {
+                return Ok(());
+            }
             return Err("The saved reading position could not be kept in this layout. The saved position was kept; check the book and reading settings, then try again.".into());
         }
         let deferred_mark_origin = if let Some(mark) = &self.pending_folder_mark {
@@ -2191,6 +2236,35 @@ impl Reader {
                 if let Some(state) = self.library.state_mut(id) {
                     *state = original;
                 }
+                return Err(error.into());
+            }
+        } else if let Some(recovery) = resume {
+            if reading.is_unsupported_spine_notice()
+                || reading.anchor().is_none()
+                || with_storage(|| self.library.identify(&entry))? != id
+                || crate::session::screen_pages::FileStamp::read(&absolute).as_ref()
+                    != Some(&recovery.stamp)
+                || self
+                    .library
+                    .state(id)
+                    .and_then(|state| state.position.as_ref())
+                    != Some(&recovery.position)
+            {
+                return Err("The book or saved position changed; no position was replaced".into());
+            }
+            let old_dirty = self.dirty;
+            let old_save_at = self.save_at;
+            let prior = self
+                .library
+                .state(id)
+                .cloned()
+                .ok_or("The saved reading data is unavailable")?;
+            self.library.state_mut(id).unwrap().position = Some(self::position(&reading));
+            self.dirty = true;
+            if let Err(error) = self.save_library() {
+                *self.library.state_mut(id).unwrap() = prior;
+                self.dirty = old_dirty;
+                self.save_at = old_save_at;
                 return Err(error.into());
             }
         } else {
@@ -10123,6 +10197,7 @@ impl Reader {
     fn reading_overlays_clear(&self) -> bool {
         matches!(self.screen, Screen::Book | Screen::Fixed)
             && self.logical_recovery.is_none()
+            && self.resume_recovery.is_none()
             && self.end_dialog.is_none()
             && self.flow_popup.is_none()
             && self.link_popup.is_none()
@@ -10413,6 +10488,7 @@ impl App for Reader {
         self.draw_alternative_contents_confirmation(canvas);
         self.draw_embedded_font_report(canvas);
         self.draw_logical_recovery(canvas);
+        self.draw_resume_recovery(canvas);
         self.draw_opening_delay(canvas);
         self.draw_opening_ask(canvas);
         self.draw_closing_profile(canvas);
@@ -10470,6 +10546,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.resume_recovery_input(input) {
+            return change;
+        }
         if let Some(change) = self.detached_note_input(input) {
             return change;
         }
@@ -10622,6 +10701,9 @@ impl App for Reader {
     }
 
     fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        if self.resume_recovery.is_some() {
+            return Change::None;
+        }
         if self.note_verification.is_some() {
             return Change::None;
         }
@@ -10771,6 +10853,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.resume_recovery_input(input) {
+            return change;
+        }
         if input == Input::Sleep {
             self.cancel_detached_note();
             self.cancel_annotation_preview();
