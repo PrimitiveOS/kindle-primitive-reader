@@ -48,6 +48,10 @@ impl Reader {
         if !self.controls.bookmark_show_highlight_colors {
             return None;
         }
+        if let Some((color, default)) = self.bookmark_browser_row_colors(action) {
+            return (self.controls.bookmark_show_default_color || color != default)
+                .then_some(color);
+        }
         let index = match *action {
             Action::Highlight(index) | Action::PdfHighlight(index) => index,
             _ => return None,

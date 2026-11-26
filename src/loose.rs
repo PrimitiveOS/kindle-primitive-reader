@@ -357,15 +357,23 @@ pub(crate) fn fallback_title(path: &Path) -> &str {
 fn decode_document(bytes: &[u8], format: Format) -> Result<Cow<'_, str>> {
     // Check four-byte BOMs before encoding_rs sees the UTF-16LE prefix.
     // These documents previously failed the binary-character check.
-    let utf32_le = if bytes.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
-        Some(true)
+    let utf32 = if bytes.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
+        Some((true, 4, false))
     } else if bytes.starts_with(&[0x00, 0x00, 0xfe, 0xff]) {
-        Some(false)
+        Some((false, 4, false))
+    } else if matches!(format, Format::Html | Format::Fb2)
+        && bytes.starts_with(b"<\0\0\0?\0\0\0x\0\0\0")
+    {
+        Some((true, 0, true))
+    } else if matches!(format, Format::Html | Format::Fb2)
+        && bytes.starts_with(b"\0\0\0<\0\0\0?\0\0\0x")
+    {
+        Some((false, 0, true))
     } else {
         None
     };
-    if let Some(little_endian) = utf32_le {
-        let encoded = &bytes[4..];
+    if let Some((little_endian, offset, requires_declaration)) = utf32 {
+        let encoded = &bytes[offset..];
         if encoded.len() % 4 != 0 {
             return Err("The document has an incomplete UTF-32 character".into());
         }
@@ -385,6 +393,37 @@ fn decode_document(bytes: &[u8], format: Format) -> Result<Cow<'_, str>> {
                 return Err("The document contains binary characters".into());
             }
             decoded.push(character);
+        }
+        if requires_declaration {
+            if !(decoded.starts_with("<?xml")
+                && decoded
+                    .as_bytes()
+                    .get(5)
+                    .is_some_and(u8::is_ascii_whitespace))
+            {
+                return Err("The document requires a UTF-32 XML declaration".into());
+            }
+            let end = decoded
+                .find("?>")
+                .ok_or("The XML declaration is incomplete")?
+                + 2;
+            if end > 1024 {
+                return Err("The XML declaration is too long".into());
+            }
+            let declaration = &decoded[..end];
+            Xml::parse(&format!("{declaration}<html/>"))
+                .map_err(|_| "The XML declaration is invalid")?;
+            let endian_label = if little_endian {
+                "utf-32le"
+            } else {
+                "utf-32be"
+            };
+            if let Some(label) = declared_encoding(declaration.as_bytes(), format)
+                && label != "utf-32"
+                && label != endian_label
+            {
+                return Err("The XML encoding conflicts with its UTF-32 byte order".into());
+            }
         }
         return Ok(Cow::Owned(decoded));
     }

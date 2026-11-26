@@ -15,7 +15,7 @@ Previously readable UTF-8 entries keep their original text, package revision
 and source anchors. BOM-marked UTF-32LE/BE XML is also accepted as a
 compatibility extension: incomplete units, invalid Unicode scalars, NULs and
 conflicting declarations are rejected under the same entry bounds. BOM-less
-UTF-16 without the declaration signature and BOM-less UTF-32 remain unsupported.
+UTF-16 without the declaration signature remains unsupported.
 These additions have not yet been behaviorally
 compared with KOReader or verified with real books, in the simulator or on
 Kindle. [Pinned CREngine encoding detection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L6108-L6122)
@@ -31,3 +31,13 @@ decoded entries over 512 KiB are rejected. Valid UTF-8 and UTF-16 paths keep
 their existing source text and anchors. This candidate has not been compared
 with KOReader or tested with real books, in the simulator or on Kindle.
 [Pinned CREngine XML charset detection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L2931-L2959)
+
+An XML entry beginning with the exact BOM-less UTF-32LE or UTF-32BE byte
+signature for `<?xml` can also be decoded. A complete, valid XML declaration
+within 1,024 decoded bytes is required; if it declares an encoding, that
+encoding must match the detected byte order or be `UTF-32`. The same bounded
+compatibility path is available to standalone HTML and FictionBook XML. Plain
+text is not guessed as UTF-32 without a BOM. Previously readable input follows
+its existing path, while malformed units, NULs and conflicting declarations
+are rejected. These are implementation candidates: real documents, simulator
+and Kindle behavior, peak memory and KOReader comparison remain unverified.

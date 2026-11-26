@@ -13,6 +13,33 @@ const MAX_DESCRIPTION: usize = 8192;
 const MAX_VALUE: usize = 512;
 const MAX_VALUES: usize = 128;
 
+impl Reader {
+    /// Resolve a result row against its own book, not the currently open one.
+    pub(in crate::app) fn bookmark_browser_row_colors(
+        &self,
+        action: &crate::app::Action,
+    ) -> Option<(
+        crate::highlight_style::HighlightColor,
+        crate::highlight_style::HighlightColor,
+    )> {
+        let crate::app::Action::BookmarkBrowser(Command::Inspect(key)) = action else {
+            return None;
+        };
+        let state = self.library.state(key.book)?;
+        let color = match key.locator {
+            super::Locator::Bookmark(_) => return None,
+            super::Locator::Reflow(index) => state.highlights.get(index)?.color,
+            super::Locator::Fixed(index) => state.pdf_highlights.get(index)?.color,
+        };
+        Some((
+            color,
+            state
+                .highlight_color
+                .unwrap_or(self.controls.highlight_color),
+        ))
+    }
+}
+
 pub(super) fn is_cbz_book(book: &BookState) -> bool {
     book.path
         .extension()

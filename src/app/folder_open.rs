@@ -86,6 +86,8 @@ impl Reader {
         {
             return Ok(false);
         }
+        self.folder_activation = None;
+        self.folder_activation_retry = None;
         if self.folder_open_busy.swap(true, Ordering::AcqRel) {
             return Err("Previous folder verification is still stopping".into());
         }

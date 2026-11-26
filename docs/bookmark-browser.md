@@ -16,6 +16,14 @@ controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0
 are the reference. This use of the settings has not yet been validated in
 simulation or on Kindle.
 
+The existing **Show highlight colors** setting also applies to highlighted
+results in this cross-book list, using the same named swatch and caption as
+the in-book list. **Also show default highlight color** compares each mark
+with its own book's saved default, falling back to the global default when
+that book has none. This includes retained archived marks; page bookmarks have
+no highlight-color badge. It changes presentation only and has not yet been
+validated in simulation or on Kindle.
+
 When the browser was opened from a book, **Filters → Remove matching notes (this book)** reviews the count and title before an explicit **Delete notes** confirmation. All matching notes begin selected; **Choose notes** lets the reader toggle individual notes, select all, add the notes visible on the current chooser page, or clear the selection before returning to the confirmation. With none selected there is no Delete action. It affects only selected nonblank notes on the current book's rows matching the active source, search and filters; page bookmarks, highlights, quotations and other books remain. Reader snapshots and rechecks each selected complete target mark before saving, aborts if the book or a selected target changed, and restores in-memory state if library persistence fails. More than 512 matching notes requires narrower filters; matching raw-anchor notes are refused rather than modified. Cancellation makes no change. KOReader's [selection-mode Delete note action](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L818-L885) is the reference. This destructive workflow has not yet been tested in simulation or on Kindle.
 
 **Filters → Remove matching marks (this book)** is a separate operation for bookmarks and highlights. Nothing starts selected. **Choose marks** offers individual, all, and current-page selection, with Clear selection. The confirmation states the selected count and that selected marks and their notes will be deleted; it offers no Delete action when none are selected. It applies only to matching marks in the current book, revalidates each complete selected snapshot, removes selected indices in descending order, and restores the prior in-memory book if the atomic library save fails. Unselected marks and other books are preserved. More than 512 matches requires narrower filters, and matching raw-anchor marks are refused. KOReader's [confirmed selected-mark removal](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L890-L911) is the reference. This destructive workflow has not yet been tested in simulation or on Kindle.

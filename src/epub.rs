@@ -2060,9 +2060,13 @@ fn toc_entry(base: &str, href: Option<&str>, node: Node<'_, '_>, depth: usize) -
 fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
     let mut bytes = read_entry(archive, path, MAX_XML)?;
     let utf32 = if bytes.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
-        Some(true)
+        Some((true, 4, false))
     } else if bytes.starts_with(&[0x00, 0x00, 0xfe, 0xff]) {
-        Some(false)
+        Some((false, 4, false))
+    } else if bytes.starts_with(b"<\0\0\0?\0\0\0x\0\0\0") {
+        Some((true, 0, true))
+    } else if bytes.starts_with(b"\0\0\0<\0\0\0?\0\0\0x") {
+        Some((false, 0, true))
     } else {
         None
     };
@@ -2077,8 +2081,18 @@ fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
     } else {
         None
     };
-    let text = if let Some(little_endian) = utf32 {
-        decode_utf32_epub_xml(&bytes[4..], little_endian)?
+    let text = if let Some((little_endian, offset, requires_declaration)) = utf32 {
+        let decoded = decode_utf32_epub_xml(&bytes[offset..], little_endian)?;
+        if requires_declaration
+            && !(decoded.starts_with("<?xml")
+                && decoded
+                    .as_bytes()
+                    .get(5)
+                    .is_some_and(u8::is_ascii_whitespace))
+        {
+            return Err("The EPUB XML requires a UTF-32 declaration".into());
+        }
+        decoded
     } else if let Some((encoding, label, offset, requires_declaration)) = utf16 {
         let decoded = encoding
             .decode_without_bom_handling_and_without_replacement(&bytes[offset..])

@@ -1038,6 +1038,7 @@ pub struct Reader {
     page_bookmark_search: Option<page_bookmark_navigation::Search>,
     folder_resume_gate: Option<folder_lifecycle::Gate>,
     folder_activation: Option<folder_activation::Activation>,
+    folder_activation_retry: Option<Instant>,
     folder_activation_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     folder_open: Option<folder_open::Pending>,
     folder_open_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -1322,6 +1323,7 @@ impl Reader {
             page_bookmark_search: None,
             folder_resume_gate: None,
             folder_activation: None,
+            folder_activation_retry: None,
             folder_activation_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             folder_open: None,
             folder_open_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -2073,9 +2075,13 @@ impl Reader {
         if opening.is_some() && reading.config.viewport != self.opening_display_viewport() {
             reading = reading.prepare_viewport(self.opening_display_viewport())?;
         }
-        if let Some(mark) = &self.pending_folder_mark {
+        let deferred_mark_origin = if let Some(mark) = &self.pending_folder_mark {
+            let previous = self::position(&reading);
             mark.verify_and_seek(&self.library, id, &mut reading)?;
-        }
+            Some(previous)
+        } else {
+            None
+        };
         if let Some(anchor) = &strict_odt_anchor
             && reading.probe.restore_anchor(anchor).is_none()
         {
@@ -2171,15 +2177,16 @@ impl Reader {
                 .cache_author(active.id, active.reading.probe.author.as_deref());
         }
         self.library.request_live_metadata(id);
-        if self.pending_folder_mark.is_some() {
+        if let Some(previous) = deferred_mark_origin {
             self.record_position();
+            self.push_history(previous);
         }
         self.start_folder_activation();
         Ok(())
     }
 
     fn show(&mut self, screen: Screen) {
-        self.folder_activation = None;
+        self.defer_folder_activation();
         self.page_bookmark_search = None;
         self.bookmark_browser.clear_confirmation();
         self.menu_search.clear_overlays();
@@ -10200,7 +10207,7 @@ impl App for Reader {
         if let Some(change) = self.folder_open_input(input) {
             return change;
         }
-        self.folder_activation = None;
+        self.defer_folder_activation();
         if let Some(change) = self.folder_resume_input(input) {
             return change;
         }
@@ -10343,7 +10350,7 @@ impl App for Reader {
         if self.folder_open.is_some() {
             return Change::None;
         }
-        self.folder_activation = None;
+        self.defer_folder_activation();
         if self.folder_resume_gate.is_some() {
             return Change::None;
         }
@@ -10488,10 +10495,11 @@ impl App for Reader {
         }
         if input == Input::Sleep {
             self.folder_activation = None;
+            self.folder_activation_retry = None;
         } else if input == Input::Wake && self.folder_resume_gate.is_none() {
             self.start_folder_activation();
         } else if input != Input::Wake {
-            self.folder_activation = None;
+            self.defer_folder_activation();
         }
         if let Some(change) = self.folder_resume_input(input) {
             return change;
@@ -11385,6 +11393,10 @@ impl App for Reader {
                     .as_ref()
                     .map(folder_activation::Activation::deadline),
             )
+            .chain(
+                self.folder_activation_retry
+                    .filter(|_| self.screen == Screen::Book),
+            )
             .chain(self.spelling_lookup.as_ref().map(|job| job.deadline))
             .chain(self.cjk_selection_lookup.as_ref().map(|job| job.deadline))
             .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
@@ -11421,6 +11433,7 @@ impl App for Reader {
         if self.folder_resume_gate.is_some() {
             return self.poll_folder_resume(now).unwrap_or(Change::None);
         }
+        self.retry_folder_activation(now);
         if let Some(change) = self.poll_folder_activation(now) {
             return change;
         }
@@ -11672,6 +11685,7 @@ impl App for Reader {
     fn save(&mut self) -> io::Result<()> {
         self.cancel_folder_open();
         self.folder_activation = None;
+        self.folder_activation_retry = None;
         if self.folder_resume_gate.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
@@ -11702,6 +11716,7 @@ impl App for Reader {
     fn storage_returned(&mut self) -> io::Result<()> {
         self.cancel_folder_open();
         self.folder_activation = None;
+        self.folder_activation_retry = None;
         if self.start_folder_resume_gate()? {
             return Ok(());
         }

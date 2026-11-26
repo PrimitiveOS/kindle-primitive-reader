@@ -241,18 +241,28 @@ The picker also recognizes a deliberately narrow `PNRd/PPrs` Palm eReader PDB
 candidate: unprotected compression-2 text records in the expected 132-byte
 header and Windows-1252 encoding, without image, link, footnote or sidebar
 records. It uses the existing bounded PalmDOC decompressor, with a 32 KiB limit
-per record and 12 MiB total. Only plain text without PML backslash commands or
-unsupported control characters is accepted; the source filename can supply
-the title. Any chapter index and other metadata are not imported. Protected,
-zlib-compressed, PML-formatted and auxiliary-content eReader books remain
-unsupported rather than being shown with missing markup or content. These
+per record and 12 MiB total. Plain text keeps its previous conversion. A
+bounded PML candidate also accepts escaped backslashes, soft hyphens, three-digit
+Windows-1252 and four-digit Unicode character escapes, and well-nested bold and
+italic toggles; paragraph breaks are retained. It rejects malformed escapes,
+unsupported control characters, unbalanced or crossing styles and other PML
+commands. The source filename can supply the title. Any chapter index and other
+metadata are not imported. Protected, zlib-compressed, other PML and
+auxiliary-content eReader books remain unsupported rather than being shown
+with missing markup or content. These
 files were previously rejected, so existing PalmDOC and MOBI output and saved
 identities remain unchanged. Pinned KOReader recognizes eReader PDBs, but
 this smaller subset has not been compared with it or tested on real files, the
 simulator or Kindle. [Pinned eReader recognition](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/pdbfmt.cpp#L724-L729)
 
-Full eReader compatibility remains open: implement bounded PML tokenization
-and styling, chapter destinations, links, images, footnotes and sidebars;
+Full eReader compatibility remains open: expand PML tokenization and styling,
+page/chapter controls, destinations, links, images, footnotes and sidebars;
 consider unprotected zlib text; preserve the plain subset's saved positions
 through a verified source mapping; and compare malformed, protected and real
 books against KOReader before expanding the supported claim.
+
+The new PML conversion allows at most 32,000 generated markup tokens and uses
+the existing XHTML size cap. Its saved anchors differ from future PML expansions
+unless a verified migration is added. This slice has not been behaviorally
+compared with KOReader or tested on real books, in simulation or on Kindle.
+[Pinned KOReader PML commands](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L2023-L2191)

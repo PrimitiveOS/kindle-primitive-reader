@@ -39,6 +39,39 @@ impl Activation {
 }
 
 impl Reader {
+    /// Retry only work interrupted by an interaction; unsupported folders do
+    /// not trigger repeated background scans.
+    pub(super) fn defer_folder_activation(&mut self) {
+        if self.folder_activation.take().is_some() || self.folder_activation_retry.is_some() {
+            self.folder_activation_retry = Some(Instant::now() + Duration::from_secs(2));
+        }
+    }
+
+    pub(super) fn retry_folder_activation(&mut self, now: Instant) {
+        if self.screen != Screen::Book
+            || self
+                .folder_activation_retry
+                .is_none_or(|deadline| now < deadline)
+        {
+            return;
+        }
+        self.folder_activation_retry = None;
+        if self.touch_hold.is_some()
+            || self.selection_mode
+            || self.selection.is_some()
+            || self.pending_orientation.is_some()
+            || self.opening_execution.is_some()
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.reading.page_turn_pending())
+        {
+            self.folder_activation_retry = Some(now + Duration::from_secs(2));
+            return;
+        }
+        self.start_folder_activation();
+    }
+
     pub(super) fn start_folder_activation(&mut self) {
         self.folder_activation = None;
         if !FOLDER_RAW_ACTIVATION_ENABLED {
@@ -74,6 +107,7 @@ impl Reader {
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = Arc::clone(&cancelled);
         if self.folder_activation_busy.swap(true, Ordering::AcqRel) {
+            self.folder_activation_retry = Some(Instant::now() + Duration::from_millis(250));
             return;
         }
         let busy = Arc::clone(&self.folder_activation_busy);

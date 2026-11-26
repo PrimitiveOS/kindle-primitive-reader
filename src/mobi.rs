@@ -14,6 +14,7 @@ use html5ever::tokenizer::{
     BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer,
 };
 pub(crate) mod cover;
+mod ereader_pml;
 mod huff;
 pub(crate) use huff::COMPRESSION as HUFF_CDIC;
 mod markup;
@@ -264,8 +265,8 @@ pub(crate) fn decode_legacy(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
 }
 
 /// Strict first subset of Palm eReader PDB: unencrypted PalmDOC-compressed
-/// plain text only. PML commands and auxiliary content require a separate
-/// reader and must not be displayed as if they were ordinary book text.
+/// plain text or the explicitly supported PML subset. Unsupported commands
+/// and auxiliary content must not be silently displayed as ordinary text.
 fn decode_plain_ereader(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     let records = record_offsets(bytes)?;
     let header = bytes
@@ -306,7 +307,7 @@ fn decode_plain_ereader(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     if raw.is_empty()
         || raw
             .iter()
-            .any(|&byte| byte == b'\\' || (byte < 32 && !matches!(byte, b'\t' | b'\n' | b'\r')))
+            .any(|&byte| byte < 32 && !matches!(byte, b'\t' | b'\n' | b'\r'))
     {
         return Err(MobiError::InvalidText);
     }
@@ -317,12 +318,19 @@ fn decode_plain_ereader(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     {
         return Err(MobiError::InvalidText);
     }
+    // Preserve the original output byte-for-byte for already readable plain
+    // documents. Only previously rejected backslash-bearing text uses PML.
+    let xhtml = if text.contains('\\') {
+        ereader_pml::xhtml(&text)?
+    } else {
+        plain_xhtml(&text)?
+    };
     Ok(MobiDocument {
         metadata: Default::default(),
         language: None,
         title: read_label(&bytes[..32], Encoding::Cp1252),
         author: None,
-        xhtml: plain_xhtml(&text)?,
+        xhtml,
         additions: Vec::new(),
         presentation: Presentation::default(),
         contents: Default::default(),
