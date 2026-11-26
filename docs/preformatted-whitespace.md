@@ -29,7 +29,7 @@ is eight spaces. Strictly validated user CSS may set an inherited numeric
 stop threshold uses a separately shaped zero with the selected font, language,
 features and variations. The same cluster advances drive line fitting, drawing
 and hit-testing. Reader keeps the old path if a line would overflow or the
-mapping cannot be proved. Publisher `tab-size` overrides, lengths, font-feature overrides, wrapped lines, RTL text,
+mapping cannot be proved. Publisher `tab-size` overrides, lengths, wrapped lines, RTL text,
 mixed styles and complex layouts are not yet supported by this path. The probe
 and admitted ASCII text both resolve to Latin under Parley's current itemizer;
 other scripts and custom synthetic-weight and cluster-spacing advances remain

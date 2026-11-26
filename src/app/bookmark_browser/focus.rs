@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 const MAX_MARKS: usize = 512;
 const MAX_ROWS: usize = 4096;
 const MAX_SNAPSHOT: usize = 2 * 1024 * 1024;
+const MAX_CROSS_CHAPTERS: usize = 8;
+const MAX_CROSS_WORK: usize = 64;
 const TICK: Duration = Duration::from_millis(80);
 const PAINT: Duration = Duration::from_secs(2);
 
@@ -25,11 +27,18 @@ enum Mark {
 struct Entry {
     ordinal: usize,
     chapter: usize,
+    last_chapter: usize,
     mark: Mark,
 }
+#[derive(Clone, Copy)]
+enum Failure {
+    Changed,
+    Limit,
+}
+
 enum Message {
     Progress { checked: usize, total: usize },
-    Done(Result<Option<usize>, ()>),
+    Done(Result<Option<usize>, Failure>),
 }
 struct Guard(Arc<AtomicBool>);
 impl Drop for Guard {
@@ -60,6 +69,86 @@ impl Focus {
     pub(in crate::app) fn deadline(&self) -> Instant {
         self.deadline
     }
+}
+
+// Verify the complete saved quotation against the same snapshot used for the
+// focus probe. Match Reading::collect_anchored_quote's source and ODT joins.
+fn verify_cross_chapter(
+    recipe: &SearchLayoutRecipe,
+    cancel: &AtomicBool,
+    first_probe: &crate::Probe,
+    first: usize,
+    last: usize,
+    mark: &Highlight,
+    work: &mut usize,
+) -> Result<bool, Failure> {
+    let saved = &mark.selection;
+    if first >= last
+        || last - first >= MAX_CROSS_CHAPTERS
+        || saved.start.book != saved.end.book
+        || saved.text.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES
+        || first_probe.page_for(&saved.start).is_none()
+    {
+        return Ok(false);
+    }
+    let raw = saved.start.raw_caret.is_some() || saved.end.raw_caret.is_some();
+    let mut text = String::new();
+    for chapter in first..=last {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Failure::Changed);
+        }
+        *work = work.checked_add(1).ok_or(Failure::Limit)?;
+        if *work > MAX_CROSS_WORK {
+            return Err(Failure::Limit);
+        }
+        let loaded;
+        let probe = if chapter == first {
+            first_probe
+        } else {
+            loaded = recipe
+                .chapter(chapter, cancel)
+                .map_err(|_| Failure::Changed)?;
+            &loaded
+        };
+        if chapter == last && probe.page_for(&saved.end).is_none() {
+            return Ok(false);
+        }
+        let fragment = if raw {
+            match probe.raw_chapter_fragment(&saved.start, &saved.end) {
+                Some(fragment) => Some(fragment.text),
+                None => return Ok(false),
+            }
+        } else {
+            match probe.select_source_range(&saved.start, &saved.end) {
+                Some(fragment) => Some(fragment.text),
+                None if probe.has_raw_layout() || chapter == first || chapter == last => {
+                    return Ok(false);
+                }
+                None => None,
+            }
+        };
+        if let Some(fragment) = fragment {
+            let joins = first_probe
+                .odt_continued_before
+                .get(chapter)
+                .copied()
+                .unwrap_or(false);
+            let extra = usize::from(!text.is_empty() && !joins);
+            if text
+                .len()
+                .saturating_add(extra)
+                .saturating_add(fragment.len())
+                > crate::library::MAX_HIGHLIGHT_TEXT_BYTES
+            {
+                return Ok(false);
+            }
+            if extra != 0 {
+                text.push('\n');
+            }
+            text.push_str(&fragment);
+        }
+    }
+    Ok(!text.trim().is_empty() && text == saved.text && !cancel.load(Ordering::Relaxed))
 }
 
 fn panel(reader: &Reader) -> (Rect, Rect) {
@@ -115,7 +204,7 @@ impl Reader {
             if key.book != active.id {
                 continue;
             }
-            let (mark, chapter, size) = match key.locator {
+            let (mark, chapter, last_chapter, size) = match key.locator {
                 Locator::Bookmark(index) => {
                     let Some(mark) = state.bookmarks.get(index) else {
                         return false;
@@ -130,7 +219,7 @@ impl Reader {
                     let Ok(raw) = serde_json::to_vec(mark) else {
                         return false;
                     };
-                    (Mark::Bookmark(mark.clone()), chapter, raw.len())
+                    (Mark::Bookmark(mark.clone()), chapter, chapter, raw.len())
                 }
                 Locator::Reflow(index) => {
                     let Some(mark) = state.highlights.get(index) else {
@@ -143,19 +232,32 @@ impl Reader {
                     else {
                         continue;
                     };
-                    // Cross-chapter selections require complete quote verification, not just an endpoint.
-                    if active
+                    let Some(last_chapter) = active
                         .reading
                         .probe
                         .chapter_index(&mark.selection.end.chapter)
-                        != Some(chapter)
+                    else {
+                        continue;
+                    };
+                    if last_chapter < chapter
+                        || mark.selection.start.book != mark.selection.end.book
                     {
                         continue;
+                    }
+                    // Do not claim a farther mark is nearest when a matching
+                    // selection exceeds the supported verification span.
+                    if last_chapter - chapter >= MAX_CROSS_CHAPTERS {
+                        return false;
                     }
                     let Ok(raw) = serde_json::to_vec(mark) else {
                         return false;
                     };
-                    (Mark::Highlight(mark.clone()), chapter, raw.len())
+                    (
+                        Mark::Highlight(mark.clone()),
+                        chapter,
+                        last_chapter,
+                        raw.len(),
+                    )
                 }
                 Locator::Fixed(_) => continue,
             };
@@ -166,6 +268,7 @@ impl Reader {
             entries.push(Entry {
                 ordinal,
                 chapter,
+                last_chapter,
                 mark,
             });
             if entries.len() > MAX_MARKS {
@@ -195,13 +298,15 @@ impl Reader {
             .name("bookmark-focus".into())
             .spawn(move || {
                 let _guard = Guard(gate);
-                let run = || -> Result<Option<usize>, ()> {
+                let run = || -> Result<Option<usize>, Failure> {
                     let origin_probe = worker_recipe
                         .chapter(current.chapter, &worker_cancel)
-                        .map_err(|_| ())?;
-                    let page = origin_probe.page_for(&origin_anchor).ok_or(())?;
+                        .map_err(|_| Failure::Changed)?;
+                    let page = origin_probe
+                        .page_for(&origin_anchor)
+                        .ok_or(Failure::Changed)?;
                     if page < current.page || page > last_visible {
-                        return Err(());
+                        return Err(Failure::Changed);
                     }
                     let mut chapters: Vec<_> =
                         worker_entries.iter().map(|entry| entry.chapter).collect();
@@ -216,6 +321,7 @@ impl Reader {
                     });
                     let total = chapters.len();
                     let mut best: Option<((bool, usize, usize, usize), usize)> = None;
+                    let mut cross_work = 0usize;
                     for (checked, chapter) in chapters.into_iter().enumerate() {
                         // A preceding page in the current chapter beats every
                         // earlier chapter once all later chapters are exhausted.
@@ -224,7 +330,7 @@ impl Reader {
                         }
                         let _ = tx.try_send(Message::Progress { checked, total });
                         if worker_cancel.load(Ordering::Relaxed) {
-                            return Err(());
+                            return Err(Failure::Changed);
                         }
                         let loaded;
                         let probe = if chapter == current.chapter {
@@ -232,7 +338,7 @@ impl Reader {
                         } else {
                             loaded = worker_recipe
                                 .chapter(chapter, &worker_cancel)
-                                .map_err(|_| ())?;
+                                .map_err(|_| Failure::Changed)?;
                             &loaded
                         };
                         for entry in worker_entries
@@ -240,7 +346,7 @@ impl Reader {
                             .filter(|entry| entry.chapter == chapter)
                         {
                             if worker_cancel.load(Ordering::Relaxed) {
-                                return Err(());
+                                return Err(Failure::Changed);
                             }
                             let page = match &entry.mark {
                                 Mark::Bookmark(mark) => match &mark.position.anchor {
@@ -254,26 +360,44 @@ impl Reader {
                                     None => continue,
                                 },
                                 Mark::Highlight(mark) => {
-                                    if probe.page_for(&mark.selection.end).is_none() {
-                                        continue;
-                                    }
-                                    if (mark.selection.start.raw_caret.is_some()
-                                        || mark.selection.end.raw_caret.is_some())
-                                        && !probe
-                                            .select_raw_anchors(
-                                                &mark.selection.start,
-                                                &mark.selection.end,
-                                            )
-                                            .is_some_and(|selection| {
-                                                selection.start == mark.selection.start
-                                                    && selection.end == mark.selection.end
-                                            })
-                                    {
-                                        continue;
-                                    }
-                                    match probe.page_for(&mark.selection.start) {
-                                        Some(page) => page,
-                                        None => continue,
+                                    if entry.last_chapter != chapter {
+                                        if !verify_cross_chapter(
+                                            &worker_recipe,
+                                            &worker_cancel,
+                                            probe,
+                                            chapter,
+                                            entry.last_chapter,
+                                            mark,
+                                            &mut cross_work,
+                                        )? {
+                                            continue;
+                                        }
+                                        match probe.page_for(&mark.selection.start) {
+                                            Some(page) => page,
+                                            None => continue,
+                                        }
+                                    } else {
+                                        if probe.page_for(&mark.selection.end).is_none() {
+                                            continue;
+                                        }
+                                        if (mark.selection.start.raw_caret.is_some()
+                                            || mark.selection.end.raw_caret.is_some())
+                                            && !probe
+                                                .select_raw_anchors(
+                                                    &mark.selection.start,
+                                                    &mark.selection.end,
+                                                )
+                                                .is_some_and(|selection| {
+                                                    selection.start == mark.selection.start
+                                                        && selection.end == mark.selection.end
+                                                })
+                                        {
+                                            continue;
+                                        }
+                                        match probe.page_for(&mark.selection.start) {
+                                            Some(page) => page,
+                                            None => continue,
+                                        }
                                     }
                                 }
                             };
@@ -306,7 +430,7 @@ impl Reader {
                         // the worker after the last candidate, never during draw.
                         worker_recipe
                             .verify_bound_folder_snapshot(&worker_cancel)
-                            .map_err(|_| ())?;
+                            .map_err(|_| Failure::Changed)?;
                     }
                     Ok(best.map(|(_, ordinal)| ordinal))
                 };
@@ -409,7 +533,7 @@ impl Reader {
                 self.bookmark_focus = Some(focus);
                 return None;
             }
-            Err(mpsc::TryRecvError::Disconnected) => Err(()),
+            Err(mpsc::TryRecvError::Disconnected) => Err(Failure::Changed),
         };
         let valid = self.screen == Screen::BookmarkBrowser(Page::Results)
             && self.open_book_id() == Some(focus.book)
@@ -450,6 +574,16 @@ impl Reader {
                         .bookmark_text("No matching marks in the current book")
                         .to_owned(),
                 )
+            }
+            (true, Err(Failure::Limit)) => {
+                self.notice = Some(
+                    if self.controls.interface_language.is_english() {
+                        "Too many long highlights to verify; narrow the filters"
+                    } else {
+                        "Quá nhiều đoạn dài cần kiểm tra; hãy thu hẹp bộ lọc"
+                    }
+                    .into(),
+                );
             }
             _ => {
                 self.notice = Some(

@@ -33,7 +33,8 @@ character and paragraph FKP coverage, nonoverlapping property pages and text,
 no piece properties, default-Normal-only paragraphs with no direct paragraph
 properties, and strictly parsed, no-inheritance/no-property Normal and
 default-character styles. Direct character runs may contain only bounded,
-nonoverlapping MS-DOC bold and italic toggle properties; all other character
+nonoverlapping MS-DOC bold and italic toggle properties and normal single
+underline; all other character
 properties, including hidden or deleted text flags, remain rejected. The default character style at index 10
 must be present in this initial candidate; an empty, inherited or otherwise
 unsupported default character style is rejected. These restrictions intentionally reject normal formatted, revised,
@@ -66,3 +67,11 @@ unknown or malformed modifiers are rejected, and the existing visibility,
 whitespace, size and auxiliary-content restrictions remain. This extension has
 not been behaviorally verified or compared with KOReader, real Word files,
 the simulator or Kindle. [Microsoft character properties](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/7022285b-9621-42e9-ad4d-4e02c115ef18) · [Toggle semantics](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/bc4ca98b-68ca-49dc-a091-1460e42d781e)
+
+The separate single-underline candidate accepts direct `sprmCKul` values for no
+underline or normal single underline, including alongside the existing bold
+and italic properties. Other underline variants, duplicate modifiers and all
+unrecognized or visibility-affecting properties are rejected. Existing
+documents without an underline modifier keep their previous XHTML. This change
+has not been behaviorally tested or compared with KOReader, real Word files,
+the simulator or Kindle. [Microsoft Kul values](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/f6d2ad93-87cf-4e46-a992-a38ccf2ef295)

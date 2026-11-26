@@ -30,6 +30,9 @@ fn set_emphasis(
     if *current == next {
         return Ok(());
     }
+    if current.underline {
+        push(output, "</u>")?;
+    }
     if current.italic {
         push(output, "</em>")?;
     }
@@ -47,6 +50,12 @@ fn set_emphasis(
             .checked_add(1)
             .ok_or("Word element count overflow")?;
         push(output, "<em>")?;
+    }
+    if next.underline {
+        *elements = elements
+            .checked_add(1)
+            .ok_or("Word element count overflow")?;
+        push(output, "<u>")?;
     }
     *current = next;
     Ok(())

@@ -1,5 +1,5 @@
 //! Fail-closed visibility proof for an intentionally minimal MS-DOC subset.
-//! Only proven default Normal text and explicitly bounded direct bold/italic
+//! Only proven default Normal text and explicitly bounded direct emphasis
 //! properties are accepted. Complex formatting and inheritance remain unsupported.
 use super::pieces::Analyzed;
 use std::collections::BTreeSet;
@@ -133,6 +133,7 @@ const MAX_STYLE_RUNS: usize = 32_768;
 pub(super) struct Emphasis {
     pub(super) bold: bool,
     pub(super) italic: bool,
+    pub(super) underline: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -154,23 +155,28 @@ fn character_properties(group: &[u8]) -> Result<Emphasis, String> {
     let mut style = Emphasis::default();
     let mut seen_bold = false;
     let mut seen_italic = false;
+    let mut seen_underline = false;
     for property in group.chunks_exact(3) {
         let code = u16::from_le_bytes([property[0], property[1]]);
-        // Both proven base styles have false bold/italic. 0x80 inherits
-        // that false value; 0x81 applies its opposite.
-        let enabled = match property[2] {
-            0x00 | 0x80 => false,
-            0x01 | 0x81 => true,
-            _ => return Err("Unsupported Word toggle operand".into()),
-        };
         match code {
             0x0835 if !seen_bold => {
-                style.bold = enabled;
+                style.bold = toggle(property[2])?;
                 seen_bold = true;
             }
             0x0836 if !seen_italic => {
-                style.italic = enabled;
+                style.italic = toggle(property[2])?;
                 seen_italic = true;
+            }
+            // Kul is an enumeration, not a toggle operand. Preserve only
+            // no underline and a normal single underline; all other styles
+            // require rendering behavior that this adapter cannot prove.
+            0x2a3e if !seen_underline => {
+                style.underline = match property[2] {
+                    0x00 => false,
+                    0x01 => true,
+                    _ => return Err("Unsupported Word underline style".into()),
+                };
+                seen_underline = true;
             }
             _ => return Err("Unsupported or repeated Word character property".into()),
         }
@@ -178,8 +184,18 @@ fn character_properties(group: &[u8]) -> Result<Emphasis, String> {
     Ok(style)
 }
 
+fn toggle(operand: u8) -> Result<bool, String> {
+    // Both proven base styles have false bold/italic. 0x80 inherits that
+    // value; 0x81 applies its opposite.
+    match operand {
+        0x00 | 0x80 => Ok(false),
+        0x01 | 0x81 => Ok(true),
+        _ => Err("Unsupported Word toggle operand".into()),
+    }
+}
+
 /// Validate FKP coverage. PAPX allows only istd=0 with no direct properties;
-/// CHPX allows only explicitly decoded bold and italic changes.
+/// CHPX allows only explicitly decoded bold, italic and single underline.
 fn property_map(
     doc: &Analyzed,
     range: Range<usize>,

@@ -13,8 +13,8 @@ text with one font run and a measurable standalone zero shaped with the selected
 font, language, features and variations. The original characters and byte
 offsets remain unchanged, while line measurement, drawing and hit-testing share
 the adjusted cluster spacing. Reader uses this only for strictly validated user
-CSS with publisher styling disabled
-and without font-variant or ligature overrides. A custom synthetic-weight or
+CSS with publisher styling disabled. The probe receives the resolved variant,
+ligature and kerning features. A custom synthetic-weight or
 cluster-spacing advance on zero causes fallback. The standalone probe and the
 admitted ASCII source both resolve to Latin in the current itemizer. Other
 scripts and unsupported content retain the previous behavior. Behavioral

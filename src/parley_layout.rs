@@ -4574,13 +4574,6 @@ fn shape_paragraph(
     // maps exactly and each unwrapped line fits this viewport.
     if !settings.publisher_styles
         && style.simple_default_tab_stops
-        && style.common_ligatures
-        && style.ligature_extras == LigatureExtras::default()
-        && style.variant_caps == VariantCaps::Normal
-        && style.variant_numeric == VariantNumeric::default()
-        && style.variant_east_asian == VariantEastAsian::default()
-        && style.variant_position == VariantPosition::Normal
-        && !style.variant_historical
         && style.preformatted_spaces
         && matches!(
             style.white_space,
