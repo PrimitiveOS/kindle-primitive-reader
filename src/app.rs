@@ -1049,6 +1049,7 @@ pub struct Reader {
         std::sync::Arc<crate::session::screen_pages::folder_sources::FolderProof>,
     )>,
     pending_folder_mark: Option<bookmark_browser::DeferredMark>,
+    pending_folder_chapter: Option<folder_open::DeferredChapter>,
     page_bookmark_worker_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     skim: Option<skim::Session>,
     staged_viewport: Option<(
@@ -1330,6 +1331,7 @@ impl Reader {
             folder_open_bypass: false,
             pending_folder_snapshot: None,
             pending_folder_mark: None,
+            pending_folder_chapter: None,
             page_bookmark_worker_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
@@ -1542,8 +1544,11 @@ impl Reader {
         if let Some((marker, chapter, path)) = publication {
             self.open_with_password(marker, None)?;
             if self.folder_open.is_some() {
-                self.cancel_folder_open();
-                return Err("Open the folder book before choosing its chapter".into());
+                if let Err(error) = self.attach_folder_open_chapter(chapter, path) {
+                    self.cancel_folder_open();
+                    return Err(error);
+                }
+                return Ok(());
             }
             if self.metadata_archive.waiting_to_restore() {
                 return Ok(());
@@ -1636,7 +1641,7 @@ impl Reader {
                 .as_ref()
                 .is_some_and(|(path, expected, _)| path == &entry.path && *expected == id)
         {
-            if self.start_folder_open(&entry, check_archive, true)? {
+            if self.start_folder_open(&entry, check_archive, Some(id))? {
                 return Ok(());
             }
             return Err("This folder book has saved raw positions and needs a verified snapshot; its saved data was kept".into());
@@ -2076,8 +2081,15 @@ impl Reader {
             reading = reading.prepare_viewport(self.opening_display_viewport())?;
         }
         let deferred_mark_origin = if let Some(mark) = &self.pending_folder_mark {
+            if self.pending_folder_chapter.is_some() {
+                return Err("The requested folder destination is ambiguous".into());
+            }
             let previous = self::position(&reading);
             mark.verify_and_seek(&self.library, id, &mut reading)?;
+            Some(previous)
+        } else if let Some(chapter) = &self.pending_folder_chapter {
+            let previous = self::position(&reading);
+            chapter.verify_and_seek(id, &mut reading)?;
             Some(previous)
         } else {
             None

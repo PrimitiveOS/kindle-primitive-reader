@@ -4,12 +4,17 @@ The local Reader build enables a bounded horizontal layout for simple source
 blocks with `white-space: pre`, `pre-wrap` or `break-spaces`. A bounded
 `pre-line` content also uses a bounded source-mapped collapse projection for
 horizontal whitespace and line breaks, including bounded explicit `<br>`
-elements. Unsupported mappings, mixed style owners within one collapsed run and
-unverifiable boundaries retain the canonical fallback. When the projected text
+elements. Collapsed whitespace crossing inline boundaries keeps the first
+space's computed style, while later collapsible spaces have no width.
+Unsupported mappings, form-feed controls and unverifiable boundaries retain the
+canonical fallback. A carriage return retained in the parsed document is
+treated as a collapsible space in this pre-line projection. When the projected text
 already matches canonical text, Reader keeps the canonical layout and anchors. It preserves
 verified spaces, tabs and line breaks while keeping existing canonical source
 identities. This implementation has not yet been behaviorally tested in the
 simulator or on Kindle and must not be treated as validated or released.
+The adjacent-owner and retained-carriage-return behavior follows the
+[CSS Text white-space processing rules](https://www.w3.org/TR/2024/CRD-css-text-3-20240930/#white-space-processing).
 
 A snapshot is captured for direct text and a bounded set of inline elements
 when the concatenated text normalizes to the canonical block exactly. Inline

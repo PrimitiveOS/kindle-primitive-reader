@@ -30,7 +30,7 @@ The latter also supports other compression and color modes, so this is a subset
 of KOReader's TIFF support, not complete TIFF parity. [KOReader TIFF provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L410-L415) · [Pinned MuPDF TIFF decoder](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L360-L369) · [PackBits filter](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L408-L418) · [TIFF 6.0 specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
 These additions have not yet been compared against KOReader or exercised on
-the simulator or Kindle. Associated-alpha white-is-zero grayscale and palette images, packed palette alpha, profiled or nonstandard CMYK, multi-page and tiled TIFFs and advanced fax options remain outside this decoder's support. [TIFF 6.0 LZW
+the simulator or Kindle. Associated-alpha white-is-zero grayscale and palette images, packed palette alpha, profiled or nonstandard CMYK, tiled TIFFs and advanced fax options remain outside this decoder's support. [TIFF 6.0 LZW
 and predictor specification](https://pdfa.org/wp-content/uploads/2020/07/TIFF6.pdf)
 
 ## Self-contained JPEG grayscale scans
@@ -167,7 +167,7 @@ combined decoded-strip and grayscale-output allocation is capped at 32 MiB,
 plus Deflate’s one-byte overflow sentinel; compressed input remains separately
 bounded. These alpha changes are not yet
 behaviorally tested. Associated-alpha white-is-zero grayscale and palette images, packed palette alpha, profiled or nonstandard CMYK, planar, tiled and
-multi-page TIFFs remain unsupported.
+multi-page TIFF illustrations remain unsupported.
 KOReader exposes TIFF via MuPDF, whose pinned loader accepts RGB photometric
 data and horizontal differencing; this limited subset is not full MuPDF
 parity. The authored compression, byte-order, predictor, orientation and
@@ -259,6 +259,18 @@ compositing over white, using the existing strip, predictor and 32 MiB
 decoded-strip-plus-output limits. Associated alpha and packed 1-, 2- or 4-bit
 palette alpha remain unsupported. KOReader output comparison and behavioral,
 simulator and Kindle validation remain open.
+
+Standalone TIFF files can now open a bounded chain of up to 128 image
+directories as separate pages. The encoded file is retained in memory, with
+the existing input-size limit; directories must be well formed and nonoverlapping,
+and loops are rejected. Each requested page is decoded on demand with the
+existing single-page strip, dimension, color and allocation limits. Pages
+that use unsupported TIFF features remain unavailable; embedded TIFF artwork
+still uses the single-page path. A single-page standalone TIFF continues to
+use its existing image path. No page files are extracted to storage. Repeated
+page-size requests may decode the page again, so performance, peak memory,
+malformed-file behavior, actual page navigation and KOReader comparison need
+computer, simulator and Kindle validation.
 
 KOReader registers TIFF through MuPDF, whose pinned loader recognizes palette
 photometric data and reads the ColorMap. This is a limited local implementation,

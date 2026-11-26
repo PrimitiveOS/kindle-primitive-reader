@@ -6,6 +6,17 @@ Latest saved mark opens the bookmark or applicable highlight with the newest rec
 
 These are explicit navigation-menu actions; they do not alter physical page buttons or claim KOReader's persistent bookmark-browsing mode. Legacy page-only bookmarks use the existing saved-position restoration. The implementation has not yet been tested in simulation or on a Kindle, and matching on changed editions, hidden or stale markers, large chapter layouts and continuous-scroll behavior remains to be validated.
 
+Selecting an interior HTML chapter of an extracted EPUB can require a bounded
+background snapshot when the book has raw-position reading data. The chapter
+request remains attached to that open: Reader verifies the edition identity,
+chapter path and spine index against the immutable snapshot, seeks in the
+candidate before replacing the current view, and retains the book's previous
+position in Back history. Cancellation leaves the current view and saved data
+untouched. A changed, ambiguous or unverifiable edition fails closed. Archive
+restoration and the normal non-snapshot opening path retain their existing
+behavior. This deferred chapter navigation has not yet been validated in
+simulation or on Kindle.
+
 When Bookmark Browser is opened from a document, Sources also offers **Current book**. It narrows the existing cross-book browser to that document, where its type, highlight-style and highlight-color filters remain available. This selection is transient: it does not replace a saved default source or reset the browser's existing filter preferences. Only marks already present in the Reader library are included; this does not add filtering to the separate per-book saved-marks screen. This workflow still requires simulation and device validation.
 
 Bookmark Browser's Filters screen offers **Show current page in results** when opened from a document. It focuses the result-list page containing the nearest visible mark on or after the current page, falling back to the nearest earlier page. Ties use the first row in the existing display order. The command honors the source, search and filters, preserves date or reverse ordering, and does not move the reading position. Fixed-layout books search their matching result rows throughout the book. Reflow books search only the current chapter using its existing layout; source anchors that cannot be resolved are skipped, while legacy page-only bookmarks must identify that chapter and a valid page. Searching adjacent chapters remains open. If no eligible mark matches, Reader reports that instead of guessing. The new behavior has not yet been tested in simulation or on a Kindle.

@@ -46,9 +46,62 @@ impl fmt::Display for TiffError {
 
 impl std::error::Error for TiffError {}
 
+/// Memory-backed directory chain for a standalone multipage TIFF. Pages are
+/// decoded on demand; no extracted image files or decoded page collection are retained.
+#[cfg(feature = "kindle")]
+pub(crate) struct Sequence {
+    data: Vec<u8>,
+    offsets: Vec<usize>,
+    order: ByteOrder,
+}
+
+#[cfg(feature = "kindle")]
+impl Sequence {
+    pub(crate) fn open(data: Vec<u8>) -> Result<Self, TiffError> {
+        const MAX_PAGES: usize = 128;
+        let (first, mut next) = Directory::first(&data)?;
+        let order = first.order;
+        let mut offsets = vec![first.range.start];
+        let mut ranges = vec![first.range];
+        while next != 0 {
+            if offsets.len() == MAX_PAGES {
+                return Err(TiffError::Limit);
+            }
+            let (directory, following) = Directory::at_offset(&data, order, next)?;
+            if ranges.iter().any(|range| overlaps(range, &directory.range)) {
+                return Err(TiffError::Directory);
+            }
+            offsets.push(directory.range.start);
+            ranges.push(directory.range);
+            next = following;
+        }
+        Ok(Self {
+            data,
+            offsets,
+            order,
+        })
+    }
+
+    pub(crate) fn page_count(&self) -> usize {
+        self.offsets.len()
+    }
+
+    pub(crate) fn image_page(&self, index: usize) -> crate::Result<crate::comic::ImagePage> {
+        let offset = *self.offsets.get(index).ok_or(TiffError::Directory)?;
+        let (directory, _) = Directory::at_offset(&self.data, self.order, offset)?;
+        let image = decode_directory(directory)?;
+        crate::comic::ImagePage::from_grayscale(image.width(), image.height(), image.into_raw())
+    }
+}
+
 /// Decode one top-left-origin page. Samples use 0 for black and 255 for white.
 pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     let image = Directory::open(bytes)?;
+    decode_directory(image)
+}
+
+fn decode_directory(image: Directory<'_>) -> Result<GrayImage, TiffError> {
+    let bytes = image.bytes;
     let width = image.required(256, SHORT_OR_LONG)?;
     let height = image.required(257, SHORT_OR_LONG)?;
     let pixel_count = width.checked_mul(height).ok_or(TiffError::Limit)?;
@@ -1086,6 +1139,14 @@ impl<'a> Directory<'a> {
     }
 
     fn open(bytes: &'a [u8]) -> Result<Self, TiffError> {
+        let (directory, next) = Self::first(bytes)?;
+        if next != 0 {
+            return Err(TiffError::Unsupported);
+        }
+        Ok(directory)
+    }
+
+    fn first(bytes: &'a [u8]) -> Result<(Self, usize), TiffError> {
         if bytes.len() > MAX_BYTES {
             return Err(TiffError::Limit);
         }
@@ -1096,6 +1157,14 @@ impl<'a> Directory<'a> {
             _ => return Err(TiffError::Header),
         };
         let start = order.long(at(bytes, 4).ok_or(TiffError::Header)?) as usize;
+        Self::at_offset(bytes, order, start)
+    }
+
+    fn at_offset(
+        bytes: &'a [u8],
+        order: ByteOrder,
+        start: usize,
+    ) -> Result<(Self, usize), TiffError> {
         if start < HEADER_BYTES || !start.is_multiple_of(2) {
             return Err(TiffError::Directory);
         }
@@ -1109,10 +1178,7 @@ impl<'a> Directory<'a> {
         let entries_end = start
             .checked_add(2 + count * FIELD_BYTES)
             .ok_or(TiffError::Directory)?;
-        let next = order.long(at(bytes, entries_end).ok_or(TiffError::Directory)?);
-        if next != 0 {
-            return Err(TiffError::Unsupported);
-        }
+        let next = order.long(at(bytes, entries_end).ok_or(TiffError::Directory)?) as usize;
         let entries = bytes[start + 2..entries_end].as_chunks::<FIELD_BYTES>().0;
         let mut previous = 0;
         for tag in entries
@@ -1127,12 +1193,15 @@ impl<'a> Directory<'a> {
             }
             previous = tag;
         }
-        Ok(Self {
-            bytes,
-            range: start..entries_end + 4,
-            entries,
-            order,
-        })
+        Ok((
+            Self {
+                bytes,
+                range: start..entries_end + 4,
+                entries,
+                order,
+            },
+            next,
+        ))
     }
 
     fn required(&self, tag: u16, types: &[u16]) -> Result<u32, TiffError> {

@@ -14,10 +14,31 @@ pub(super) struct Pending {
     entry: LibraryBook,
     check_archive: bool,
     mark: Option<super::bookmark_browser::DeferredMark>,
+    chapter: Option<DeferredChapter>,
+    expected_id: Option<u64>,
     screen: Screen,
     receiver: mpsc::Receiver<Option<Arc<FolderProof>>>,
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
+}
+
+pub(super) struct DeferredChapter {
+    pub(super) index: usize,
+    pub(super) path: String,
+    pub(super) book: u64,
+}
+
+impl DeferredChapter {
+    pub(super) fn verify_and_seek(
+        &self,
+        book: u64,
+        reading: &mut crate::session::Reading,
+    ) -> crate::Result<()> {
+        if book != self.book || reading.probe.chapter_index(&self.path) != Some(self.index) {
+            return Err("The folder book or selected chapter changed; open it again".into());
+        }
+        reading.jump(self.index, None)
+    }
 }
 impl Drop for Pending {
     fn drop(&mut self) {
@@ -45,6 +66,25 @@ fn controls(reader: &Reader) -> (Rect, Rect) {
 }
 
 impl Reader {
+    pub(super) fn attach_folder_open_chapter(
+        &mut self,
+        index: usize,
+        path: String,
+    ) -> crate::Result<()> {
+        let pending = self
+            .folder_open
+            .as_mut()
+            .ok_or("The folder open was cancelled")?;
+        if pending.mark.is_some() || pending.chapter.is_some() || path.len() > 4096 {
+            return Err("The selected chapter cannot be safely opened".into());
+        }
+        let book = pending
+            .expected_id
+            .ok_or("The selected folder edition is ambiguous; open the book first")?;
+        pending.chapter = Some(DeferredChapter { index, path, book });
+        Ok(())
+    }
+
     pub(super) fn attach_folder_open_mark(
         &mut self,
         mark: super::bookmark_browser::DeferredMark,
@@ -67,25 +107,37 @@ impl Reader {
         entry: &LibraryBook,
         check_archive: bool,
     ) -> crate::Result<bool> {
-        self.start_folder_open(entry, check_archive, false)
+        self.start_folder_open(entry, check_archive, None)
     }
 
     pub(super) fn start_folder_open(
         &mut self,
         entry: &LibraryBook,
         check_archive: bool,
-        identified_raw: bool,
+        identified_raw: Option<u64>,
     ) -> crate::Result<bool> {
         if self.folder_open_bypass
             || !crate::parley_layout::RAW_LAYOUT_ENABLED
             || !crate::epub_members::is_folder_book(&entry.path)
-            || (!identified_raw
+            || (identified_raw.is_none()
                 && !self.library.recents().iter().any(|state| {
                     state.path == entry.path && self.library.has_raw_whitespace_state(state.id)
                 }))
         {
             return Ok(false);
         }
+        let expected_id = identified_raw.or_else(|| {
+            let mut matches = self
+                .library
+                .recents()
+                .iter()
+                .filter(|state| {
+                    state.path == entry.path && self.library.has_raw_whitespace_state(state.id)
+                })
+                .map(|state| state.id);
+            let first = matches.next()?;
+            matches.next().is_none().then_some(first)
+        });
         self.folder_activation = None;
         self.folder_activation_retry = None;
         if self.folder_open_busy.swap(true, Ordering::AcqRel) {
@@ -128,6 +180,8 @@ impl Reader {
             entry: entry.clone(),
             check_archive,
             mark: None,
+            chapter: None,
+            expected_id,
             screen: self.screen,
             receiver,
             cancelled,
@@ -194,6 +248,7 @@ impl Reader {
         }
         let entry = pending.entry.clone();
         let mark = pending.mark.take();
+        let chapter = pending.chapter.take();
         if mark
             .as_ref()
             .is_some_and(|mark| !mark.matches(&self.library))
@@ -203,20 +258,28 @@ impl Reader {
         }
         if let Some(proof) = proof {
             let id = proof.legacy_identity();
+            if chapter.as_ref().is_some_and(|chapter| chapter.book != id) {
+                self.metadata_archive.abandon_archive_consumption();
+                return Some(
+                    self.report("The folder edition changed; the selected chapter was not opened"),
+                );
+            }
             if self.library.has_raw_whitespace_state(id) {
                 self.pending_folder_snapshot = Some((entry.path.clone(), id, proof));
             }
         }
-        if mark.is_some() && self.pending_folder_snapshot.is_none() {
+        if (mark.is_some() || chapter.is_some()) && self.pending_folder_snapshot.is_none() {
             self.metadata_archive.abandon_archive_consumption();
-            return Some(self.report("The folder book could not be verified; the mark was kept"));
+            return Some(self.report("The folder book could not be verified; saved data was kept"));
         }
         self.pending_folder_mark = mark;
+        self.pending_folder_chapter = chapter;
         self.folder_open_bypass = true;
         let result = self.open_with_password_mode(entry, None, pending.check_archive);
         self.folder_open_bypass = false;
         self.pending_folder_snapshot = None;
         self.pending_folder_mark = None;
+        self.pending_folder_chapter = None;
         Some(match result {
             Ok(()) => Change::Full,
             Err(error) => self.report(error),

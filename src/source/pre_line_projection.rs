@@ -42,32 +42,24 @@ impl PreLineProjection {
         let mut display = String::with_capacity(raw.len());
         let mut segments: Vec<Segment> = Vec::new();
         let mut pending: Option<Range<usize>> = None;
-        let mut chars = raw.char_indices().peekable();
-        while let Some((at, ch)) = chars.next() {
+        for (at, ch) in raw.char_indices() {
             let end = at.checked_add(ch.len_utf8())?;
             match ch {
-                ' ' | '\t' | '\u{c}' => {
+                ' ' | '\t' | '\r' => {
                     pending = Some(match pending {
                         Some(span) => span.start..end,
                         None => at..end,
                     });
                 }
-                '\r' | '\n' => {
+                '\u{c}' => return None,
+                '\n' => {
                     pending = None;
-                    let raw_end = if ch == '\r'
-                        && chars.peek().is_some_and(|(next_at, next)| {
-                            *next == '\n' && hard_breaks.binary_search(next_at).is_err()
-                        }) {
-                        chars.next().map(|(i, c)| i + c.len_utf8())?
-                    } else {
-                        end
-                    };
                     let start = display.len();
                     display.push('\n');
                     segments.push(Segment {
                         visible: start..display.len(),
-                        raw: at..raw_end,
-                        exact: ch == '\n',
+                        raw: at..end,
+                        exact: true,
                     });
                 }
                 _ => {
@@ -127,8 +119,8 @@ impl PreLineProjection {
         })
     }
 
-    /// Project text ownership without inventing a style across a collapsed
-    /// run. If collapsed bytes have different owners, use canonical fallback.
+    /// Preserve the first owner's style on a collapsed sequence; following
+    /// spaces, including those across inline boundaries, have zero width.
     pub(crate) fn style_spans(
         &self,
         owners: &[super::raw_whitespace::RawStyleRun],
@@ -138,6 +130,7 @@ impl PreLineProjection {
             let mut covered = segment.raw.start;
             let first = owners.partition_point(|run| run.raw.end <= covered);
             let mut pieces = 0usize;
+            let mut collapsed_owner = None;
             for owner in owners[first..]
                 .iter()
                 .take_while(|run| run.raw.start < segment.raw.end)
@@ -147,22 +140,19 @@ impl PreLineProjection {
                 if start != covered || start >= end {
                     return None;
                 }
-                let visible = if segment.exact {
-                    (segment.visible.start + start - segment.raw.start)
-                        ..(segment.visible.start + end - segment.raw.start)
-                } else {
-                    if start != segment.raw.start || end != segment.raw.end {
-                        return None;
+                if segment.exact {
+                    let visible = (segment.visible.start + start - segment.raw.start)
+                        ..(segment.visible.start + end - segment.raw.start);
+                    if let Some((prior, element)) = result.last_mut()
+                        && *element == owner.element
+                        && prior.end == visible.start
+                    {
+                        prior.end = visible.end;
+                    } else {
+                        result.push((visible, owner.element));
                     }
-                    segment.visible.clone()
-                };
-                if let Some((prior, element)) = result.last_mut()
-                    && *element == owner.element
-                    && prior.end == visible.start
-                {
-                    prior.end = visible.end;
-                } else {
-                    result.push((visible, owner.element));
+                } else if collapsed_owner.is_none() {
+                    collapsed_owner = Some(owner.element);
                 }
                 covered = end;
                 pieces += 1;
@@ -172,6 +162,20 @@ impl PreLineProjection {
             }
             if covered != segment.raw.end || pieces == 0 {
                 return None;
+            }
+            if !segment.exact {
+                let owner = collapsed_owner?;
+                if let Some((prior, element)) = result.last_mut()
+                    && *element == owner
+                    && prior.end == segment.visible.start
+                {
+                    prior.end = segment.visible.end;
+                } else {
+                    result.push((segment.visible.clone(), owner));
+                }
+                if result.len() > MAX_SEGMENTS {
+                    return None;
+                }
             }
         }
         Some(result)
