@@ -95,6 +95,33 @@ fn parse_recovery_xml(
 }
 
 pub(crate) fn recover_html_voids(xml: &str, limit: usize) -> Option<String> {
+    let repaired = html_void_candidate(xml, limit)?;
+    let repaired = recover_html_names(repaired, limit);
+    let checked = without_plain_doctype(&repaired);
+    let doc = parse_recovery_xml(&checked).ok()?;
+    let root = doc.root_element();
+    if root.tag_name().name() != "html"
+        || !matches!(
+            root.tag_name().namespace(),
+            None | Some("http://www.w3.org/1999/xhtml")
+        )
+        || !root.children().any(|node| node.has_tag_name("body"))
+    {
+        return None;
+    }
+    drop(doc);
+    drop(checked);
+    Some(repaired)
+}
+
+/// Reuse the exact void-tag scan and only return after the existing
+/// ampersand repair validates the entire combined result.
+pub(crate) fn recover_html_voids_and_ampersands(xml: &str, limit: usize) -> Option<String> {
+    let candidate = html_void_candidate(xml, limit)?;
+    recover_html_bare_ampersands(&candidate, limit)
+}
+
+fn html_void_candidate(xml: &str, limit: usize) -> Option<String> {
     if xml.len() > limit {
         return None;
     }
@@ -218,21 +245,6 @@ pub(crate) fn recover_html_voids(xml: &str, limit: usize) -> Option<String> {
         last = at;
     }
     repaired.push_str(&xml[last..]);
-    let repaired = recover_html_names(repaired, limit);
-    let checked = without_plain_doctype(&repaired);
-    let doc = parse_recovery_xml(&checked).ok()?;
-    let root = doc.root_element();
-    if root.tag_name().name() != "html"
-        || !matches!(
-            root.tag_name().namespace(),
-            None | Some("http://www.w3.org/1999/xhtml")
-        )
-        || !root.children().any(|node| node.has_tag_name("body"))
-    {
-        return None;
-    }
-    drop(doc);
-    drop(checked);
     Some(repaired)
 }
 

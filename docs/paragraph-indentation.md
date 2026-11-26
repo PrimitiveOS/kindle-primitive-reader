@@ -58,8 +58,11 @@ Reader also recognizes `:empty` and `:dir(ltr)` / `:dir(rtl)`, including inside 
 Publisher `@supports` accepts a bounded positive query containing a single
 parenthesized `font-style`, `font-weight`, or `text-align` declaration when
 Reader's publisher parser accepts its value. These properties have existing
-rendering paths; capability queries for other properties are left unmatched,
-as are logical combinations, negation, and selector functions. This follows
+rendering paths. The exact `display: grid`, `inline-grid`, `flex`, and
+`inline-flex` values are known unsupported; simple `not (...)` can invert only
+these known results or a supported positive result. Unknown and malformed
+declarations are not inverted. Other capability queries, logical
+combinations, and selector functions remain unmatched. This follows
 the existing nested-rule and sheet budgets and does not change source text or
 saved positions. The candidate is unverified. [CRE capability queries](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L1984-L2004)
 

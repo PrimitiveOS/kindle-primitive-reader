@@ -45,31 +45,43 @@ fn media_query(input: &mut Parser<'_>) -> CssResult<bool> {
     Ok(if modifier == "not" { !matches } else { matches })
 }
 
-// A deliberately small positive subset: these properties have an active
-// publisher rendering path rather than merely a syntactic CSS parser.
-// Complex conditions remain unmatched until their semantics are implemented.
+// Only invert a proven result. Unknown or incompletely implemented conditions
+// are distinct from known unsupported grid/flex layouts.
 fn supports_query(input: &mut Parser<'_>) -> CssResult<bool> {
+    let negated = input
+        .try_parse(|input| input.expect_ident_matching("not"))
+        .is_ok();
     input.expect_parenthesis_block()?;
     let supported = input.parse_nested_block(|input| {
         let state = input.state();
         let name = input.expect_ident_cloned()?;
+        if name.eq_ignore_ascii_case("display") {
+            input.expect_colon()?;
+            let value = input.expect_ident_cloned()?;
+            input.expect_exhausted()?;
+            return Ok(matches!(
+                value.to_ascii_lowercase().as_str(),
+                "grid" | "inline-grid" | "flex" | "inline-flex"
+            )
+            .then_some(false));
+        }
         if !matches!(
             name.to_ascii_lowercase().as_str(),
             "font-style" | "font-weight" | "text-align"
         ) {
             while input.next().is_ok() {}
-            return Ok(false);
+            return Ok(None);
         }
         input.expect_colon()?;
         let supported = Properties.parse_value(name, input, &state).is_ok();
         if input.expect_exhausted().is_err() {
             while input.next().is_ok() {}
-            return Ok(false);
+            return Ok(None);
         }
-        Ok(supported)
+        Ok(supported.then_some(true))
     })?;
     input.expect_exhausted()?;
-    Ok(supported)
+    Ok(supported.is_some_and(|supported| supported != negated))
 }
 
 impl<'i> QualifiedRuleParser<'i> for PublisherParser<'_> {

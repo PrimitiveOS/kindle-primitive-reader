@@ -27,8 +27,9 @@ escape an unambiguous literal ampersand in text or an attribute, then require
 the same bounded complete-document validation. Existing XML references,
 comments, CDATA and processing instructions are kept unchanged. Numeric
 references, complete unknown names and semicolonless names that could be HTML
-entities are not guessed; malformed markup continues to fail. This candidate
-does not combine ampersand and unclosed-void repairs in the same chapter.
+entities are not guessed; malformed markup continues to fail. If neither
+individual repair succeeds, the same bounded void-tag scan can be combined
+with the ampersand repair; the combined result must pass full validation.
 Source text and anchors for previously readable chapters remain unchanged;
 newly readable chapters use the deterministic repaired source. This path is
 also untested on real books, simulator and Kindle.
