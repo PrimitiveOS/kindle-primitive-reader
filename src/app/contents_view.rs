@@ -272,7 +272,7 @@ impl Reader {
                 .map(|heading| {
                     let entry = &view.entries[heading.source_index];
                     let action = match &entry.target {
-                        Target::Reflow(target) => Action::Jump(target.clone()),
+                        Target::Reflow(target) => Action::ContentsJump(target.clone()),
                         Target::Alternative(target) => {
                             Action::AlternativeContentsEntry(target.clone())
                         }

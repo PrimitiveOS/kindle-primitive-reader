@@ -60,10 +60,13 @@ identity, and non-element nodes and anonymous wrappers do not count. The
 These additions have not
 yet been behaviorally tested in simulation or on Kindle.
 
-Publisher selectors can also use `:not(...)` with one supported compound
-selector, with argument specificity and up to four nested negations. Selector
-lists, combinators and pseudo-elements inside `:not` remain unsupported. This
-is an unverified candidate; existing selector and source-position bounds apply.
+Publisher selectors can also use `:not(...)`, `:is(...)` and `:where(...)`
+with lists of supported single compounds and up to four nested functions.
+`:not` and `:is` use the most specific argument; `:where` adds no specificity.
+Complex combinators and pseudo-elements inside these functions remain
+unsupported. Unsupported list alternatives invalidate the function rather
+than receiving CSS's forgiving-list behavior. This is an unverified candidate;
+existing selector and source-position bounds apply.
 
 In anonymous EPUB 061, the first paragraph in spine item 57 follows a second-level heading. A grouped publisher rule resets its indent to zero. The first three selection rectangles previously began at x = 56, 24 and 24. They now begin at x = 24, 24 and 24. The 311-byte paragraph matched its source exactly, with 5,947 of 5,947 nonspace characters mapped across the chapter. The authored comparison below shows an opening paragraph and its indented continuation in two sections. [Fixture](../tests/fixtures/paragraph-opener.xhtml)
 

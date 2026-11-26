@@ -721,6 +721,7 @@ enum Action {
     ExportAnnotatedPdf,
     Show(Screen),
     Jump(Destination),
+    ContentsJump(Destination),
     BookMapChapter(usize),
     OpenFixedLink(crate::fixed::PdfLink),
     OpenLinkAddress(String),
@@ -4907,6 +4908,7 @@ impl Reader {
             Action::PreviewReadingMenu(index) => self.menu_search.preview(index)?,
 
             Action::Jump(target) => self.follow(target)?,
+            Action::ContentsJump(target) => self.follow_contents(target)?,
             Action::BookMapChapter(chapter) => {
                 self.select_book_map_page(page_overview::MapOrigin::Chapter(chapter), 0)?;
             }
@@ -5993,6 +5995,28 @@ impl Reader {
         };
         active.reading.jump(chapter, target.fragment.as_deref())?;
         self.finish_link_jump(previous);
+        Ok(())
+    }
+
+    fn follow_contents(&mut self, target: Destination) -> Result<()> {
+        let Some(active) = self.active.as_ref() else {
+            return self.follow(target);
+        };
+        if active.entry.format != DocumentFormat::Epub {
+            return self.follow(target);
+        }
+        let Some(chapter) = active.reading.probe.chapter_index(&target.path) else {
+            return self.follow(target);
+        };
+        let active = self.active.as_mut().ok_or("No open book")?;
+        let previous = position(&active.reading);
+        let fallback = active
+            .reading
+            .jump_contents(chapter, target.fragment.as_deref())?;
+        self.finish_link_jump(previous);
+        if fallback {
+            self.notice = Some("Contents location missing; opened chapter start".into());
+        }
         Ok(())
     }
 
@@ -16704,7 +16728,7 @@ mod tests {
         };
         let rows = app.contents_rows();
         assert!(row >= rows);
-        let Action::Jump(destination) = &items[row].action else {
+        let Action::ContentsJump(destination) = &items[row].action else {
             panic!("The fixture needs an internal destination at the chosen list row");
         };
         assert!(app.follow(destination.clone()).is_ok());

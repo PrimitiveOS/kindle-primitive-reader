@@ -1938,6 +1938,7 @@ struct Compound {
     nth_type: Vec<(i32, i32)>,
     nth_type_from_end: Vec<(i32, i32)>,
     negations: Vec<Compound>,
+    alternatives: Vec<Vec<Compound>>,
     relation: Relation,
 }
 
@@ -1961,6 +1962,7 @@ impl Compound {
             && self.nth_type.is_empty()
             && self.nth_type_from_end.is_empty()
             && self.negations.is_empty()
+            && self.alternatives.is_empty()
     }
 
     fn matches(&self, element: &Element) -> bool {
@@ -1999,6 +2001,10 @@ impl Compound {
                 .negations
                 .iter()
                 .all(|negative| !negative.matches(element))
+            && self
+                .alternatives
+                .iter()
+                .all(|group| group.iter().any(|candidate| candidate.matches(element)))
             && self
                 .tag
                 .as_ref()
@@ -2097,22 +2103,51 @@ impl Selector {
                     }
                     let mut class_specificity = true;
                     match token {
-                        Token::Function(name) if name.eq_ignore_ascii_case("not") => {
+                        Token::Function(name)
+                            if name.eq_ignore_ascii_case("not")
+                                || name.eq_ignore_ascii_case("is")
+                                || name.eq_ignore_ascii_case("where") =>
+                        {
                             if depth >= 4 {
                                 return Err(ParseError::unexpected_token());
                             }
-                            let mut nested = input.parse_nested_block(|input| {
-                                Self::parse_with_depth(input, depth + 1)
+                            let nested = input.parse_nested_block(|input| {
+                                let mut count = 0;
+                                input.parse_comma_separated(|part| {
+                                    count += 1;
+                                    if count > MAX_SELECTORS_PER_RULE {
+                                        return Err(ParseError::unexpected_token());
+                                    }
+                                    Self::parse_with_depth(part, depth + 1)
+                                })
                             })?;
-                            if nested.steps.len() != 1 || nested.pseudo.is_some() {
+                            if nested.is_empty()
+                                || nested.len() > MAX_SELECTORS_PER_RULE
+                                || nested
+                                    .iter()
+                                    .any(|item| item.steps.len() != 1 || item.pseudo.is_some())
+                            {
                                 return Err(ParseError::unexpected_token());
                             }
-                            specificity.0 = specificity.0.saturating_add(nested.specificity.0);
-                            specificity.1 = specificity.1.saturating_add(nested.specificity.1);
-                            specificity.2 = specificity.2.saturating_add(nested.specificity.2);
-                            compound
-                                .negations
-                                .push(nested.steps.pop().expect("one checked selector"));
+                            if !name.eq_ignore_ascii_case("where") {
+                                let highest = nested
+                                    .iter()
+                                    .map(|item| item.specificity)
+                                    .max()
+                                    .unwrap_or_default();
+                                specificity.0 = specificity.0.saturating_add(highest.0);
+                                specificity.1 = specificity.1.saturating_add(highest.1);
+                                specificity.2 = specificity.2.saturating_add(highest.2);
+                            }
+                            let items: Vec<_> = nested
+                                .into_iter()
+                                .map(|mut item| item.steps.pop().expect("one checked selector"))
+                                .collect();
+                            if name.eq_ignore_ascii_case("not") {
+                                compound.negations.extend(items);
+                            } else {
+                                compound.alternatives.push(items);
+                            }
                             class_specificity = false;
                         }
                         Token::Ident(name) if name.eq_ignore_ascii_case("first-of-type") => {

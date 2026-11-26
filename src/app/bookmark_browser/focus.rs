@@ -30,7 +30,7 @@ struct Entry {
     mark: Mark,
 }
 #[derive(Clone, Copy)]
-pub(super) enum Failure {
+pub(in crate::app) enum Failure {
     Changed,
     Limit,
 }
@@ -81,6 +81,21 @@ pub(super) fn verify_cross_chapter(
     mark: &Highlight,
     work: &mut usize,
 ) -> Result<bool, Failure> {
+    verify_cross_chapter_with_snapshot(recipe, cancel, first_probe, first, last, mark, work, None)
+}
+
+/// A bookmark-navigation worker can use the immutable folder proof it just
+/// captured, rather than allowing verification to reopen the live folder.
+pub(in crate::app) fn verify_cross_chapter_with_snapshot(
+    recipe: &SearchLayoutRecipe,
+    cancel: &AtomicBool,
+    first_probe: &crate::Probe,
+    first: usize,
+    last: usize,
+    mark: &Highlight,
+    work: &mut usize,
+    folder: Option<&crate::session::screen_pages::folder_sources::FolderProof>,
+) -> Result<bool, Failure> {
     let saved = &mark.selection;
     if first >= last
         || saved.start.book != saved.end.book
@@ -110,9 +125,12 @@ pub(super) fn verify_cross_chapter(
         let probe = if chapter == first {
             first_probe
         } else {
-            loaded = recipe
-                .chapter(chapter, cancel)
-                .map_err(|_| Failure::Changed)?;
+            loaded = if let Some(proof) = folder {
+                recipe.folder_chapter(proof, chapter, cancel)
+            } else {
+                recipe.chapter(chapter, cancel)
+            }
+            .map_err(|_| Failure::Changed)?;
             &loaded
         };
         if chapter == last && probe.page_for(&saved.end).is_none() {

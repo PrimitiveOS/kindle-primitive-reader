@@ -78,6 +78,8 @@ enum Message {
     ),
     FolderVerified(bool),
     FolderUnavailable,
+    QuoteMismatch,
+    QuoteLimit,
     Failed,
 }
 struct WorkerGuard(Arc<AtomicBool>);
@@ -150,6 +152,69 @@ impl Search {
         self.invalidated = true;
         self.deadline = Instant::now();
     }
+}
+
+/// Verify the winning highlight in the worker before its location is used.
+/// Bookmarks and fixed-document marks keep their existing navigation behavior.
+fn verify_winning_quote(
+    recipe: &SearchLayoutRecipe,
+    probe: &crate::Probe,
+    mark: &Highlight,
+    folder: Option<&FolderProof>,
+    cancel: &AtomicBool,
+) -> Result<bool, super::bookmark_browser::focus::Failure> {
+    use super::bookmark_browser::focus::{Failure, verify_cross_chapter_with_snapshot};
+
+    let selection = &mark.selection;
+    if selection.start.book != probe.book || selection.end.book != probe.book {
+        return Ok(false);
+    }
+    let chapters = probe.chapter_entries();
+    let unique = |path: &str| {
+        let mut matches = chapters
+            .iter()
+            .enumerate()
+            .filter(|(_, chapter)| chapter.href == path);
+        let index = matches.next()?.0;
+        matches.next().is_none().then_some(index)
+    };
+    let (Some(first), Some(last)) = (
+        unique(&selection.start.chapter),
+        unique(&selection.end.chapter),
+    ) else {
+        return Ok(false);
+    };
+    if first > last
+        || probe.chapter_index(&probe.chapter) != Some(first)
+        || chapters[first..=last]
+            .iter()
+            .any(|chapter| chapter.unsupported)
+        || probe.page_for(&selection.start).is_none()
+    {
+        return Ok(false);
+    }
+    if first != last {
+        let mut work = 0;
+        return verify_cross_chapter_with_snapshot(
+            recipe, cancel, probe, first, last, mark, &mut work, folder,
+        );
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Failure::Changed);
+    }
+    if probe.page_for(&selection.end).is_none()
+        || !probe
+            .compare_text_anchors(&selection.start, &selection.end)
+            .is_some_and(|order| order.is_lt())
+    {
+        return Ok(false);
+    }
+    let verified = if selection.start.raw_caret.is_some() || selection.end.raw_caret.is_some() {
+        probe.select_raw_anchors(&selection.start, &selection.end)
+    } else {
+        probe.select_source_range(&selection.start, &selection.end)
+    };
+    Ok(verified.is_some_and(|quote| quote.text == selection.text))
 }
 
 fn worker(
@@ -341,6 +406,26 @@ fn worker(
         }
     }
     if !cancelled.load(Ordering::Relaxed) {
+        if let (Some((_, (index, _))), Some(recipe), Some(probe)) =
+            (&best, recipe.as_deref(), cached_probe.as_ref())
+            && let SavedMark::Reflow(mark) = &snapshot[*index].saved
+        {
+            use super::bookmark_browser::focus::Failure;
+            let verification =
+                verify_winning_quote(recipe, probe, mark, folder.as_deref(), &cancelled);
+            let failure = match verification {
+                Ok(true) => None,
+                Ok(false) => Some(Message::QuoteMismatch),
+                Err(Failure::Limit) => Some(Message::QuoteLimit),
+                Err(Failure::Changed) => Some(Message::Failed),
+            };
+            if let Some(failure) = failure {
+                if !cancelled.load(Ordering::Relaxed) {
+                    let _ = tx.send(failure);
+                }
+                return;
+            }
+        }
         let best = best.map(|(_, value)| value);
         // Move the existing winning layout rather than cloning or reshaping it.
         // Provisional quote prefixes and other renderers retain the old path.
@@ -940,6 +1025,14 @@ impl Reader {
                         }
                         Ok(Message::Failed) => {
                             failure = Some("A bookmarked chapter could not be checked");
+                            break;
+                        }
+                        Ok(Message::QuoteMismatch) => {
+                            failure = Some("The saved highlight no longer matches this document");
+                            break;
+                        }
+                        Ok(Message::QuoteLimit) => {
+                            failure = Some("The saved highlight exceeds the verification limit");
                             break;
                         }
                         Ok(Message::FolderVerified(_)) => {

@@ -173,7 +173,7 @@ fn contents_expansion_search_clear_and_page_keys_keep_the_reading_anchor() {
     assert!(app.forward.is_empty());
 
     // The selected row still uses its original XHTML fragment.
-    let Action::Jump(destination) = app
+    let Action::ContentsJump(destination) = app
         .items()
         .into_iter()
         .find(|item| item.title == "Other material")

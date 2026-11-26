@@ -213,7 +213,7 @@ fn reflow_contents_uses_existing_layout_and_exact_publisher_targets() {
         .into_iter()
         .find(|item| item.title == "Part B")
         .unwrap();
-    let Action::Jump(target) = &row.action else {
+    let Action::ContentsJump(target) = &row.action else {
         panic!("lost reflow destination");
     };
     assert!(target.path.ends_with("second.xhtml"));

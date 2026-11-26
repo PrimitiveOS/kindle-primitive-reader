@@ -380,6 +380,7 @@ fn same_link(before: &Item, after: &Item) -> bool {
     before.title == after.title
         && match (&before.action, &after.action) {
             (Action::Jump(left), Action::Jump(right)) => left == right,
+            (Action::ContentsJump(left), Action::ContentsJump(right)) => left == right,
             (Action::OpenFixedLink(left), Action::OpenFixedLink(right)) => left == right,
             (Action::OpenLinkAddress(left), Action::OpenLinkAddress(right)) => left == right,
             _ => false,

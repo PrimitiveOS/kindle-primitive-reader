@@ -2501,6 +2501,65 @@ impl Reading {
         self.use_chapter(candidate, chapter, anchor.as_ref(), 0)
     }
 
+    /// Follow publisher Contents, falling back only after proving the target
+    /// ID is absent from the exact source used for the candidate layout.
+    pub(crate) fn jump_contents(&mut self, chapter: usize, fragment: Option<&str>) -> Result<bool> {
+        let candidate = self.config.reading_chapter(chapter)?;
+        let Some(name) = fragment else {
+            self.use_chapter(candidate, chapter, None, 0)?;
+            return Ok(false);
+        };
+        if let Some(anchor) = candidate.fragment(name) {
+            if candidate.page_for(&anchor).is_none() {
+                return Err("That location is unavailable".into());
+            }
+            self.use_chapter(candidate, chapter, Some(&anchor), 0)?;
+            return Ok(false);
+        }
+        with_storage(|| {
+            let mut book = self.config.open_book().map_err(io::Error::other)?;
+            let entry = book
+                .chapters
+                .get(chapter)
+                .ok_or_else(|| io::Error::other("That chapter is unavailable"))?;
+            if book.revision() != candidate.book
+                || entry.href != candidate.chapter
+                || entry.is_svg
+                || book.recovered_placeholder(entry)
+            {
+                return Err(io::Error::other("That location is unavailable"));
+            }
+            let xhtml = book.chapter(chapter).map_err(io::Error::other)?;
+            if !candidate.source.matches_input(&xhtml) {
+                return Err(io::Error::other("The chapter changed; try again"));
+            }
+            let checked = crate::epub_xml::without_plain_doctype(&xhtml);
+            let doc = roxmltree::Document::parse_with_options(
+                &checked,
+                roxmltree::ParsingOptions {
+                    nodes_limit: 80_000,
+                    ..Default::default()
+                },
+            )
+            .map_err(io::Error::other)?;
+            if doc
+                .descendants()
+                .filter(roxmltree::Node::is_element)
+                .any(|node| {
+                    node.attributes().any(|attr| {
+                        (attr.name() == "id" || node.has_tag_name("a") && attr.name() == "name")
+                            && attr.value() == name
+                    })
+                })
+            {
+                return Err(io::Error::other("That location is unavailable"));
+            }
+            Ok(())
+        })?;
+        self.use_chapter(candidate, chapter, None, 0)?;
+        Ok(true)
+    }
+
     pub(crate) fn jump_to_anchor(&mut self, chapter: usize, anchor: &Anchor) -> Result<()> {
         let candidate = self.config.reading_chapter(chapter)?;
         if candidate.page_for(anchor).is_none() {
