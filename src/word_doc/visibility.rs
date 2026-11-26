@@ -130,10 +130,20 @@ fn normal_style(sheet: &[u8]) -> Result<(), String> {
 const MAX_STYLE_RUNS: usize = 32_768;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum ScriptPosition {
+    #[default]
+    Normal,
+    Superscript,
+    Subscript,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Emphasis {
     pub(super) bold: bool,
     pub(super) italic: bool,
     pub(super) underline: bool,
+    pub(super) strike: bool,
+    pub(super) position: ScriptPosition,
 }
 
 #[derive(Clone, Debug)]
@@ -156,6 +166,8 @@ fn character_properties(group: &[u8]) -> Result<Emphasis, String> {
     let mut seen_bold = false;
     let mut seen_italic = false;
     let mut seen_underline = false;
+    let mut seen_strike = false;
+    let mut seen_position = false;
     for property in group.chunks_exact(3) {
         let code = u16::from_le_bytes([property[0], property[1]]);
         match code {
@@ -166,6 +178,10 @@ fn character_properties(group: &[u8]) -> Result<Emphasis, String> {
             0x0836 if !seen_italic => {
                 style.italic = toggle(property[2])?;
                 seen_italic = true;
+            }
+            0x0837 if !seen_strike => {
+                style.strike = toggle(property[2])?;
+                seen_strike = true;
             }
             // Kul is an enumeration, not a toggle operand. Preserve only
             // no underline and a normal single underline; all other styles
@@ -178,6 +194,16 @@ fn character_properties(group: &[u8]) -> Result<Emphasis, String> {
                 };
                 seen_underline = true;
             }
+            // Iss is an enumeration; it is not a boolean or toggle operand.
+            0x2a48 if !seen_position => {
+                style.position = match property[2] {
+                    0 => ScriptPosition::Normal,
+                    1 => ScriptPosition::Superscript,
+                    2 => ScriptPosition::Subscript,
+                    _ => return Err("Unsupported Word script position".into()),
+                };
+                seen_position = true;
+            }
             _ => return Err("Unsupported or repeated Word character property".into()),
         }
     }
@@ -185,8 +211,8 @@ fn character_properties(group: &[u8]) -> Result<Emphasis, String> {
 }
 
 fn toggle(operand: u8) -> Result<bool, String> {
-    // Both proven base styles have false bold/italic. 0x80 inherits that
-    // value; 0x81 applies its opposite.
+    // Both proven base styles have false bold/italic/strike. 0x80 inherits
+    // that value; 0x81 applies its opposite.
     match operand {
         0x00 | 0x80 => Ok(false),
         0x01 | 0x81 => Ok(true),
@@ -195,7 +221,7 @@ fn toggle(operand: u8) -> Result<bool, String> {
 }
 
 /// Validate FKP coverage. PAPX allows only istd=0 with no direct properties;
-/// CHPX allows only explicitly decoded bold, italic and single underline.
+/// CHPX allows only explicitly decoded emphasis and script position.
 fn property_map(
     doc: &Analyzed,
     range: Range<usize>,

@@ -1,44 +1,41 @@
 // Required Notice: Copyright (C) 2026 Doan Nguyen (https://github.com/DoanNguyenTrong/kindle-primitive)
 // SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
 
-//! Isolated zero glyph used for a source-preserving CSS tab-stop threshold.
+//! Isolated glyphs used for source-preserving CSS tab stops.
 use parley_engine::{
-    Analysis, AnalysisOptions, Analyzer, FontInstance, FontInstanceRef, FontSelector,
-    ShapeOptions, ShapedText, Shaper, itemize::{Item, Segment}, shape::CharCluster,
+    Analysis, AnalysisOptions, Analyzer, FontInstance, FontSelector,
+    ShapeOptions, ShapedText, Shaper, itemize::Item,
 };
 use skrifa::{FontRef, MetadataProvider};
 
-struct SelectedFont(FontInstance);
-
-impl FontSelector for SelectedFont {
-    fn select_font(
-        &mut self,
-        _: &Segment,
-        _: &ShapeOptions<'_>,
-        _: &mut CharCluster,
-    ) -> Option<FontInstanceRef<'_>> {
-        Some(self.0.as_ref())
-    }
-}
-
-pub(super) fn standalone_zero(
+pub(super) fn standalone_glyph(
     shaper: &mut Shaper,
-    font: FontInstance,
+    expected: &FontInstance,
+    select_font: impl FontSelector,
     options: ShapeOptions<'_>,
+    style_index: u16,
+    ch: char,
 ) -> Option<f32> {
     // Do not silently measure a missing-glyph box or a different fallback face.
-    let face = FontRef::from_index(font.font.data.as_ref(), font.font.index).ok()?;
-    face.charmap().map('0')?;
+    let face = FontRef::from_index(expected.font.data.as_ref(), expected.font.index).ok()?;
+    face.charmap().map(ch)?;
+    let text = match ch {
+        '0' => "0",
+        ' ' => " ",
+        _ => return None,
+    };
     if !options.font_size.is_finite() || options.font_size <= 0.0 {
         return None;
     }
     let mut analysis = Analysis::new();
-    Analyzer::new().analyze("0", &AnalysisOptions::default(), &mut analysis);
+    Analyzer::new().analyze(text, &AnalysisOptions::default(), &mut analysis);
     let mut shaped = ShapedText::new();
     shaper.shape_text(
-        "0", &analysis, &[0], [Item { char_end: 1, options }], SelectedFont(font), &mut shaped,
+        text, &analysis, &[style_index], [Item { char_end: 1, options }], select_font, &mut shaped,
     );
-    if shaped.runs().len() != 1 || shaped.characters().len() != 1 {
+    if shaped.runs().len() != 1 || shaped.characters().len() != 1
+        || shaped.fonts() != core::slice::from_ref(expected)
+    {
         return None;
     }
     let [cluster] = shaped.shaped_clusters() else { return None; };

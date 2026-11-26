@@ -200,15 +200,25 @@ pub(crate) fn shape_text<'a, B: Brush>(
             if let Some(&style_index) = char_style_indices.first() {
                 if char_style_indices.iter().all(|index| *index == style_index) {
                     let style = &styles[usize::from(style_index)];
-                    if let Some(font) = shaped.fonts().get(run.font_index) {
-                        let options = ShapeOptions {
+                    if let Some(font) = shaped.fonts().get(run.font_index).cloned() {
+                        let options = || ShapeOptions {
                             language: style.locale,
                             font_size: style.font_size,
                             features: &style_features[usize::from(style_index)],
                             variations: rcx.variations(style.font_variations).unwrap_or(&[]),
                         };
-                        layout.data.shaped_zero_advance =
-                            tab_probe::standalone_zero(scx, font.clone(), options);
+                        layout.data.shaped_zero_advance = tab_probe::standalone_glyph(
+                            scx, &font,
+                            FontSelector::new(&mut fq, rcx, styles, analysis_data_sources),
+                            options(), style_index, '0',
+                        );
+                        if !text.contains(' ') {
+                            layout.data.shaped_space_advance = tab_probe::standalone_glyph(
+                                scx, &font,
+                                FontSelector::new(&mut fq, rcx, styles, analysis_data_sources),
+                                options(), style_index, ' ',
+                            );
+                        }
                     }
                 }
             }

@@ -33,8 +33,8 @@ character and paragraph FKP coverage, nonoverlapping property pages and text,
 no piece properties, default-Normal-only paragraphs with no direct paragraph
 properties, and strictly parsed, no-inheritance/no-property Normal and
 default-character styles. Direct character runs may contain only bounded,
-nonoverlapping MS-DOC bold and italic toggle properties and normal single
-underline; all other character
+nonoverlapping MS-DOC bold, italic and strike toggle properties, normal single
+underline, and basic superscript/subscript; all other character
 properties, including hidden or deleted text flags, remain rejected. The default character style at index 10
 must be present in this initial candidate; an empty, inherited or otherwise
 unsupported default character style is rejected. These restrictions intentionally reject normal formatted, revised,
@@ -75,3 +75,11 @@ unrecognized or visibility-affecting properties are rejected. Existing
 documents without an underline modifier keep their previous XHTML. This change
 has not been behaviorally tested or compared with KOReader, real Word files,
 the simulator or Kindle. [Microsoft Kul values](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/f6d2ad93-87cf-4e46-a992-a38ccf2ef295)
+
+The direct `sprmCFStrike` and `sprmCIss` candidate admits the documented
+strikethrough toggle and normal/superscript/subscript values while retaining the
+existing visibility proof and rejecting duplicates or unsupported properties.
+It emits semantic `<s>`, `<sup>` and `<sub>` elements; Reader's size and
+baseline choices are approximations and have not been compared to Word or
+KOReader. Previously accepted documents retain their generated XHTML, and this
+addition remains behaviorally unverified. [Microsoft character properties](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/7022285b-9621-42e9-ad4d-4e02c115ef18)

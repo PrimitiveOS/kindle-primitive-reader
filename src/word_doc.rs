@@ -30,6 +30,14 @@ fn set_emphasis(
     if *current == next {
         return Ok(());
     }
+    match current.position {
+        visibility::ScriptPosition::Normal => {}
+        visibility::ScriptPosition::Superscript => push(output, "</sup>")?,
+        visibility::ScriptPosition::Subscript => push(output, "</sub>")?,
+    }
+    if current.strike {
+        push(output, "</s>")?;
+    }
     if current.underline {
         push(output, "</u>")?;
     }
@@ -56,6 +64,25 @@ fn set_emphasis(
             .checked_add(1)
             .ok_or("Word element count overflow")?;
         push(output, "<u>")?;
+    }
+    if next.strike {
+        *elements = elements
+            .checked_add(1)
+            .ok_or("Word element count overflow")?;
+        push(output, "<s>")?;
+    }
+    match next.position {
+        visibility::ScriptPosition::Normal => {}
+        position => {
+            *elements = elements
+                .checked_add(1)
+                .ok_or("Word element count overflow")?;
+            match position {
+                visibility::ScriptPosition::Superscript => push(output, "<sup>")?,
+                visibility::ScriptPosition::Subscript => push(output, "<sub>")?,
+                visibility::ScriptPosition::Normal => unreachable!(),
+            }
+        }
     }
     *current = next;
     Ok(())

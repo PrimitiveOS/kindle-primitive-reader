@@ -65,7 +65,7 @@ impl<B: Brush> Layout<B> {
                 if atoms.len() > MAX_BYTES { return false; }
             }
         }
-        let Some(space) = space else { return false; };
+        let Some(space) = space.or(self.data.shaped_space_advance) else { return false; };
         let step = space * spaces;
         if !step.is_finite() { return false; }
         atoms.sort_unstable_by_key(|atom| atom.start);

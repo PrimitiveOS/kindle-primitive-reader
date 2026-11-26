@@ -21,13 +21,17 @@ Native `<pre>` defaults to preserved, non-wrapping whitespace before the CSS
 cascade; explicit author or user `white-space` declarations still take priority.
 For a bounded horizontal LTR ASCII passage with publisher styles disabled, one
 text owner, a single shaped font run, no complex layout or indent, a measurable
-standalone zero glyph and an actual consistently measured space glyph, Reader can
+standalone zero glyph and a consistently measured space glyph, Reader can
 apply tab stops without changing source characters or caret offsets. The default
 is eight spaces. Strictly validated user CSS may set an inherited numeric
 `tab-size` from 0 to 32, or use `inherit`, `initial`, and
 `unset`; unsupported values and pseudo-element declarations are rejected. The
-stop threshold uses a separately shaped zero with the selected font, language,
-features and variations. The same cluster advances drive line fitting, drawing
+stop threshold uses a separately shaped zero with the same font, language,
+features and variations. Reader checks that normal font fallback selects the
+source run's font for the isolated character. When no literal space is present,
+Reader measures an isolated space with those same checks only if word/letter spacing and custom
+advance policies leave it unchanged; otherwise it retains the previous path.
+The same cluster advances drive line fitting, drawing
 and hit-testing. Reader keeps the old path if a line would overflow or the
 mapping cannot be proved. Publisher `tab-size` overrides, lengths, wrapped lines, RTL text,
 mixed styles and complex layouts are not yet supported by this path. The probe

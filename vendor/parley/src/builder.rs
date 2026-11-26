@@ -593,6 +593,27 @@ fn build_into_layout<B: Brush>(
         }
     }
 
+    // An isolated space may replace an absent source space only when no
+    // spacing or synthetic-weight policy changes its measured advance.
+    if let Some(space) = layout.data.shaped_space_advance {
+        let run = layout.data.shaped_text.runs().first();
+        let run_data = layout.data.runs.first();
+        let safe = run.zip(run_data).is_some_and(|(run, run_data)| {
+            let cluster_safe = options.cluster_spacing
+                .is_none_or(|policy| policy(" ", space, run.font_size) == 0);
+            let weight_safe = options.font_weight_spacing.is_none_or(|policy| {
+                let Some(font) = layout.data.shaped_text.fonts().get(run.font_index) else {
+                    return false;
+                };
+                policy(&font.font, run_data.font_attrs.weight.value(), run.font_size) == 0.0
+            });
+            run_data.spacing.is_zero() && cluster_safe && weight_safe
+        });
+        if !safe {
+            layout.data.shaped_space_advance = None;
+        }
+    }
+
     if let Some(policy) = options.soft_hyphen_policy {
         super::shape::collect_soft_hyphens(text, layout, policy, options.trusted_soft_hyphen_words);
     }

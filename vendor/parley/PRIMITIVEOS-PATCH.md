@@ -10,12 +10,14 @@ dependency version for the selected font instance.
 
 Reader can opt into bounded numeric tab stops for simple, unwrapped LTR ASCII
 text with one font run and a measurable standalone zero shaped with the selected
-font, language, features and variations. The original characters and byte
+font, language, features and variations; normal font selection must resolve
+each probe to the source run's font. The original characters and byte
 offsets remain unchanged, while line measurement, drawing and hit-testing share
 the adjusted cluster spacing. Reader uses this only for strictly validated user
 CSS with publisher styling disabled. The probe receives the resolved variant,
-ligature and kerning features. A custom synthetic-weight or
-cluster-spacing advance on zero causes fallback. The standalone probe and the
+ligature and kerning features. For text without spaces, the same shaper can
+measure a standalone space when spacing policies leave it unchanged. A custom
+synthetic-weight or cluster-spacing advance on the probe causes fallback. The standalone probe and the
 admitted ASCII source both resolve to Latin in the current itemizer. Other
 scripts and unsupported content retain the previous behavior. Behavioral
 validation is still pending.

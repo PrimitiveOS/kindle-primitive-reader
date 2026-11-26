@@ -14,7 +14,6 @@ use std::time::{Duration, Instant};
 const MAX_MARKS: usize = 512;
 const MAX_ROWS: usize = 4096;
 const MAX_SNAPSHOT: usize = 2 * 1024 * 1024;
-const MAX_CROSS_CHAPTERS: usize = 8;
 const MAX_CROSS_WORK: usize = 64;
 const TICK: Duration = Duration::from_millis(80);
 const PAINT: Duration = Duration::from_secs(2);
@@ -84,12 +83,18 @@ fn verify_cross_chapter(
 ) -> Result<bool, Failure> {
     let saved = &mark.selection;
     if first >= last
-        || last - first >= MAX_CROSS_CHAPTERS
         || saved.start.book != saved.end.book
         || saved.text.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES
         || first_probe.page_for(&saved.start).is_none()
     {
         return Ok(false);
+    }
+    let span = last
+        .checked_sub(first)
+        .and_then(|count| count.checked_add(1))
+        .ok_or(Failure::Limit)?;
+    if span > MAX_CROSS_WORK.saturating_sub(*work) {
+        return Err(Failure::Limit);
     }
     let raw = saved.start.raw_caret.is_some() || saved.end.raw_caret.is_some();
     let mut text = String::new();
@@ -243,11 +248,6 @@ impl Reader {
                         || mark.selection.start.book != mark.selection.end.book
                     {
                         continue;
-                    }
-                    // Do not claim a farther mark is nearest when a matching
-                    // selection exceeds the supported verification span.
-                    if last_chapter - chapter >= MAX_CROSS_CHAPTERS {
-                        return false;
                     }
                     let Ok(raw) = serde_json::to_vec(mark) else {
                         return false;
@@ -578,9 +578,9 @@ impl Reader {
             (true, Err(Failure::Limit)) => {
                 self.notice = Some(
                     if self.controls.interface_language.is_english() {
-                        "Too many long highlights to verify; narrow the filters"
+                        "Highlight verification limit reached; narrow filters or open the mark"
                     } else {
-                        "Quá nhiều đoạn dài cần kiểm tra; hãy thu hẹp bộ lọc"
+                        "Đạt giới hạn kiểm tra; hãy thu hẹp bộ lọc hoặc mở dấu trang"
                     }
                     .into(),
                 );

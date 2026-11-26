@@ -233,6 +233,8 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) shaped_text: ShapedText,
     /// Advance of a standalone zero shaped with the same single-run style.
     pub(crate) shaped_zero_advance: Option<f32>,
+    /// Optional standalone space when the source has no space atom.
+    pub(crate) shaped_space_advance: Option<f32>,
     pub(crate) soft_hyphens: Vec<SoftHyphenOpportunity>,
     /// Extra advance indexed by the first shaped cluster of an atom. Empty by default.
     pub(crate) cluster_spacing: Vec<Gaps>,
@@ -291,6 +293,7 @@ impl<B: Brush> Default for LayoutData<B> {
             inline_boxes: Vec::new(),
             shaped_text: ShapedText::new(),
             shaped_zero_advance: None,
+            shaped_space_advance: None,
             soft_hyphens: Vec::new(),
             cluster_spacing: Vec::new(),
             fast_pair_gaps: Vec::new(),
@@ -330,6 +333,7 @@ impl<B: Brush> LayoutData<B> {
         self.inline_boxes.clear();
         self.shaped_text.clear();
         self.shaped_zero_advance = None;
+        self.shaped_space_advance = None;
         self.soft_hyphens.clear();
         self.cluster_spacing.clear();
         self.fast_pair_gaps.clear();
