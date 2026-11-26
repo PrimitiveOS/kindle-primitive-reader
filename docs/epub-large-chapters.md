@@ -102,9 +102,10 @@ SHA-256 transcript of its original
 source ranges, line and paragraph geometry, selected captured font face,
 variation and synthesis settings, clusters and positioned glyphs. A future
 window renderer must reproduce that transcript before displaying the batch.
-The index returns nothing if a batch fails or is cancelled. Digests check
-cancellation between 64 KiB chunks; a single ZIP parse, font registration or
-paragraph shape is not interruptible.
+The index returns nothing if a batch fails or is cancelled. A page replay
+registers its captured font stack once and reuses that context across the
+page's batches. Digests check cancellation between 64 KiB chunks; a single ZIP
+parse, font registration or paragraph shape is not interruptible.
 Scroll, facing-page, hidden-flow, nonlinear-hiding and in-page note modes
 remain excluded.
 

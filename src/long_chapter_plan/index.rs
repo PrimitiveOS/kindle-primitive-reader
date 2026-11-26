@@ -127,10 +127,10 @@ fn same_settings(left: Settings, right: Settings) -> bool {
 
 /// No system or file-backed fallback is allowed in this isolated experiment.
 /// Keep the same registration order and TTC face ordering as font_context.
-fn captured_fonts(
+fn register_fonts(
     snapshots: &[Arc<Vec<u8>>],
     cancel: &AtomicBool,
-) -> Result<(FontContext, Vec<u64>, Vec<[u8; 32]>)> {
+) -> Result<(FontContext, Vec<u64>)> {
     if snapshots.is_empty() || snapshots.len() > MAX_FONTS {
         return Err("The long chapter font snapshot is unavailable".into());
     }
@@ -143,7 +143,6 @@ fn captured_fonts(
         source_cache: Default::default(),
     };
     let mut identities = Vec::with_capacity(snapshots.len());
-    let mut hashes = Vec::with_capacity(snapshots.len());
     let mut families = Vec::new();
     for bytes in snapshots {
         cancelled(cancel)?;
@@ -153,7 +152,6 @@ fn captured_fonts(
         if bytes.is_empty() || total > MAX_FONT_BYTES {
             return Err("The font snapshot is too large or empty".into());
         }
-        hashes.push(digest(bytes, cancel)?);
         let blob = parley::fontique::Blob::new(bytes.clone());
         identities.push(blob.id());
         let mut registered = fonts.collection.register_fonts(blob, None);
@@ -175,6 +173,19 @@ fn captured_fonts(
     fonts
         .collection
         .set_generic_families(GenericFamily::SansSerif, families.iter().copied());
+    cancelled(cancel)?;
+    Ok((fonts, identities))
+}
+
+fn captured_fonts(
+    snapshots: &[Arc<Vec<u8>>],
+    cancel: &AtomicBool,
+) -> Result<(FontContext, Vec<u64>, Vec<[u8; 32]>)> {
+    let (fonts, identities) = register_fonts(snapshots, cancel)?;
+    let hashes = snapshots
+        .iter()
+        .map(|bytes| digest(bytes, cancel))
+        .collect::<Result<Vec<_>>>()?;
     Ok((fonts, identities, hashes))
 }
 
@@ -374,6 +385,21 @@ impl PageIndex {
     /// match the index transcript. Call only on a worker.
     pub(crate) fn replay_batch(&self, index: usize, cancel: &AtomicBool) -> Result<VerifiedBatch> {
         cancelled(cancel)?;
+        let (fonts, identities) = register_fonts(&self.font_bytes, cancel)?;
+        if identities != self.font_ids {
+            return Err("The long chapter font registration changed".into());
+        }
+        self.replay_batch_with_fonts(index, cancel, fonts, &identities)
+    }
+
+    fn replay_batch_with_fonts(
+        &self,
+        index: usize,
+        cancel: &AtomicBool,
+        fonts: FontContext,
+        identities: &[u64],
+    ) -> Result<VerifiedBatch> {
+        cancelled(cancel)?;
         let batch = self
             .batches
             .get(index)
@@ -382,21 +408,6 @@ impl PageIndex {
             .checkpoints
             .get(index)
             .ok_or("The long chapter layout checkpoint is unavailable")?;
-        if !self.matches_snapshots(
-            &self.book_bytes,
-            &self.font_bytes,
-            self.settings,
-            self.mode,
-            &self.user_styles,
-            &self.rules,
-            cancel,
-        ) {
-            return Err("The long chapter snapshot changed".into());
-        }
-        let (fonts, identities, digests) = captured_fonts(&self.font_bytes, cancel)?;
-        if identities != self.font_ids || digests != self.font_digests {
-            return Err("The long chapter font registration changed".into());
-        }
         let mut stream = SimpleLayoutStream::new_at_checkpoint(
             &self.plan,
             &self.source,
@@ -417,7 +428,7 @@ impl PageIndex {
         let mut replayed = None;
         let produced = stream.next_batch_owned(|paragraphs, lines| {
             let mut witness = ShapeWitness::new(batch.blocks.clone());
-            witness.observe(&paragraphs, &lines, &identities, &digests)?;
+            witness.observe(&paragraphs, &lines, identities, &self.font_digests)?;
             if witness.finish()? != batch.shape_digest || lines.len() != expected_lines.len() {
                 return Err("The long chapter page window did not match its index".into());
             }
@@ -460,6 +471,10 @@ impl PageIndex {
             batches
                 .try_reserve_exact(end - first)
                 .map_err(|_| "The long chapter page cannot be reserved")?;
+            let (fonts, identities) = register_fonts(&self.font_bytes, cancel)?;
+            if identities != self.font_ids {
+                return Err("The long chapter font registration changed".into());
+            }
             let mut covered = lines.start;
             for index in first..end {
                 cancelled(cancel)?;
@@ -473,7 +488,12 @@ impl PageIndex {
                     return Err("The long chapter page batches are not contiguous".into());
                 }
                 covered = overlap_end;
-                batches.push(self.replay_batch(index, cancel)?);
+                batches.push(self.replay_batch_with_fonts(
+                    index,
+                    cancel,
+                    fonts.clone(),
+                    &identities,
+                )?);
             }
             if covered != lines.end {
                 return Err("The long chapter page is missing a replay batch".into());
