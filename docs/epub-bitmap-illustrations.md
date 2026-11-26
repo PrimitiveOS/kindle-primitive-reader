@@ -116,6 +116,17 @@ anchors are unchanged; opening an illustration again verifies its source digest.
 KOReader parity, malformed-input behavior, renderer peak memory, real-book,
 simulator and Kindle verification remain open.
 
+Reflow JPEG illustrations with a supported non-identity EXIF orientation use
+that orientation for both the page image and its original-image viewer. The
+oriented dimensions determine the CSS image fit, so affected books can
+repaginate; package bytes, resource paths and saved text anchors are unchanged.
+JPEGs with no readable orientation or an identity orientation retain the prior
+decoding path. The existing 4096-pixel-side, 8-million-pixel and 24 MiB decoded
+image limits apply. Orientation is applied after grayscale conversion to bound
+the extra rotated buffer, but peak decoder memory and malformed-metadata
+behavior remain unverified. KOReader comparison and real-book, simulator and
+Kindle verification are also open.
+
 Standalone SVG embedded-image fallback uses the same 256 KiB input, eight
 unique images, pixel and 8 MiB aggregate raster limits, plus the existing GIF
 conversion checks. Previously successful vector-only output is tried first.

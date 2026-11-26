@@ -32,7 +32,7 @@ use crate::publisher_padding::{BoxArea, TextBoxCandidate, text_box_candidates};
 use crate::source::{Block, EmbeddedImage, Source};
 use crate::svg_image;
 use crate::{Line, Result, Settings, image_reader};
-use image::{DynamicImage, GrayImage, Luma, imageops::FilterType};
+use image::{DynamicImage, GrayImage, ImageDecoder, Luma, imageops::FilterType};
 use parley::{
     Affinity, Alignment, AlignmentOptions, BoundingBox, Cursor, FontContext, FontFamily,
     FontWeight, GenericFamily, Language, Layout, LayoutContext, LineBreak, LineHeight,
@@ -4255,8 +4255,11 @@ fn shape_paragraph(
     };
     builder.push_default(StyleProperty::FontFamily(family));
     let line_height = |style: &Style| {
-        if let Some(height) = style.line_height_relative {
-            return LineHeight::Absolute(height.pixels(settings));
+        if let Some(height) = style
+            .line_height_relative
+            .and_then(|height| height.pixels(settings))
+        {
+            return LineHeight::Absolute(height);
         }
         let default_spacing = Settings::default().line_height;
         let publisher = style.line_height.unwrap_or_else(|| {
@@ -5128,6 +5131,17 @@ fn load_image(
     if u64::from(w) * u64::from(h) > MAX_IMAGE_PIXELS as u64 {
         return None;
     }
+    if let Some(oriented) = oriented_jpeg(&bytes).ok()? {
+        let (oriented_w, oriented_h) = oriented.dimensions();
+        let display = target(oriented_w, oriented_h);
+        let stored = preview_size(display.0, display.1);
+        let pixels = if stored == (oriented_w, oriented_h) {
+            oriented
+        } else {
+            image::imageops::resize(&oriented, stored.0, stored.1, filter)
+        };
+        return Some((path, pixels, display));
+    }
     let display = target(w, h);
     let stored = preview_size(display.0, display.1);
     let mut image = if crate::gif_image::has_signature(&bytes) {
@@ -5139,6 +5153,33 @@ fn load_image(
         image = image.resize_exact(stored.0, stored.1, filter);
     }
     Some((path, grayscale_image(image), display))
+}
+
+// Only EXIF-oriented JPEGs take this route. All identity-orientation images
+// keep their existing decoding and scaling behavior. Rotate after grayscale
+// conversion so the additional orientation buffer is bounded to one byte per
+// source pixel instead of retaining another full RGB image.
+fn oriented_jpeg(bytes: &[u8]) -> Result<Option<GrayImage>> {
+    use image::metadata::Orientation;
+
+    if !bytes.starts_with(b"\xff\xd8\xff") {
+        return Ok(None);
+    }
+    let mut decoder = image_reader(bytes)?.into_decoder()?;
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    if orientation == Orientation::NoTransforms {
+        return Ok(None);
+    }
+    let (width, height) = decoder.dimensions();
+    if !crate::comic::image_dimensions_valid(width, height)
+        || decoder.total_bytes() > 24 * 1024 * 1024
+    {
+        return Err("The EPUB JPEG exceeds Reader's decoded image limit".into());
+    }
+    let gray = grayscale_image(DynamicImage::from_decoder(decoder)?);
+    let mut oriented = DynamicImage::ImageLuma8(gray);
+    oriented.apply_orientation(orientation);
+    Ok(Some(oriented.into_luma8()))
 }
 
 // Keep the original package bytes and href unchanged; conversion is local to
@@ -5178,6 +5219,9 @@ pub(crate) fn original_illustration(bytes: &[u8]) -> Result<ImagePage> {
     let bytes = converted.as_deref().unwrap_or(bytes);
     if crate::gif_image::has_signature(bytes) {
         return ImagePage::decode_gif(bytes);
+    }
+    if let Some(gray) = oriented_jpeg(bytes)? {
+        return ImagePage::from_grayscale(gray.width(), gray.height(), gray.into_raw());
     }
     let gray = match image_reader(bytes) {
         Ok(reader) => {

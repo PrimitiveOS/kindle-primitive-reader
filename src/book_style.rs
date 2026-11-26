@@ -162,6 +162,7 @@ pub(crate) enum LineHeightLength {
     Relative(f32),
     DefaultFont(f32),
     Pixels(f32),
+    Physical(f32),
 }
 
 /// A length line-height computed against its declaring font.
@@ -174,7 +175,7 @@ pub(crate) struct ComputedLineHeight {
 }
 
 impl ComputedLineHeight {
-    pub(crate) fn pixels(self, settings: crate::Settings) -> f32 {
+    pub(crate) fn pixels(self, settings: crate::Settings) -> Option<f32> {
         let mut font = settings.styled_font(self.font_scale);
         if self.allow_small {
             font = font.min((settings.font_size * self.font_scale).max(4.0));
@@ -193,8 +194,17 @@ impl ComputedLineHeight {
                     .pixels(0, font)
                     / font
             }
+            // CRE's legacy 0-DPI line-height path falls back to normal font
+            // metrics for physical units rather than interpreting them as px.
+            LineHeightLength::Physical(_) if settings.render_dpi == 0 => return None,
+            LineHeightLength::Physical(px) => {
+                CssLength::Physical(px)
+                    .for_dpi(settings.render_dpi)
+                    .pixels(0, font)
+                    / font
+            }
         };
-        font * (ratio * settings.line_height_scale()).clamp(minimum, 3.0)
+        Some(font * (ratio * settings.line_height_scale()).clamp(minimum, 3.0))
     }
 }
 
@@ -3470,6 +3480,22 @@ impl<'i> DeclarationParser<'i> for Properties {
                                     && (0.0..=4096.0).contains(&value) =>
                             {
                                 Some(LineHeightLength::Pixels(value))
+                            }
+                            Token::Dimension { value, unit, .. }
+                                if value.is_finite() && value >= 0.0 =>
+                            {
+                                let px_per_unit = match unit.to_ascii_lowercase().as_str() {
+                                    "pt" => 96.0 / 72.0,
+                                    "pc" => 16.0,
+                                    "in" => 96.0,
+                                    "cm" => 96.0 / 2.54,
+                                    "mm" => 96.0 / 25.4,
+                                    "q" => 96.0 / 101.6,
+                                    _ => 0.0,
+                                };
+                                let px = value * px_per_unit;
+                                (px_per_unit > 0.0 && (0.0..=4096.0).contains(&px))
+                                    .then_some(LineHeightLength::Physical(px))
                             }
                             _ => None,
                         };

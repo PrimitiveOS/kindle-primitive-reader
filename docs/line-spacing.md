@@ -1,6 +1,7 @@
 # Line spacing parity
 
-Publisher `line-height` percentages, `em`, `rem`, `ex`, `ch`, and `px` values
+Publisher `line-height` percentages, `em`, `rem`, `ex`, `ch`, `px` and
+physical CSS lengths (`pt`, `pc`, `in`, `cm`, `mm`, `q`)
 have a bounded implementation candidate in the horizontal Parley renderer.
 Relative heights inherit as fixed computed heights, so changing a descendant's
 font size does not rescale them. Unitless and
@@ -8,9 +9,11 @@ font size does not rescale them. Unitless and
 control and existing minimum/maximum line-height limits still apply. Generated
 content and supported first-line/first-letter styles use the same model.
 Pixel values use Reader's configured CSS DPI once and remain fixed when the
-descendant font changes. Physical units such as `pt`, other relative units,
-relative values outside 0–8 (0–16 for `ex` and `ch`), and pixel values
-outside 0–4096 remain unsupported. As in pinned CREngine, `rem` uses the
+descendant font changes. Physical values use the same configured DPI and
+fall back to Reader's normal line-height behavior at legacy DPI 0, consistent
+with CREngine's legacy fallback. Other relative units, relative values outside
+0–8 (0–16 for `ex` and `ch`), and pixel or converted physical values outside
+0–4096 remain unsupported. As in pinned CREngine, `rem` uses the
 reader's default font and `ex`/`ch` use half the declaring font size.
 [CREngine length conversion](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L2547-L2559)
 This change does not alter source text or saved positions and has not yet been behaviorally tested.
