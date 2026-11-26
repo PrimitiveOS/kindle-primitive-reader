@@ -24,6 +24,41 @@ fn capacity(grid: Option<PageBrowserGrid>) -> usize {
     })
 }
 
+/// A local stripe of page slots around the thumbnail focus. Negative and
+/// beyond-chapter slots are blank; they never designate another chapter.
+struct LocalStripe {
+    start: i64,
+    slots: usize,
+}
+
+impl LocalStripe {
+    fn new(overview: &PageOverview) -> Self {
+        let batch = capacity(overview.grid);
+        let mut slots = batch.saturating_mul(3).max(20);
+        if slots % 2 != batch % 2 {
+            slots += 1;
+        }
+        let focus = i64::try_from(overview.focus.page).unwrap_or(i64::MAX);
+        Self {
+            start: focus.saturating_sub((slots / 2) as i64),
+            slots,
+        }
+    }
+
+    fn slot(&self, page: usize) -> Option<usize> {
+        let slot = i64::try_from(page).ok()?.checked_sub(self.start)?;
+        usize::try_from(slot).ok().filter(|slot| *slot < self.slots)
+    }
+
+    fn page(&self, slot: usize, count: usize) -> Option<usize> {
+        if slot >= self.slots {
+            return None;
+        }
+        let page = self.start.checked_add(i64::try_from(slot).ok()?)?;
+        usize::try_from(page).ok().filter(|page| *page < count)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MapOrigin {
     Fixed(MapWindow),
@@ -940,12 +975,13 @@ impl Reader {
         } else {
             overview.first
         };
-        let single_spine = overview.chapter == Some(0)
-            && self.active.as_ref().is_some_and(|active| {
-                active.reading.chapter == 0 && active.reading.probe.chapter_count() == 1
-            });
-        let (selected, count, title) = if single_spine {
-            (page, overview.count, "Skim pages")
+        let stripe = overview.chapter.map(|_| LocalStripe::new(overview));
+        let (selected, count, title) = if let Some(stripe) = &stripe {
+            (
+                stripe.slot(overview.focus.page).unwrap_or(0),
+                stripe.slots,
+                "Skim pages",
+            )
         } else {
             overview
                 .chapter
@@ -999,82 +1035,45 @@ impl Reader {
                 }
             }
         }
-        if let Some(active) = self.active.as_ref().filter(|_| overview.chapter.is_some()) {
-            let probe = &active.reading.probe;
-            // The reflow track represents spine chapters, not pages within a
-            // chapter. Its markers show which chapters contain TOC entries.
-            let mut add_chapter = |chapter: usize| {
-                if single_spine {
-                    return;
-                }
-                if chapter >= count {
-                    return;
-                }
-                let portion = chapter as f64 / count.saturating_sub(1).max(1) as f64;
-                let portion = if layout.navigation.mirrored {
-                    1.0 - portion
-                } else {
-                    portion
-                };
-                let offset = (portion * (track.w - 20).max(0) as f64).round() as i32;
-                ticks.insert(offset / 3 * 3);
-            };
-            if let Some(custom) = self
-                .library
-                .state(active.id)
-                .map(|book| &book.custom_contents)
-                .filter(|custom| custom.enabled)
-            {
-                for entry in custom.entries().iter().filter(|_| levels > 0) {
-                    let chapter = match &entry.position.anchor {
-                        Some(anchor) => probe.chapter_index(&anchor.chapter),
-                        None => Some(entry.position.chapter),
-                    };
-                    if let Some(chapter) = chapter {
-                        add_chapter(chapter);
-                    }
-                }
-            } else if let Some(entries) = self.alternative_entries(active.id) {
-                for entry in entries.iter().filter(|entry| entry.depth < levels) {
-                    let chapter = match &entry.target {
-                        OutlineTarget::Chapter(chapter) | OutlineTarget::Heading(chapter, _) => {
-                            *chapter
-                        }
-                    };
-                    add_chapter(chapter);
-                }
-            } else if probe.toc.is_empty() {
-                for (chapter, _) in probe
-                    .chapter_entries()
-                    .iter()
-                    .enumerate()
-                    .filter(|_| levels > 0)
-                {
-                    add_chapter(chapter);
-                }
-            } else {
-                for entry in probe.toc.iter().filter(|entry| entry.depth < levels) {
-                    if let Some(chapter) = entry
-                        .destination
-                        .as_ref()
-                        .and_then(|destination| probe.chapter_index(&destination.path))
-                    {
-                        add_chapter(chapter);
-                    }
-                }
-            }
-            // A TOC heading can start later within the chapter: show the
-            // spine label instead of implying the heading has started.
-            section_title = probe
+        if let (Some(active), Some(chapter)) = (&self.active, overview.chapter) {
+            // A heading may begin later in the chapter; the chapter label is
+            // safe while exact within-chapter outline positions remain open.
+            section_title = active
+                .reading
+                .probe
                 .chapter_entries()
-                .get(if single_spine { 0 } else { selected })
+                .get(chapter)
                 .map(|entry| entry.label.clone());
         }
+        if let Some(stripe) = &stripe {
+            for slot in 0..stripe.slots {
+                if stripe.page(slot, overview.count).is_none() {
+                    continue;
+                }
+                let fraction = slot as f64 / stripe.slots.saturating_sub(1).max(1) as f64;
+                let fraction = if layout.navigation.mirrored {
+                    1.0 - fraction
+                } else {
+                    fraction
+                };
+                let offset = (fraction * (track.w - 20).max(0) as f64).round() as i32;
+                ticks.insert(offset / 3 * 3);
+            }
+        }
         let mut detail = format!(
-            "{} · {} {} {count}",
+            "{} · {} {} {}",
             language.overview_text(title),
-            selected + 1,
-            language.overview_text("of")
+            if stripe.is_some() {
+                overview.focus.page + 1
+            } else {
+                selected + 1
+            },
+            language.overview_text("of"),
+            if stripe.is_some() {
+                overview.count
+            } else {
+                count
+            }
         );
         if let Some(title) = section_title.filter(|title| !title.trim().is_empty()) {
             detail.push_str(" · ");
@@ -1090,6 +1089,17 @@ impl Reader {
         // to bound the marker count by available ribbon width.
         let mut saved = BTreeMap::<i32, u8>::new();
         let mut mark_page = |page: usize, flags: u8| {
+            let page = if let Some(stripe) = &stripe {
+                if page >= overview.count {
+                    return;
+                }
+                let Some(slot) = stripe.slot(page) else {
+                    return;
+                };
+                slot
+            } else {
+                page
+            };
             if page >= count {
                 return;
             }
@@ -1106,11 +1116,32 @@ impl Reader {
         // inspects source blocks. Bound aggregate synchronous work per draw,
         // including history, rather than only bounding the mark count.
         let cue_work = std::cell::Cell::new(0usize);
+        let chapter_probe = self.active.as_ref().and_then(|active| {
+            let chapter = overview.chapter?;
+            if active.reading.chapter == chapter {
+                Some(&active.reading.probe)
+            } else {
+                overview.preview.as_deref()
+            }
+        });
+        let unique_chapter = chapter_probe
+            .and_then(|probe| {
+                let path = &probe.chapter_entries().get(overview.chapter?)?.href;
+                Some(
+                    probe
+                        .chapter_entries()
+                        .iter()
+                        .filter(|entry| &entry.href == path)
+                        .take(2)
+                        .count()
+                        == 1,
+                )
+            })
+            .unwrap_or(false);
         let chapter_for = |anchor: &Anchor| {
-            let reading = &self.active.as_ref()?.reading;
-            let probe = &reading.probe;
-            if single_spine {
-                if anchor.raw_caret.is_some() {
+            let probe = chapter_probe?;
+            if stripe.is_some() {
+                if anchor.raw_caret.is_some() || !unique_chapter {
                     return None;
                 }
                 let cost = probe
@@ -1128,31 +1159,7 @@ impl Reader {
                 cue_work.set(next);
                 return probe.page_for(anchor);
             }
-            if anchor.book != probe.book {
-                return None;
-            }
-            let chapter = probe.chapter_index(&anchor.chapter)?;
-            if anchor.raw_caret.is_some() {
-                let loaded = if chapter == reading.chapter {
-                    Some(probe)
-                } else if overview.chapter == Some(chapter) {
-                    overview.preview.as_deref()
-                } else {
-                    None
-                };
-                let valid = loaded.map_or_else(
-                    || {
-                        self.overview_raw
-                            .as_ref()
-                            .is_some_and(|job| job.history(anchor))
-                    },
-                    |probe| probe.page_for(anchor).is_some(),
-                );
-                if !valid {
-                    return None;
-                }
-            }
-            Some(chapter)
+            None
         };
         if let Some(fixed) = self.fixed.as_ref().filter(|_| overview.chapter.is_none())
             && let Some(state) = self.library.state(fixed.id)
@@ -1181,38 +1188,29 @@ impl Reader {
         } else if let Some(active) = self.active.as_ref().filter(|_| overview.chapter.is_some())
             && let Some(state) = self.library.state(active.id)
         {
-            let limit = if single_spine { 512 } else { usize::MAX };
+            let limit = 512usize;
             for bookmark in state.bookmarks.iter().take(limit) {
                 let chapter = match &bookmark.position.anchor {
                     Some(anchor) => chapter_for(anchor),
-                    None if single_spine => {
-                        (bookmark.position.chapter == 0).then_some(bookmark.position.page)
-                    }
-                    None => Some(bookmark.position.chapter),
+                    None => (Some(bookmark.position.chapter) == overview.chapter)
+                        .then_some(bookmark.position.page),
                 };
                 if let Some(chapter) = chapter {
                     mark_page(chapter, 4);
                 }
             }
-            let highlight_limit = if single_spine {
-                limit.saturating_sub(state.bookmarks.len().min(limit))
-            } else {
-                usize::MAX
-            };
+            let highlight_limit = limit.saturating_sub(state.bookmarks.len().min(limit));
             for highlight in state.highlights.iter().take(highlight_limit) {
                 let selection = &highlight.selection;
                 if selection.start.raw_caret.is_some() || selection.end.raw_caret.is_some() {
                     continue;
                 }
                 let start = chapter_for(&selection.start);
-                if single_spine
-                    && (start.is_none()
-                        || chapter_for(&selection.end).is_none()
-                        || active
-                            .reading
-                            .probe
-                            .compare_text_anchors(&selection.start, &selection.end)
-                            != Some(std::cmp::Ordering::Less))
+                if start.is_none()
+                    || chapter_for(&selection.end).is_none()
+                    || chapter_probe.and_then(|probe| {
+                        probe.compare_text_anchors(&selection.start, &selection.end)
+                    }) != Some(std::cmp::Ordering::Less)
                 {
                     continue;
                 }
@@ -1222,17 +1220,6 @@ impl Reader {
                         .as_ref()
                         .is_some_and(|note| !note.trim().is_empty());
                     mark_page(chapter, 1 | if noted { 2 } else { 0 });
-                }
-            }
-            if !single_spine && let Some(job) = &self.overview_raw {
-                for (bin, &flags) in job.bins().iter().enumerate() {
-                    if flags != 0 {
-                        let chapter = bin
-                            .saturating_mul(count.saturating_sub(1))
-                            .saturating_add(127)
-                            / 255;
-                        mark_page(chapter, flags);
-                    }
                 }
             }
         }
@@ -1281,12 +1268,17 @@ impl Reader {
                     } else {
                         match &position.anchor {
                             Some(anchor) => chapter_for(anchor),
-                            None if single_spine => {
-                                (position.chapter == 0).then_some(position.page)
-                            }
-                            None => Some(position.chapter),
+                            None => (Some(position.chapter) == overview.chapter)
+                                .then_some(position.page),
                         }
                     };
+                    let coordinate = coordinate
+                        .filter(|page| stripe.is_none() || *page < overview.count)
+                        .and_then(|page| {
+                            stripe
+                                .as_ref()
+                                .map_or(Some(page), |stripe| stripe.slot(page))
+                        });
                     if let Some(coordinate) = coordinate.filter(|&coordinate| coordinate < count) {
                         let bucket = marker_offset(coordinate) / 18 * 18;
                         *history.entry(bucket).or_default() |= flag;
@@ -1309,12 +1301,10 @@ impl Reader {
         let reading = if overview.chapter.is_none() {
             self.fixed.as_ref().map(|book| book.reading.page())
         } else {
-            self.active.as_ref().map(|book| {
-                if single_spine {
-                    book.reading.page
-                } else {
-                    book.reading.chapter
-                }
+            self.active.as_ref().and_then(|book| {
+                (Some(book.reading.chapter) == overview.chapter)
+                    .then_some(book.reading.page)
+                    .and_then(|page| stripe.as_ref()?.slot(page))
             })
         };
         if let Some(reading) = reading.filter(|&reading| reading < count) {
@@ -1333,11 +1323,29 @@ impl Reader {
             return Some(Change::None);
         }
         let layout = OverviewLayout::with_grid(self.navigation_layout(), view.grid);
+        let chapter = view.chapter;
+        let focus_page = view.focus.page;
+        let count = view.count;
+        let stripe_slots = LocalStripe::new(view).slots;
         let Input::Swipe { dx, dy, start_y } = input else {
             return None;
         };
         if let Some(change) = self.overview_grid_swipe(layout, (start_x, start_y), (dx, dy)) {
             return Some(change);
+        }
+        if dx.abs() > dy.abs()
+            && layout.track().contains(start_x, start_y)
+            && let Some(chapter) = chapter
+        {
+            let forward = (dx < 0.0) != layout.navigation.mirrored;
+            let target = if forward {
+                focus_page
+                    .saturating_add(stripe_slots)
+                    .min(count.saturating_sub(1))
+            } else {
+                focus_page.saturating_sub(stripe_slots)
+            };
+            return Some(self.focus_overview_page(chapter, target));
         }
         (dx.abs() > dy.abs() && layout.track().contains(start_x, start_y))
             .then(|| self.scrub_overview(start_x + dx))
@@ -1363,10 +1371,8 @@ impl Reader {
     }
 
     fn scrub_overview(&mut self, x: f32) -> Change {
-        if let (Some(active), Some(overview)) = (&self.active, &self.overview)
-            && overview.chapter == Some(0)
-            && active.reading.chapter == 0
-            && active.reading.probe.chapter_count() == 1
+        if let Some(overview) = &self.overview
+            && let Some(chapter) = overview.chapter
         {
             let track = OverviewLayout::new(self.navigation_layout()).track();
             let width = (track.w - 20).max(1) as f32;
@@ -1376,14 +1382,11 @@ impl Reader {
             } else {
                 fraction
             };
-            let page = (fraction * overview.count.saturating_sub(1) as f32).round() as usize;
-            if page == overview.first {
-                return Change::None;
-            }
-            return match self.update_overview(Some(0), Some(page)) {
-                Ok(()) => Change::Partial,
-                Err(error) => self.report(error),
-            };
+            let stripe = LocalStripe::new(overview);
+            let slot = (fraction * stripe.slots.saturating_sub(1) as f32).round() as usize;
+            return stripe
+                .page(slot, overview.count)
+                .map_or(Change::None, |page| self.focus_overview_page(chapter, page));
         }
         let result = match self.overview_ribbon_target(x) {
             Some(RibbonMapTarget::Chapter(chapter)) => {
@@ -1405,6 +1408,29 @@ impl Reader {
         }
     }
 
+    fn focus_overview_page(&mut self, chapter: usize, page: usize) -> Change {
+        if self
+            .overview
+            .as_ref()
+            .is_some_and(|view| view.chapter == Some(chapter) && view.focus.page == page)
+        {
+            return Change::None;
+        }
+        match self.update_overview(Some(chapter), Some(page)) {
+            Ok(()) => {
+                if let Some(view) = &mut self.overview {
+                    view.focus = OverviewFocus {
+                        page,
+                        slot: page - view.first,
+                        anchor: None,
+                    };
+                }
+                Change::Partial
+            }
+            Err(error) => self.report(error),
+        }
+    }
+
     pub(super) fn overview_input(&mut self, input: Input) -> Change {
         let Some(overview) = &self.overview else {
             return Change::None;
@@ -1418,8 +1444,10 @@ impl Reader {
         let batch = capacity(overview.grid);
         let (direction, step) = match input {
             Input::LongTap(x, y) if layout.track().contains(x, y) => {
-                return self
-                    .overview_ribbon_target(x)
+                return overview
+                    .chapter
+                    .map(RibbonMapTarget::Chapter)
+                    .or_else(|| self.overview_ribbon_target(x))
                     .map_or(Change::None, |target| self.hold_overview_ribbon(target));
             }
             Input::LongTap(x, y) => {

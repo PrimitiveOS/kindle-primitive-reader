@@ -35,7 +35,7 @@ The planner does not participate in reading, seeking, search, or annotation
 handling, and does not increase the current chapter limit.
 
 The initial candidate is deliberately narrow: at most 1 MiB of original chapter
-and canonical text, 8,192 blocks/elements, 128 KiB per batch or block and 32
+and canonical text, 8,192 blocks/elements, 128 KiB or 256 blocks per batch, 128 KiB per block and 32
 batches. It rejects nonunique or unsupported chapters, stylesheet or user-style
 inputs, images, tables, lists, ruby, raw whitespace, generated content, special
 breaks, complex boxes, non-horizontal and unsupported reading modes. A
@@ -67,3 +67,20 @@ never creates a page boundary. This
 component is not connected to reading: it cannot prove that a layout stream is
 complete, that its absolute geometry is continuous, or that fonts and styles
 match. The continuation layout and those proofs remain required before use.
+
+A separate internal simple-Parley stream now shapes one planned block batch at
+a time while carrying the original layout's vertical position, row-flow state,
+paragraph gap and paint extent. It yields borrowed paragraph layouts and
+original-source line ranges to a callback; the batch is dropped afterward.
+The stream repeats the source and conservative style gates, rejects coupled
+layout modes and inline direction overrides, and limits each individual
+paragraph to 16 KiB, the chapter to 30,000 lines and each work batch to the
+planner's 128 KiB. Cancellation is checked between paragraphs and before and
+after delivery; one shaping operation is not interruptible. A consumer must
+stage and discard its output if any later batch fails or is cancelled.
+
+This stream is not wired into `Probe` or Reader. It does not prove the font,
+settings or complete metadata snapshot, establish a total device-memory cap,
+provide a page/window cache, or implement search, selection, navigation or
+resume across batches. Those are prerequisites before any user-facing path can
+use it. The stream has not been behaviorally tested or used on a device.

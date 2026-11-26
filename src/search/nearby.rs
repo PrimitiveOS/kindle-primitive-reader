@@ -125,7 +125,6 @@ impl NearbySearch {
             return Err("The starting chapter is unavailable".into());
         }
         let mut ci = origin;
-        let mut skipped = false;
         loop {
             if cancel.load(Ordering::Relaxed) {
                 return Ok(None);
@@ -150,11 +149,12 @@ impl NearbySearch {
             }
             let stop_here = stop.is_some_and(|(chapter, _)| ci == chapter);
             if stop_here && stop.and_then(|(_, boundary)| boundary).is_none() {
-                return if skipped {
-                    Err("Some chapters could not be searched".into())
-                } else {
-                    Ok(None)
-                };
+                return Ok(None);
+            }
+            // The display-only notice is not the publication's text. It
+            // cannot establish that there is no nearer match in this chapter.
+            if text.placeholder {
+                return Err("Some chapters could not be searched".into());
             }
             if let Some(source) = text.source {
                 if crate::parley_layout::RAW_LAYOUT_ENABLED && text.raw_layout.is_none() {
@@ -347,19 +347,17 @@ impl NearbySearch {
             } else if anchor.is_some() && ci == origin {
                 return Err("The starting chapter could not be read".into());
             } else {
-                skipped = true;
+                // A later hit cannot be called the nearest when this chapter
+                // may contain a closer occurrence. Keep the reading position
+                // and report an incomplete search rather than skipping it.
+                return Err("Some chapters could not be searched".into());
             }
             if stop_here {
-                return if skipped {
-                    Err("Some chapters could not be searched".into())
-                } else {
-                    Ok(None)
-                };
+                return Ok(None);
             }
             match self.direction {
                 SearchDirection::Previous if ci > 0 => ci -= 1,
                 SearchDirection::Next if ci + 1 < chapters => ci += 1,
-                _ if skipped => return Err("Some chapters could not be searched".into()),
                 _ => return Ok(None),
             }
         }
@@ -414,6 +412,7 @@ pub(crate) struct ChapterText {
     pub(super) book: u64,
     pub(super) label: String,
     pub(super) href: String,
+    pub(super) placeholder: bool,
     pub(super) source: Option<Source>,
     pub(super) flow: crate::flow_view::ChapterFlow,
     pub(super) flow_config: FlowConfig,
@@ -449,6 +448,7 @@ impl ChapterText {
             .get(index)
             .ok_or("That chapter is unavailable")?
             .clone();
+        let placeholder = book.recovered_placeholder(&info);
         let mut source = book
             .chapter(index)
             .ok()
@@ -466,6 +466,7 @@ impl ChapterText {
             book: book.revision(),
             label: info.label,
             href: info.href,
+            placeholder,
             source,
             flow,
             flow_config: config.clone(),

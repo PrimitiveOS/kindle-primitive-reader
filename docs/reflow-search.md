@@ -10,6 +10,13 @@ KOReader v2026.07.1's search input offers All, Backward and Forward. Its rolling
 
 The edge shortcuts stop at the current page: **From start** does not jump past it to a later occurrence, and **From end** does not jump to an earlier one. When a page contains no searchable text, Reader conservatively excludes its current spine item if it cannot resolve a text boundary; searchable items beyond that page are never included.
 
+Directional search now stops with an incomplete-search message if an intervening
+chapter cannot be read or parsed. It keeps the current reading location: a match
+after the unreadable chapter might not be the nearest one. Verified matches found
+before any unreadable chapter remain available. Display-only notices for missing
+or unsupported spine items also stop the directional search; they are not the
+original chapter text. This change has not yet been behaviorally tested.
+
 A single worker reads chapters in the requested direction and stops at the nearest match. It loads one spine item at a time and releases Kindle storage before parsing, matching or waiting for input. Replacing or cancelling a request discards its result. Case folding, optional removal of accents and invisible soft hyphens map back to the source's UTF-8 boundaries. Tests cover overlapping strings, multi-character Unicode folds, a decomposed accent and a soft hyphen inside a selected word.
 
 ## Directional search in Reader 0.1.13

@@ -109,9 +109,9 @@ impl Reader {
                 "Tap a thumbnail to read. Hold it to bookmark or show page actions.",
                 "Swipe vertically for one row, horizontally or use page buttons for a screen.",
                 "Swipe along the top or left edge to change the grid columns or rows.",
-                "Tap or drag the ribbon to browse. Hold it to open the book map.",
+                "Tap or swipe the ribbon to browse. Hold it to open the book map.",
                 "The handle is browsing; the caret is reading. Squares show page or chapter history.",
-                "Ribbon: gray highlight, black note, tall bookmark. Reflow marks show starting chapters.",
+                "Ribbon: gray highlight, black note, tall bookmark. Some marks may be omitted.",
                 "Numbers and chapter levels save per book. Defaults apply to page numbers.",
             ]
             .into_iter()

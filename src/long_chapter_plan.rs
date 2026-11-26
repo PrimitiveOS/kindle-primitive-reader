@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 const NORMAL_TEXT_LIMIT: usize = 512 * 1024;
 const SOURCE_LIMIT: usize = 1024 * 1024;
 const BATCH_TEXT_LIMIT: usize = 128 * 1024;
+pub(crate) const MAX_BATCH_BLOCKS: usize = 256;
 const MAX_BATCHES: usize = 32;
 const MAX_BLOCKS: usize = 8192;
 const MAX_ELEMENTS: usize = 8192;
@@ -50,7 +51,7 @@ pub(crate) struct LongChapterPlan {
     batches: Vec<Batch>,
 }
 
-fn cancelled(flag: &AtomicBool) -> Result<()> {
+pub(crate) fn cancelled(flag: &AtomicBool) -> Result<()> {
     if flag.load(Ordering::Relaxed) {
         Err("Long chapter planning was cancelled".into())
     } else {
@@ -83,6 +84,50 @@ fn simple_styles(styles: &[Style]) -> bool {
             && style.vertical_padding == [CssLength::default(); 2]
             && style.vertical_margin == [CssLength::default(); 2]
     })
+}
+
+/// Recheck the structural gates before consuming a plan. The plan's text
+/// digest alone does not bind these fields or the current computed styles.
+pub(crate) fn simple_source(source: &Source, styles: &[Style]) -> bool {
+    !source.blocks.is_empty()
+        && source.blocks.len() <= MAX_BLOCKS
+        && source.elements.len() <= MAX_ELEMENTS
+        && source.fragments.len() <= MAX_ELEMENTS
+        && styles.len() == source.elements.len()
+        && source.stylesheets.is_empty()
+        && source.table_cells.is_empty()
+        && source.list_counters.is_empty()
+        && source.raw_only_blocks.is_empty()
+        && source.elements.iter().all(|element| {
+            element.inline_style.is_none()
+                && !element.anonymous
+                && matches!(
+                    element.tag.as_str(),
+                    "html"
+                        | "head"
+                        | "title"
+                        | "body"
+                        | "p"
+                        | "span"
+                        | "a"
+                        | "em"
+                        | "strong"
+                        | "b"
+                        | "i"
+                        | "br"
+                )
+        })
+        && source.blocks.iter().all(|block| {
+            block.element < styles.len()
+                && !block.text.is_empty()
+                && block.text.len() <= BATCH_TEXT_LIMIT
+                && block.table_cell.is_none()
+                && block.list_item.is_none()
+                && block.raw_whitespace.is_none()
+                && block.images.is_empty()
+                && block.ruby.is_empty()
+        })
+        && simple_styles(styles)
 }
 
 /// The binding token identifies the parsed Source lifetime; this digest also
@@ -167,36 +212,7 @@ impl LongChapterPlan {
         if xhtml.len() > SOURCE_LIMIT || !source.matches_input(&xhtml) {
             return Err("The original long chapter cannot be verified".into());
         }
-        if source.blocks.is_empty()
-            || source.blocks.len() > MAX_BLOCKS
-            || source.elements.len() > MAX_ELEMENTS
-            || source.fragments.len() > MAX_ELEMENTS
-            || styles.len() != source.elements.len()
-            || !source.stylesheets.is_empty()
-            || !source.table_cells.is_empty()
-            || !source.list_counters.is_empty()
-            || !source.raw_only_blocks.is_empty()
-            || source.elements.iter().any(|element| {
-                element.inline_style.is_some()
-                    || element.anonymous
-                    || !matches!(
-                        element.tag.as_str(),
-                        "html"
-                            | "head"
-                            | "title"
-                            | "body"
-                            | "p"
-                            | "span"
-                            | "a"
-                            | "em"
-                            | "strong"
-                            | "b"
-                            | "i"
-                            | "br"
-                    )
-            })
-            || !simple_styles(styles)
-        {
+        if !simple_source(source, styles) {
             return Err("This long chapter uses unsupported layout features".into());
         }
         let first = &source.blocks[0];
@@ -231,6 +247,7 @@ impl LongChapterPlan {
             if bytes
                 .checked_add(len)
                 .is_none_or(|size| size > BATCH_TEXT_LIMIT)
+                || index - start >= MAX_BATCH_BLOCKS
             {
                 batches.push(Batch {
                     blocks: start..index,

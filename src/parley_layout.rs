@@ -7,6 +7,7 @@ mod hyphenation_options_tests;
 mod inline_blocks;
 #[cfg(test)]
 mod inline_blocks_tests;
+pub(crate) mod long_chapter;
 mod note_inline;
 mod short_words;
 #[cfg(test)]

@@ -1414,6 +1414,7 @@ mod tests {
             book: 1,
             label,
             href: "chapter.xhtml".into(),
+            placeholder: false,
             source: Source::parse(&format!("<html><body>{html}</body></html>")).ok(),
             flow: Default::default(),
             flow_config: Default::default(),
