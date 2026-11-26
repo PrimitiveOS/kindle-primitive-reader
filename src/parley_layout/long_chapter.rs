@@ -13,6 +13,21 @@ use std::sync::atomic::AtomicBool;
 // 128 KiB work batch. The shaping library cannot be interrupted mid-paragraph.
 const MAX_PARAGRAPH_BYTES: usize = 16 * 1024;
 
+/// Exact scalar layout state after one complete work batch. This is valid only
+/// with the same immutable plan, source, styles, settings, rules and font set.
+#[derive(Clone)]
+pub(crate) struct SimpleLayoutCheckpoint {
+    next_batch: usize,
+    line_count: usize,
+    y: f32,
+    maximum: f32,
+    normal_gap: f32,
+    trailing_gap: f32,
+    painted_bottom: f32,
+    previous_top: Option<f32>,
+    row_flow: crate::table_layout::RowFlow,
+}
+
 pub(crate) struct SimpleLayoutStream<'a> {
     plan: &'a LongChapterPlan,
     source: &'a Source,
@@ -127,11 +142,95 @@ impl<'a> SimpleLayoutStream<'a> {
         })
     }
 
+    /// Recreate a stream at a previously captured boundary, validating that
+    /// the checkpoint still fits the same plan and settings.
+    pub(crate) fn new_at_checkpoint(
+        plan: &'a LongChapterPlan,
+        source: &'a Source,
+        xhtml: &str,
+        styles: &'a [Style],
+        user_styles: &crate::user_styles::Snapshot,
+        rules: &'a crate::user_hyphenation::Rules,
+        settings: Settings,
+        mode: LayoutMode,
+        fonts: FontContext,
+        cancel: &'a AtomicBool,
+        checkpoint: &SimpleLayoutCheckpoint,
+    ) -> Result<Self> {
+        let mut stream = Self::new(
+            plan,
+            source,
+            xhtml,
+            styles,
+            user_styles,
+            rules,
+            settings,
+            mode,
+            fonts,
+            cancel,
+        )?;
+        if checkpoint.next_batch >= plan.batches().len()
+            || checkpoint.line_count > MAX_LINES
+            || !checkpoint.y.is_finite()
+            || checkpoint.y < 0.0
+            || !checkpoint.maximum.is_finite()
+            || checkpoint.maximum < 0.0
+            || !checkpoint.normal_gap.is_finite()
+            || checkpoint.normal_gap.to_bits() != stream.normal_gap.to_bits()
+            || !checkpoint.trailing_gap.is_finite()
+            || !checkpoint.painted_bottom.is_finite()
+            || checkpoint.previous_top.is_some_and(|top| !top.is_finite())
+        {
+            return Err("The long chapter checkpoint is invalid".into());
+        }
+        stream.next_batch = checkpoint.next_batch;
+        stream.line_count = checkpoint.line_count;
+        stream.y = checkpoint.y;
+        stream.maximum = checkpoint.maximum;
+        stream.trailing_gap = checkpoint.trailing_gap;
+        stream.painted_bottom = checkpoint.painted_bottom;
+        stream.previous_top = checkpoint.previous_top;
+        stream.row_flow = checkpoint.row_flow.clone();
+        Ok(stream)
+    }
+
+    /// Capture the continuation state after a completed batch.
+    pub(crate) fn checkpoint(&self) -> Result<SimpleLayoutCheckpoint> {
+        if self.failed
+            || self.next_batch > self.plan.batches().len()
+            || !self.y.is_finite()
+            || !self.maximum.is_finite()
+            || !self.trailing_gap.is_finite()
+            || !self.painted_bottom.is_finite()
+        {
+            return Err("The long chapter checkpoint is unavailable".into());
+        }
+        Ok(SimpleLayoutCheckpoint {
+            next_batch: self.next_batch,
+            line_count: self.line_count,
+            y: self.y,
+            maximum: self.maximum,
+            normal_gap: self.normal_gap,
+            trailing_gap: self.trailing_gap,
+            painted_bottom: self.painted_bottom,
+            previous_top: self.previous_top,
+            row_flow: self.row_flow.clone(),
+        })
+    }
+
     /// Give a consumer borrowed layouts and lines for exactly one work batch.
     /// They are dropped after the callback; work-batch boundaries are not pages.
     pub(crate) fn next_batch(
         &mut self,
         consume: impl FnOnce(&[Paragraph], &[Line]) -> Result<()>,
+    ) -> Result<bool> {
+        self.next_batch_owned(|paragraphs, lines| consume(&paragraphs, &lines))
+    }
+
+    /// Return the shaped batch to a bounded replay consumer.
+    pub(crate) fn next_batch_owned(
+        &mut self,
+        consume: impl FnOnce(Vec<Paragraph>, Vec<Line>) -> Result<()>,
     ) -> Result<bool> {
         if self.failed {
             return Err("The long chapter layout stream is unavailable".into());
@@ -145,7 +244,7 @@ impl<'a> SimpleLayoutStream<'a> {
 
     fn produce_batch(
         &mut self,
-        consume: impl FnOnce(&[Paragraph], &[Line]) -> Result<()>,
+        consume: impl FnOnce(Vec<Paragraph>, Vec<Line>) -> Result<()>,
     ) -> Result<bool> {
         cancelled(self.cancel)?;
         let Some(batch) = self.plan.batches().get(self.next_batch) else {
@@ -287,7 +386,7 @@ impl<'a> SimpleLayoutStream<'a> {
             self.y += 0.0;
         }
         cancelled(self.cancel)?;
-        consume(&paragraphs, &lines)?;
+        consume(paragraphs, lines)?;
         cancelled(self.cancel)?;
         self.next_batch += 1;
         Ok(true)

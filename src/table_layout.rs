@@ -404,7 +404,7 @@ mod tests {
 
 /// The next block in a cell follows the previous block vertically. Neighboring
 /// cells begin together, and subsequent prose follows the tallest cell.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct RowFlow {
     cell: Option<Cell>,
     row_ends: BTreeMap<usize, f32>,

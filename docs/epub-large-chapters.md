@@ -92,22 +92,27 @@ stack at eight files totaling 16 MiB, and the index at 30,000 line records and
 16,384 pages. It disables system font discovery and embedded fonts, rejects
 missing glyphs or a shaped font outside the captured stack, and derives the
 source and computed styles from the same snapshot and exact settings. It stores
-original-source line ranges, exact simple-page bounds and batch-to-line ranges;
-these ranges are not resumable layout checkpoints. It returns nothing if a
-batch fails or is cancelled. Digests check cancellation between 64 KiB
-chunks; every bounded batch also retains a SHA-256 transcript of its original
+original-source line ranges, exact simple-page bounds, batch-to-line ranges,
+page-to-line ranges, and scalar layout state at each source-block batch
+boundary. It rejects any line that crosses a page bound and can request the
+exact source batches needed for one page. Those checkpoints can replay one
+bounded batch in the isolated stream; they are not page-start checkpoints and
+do not provide a page renderer or reusable window cache. A replay must match the batch's
+SHA-256 transcript of its original
 source ranges, line and paragraph geometry, selected captured font face,
 variation and synthesis settings, clusters and positioned glyphs. A future
-window replay must reproduce that transcript before displaying the batch.
-A single ZIP parse, font registration or paragraph shape is not interruptible.
+window renderer must reproduce that transcript before displaying the batch.
+The index returns nothing if a batch fails or is cancelled. Digests check
+cancellation between 64 KiB chunks; a single ZIP parse, font registration or
+paragraph shape is not interruptible.
 Scroll, facing-page, hidden-flow, nonlinear-hiding and in-page note modes
 remain excluded.
 
 The proof covers these in-memory EPUB/font bytes and the supplied settings,
 user-style and hyphenation snapshots. It does not prove that they are the live
 open book or that this isolated font context is equivalent to Reader's normal
-firmware-mapped or system-fallback font context. It also does not provide a
-windowed renderer, interactive navigation, Find, selections or saved-position
+firmware-mapped or system-fallback font context. It does not provide a page
+window renderer, interactive navigation, Find, selections or saved-position
 handoff. Peak allocator and device memory remain unmeasured. No reader path
 uses this index; the transcript proves replay only within its isolated input
 snapshot and does not establish live Reader font equivalence. Source and font

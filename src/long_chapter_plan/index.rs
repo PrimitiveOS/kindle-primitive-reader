@@ -8,9 +8,9 @@ use super::{
 };
 use crate::book_style::BookStyle;
 use crate::epub::Book;
-use crate::parley_layout::long_chapter::SimpleLayoutStream;
+use crate::parley_layout::long_chapter::{SimpleLayoutCheckpoint, SimpleLayoutStream};
 use crate::source::Source;
-use crate::{Anchor, Result, Settings, TypographyLocale};
+use crate::{Anchor, Line, Result, Settings, TypographyLocale};
 use parley::{FontContext, GenericFamily};
 use std::ops::Range;
 use std::sync::{Arc, atomic::AtomicBool};
@@ -37,17 +37,70 @@ pub(crate) struct BatchIndex {
 }
 
 pub(crate) struct PageIndex {
+    book_bytes: Arc<[u8]>,
+    font_bytes: Vec<Arc<Vec<u8>>>,
     source: Source,
+    xhtml: String,
+    styles: Vec<crate::book_style::Style>,
     plan: LongChapterPlan,
     bounds: Vec<f32>,
     lines: Vec<LineRecord>,
+    page_lines: Vec<Option<Range<usize>>>,
     batches: Vec<BatchIndex>,
+    checkpoints: Vec<SimpleLayoutCheckpoint>,
     book_digest: [u8; 32],
+    font_ids: Vec<u64>,
     font_digests: Vec<[u8; 32]>,
     settings: Settings,
     mode: LayoutMode,
     user_styles: crate::user_styles::Snapshot,
     rules: Arc<crate::user_hyphenation::Rules>,
+}
+
+pub(crate) struct VerifiedBatch {
+    pub paragraphs: Vec<crate::parley_layout::Paragraph>,
+    pub lines: Vec<Line>,
+}
+
+pub(crate) struct VerifiedPage {
+    pub bounds: Range<f32>,
+    pub batches: Vec<VerifiedBatch>,
+}
+
+fn page_line_ranges(
+    bounds: &[f32],
+    lines: &[LineRecord],
+    cancel: &AtomicBool,
+) -> Result<Vec<Option<Range<usize>>>> {
+    let pages = bounds.len().saturating_sub(1);
+    let mut ranges: Vec<Option<Range<usize>>> = vec![None; pages];
+    let mut previous_page = None;
+    for (index, line) in lines.iter().enumerate() {
+        if index % 256 == 0 {
+            cancelled(cancel)?;
+        }
+        let page = bounds
+            .partition_point(|bound| *bound <= line.top)
+            .saturating_sub(1);
+        let Some((&start, &end)) = bounds.get(page).zip(bounds.get(page + 1)) else {
+            return Err("The long chapter page index is invalid".into());
+        };
+        if page >= pages
+            || line.top < start
+            || line.bottom > end
+            || previous_page.is_some_and(|previous| previous > page)
+        {
+            return Err("A long chapter line crosses a page boundary".into());
+        }
+        match &mut ranges[page] {
+            Some(range) if range.end == index => range.end += 1,
+            Some(_) => return Err("The long chapter page lines are not contiguous".into()),
+            None => ranges[page] = Some(index..index + 1),
+        }
+        previous_page = Some(page);
+    }
+    cancelled(cancel)?;
+    Ok(ranges)
 }
 
 fn digest(bytes: &[u8], cancel: &AtomicBool) -> Result<[u8; 32]> {
@@ -151,7 +204,7 @@ impl PageIndex {
         let book_digest = digest(&book_bytes, cancel)?;
         cancelled(cancel)?;
         let (mut fonts, identities, font_digests) = captured_fonts(font_bytes, cancel)?;
-        let mut book = Book::open_snapshot(book_bytes)?;
+        let mut book = Book::open_snapshot(Arc::clone(&book_bytes))?;
         cancelled(cancel)?;
         if !book.is_reflowable_epub()
             || book.spine_rtl
@@ -218,13 +271,15 @@ impl PageIndex {
         )?;
         let mut records = Vec::new();
         let mut batches = Vec::with_capacity(plan.batches().len());
+        let mut checkpoints = Vec::with_capacity(plan.batches().len() + 1);
+        checkpoints.push(stream.checkpoint()?);
         for batch in plan.batches() {
             cancelled(cancel)?;
             let first = records.len();
             let mut witness = ShapeWitness::new(batch.blocks.clone());
-            let produced = stream.next_batch(|paragraphs, lines| {
-                witness.observe(paragraphs, lines, &identities, &font_digests)?;
-                for paragraph in paragraphs {
+            let produced = stream.next_batch_owned(|paragraphs, lines| {
+                witness.observe(&paragraphs, &lines, &identities, &font_digests)?;
+                for paragraph in &paragraphs {
                     for line in paragraph.layout.lines() {
                         for run in line.runs() {
                             if !identities.contains(&run.font().data.id()) {
@@ -233,7 +288,7 @@ impl PageIndex {
                         }
                     }
                 }
-                for line in lines {
+                for line in &lines {
                     if line.missing_glyphs != 0 || records.len() == MAX_LINES {
                         return Err(
                             "The long chapter has unavailable glyphs or too many lines".into()
@@ -257,17 +312,26 @@ impl PageIndex {
                 lines: first..records.len(),
                 shape_digest: witness.finish()?,
             });
+            checkpoints.push(stream.checkpoint()?);
         }
         let (extent, painted_bottom) = stream.finish()?;
         let bounds = pagination.finish(extent, painted_bottom)?;
+        let page_lines = page_line_ranges(&bounds, &records, cancel)?;
         cancelled(cancel)?;
         Ok(Self {
+            book_bytes,
+            font_bytes: font_bytes.to_vec(),
             source,
+            xhtml,
+            styles,
             plan,
             bounds,
             lines: records,
+            page_lines,
             batches,
+            checkpoints,
             book_digest,
+            font_ids: identities,
             font_digests,
             settings,
             mode,
@@ -303,6 +367,120 @@ impl PageIndex {
             && mode == self.mode
             && user_styles == &self.user_styles
             && rules == self.rules.as_ref()
+    }
+
+    /// Replay one bounded batch from its exact prior layout state and discard
+    /// it unless source ranges, geometry, selected captured fonts and glyphs
+    /// match the index transcript. Call only on a worker.
+    pub(crate) fn replay_batch(&self, index: usize, cancel: &AtomicBool) -> Result<VerifiedBatch> {
+        cancelled(cancel)?;
+        let batch = self
+            .batches
+            .get(index)
+            .ok_or("The long chapter page window is unavailable")?;
+        let checkpoint = self
+            .checkpoints
+            .get(index)
+            .ok_or("The long chapter layout checkpoint is unavailable")?;
+        if !self.matches_snapshots(
+            &self.book_bytes,
+            &self.font_bytes,
+            self.settings,
+            self.mode,
+            &self.user_styles,
+            &self.rules,
+            cancel,
+        ) {
+            return Err("The long chapter snapshot changed".into());
+        }
+        let (fonts, identities, digests) = captured_fonts(&self.font_bytes, cancel)?;
+        if identities != self.font_ids || digests != self.font_digests {
+            return Err("The long chapter font registration changed".into());
+        }
+        let mut stream = SimpleLayoutStream::new_at_checkpoint(
+            &self.plan,
+            &self.source,
+            &self.xhtml,
+            &self.styles,
+            &self.user_styles,
+            &self.rules,
+            self.settings,
+            self.mode,
+            fonts,
+            cancel,
+            checkpoint,
+        )?;
+        let expected_lines = self
+            .lines
+            .get(batch.lines.clone())
+            .ok_or("The long chapter page index changed")?;
+        let mut replayed = None;
+        let produced = stream.next_batch_owned(|paragraphs, lines| {
+            let mut witness = ShapeWitness::new(batch.blocks.clone());
+            witness.observe(&paragraphs, &lines, &identities, &digests)?;
+            if witness.finish()? != batch.shape_digest || lines.len() != expected_lines.len() {
+                return Err("The long chapter page window did not match its index".into());
+            }
+            for (line, expected) in lines.iter().zip(expected_lines) {
+                if line.block != expected.block
+                    || line.bytes != expected.bytes
+                    || line.top.to_bits() != expected.top.to_bits()
+                    || line.bottom.to_bits() != expected.bottom.to_bits()
+                {
+                    return Err("The long chapter page window changed".into());
+                }
+            }
+            replayed = Some(VerifiedBatch { paragraphs, lines });
+            Ok(())
+        })?;
+        if !produced {
+            return Err("The long chapter page window could not be replayed".into());
+        }
+        cancelled(cancel)?;
+        replayed.ok_or("The long chapter page window was empty".into())
+    }
+
+    /// Rebuild only the captured batches that contain lines on this page.
+    /// The complete page is discarded if any batch fails its replay witness.
+    pub(crate) fn replay_page(&self, page: usize, cancel: &AtomicBool) -> Result<VerifiedPage> {
+        let bounds = self
+            .page_bounds(page)
+            .ok_or("The long chapter page is unavailable")?;
+        let mut batches = Vec::new();
+        if let Some(lines) = self.page_lines.get(page).and_then(Option::as_ref) {
+            let first = self
+                .batches
+                .partition_point(|batch| batch.lines.end <= lines.start);
+            let end = self
+                .batches
+                .partition_point(|batch| batch.lines.start < lines.end);
+            if first >= end {
+                return Err("The long chapter page has no replay batches".into());
+            }
+            batches
+                .try_reserve_exact(end - first)
+                .map_err(|_| "The long chapter page cannot be reserved")?;
+            let mut covered = lines.start;
+            for index in first..end {
+                cancelled(cancel)?;
+                let batch = self
+                    .batches
+                    .get(index)
+                    .ok_or("The long chapter page batch is unavailable")?;
+                let overlap_start = batch.lines.start.max(lines.start);
+                let overlap_end = batch.lines.end.min(lines.end);
+                if overlap_start != covered || overlap_start >= overlap_end {
+                    return Err("The long chapter page batches are not contiguous".into());
+                }
+                covered = overlap_end;
+                batches.push(self.replay_batch(index, cancel)?);
+            }
+            if covered != lines.end {
+                return Err("The long chapter page is missing a replay batch".into());
+            }
+        }
+        cancelled(cancel)?;
+        Ok(VerifiedPage { bounds, batches })
     }
 
     pub(crate) fn page_count(&self) -> usize {
@@ -360,11 +538,13 @@ impl PageIndex {
 
     /// Rows touching an actual page, preserving original line ordering.
     pub(crate) fn lines_on_page(&self, page: usize) -> Option<Vec<(usize, Range<usize>)>> {
-        let range = self.page_bounds(page)?;
+        self.page_bounds(page)?;
+        let Some(range) = self.page_lines.get(page)?.as_ref() else {
+            return Some(Vec::new());
+        };
         Some(
-            self.lines
+            self.lines[range.clone()]
                 .iter()
-                .filter(|line| line.bottom > range.start && line.top < range.end)
                 .map(|line| (line.block, line.bytes.clone()))
                 .collect(),
         )

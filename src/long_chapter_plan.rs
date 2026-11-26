@@ -1,8 +1,9 @@
-//! Read-only planning for oversized EPUB chapters. No reading path uses this yet.
+//! Read-only planning and replay for oversized EPUB chapters. No reading path uses this yet.
 //!
 //! These ranges are work batches over the original Source, not pages or new
 //! spine items. They do not establish that independent layouts can be joined;
-//! a future continuation/index pass must prove that separately.
+//! the isolated index verifies a continuation transcript before returning a
+//! page's source batches, but a live renderer must prove that separately.
 #![allow(dead_code)]
 
 #[cfg(feature = "kindle")]
