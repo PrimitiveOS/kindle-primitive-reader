@@ -244,9 +244,11 @@ records. It uses the existing bounded PalmDOC decompressor, with a 32 KiB limit
 per record and 12 MiB total. Plain text keeps its previous conversion. A
 bounded PML candidate also accepts escaped backslashes, soft hyphens, three-digit
 Windows-1252 and four-digit Unicode character escapes, and well-nested bold and
-italic toggles; paragraph breaks are retained. It rejects malformed escapes,
+italic, underline and strike-through toggles (including the alternate bold
+command); paragraph breaks are retained. It rejects malformed escapes,
 unsupported control characters, unbalanced or crossing styles and other PML
-commands. The source filename can supply the title. Any chapter index and other
+commands. This subset counts each style opening/closing against its 32,000
+markup-token cap. The source filename can supply the title. Any chapter index and other
 metadata are not imported. Protected, zlib-compressed, other PML and
 auxiliary-content eReader books remain unsupported rather than being shown
 with missing markup or content. These
@@ -256,7 +258,7 @@ this smaller subset has not been compared with it or tested on real files, the
 simulator or Kindle. [Pinned eReader recognition](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/pdbfmt.cpp#L724-L729)
 
 Full eReader compatibility remains open: expand PML tokenization and styling,
-page/chapter controls, destinations, links, images, footnotes and sidebars;
+more general page/chapter controls and links, images, footnotes and sidebars;
 consider unprotected zlib text; preserve the plain subset's saved positions
 through a verified source mapping; and compare malformed, protected and real
 books against KOReader before expanding the supported claim.
@@ -266,3 +268,20 @@ the existing XHTML size cap. Its saved anchors differ from future PML expansions
 unless a verified migration is added. This slice has not been behaviorally
 compared with KOReader or tested on real books, in simulation or on Kindle.
 [Pinned KOReader PML commands](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L2023-L2191)
+
+A separate navigation-bearing PML candidate is tried only when the prior PML
+subset rejects the document. It accepts whole-line `\xTitle\x` or
+`\XnTitle\Xn` chapter headings (n 0–4), standalone `\p` page controls,
+local `\Q="name"` anchors and balanced same-line `\q="#name"…\q` links.
+Chapter rows use deterministic fragments and the existing section-aware
+contents resolver. PML page controls emit publisher page-break hints. Anchor
+names are limited to 128 ASCII letters, digits, period, underscore or hyphen;
+up to 1,024 unique targets and chapters are allowed. Duplicate or unresolved
+anchors, external links, crossing styles, multiline or formatted chapter
+titles, page controls without following visible content, and other unsupported
+PML are rejected. The earlier plain and PML parsers remain first, preserving
+their existing XHTML and anchors. This candidate has not yet been tested on
+real books, in simulation or on Kindle; publisher-break behavior, source
+positions, cross-section links and KOReader alignment need validation before
+parity is claimed. Future expansions must preserve these generated identities
+or supply a verified migration.

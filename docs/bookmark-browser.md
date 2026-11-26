@@ -10,8 +10,10 @@ The results list uses the existing Bookmark list rows-per-page and font-size
 preferences, including its optional fixed-row shrink-to-fit behavior. Book
 headings remain in the result list and count as rows; choosing one still opens
 its book information. Sources, filters and destructive review screens keep
-their own standard row layout. Flexible-height bookmark rows are not yet
-applied to this cross-book list. KOReader's [bookmark list density and font
+their own standard row layout. When **Max lines per bookmark** is enabled,
+the cross-book results use measured flexible-height rows with lazy page
+construction. To bound memory, lists above 512 rows or 2 MiB of row text use
+the fixed-row layout instead; all results remain available. KOReader's [bookmark list density and font
 controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L133-L185)
 are the reference. This use of the settings has not yet been validated in
 simulation or on Kindle.

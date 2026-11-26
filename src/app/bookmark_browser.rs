@@ -1574,7 +1574,8 @@ impl Reader {
                     .iter()
                     .position(|r| *r == RowKey::Book(id));
                 self.show(Screen::BookmarkBrowser(Page::Results));
-                self.list_page = page.unwrap_or(0) / self.list_geometry().rows;
+                let ordinal = page.unwrap_or(0);
+                self.set_bookmark_list_anchor(ordinal / self.list_geometry().rows, ordinal);
             }
             Command::BookInfo(id) => {
                 self.bookmark_browser.book = Some(id);
@@ -1613,13 +1614,17 @@ impl Reader {
                 .list_anchor
                 .filter(|&(page, _)| page == self.list_page)
                 .map_or_else(
-                    || self.list_page * self.list_geometry().rows,
+                    || {
+                        self.flexible_mark_first()
+                            .unwrap_or(self.list_page * self.list_geometry().rows)
+                    },
                     |(_, ordinal)| ordinal,
                 )
         })
     }
 
     pub(super) fn set_bookmark_list_anchor(&mut self, page: usize, ordinal: usize) {
+        let page = self.flexible_mark_page_for(ordinal).unwrap_or(page);
         self.list_page = page;
         self.bookmark_browser.list_anchor = Some((page, ordinal));
     }

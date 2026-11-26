@@ -3,8 +3,8 @@
 The local Reader build enables a bounded horizontal layout for simple source
 blocks with `white-space: pre`, `pre-wrap` or `break-spaces`. A bounded
 `pre-line` content also uses a bounded source-mapped collapse projection for
-horizontal whitespace and line breaks. Unsupported mappings, mixed style owners
-within one collapsed run, explicit `<br>` elements in collapsed projections and
+horizontal whitespace and line breaks, including bounded explicit `<br>`
+elements. Unsupported mappings, mixed style owners within one collapsed run and
 unverifiable boundaries retain the canonical fallback. When the projected text
 already matches canonical text, Reader keeps the canonical layout and anchors. It preserves
 verified spaces, tabs and line breaks while keeping existing canonical source
@@ -16,8 +16,9 @@ when the concatenated text normalizes to the canonical block exactly. Inline
 style runs retain each source text node’s owner, including whitespace at
 inline boundaries; each run keeps its computed style and language. Hidden,
 unpainted, direction-changing or reclassified descendants, including empty
-elements and explicit breaks, use the canonical fallback. Explicit
-`<br>` elements map to verified canonical newlines. Comments and processing instructions are ignored. Each block is limited to
+elements and unsupported breaks, use the canonical fallback. Explicit
+`<br>` elements map to verified canonical newlines and a terminal explicit break
+is retained in pre-line projections. Comments and processing instructions are ignored. Each block is limited to
 64 KiB and 4,096 mapping records; chapter metadata budgets are 768 KiB for
 preferred `<pre>` content and 256 KiB for other content. The ordinary layout
 is used for content outside these bounds, unsupported projections, images,

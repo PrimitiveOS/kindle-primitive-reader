@@ -25,6 +25,22 @@ pub(crate) struct Contents {
 }
 
 impl Contents {
+    /// PML headings already have deterministic, unique generated fragments.
+    pub(crate) fn from_pml(rows: Vec<(String, usize, String)>) -> Self {
+        Self {
+            items: rows
+                .into_iter()
+                .map(|(label, depth, fragment)| Item {
+                    label,
+                    depth,
+                    position: 0,
+                    fragment: Some(fragment),
+                })
+                .collect(),
+            insertions: Vec::new(),
+        }
+    }
+
     pub(crate) fn read(bytes: &[u8], offsets: &[usize], header: &[u8]) -> Result<Self> {
         let records = Records {
             bytes,

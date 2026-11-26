@@ -332,7 +332,11 @@ impl Paragraph {
         };
         let expected = match &self.raw_pre_line {
             Some(projection) => {
-                if crate::source::pre_line_projection::PreLineProjection::build(raw.raw()).as_ref()
+                if crate::source::pre_line_projection::PreLineProjection::build(
+                    raw.raw(),
+                    raw.hard_breaks(),
+                )
+                .as_ref()
                     != Some(projection.as_ref())
                 {
                     return false;

@@ -53,7 +53,10 @@ struct MarkRow {
 fn is_saved_mark(action: &Action) -> bool {
     matches!(
         action,
-        Action::Bookmark(_) | Action::Highlight(_) | Action::PdfHighlight(_)
+        Action::Bookmark(_)
+            | Action::Highlight(_)
+            | Action::PdfHighlight(_)
+            | Action::BookmarkBrowser(super::super::bookmark_browser::Command::Inspect(_))
     )
 }
 
@@ -240,7 +243,9 @@ impl Reader {
     }
 
     fn build_flexible_marks(&self) -> Result<Option<FlexibleMarks>, String> {
-        if !self.screen.is_bookmark_list() {
+        let browser_results = self.screen
+            == super::super::Screen::BookmarkBrowser(super::super::bookmark_browser::Page::Results);
+        if !self.screen.is_bookmark_list() && !browser_results {
             return Ok(None);
         }
         let Some(max_lines) = self.controls.bookmark_max_lines() else {
@@ -251,8 +256,30 @@ impl Reader {
             .iter()
             .map(|font| font.display().to_string())
             .collect::<Vec<_>>();
+        let items = if browser_results {
+            let (count, _) =
+                self.bookmark_window(super::super::bookmark_browser::Page::Results, 0, 0);
+            // Keep the lazy fixed-row view available for very large libraries.
+            if count > 512 {
+                return Ok(None);
+            }
+            let (_, items) =
+                self.bookmark_window(super::super::bookmark_browser::Page::Results, 0, count);
+            if items.len() != count
+                || items
+                    .iter()
+                    .map(|item| item.title.len() + item.detail.as_ref().map_or(0, String::len))
+                    .sum::<usize>()
+                    > 2 * 1024 * 1024
+            {
+                return Ok(None);
+            }
+            items
+        } else {
+            self.items()
+        };
         FlexibleMarks::new(
-            self.items(),
+            items,
             &fonts,
             self.controls.bookmark_density.font(),
             max_lines,
@@ -284,12 +311,24 @@ impl Reader {
         let Some(view) = &self.flexible_marks else {
             return false;
         };
-        let Some(page) = view.pages.get(self.list_page) else {
-            canvas.text(
-                view.layout.body(LIST_Y, 110),
-                language.bookmark_list_settings_text("No saved marks in this book"),
-                BODY,
+        if self.screen
+            == super::super::Screen::BookmarkBrowser(super::super::bookmark_browser::Page::Results)
+        {
+            self.draw_bookmark_browser_controls(
+                canvas,
+                super::super::bookmark_browser::Page::Results,
             );
+        }
+        let Some(page) = view.pages.get(self.list_page) else {
+            let empty = if self.screen
+                == super::super::Screen::BookmarkBrowser(
+                    super::super::bookmark_browser::Page::Results,
+                ) {
+                language.bookmark_text("No matching marks")
+            } else {
+                language.bookmark_list_settings_text("No saved marks in this book")
+            };
+            canvas.text(view.layout.body(LIST_Y, 110), empty, BODY);
             return true;
         };
         if let Some(last) = page.rows.last() {
@@ -408,7 +447,20 @@ impl Reader {
         }) {
             return;
         }
-        let items = self.items();
+        let items = if self.screen
+            == super::super::Screen::BookmarkBrowser(super::super::bookmark_browser::Page::Results)
+        {
+            self.bookmark_window(
+                super::super::bookmark_browser::Page::Results,
+                0,
+                self.flexible_marks
+                    .as_ref()
+                    .map_or(0, |view| view.items.len()),
+            )
+            .1
+        } else {
+            self.items()
+        };
         let view = self.flexible_marks.as_mut().unwrap();
         let same_rows = items.len() == view.items.len()
             && items
@@ -432,10 +484,36 @@ impl Reader {
         };
         if page < view.pages.len() || (view.has_next(self.list_page) && view.append_page()) {
             self.list_page = page;
+            if self.screen
+                == super::super::Screen::BookmarkBrowser(
+                    super::super::bookmark_browser::Page::Results,
+                )
+            {
+                self.bookmark_browser.reset_list_anchor();
+            }
             Change::Partial
         } else {
             Change::None
         }
+    }
+
+    pub(in crate::app) fn flexible_mark_first(&self) -> Option<usize> {
+        self.flexible_marks
+            .as_ref()?
+            .pages
+            .get(self.list_page)
+            .map(|page| page.first)
+    }
+
+    pub(in crate::app) fn flexible_mark_page_for(&mut self, ordinal: usize) -> Option<usize> {
+        let view = self.flexible_marks.as_mut()?;
+        if ordinal >= view.items.len() {
+            return None;
+        }
+        while view.pages.last().is_some_and(|page| page.end() <= ordinal) && view.append_page() {}
+        view.pages
+            .iter()
+            .position(|page| page.first <= ordinal && ordinal < page.end())
     }
 }
 

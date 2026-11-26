@@ -67,6 +67,7 @@ pub struct BookSeries {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoverKind {
     Bmp,
+    Tiff,
     Webp,
     Gif,
     Jpeg,
@@ -1025,7 +1026,7 @@ impl Book {
                 CoverKind::Jpeg => "jpg",
                 CoverKind::Png => "png",
                 CoverKind::Gif => "gif",
-                CoverKind::Bmp | CoverKind::Webp | CoverKind::Svg => return None,
+                CoverKind::Bmp | CoverKind::Tiff | CoverKind::Webp | CoverKind::Svg => return None,
             };
             let path = format!("assets/primitiveos-mobi-cover.{extension}");
             if publication.resources.contains_key(&path) {
@@ -1258,6 +1259,7 @@ impl Book {
         };
         let cap = match cover.kind {
             CoverKind::Bmp
+            | CoverKind::Tiff
             | CoverKind::Webp
             | CoverKind::Gif
             | CoverKind::Jpeg
@@ -1267,6 +1269,21 @@ impl Book {
         let bytes = self.resource_limited(&cover.path, cap)?;
         if cover.kind == CoverKind::Webp {
             let converted = crate::comic::ImagePage::webp_as_png(&bytes)?;
+            if converted.len() > MAX_RASTER_COVER {
+                return Err("The converted EPUB cover exceeds Reader's size limit".into());
+            }
+            return Ok(Some((CoverKind::Png, converted)));
+        }
+        if cover.kind == CoverKind::Tiff {
+            use image::ImageEncoder;
+            let gray = crate::tiff_image::decode(&bytes)?;
+            let mut converted = Vec::new();
+            image::codecs::png::PngEncoder::new(&mut converted).write_image(
+                &gray,
+                gray.width(),
+                gray.height(),
+                image::ExtendedColorType::L8,
+            )?;
             if converted.len() > MAX_RASTER_COVER {
                 return Err("The converted EPUB cover exceeds Reader's size limit".into());
             }
@@ -1621,6 +1638,7 @@ fn cover_item(item: &Item, allow_extra: bool) -> Option<BookCover> {
     }
     let kind = match item.media.as_str() {
         "image/bmp" | "image/x-ms-bmp" if allow_extra => CoverKind::Bmp,
+        "image/tiff" if allow_extra => CoverKind::Tiff,
         "image/webp" if allow_extra => CoverKind::Webp,
         "image/gif" => CoverKind::Gif,
         "image/jpeg" => CoverKind::Jpeg,

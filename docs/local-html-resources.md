@@ -37,8 +37,10 @@ style engine applies unconditional string or `url()` imports in order before
 supported rules, within its separate eight-import, four-level, 96 KiB per
 sheet and 256 KiB total CSS limits. Font loading also has its existing six-file
 and total byte limits. Media-qualified, layered or conditional imports,
-arbitrary CSS image rendering, inline SVG data URLs, and links to separate
-HTML chapters remain unsupported. Imported CSS uses the existing selector and
+arbitrary CSS image rendering and links to separate HTML chapters remain
+unsupported. The SVG renderer supports a bounded subset of embedded raster
+data URLs; see [EPUB illustration support](epub-bitmap-illustrations.md).
+Imported CSS uses the existing selector and
 property subset; loading an asset does not imply every CSS property renders.
 Well-formed XML-compatible HTML retains its existing conversion and local
 resources. If that path fails, a document starting with an `<html>` element,
@@ -59,7 +61,9 @@ This is narrower than KOReader's HTML detection and has not yet been behaviorall
 compared or verified on Kindle. [Pinned KOReader HTML detection](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L6097-L6198)
 
 The loose-document decoder additionally accepts strictly valid
-BOM-marked UTF-32LE and UTF-32BE; BOM-less UTF-32 is not detected. KOReader's
+BOM-marked UTF-32LE and UTF-32BE. A BOM-less UTF-32 XML declaration is accepted
+under the restrictions in [XML encoding compatibility](epub-utf16.md).
+KOReader's
 pinned CREngine resolves non-container HTML resources against
 the document directory; Reader applies the narrower boundaries above.
 [KOReader resource resolution](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvdocview.cpp#L995-L1011)

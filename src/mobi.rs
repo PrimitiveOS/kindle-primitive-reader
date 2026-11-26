@@ -320,10 +320,17 @@ fn decode_plain_ereader(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     }
     // Preserve the original output byte-for-byte for already readable plain
     // documents. Only previously rejected backslash-bearing text uses PML.
-    let xhtml = if text.contains('\\') {
-        ereader_pml::xhtml(&text)?
+    let (xhtml, contents) = if text.contains('\\') {
+        match ereader_pml::xhtml(&text) {
+            Ok(xhtml) => (xhtml, Default::default()),
+            Err(MobiError::InvalidText) => {
+                let (xhtml, rows) = ereader_pml::with_navigation(&text)?;
+                (xhtml, crate::kf8::legacy_contents::Contents::from_pml(rows))
+            }
+            Err(error) => return Err(error),
+        }
     } else {
-        plain_xhtml(&text)?
+        (plain_xhtml(&text)?, Default::default())
     };
     Ok(MobiDocument {
         metadata: Default::default(),
@@ -333,7 +340,7 @@ fn decode_plain_ereader(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
         xhtml,
         additions: Vec::new(),
         presentation: Presentation::default(),
-        contents: Default::default(),
+        contents,
         shadow: None,
         resources: BTreeMap::new(),
     })

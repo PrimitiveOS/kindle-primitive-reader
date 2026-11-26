@@ -68,7 +68,7 @@ pub(crate) struct Snapshot {
     raw: String,
     style_runs: Vec<RawStyleRun>,
     elements: Vec<usize>,
-    explicit_breaks: bool,
+    hard_breaks: Vec<usize>,
     text: Vec<TextSpan>,
     gaps: Vec<WhitespaceGap>,
     canonical_sha256: [u8; 32],
@@ -151,8 +151,8 @@ impl Bound<'_> {
         &self.snapshot.elements
     }
 
-    pub(crate) fn has_explicit_breaks(&self) -> bool {
-        self.snapshot.explicit_breaks
+    pub(crate) fn hard_breaks(&self) -> &[usize] {
+        &self.snapshot.hard_breaks
     }
 
     pub(crate) fn text_spans(&self) -> &[TextSpan] {
@@ -553,6 +553,11 @@ pub(super) fn capture(
                 .checked_mul(std::mem::size_of::<usize>())?,
         )?
         .checked_add(
+            hard_breaks
+                .capacity()
+                .checked_mul(std::mem::size_of::<usize>())?,
+        )?
+        .checked_add(
             style_runs
                 .capacity()
                 .checked_mul(std::mem::size_of::<RawStyleRun>())?,
@@ -573,7 +578,7 @@ pub(super) fn capture(
         raw: raw.to_owned(),
         style_runs,
         elements,
-        explicit_breaks: !hard_breaks.is_empty(),
+        hard_breaks,
         text,
         gaps,
         canonical_sha256: digest(&SHA256, canonical.as_bytes())

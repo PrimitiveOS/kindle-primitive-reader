@@ -15,9 +15,10 @@ KOReader offers an alternate MuPDF EPUB provider. Its pinned image decoder
 handles BMP and PNM image data; the native Reader uses Rust's existing image
 decoder instead. [KOReader EPUB provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L378-L382) · [MuPDF BMP and PNM decode](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/image.c#L805-L819)
 
-This change has not yet been built or tested. Pixel fidelity, malformed-image
-limits, transparency and appearance in both reflow and fixed-layout views
-need simulator and device verification before a compatibility claim.
+This change is included in the current Mac build-only checkpoint; it has not
+been behaviorally tested. Pixel fidelity, malformed-image limits, transparency
+and appearance in both reflow and fixed-layout views need simulator and device
+verification before a compatibility claim.
 
 Book Information can also attempt a publisher-declared BMP (`image/bmp` or
 `image/x-ms-bmp`) or WebP (`image/webp`) cover when no previously supported
@@ -29,6 +30,15 @@ limit. Animated, extended and otherwise unsupported WebP variants are not
 accepted. The decoder's internal memory behavior, malformed inputs, real-book
 appearance, and exact KOReader cover behavior remain unverified; this candidate
 has not yet been behaviorally tested in simulation or on Kindle.
+
+The same fallback can attempt a publisher-declared TIFF (`image/tiff`) cover.
+It converts the existing supported single-page TIFF subset to grayscale PNG in
+memory for Book Information. Input and converted output are each capped at
+4 MiB; the TIFF decoder's dimension, strip and pixel limits still apply. Other
+TIFF variants remain unsupported, and decoder/encoder peak memory, appearance,
+KOReader comparison, real-document, simulator and Kindle behavior are not yet
+verified. The publication bytes, chapter content and source positions do not
+change.
 
 As a separate candidate, EPUB chapter illustrations may now use simple still
 VP8 or VP8L WebP. The image display and original-size inspection paths convert

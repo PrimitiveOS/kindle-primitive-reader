@@ -305,8 +305,11 @@ impl VerifiedRawLayout {
             if bound.raw().len() != saved.length
                 || digest(&SHA256, bound.raw().as_bytes()).as_ref() != saved.hash.as_slice()
                 || saved.pre_line.as_ref().is_some_and(|projection| {
-                    crate::source::pre_line_projection::PreLineProjection::build(bound.raw())
-                        .as_ref()
+                    crate::source::pre_line_projection::PreLineProjection::build(
+                        bound.raw(),
+                        bound.hard_breaks(),
+                    )
+                    .as_ref()
                         != Some(projection.as_ref())
                 })
             {

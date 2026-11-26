@@ -1,4 +1,5 @@
 //! Bounded first subset of Palm Markup Language for eReader PDB text.
+mod navigation;
 use super::{MobiError, XHTML_START, cp1252, escape_xml, finish_xhtml};
 
 const MAX_MARKUP: usize = 32_000;
@@ -17,10 +18,14 @@ fn tag(output: &mut String, markup: &str, count: &mut usize) -> Result<(), MobiE
 
 fn style_tag(style: char, open: bool) -> &'static str {
     match (style, open) {
-        ('b', true) => "<strong>",
-        ('b', false) => "</strong>",
+        ('b' | 'B', true) => "<strong>",
+        ('b' | 'B', false) => "</strong>",
         ('i', true) => "<em>",
         ('i', false) => "</em>",
+        ('u', true) => "<u>",
+        ('u', false) => "</u>",
+        ('o', true) => "<s>",
+        ('o', false) => "</s>",
         _ => unreachable!(),
     }
 }
@@ -101,7 +106,7 @@ pub(super) fn xhtml(text: &str) -> Result<String, MobiError> {
                     let ch = char::from_u32(value).ok_or(MobiError::InvalidText)?;
                     character(&mut output, ch, &mut visible)?;
                 }
-                style @ ('b' | 'i') => {
+                style @ ('b' | 'B' | 'i' | 'u' | 'o') => {
                     if styles.last() == Some(&style) {
                         styles.pop();
                         tag(&mut output, style_tag(style, false), &mut markup)?;
@@ -123,4 +128,11 @@ pub(super) fn xhtml(text: &str) -> Result<String, MobiError> {
         tag(&mut output, "</p>", &mut markup)?;
     }
     finish_xhtml(output)
+}
+
+/// Used only after the original PML subset rejects a document.
+pub(super) fn with_navigation(
+    text: &str,
+) -> Result<(String, Vec<(String, usize, String)>), MobiError> {
+    navigation::parse(text)
 }

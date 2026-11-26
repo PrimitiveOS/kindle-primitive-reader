@@ -145,10 +145,13 @@ impl Plan {
         let raw = bound.raw();
         let pre_line_projection =
             if owner_style.white_space == WhiteSpace::PreLine && !pre_line_identity(raw) {
-                if !EXTENDED_PRE_LINE_ENABLED || bound.has_explicit_breaks() {
+                if !EXTENDED_PRE_LINE_ENABLED {
                     return None;
                 }
-                let projection = crate::source::pre_line_projection::PreLineProjection::build(raw)?;
+                let projection = crate::source::pre_line_projection::PreLineProjection::build(
+                    raw,
+                    bound.hard_breaks(),
+                )?;
                 if projection.text() == block.text {
                     return None;
                 }

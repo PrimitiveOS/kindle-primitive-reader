@@ -3149,6 +3149,7 @@ impl InterfaceLanguage {
             "Show current page in results" => "Hiện trang đang đọc trong kết quả",
             "Latest saved mark" => "Dấu đã lưu mới nhất",
             "No matching marks in the current book" => "Không có dấu phù hợp trong sách đang đọc",
+            "No matching marks" => "Không có dấu phù hợp",
             "No matching marks in the current chapter" => {
                 "Không có dấu phù hợp trong chương đang đọc"
             }

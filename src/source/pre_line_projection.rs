@@ -29,8 +29,14 @@ impl PreLineProjection {
     /// Preserve segment breaks, collapse horizontal CSS whitespace, remove
     /// line-edge spaces and discard the final segment break. Unsupported or
     /// over-budget input returns None without modifying source text.
-    pub(crate) fn build(raw: &str) -> Option<Self> {
-        if raw.len() > MAX_BYTES {
+    pub(crate) fn build(raw: &str, hard_breaks: &[usize]) -> Option<Self> {
+        if raw.len() > MAX_BYTES
+            || hard_breaks.len() > MAX_SEGMENTS
+            || hard_breaks.windows(2).any(|pair| pair[0] >= pair[1])
+            || hard_breaks
+                .iter()
+                .any(|&at| raw.as_bytes().get(at) != Some(&b'\n'))
+        {
             return None;
         }
         let mut display = String::with_capacity(raw.len());
@@ -48,12 +54,14 @@ impl PreLineProjection {
                 }
                 '\r' | '\n' => {
                     pending = None;
-                    let raw_end =
-                        if ch == '\r' && chars.peek().is_some_and(|(_, next)| *next == '\n') {
-                            chars.next().map(|(i, c)| i + c.len_utf8())?
-                        } else {
-                            end
-                        };
+                    let raw_end = if ch == '\r'
+                        && chars.peek().is_some_and(|(next_at, next)| {
+                            *next == '\n' && hard_breaks.binary_search(next_at).is_err()
+                        }) {
+                        chars.next().map(|(i, c)| i + c.len_utf8())?
+                    } else {
+                        end
+                    };
                     let start = display.len();
                     display.push('\n');
                     segments.push(Segment {
@@ -98,11 +106,16 @@ impl PreLineProjection {
             }
         }
         if display.ends_with('\n') {
-            let last = segments.pop()?;
+            let last = segments.last()?;
             if last.visible.end != display.len() || last.visible.len() != 1 {
                 return None;
             }
-            display.pop();
+            // A trailing source segment break is discarded by pre-line, but
+            // an explicit <br> is an authored forced line break.
+            if hard_breaks.binary_search(&last.raw.start).is_err() {
+                segments.pop()?;
+                display.pop();
+            }
         }
         if display.is_empty() || segments.is_empty() {
             return None;
