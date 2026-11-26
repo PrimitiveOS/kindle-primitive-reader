@@ -525,7 +525,7 @@ fn validate(root: roxmltree::Node<'_, '_>, local_images: bool) -> Result<()> {
     if root.tag_name().name() != "svg" || root.tag_name().namespace() != Some(SVG_NAMESPACE) {
         return Err("The illustration needs a standalone SVG root".into());
     }
-    validate_primitive_uses(root)?;
+    validate_local_uses(root)?;
     let mut vector_bytes = 0;
     for node in root.descendants().filter(roxmltree::Node::is_element) {
         if node
@@ -613,8 +613,9 @@ fn validate(root: roxmltree::Node<'_, '_>, local_images: bool) -> Result<()> {
 }
 
 /// Bound use expansion before the SVG parser can clone referenced geometry.
-/// Only one unambiguous primitive leaf in this SVG may be referenced.
-fn validate_primitive_uses(root: roxmltree::Node<'_, '_>) -> Result<()> {
+/// Only unambiguous static primitive leaves or bounded primitive groups in
+/// this SVG may be referenced; references cannot chain or contain images.
+fn validate_local_uses(root: roxmltree::Node<'_, '_>) -> Result<()> {
     let nodes = || root.descendants().filter(|node| node.is_element());
     if !nodes().any(|node| node.has_tag_name((SVG_NAMESPACE, "use"))) {
         return Ok(());
@@ -629,6 +630,7 @@ fn validate_primitive_uses(root: roxmltree::Node<'_, '_>) -> Result<()> {
     }
     let mut uses = 0usize;
     let mut expanded = 0usize;
+    let mut expanded_elements = 0usize;
     for node in nodes().filter(|node| node.has_tag_name((SVG_NAMESPACE, "use"))) {
         uses += 1;
         if uses > 128
@@ -662,17 +664,48 @@ fn validate_primitive_uses(root: roxmltree::Node<'_, '_>) -> Result<()> {
             .copied()
             .flatten()
             .ok_or("The SVG use target is missing or ambiguous")?;
-        if target.tag_name().namespace() != Some(SVG_NAMESPACE)
-            || !matches!(
-                target.tag_name().name(),
+        if target.tag_name().namespace() != Some(SVG_NAMESPACE) {
+            return Err("The SVG use target has an unsupported namespace".into());
+        }
+        let primitive = |name| {
+            matches!(
+                name,
                 "path" | "rect" | "circle" | "ellipse" | "polygon" | "polyline" | "line"
             )
-            || target.children().any(|child| {
+        };
+        if primitive(target.tag_name().name()) {
+            if target.children().any(|child| {
                 child.is_element()
                     || child.is_text() && !child.text().unwrap_or("").trim().is_empty()
-            })
-        {
-            return Err("The SVG use target is not a supported primitive leaf".into());
+            }) {
+                return Err("The SVG use target is not a primitive leaf".into());
+            }
+            expanded_elements = expanded_elements
+                .checked_add(1)
+                .ok_or("The SVG use element budget overflowed")?;
+        } else if target.tag_name().name() == "g" {
+            for child in target.descendants() {
+                if child.is_text() && !child.text().unwrap_or("").trim().is_empty() {
+                    return Err("The SVG use group contains unsupported text".into());
+                }
+                if child.is_element() {
+                    if child.tag_name().namespace() != Some(SVG_NAMESPACE)
+                        || !(child.tag_name().name() == "g" || primitive(child.tag_name().name()))
+                        || (primitive(child.tag_name().name())
+                            && child.children().any(|n| n.is_element()))
+                    {
+                        return Err("The SVG use group contains unsupported elements".into());
+                    }
+                    expanded_elements = expanded_elements
+                        .checked_add(1)
+                        .ok_or("The SVG use element budget overflowed")?;
+                    if expanded_elements > 4_096 {
+                        return Err("The SVG use exceeds its element budget".into());
+                    }
+                }
+            }
+        } else {
+            return Err("The SVG use target is not a supported shape or group".into());
         }
         expanded = expanded
             .checked_add(target.range().len())

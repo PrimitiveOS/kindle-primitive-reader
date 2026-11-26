@@ -140,13 +140,14 @@ malformed inputs, memory use and real-book, simulator and Kindle rendering
 remain unverified.
 
 Supported static SVG can also use up to 128 local `<use href="#id">` or
-`xlink:href` references to uniquely identified primitive leaf shapes. The sum
-of referenced source bytes is capped at 512 KiB before SVG expansion, and the
-existing document, pixel and paint-work limits continue to apply. External or
-ambiguous targets, chained uses, groups, symbols and referenced elements with
-children are excluded. Package data and reading anchors remain unchanged;
-KOReader comparison, rendering fidelity, peak memory and real-book, simulator
-and Kindle behavior remain unverified.
+`xlink:href` references to uniquely identified primitive leaf shapes or groups
+containing only nested static groups and primitive leaves. The sum of
+referenced source bytes is capped at 512 KiB and expanded elements at 4,096
+before SVG expansion; the existing document, pixel and paint-work limits still
+apply. External or ambiguous targets, chained uses, images in groups, symbols
+and referenced primitive elements with children are excluded. Package data
+and reading anchors remain unchanged; KOReader comparison, rendering fidelity,
+peak memory and real-book, simulator and Kindle behavior remain unverified.
 
 Standalone SVG embedded-image fallback uses the same 256 KiB input, eight
 unique images, pixel and 8 MiB aggregate raster limits, plus the existing GIF

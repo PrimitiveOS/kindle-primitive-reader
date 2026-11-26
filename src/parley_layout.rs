@@ -4791,6 +4791,7 @@ struct ImageSizing {
     requested_height: Option<f64>,
     max_width: Option<f64>,
     max_height: Option<f64>,
+    min_width: Option<f64>,
     render_dpi: u16,
 }
 
@@ -4799,6 +4800,7 @@ struct ImageKey<'a> {
     path: &'a str,
     requested: [Option<u64>; 2],
     maximum: [Option<u64>; 2],
+    minimum_width: Option<u64>,
     viewport: (u32, u32),
     render_dpi: u16,
 }
@@ -4949,6 +4951,7 @@ impl ImageSizing {
                 self.max_width.map(f64::to_bits),
                 self.max_height.map(f64::to_bits),
             ],
+            minimum_width: self.min_width.map(f64::to_bits),
             viewport: (self.width, self.height),
             render_dpi: self.render_dpi,
         }
@@ -5005,6 +5008,20 @@ impl ImageSizing {
             .and_then(|value| value.pixels(height, font_size))
             .filter(|v| v.is_finite() && *v > 0.0)
             .map(f64::from);
+        // Conflicting constraints require the full replaced-element algorithm.
+        // Preserve the existing image path until that broader case is supported.
+        let min_width = if style.image_max_width.is_none()
+            && style.image_max_height.is_none()
+            && style.min_height.is_none()
+        {
+            style
+                .image_min_width
+                .map(|value| value.pixels(width, settings.font_size))
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .map(f64::from)
+        } else {
+            None
+        };
         Self {
             width,
             height,
@@ -5012,6 +5029,7 @@ impl ImageSizing {
             requested_height,
             max_width,
             max_height,
+            min_width,
             render_dpi: settings.render_dpi,
         }
     }
@@ -5025,7 +5043,7 @@ impl ImageSizing {
         let ratio = f64::from(original_w) / f64::from(original_h);
         let max_width = self.max_width.unwrap_or(f64::INFINITY);
         let max_height = self.max_height.unwrap_or(f64::INFINITY);
-        let (w, h) = match (self.requested_width, self.requested_height) {
+        let (mut w, mut h) = match (self.requested_width, self.requested_height) {
             // If the width is definite, the height cap does not change it.
             (Some(width), height) => {
                 let width = width.min(max_width);
@@ -5043,6 +5061,14 @@ impl ImageSizing {
                 (width * scale, height * scale)
             }
         };
+        if let Some(minimum) = self.min_width
+            && w < minimum
+        {
+            w = minimum;
+            if self.requested_height.is_none() {
+                h = w / ratio;
+            }
+        }
         let scale = (f64::from(self.width) / w)
             .min(f64::from(self.height) / h)
             .min(1.0);
@@ -5068,6 +5094,7 @@ fn load_image(
         || sizing.requested_height.is_some()
         || sizing.max_width.is_some()
         || sizing.max_height.is_some()
+        || sizing.min_width.is_some()
         || !matches!(sizing.render_dpi, 0 | 96))
     .then_some(&target as &dyn Fn(u32, u32) -> (u32, u32));
     let filter = if settings.smooth_images {
@@ -6580,6 +6607,7 @@ mod tests {
             requested_height: Some(96.0),
             max_width: None,
             max_height: None,
+            min_width: None,
             render_dpi: 96,
         };
         let (path, preview, display) =

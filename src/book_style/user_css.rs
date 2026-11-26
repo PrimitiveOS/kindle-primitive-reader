@@ -151,7 +151,10 @@ pub(super) fn apply_reset(
         41 => style.visibility = value.visibility,
         42 => style.image_max_width = value.image_max_width,
         43 => style.image_max_height = value.image_max_height,
-        50 => style.min_width = value.min_width,
+        50 => {
+            style.min_width = value.min_width;
+            style.image_min_width = value.image_min_width;
+        }
         51 => {
             style.box_sizing = value.box_sizing;
             style.box_sizing_explicit = value.box_sizing_explicit;

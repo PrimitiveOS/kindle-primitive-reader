@@ -682,6 +682,7 @@ pub(crate) struct Style {
     pub image_height: Option<ImageLength>,
     pub image_max_width: Option<ImageLength>,
     pub image_max_height: Option<ImageLength>,
+    pub(crate) image_min_width: Option<CssLength>,
     pub min_width: Option<CssLength>,
     pub min_height: Option<ImageLength>,
     pub box_sizing: BoxSizing,
@@ -770,6 +771,7 @@ impl Default for Style {
             image_height: None,
             image_max_width: None,
             image_max_height: None,
+            image_min_width: None,
             min_width: None,
             min_height: None,
             box_sizing: BoxSizing::default(),
@@ -1126,6 +1128,13 @@ impl BookStyle {
             style.image_max_height = style
                 .image_max_height
                 .map(|value| height_for_dpi(value, dpi));
+            style.image_min_width = style.image_min_width.and_then(|value| {
+                if dpi == 0 && matches!(value, CssLength::Physical(_)) {
+                    None
+                } else {
+                    Some(value.for_dpi(dpi))
+                }
+            });
             style.min_width = style.min_width.map(|value| value.for_dpi(dpi));
             style.min_height = style.min_height.map(|value| height_for_dpi(value, dpi));
         }
@@ -1250,6 +1259,7 @@ impl BookStyle {
             style.image_height = None;
             style.image_max_width = None;
             style.image_max_height = None;
+            style.image_min_width = None;
             style.min_width = None;
             style.min_height = None;
             style.box_sizing = BoxSizing::default();
@@ -1605,13 +1615,24 @@ impl BookStyle {
                     Property::Hyphens(mode) => style.hyphens = *mode,
                     Property::WritingMode(mode) => style.writing_mode = *mode,
                     Property::MinWidth(value) => {
+                        let font = relative_font(style.size_scale);
+                        let root = result
+                            .first()
+                            .map_or(font, |root| relative_font(root.size_scale));
+                        let image_font = settings.map_or(style.size_scale, |settings| {
+                            style.font_pixels(settings) / settings.font_size
+                        });
+                        let image_root = result.first().map_or(image_font, |root| {
+                            settings.map_or(root.size_scale, |settings| {
+                                root.font_pixels(settings) / settings.font_size
+                            })
+                        });
+                        style.image_min_width = value
+                            .css_length()
+                            .map(|length| length.computed(image_font, image_root));
                         if constrained_width
                             || matches!(style.image_width, Some(ImageLength::FitContent))
                         {
-                            let font = relative_font(style.size_scale);
-                            let root = result
-                                .first()
-                                .map_or(font, |root| relative_font(root.size_scale));
                             style.min_width =
                                 value.css_length().map(|length| length.computed(font, root));
                         }
