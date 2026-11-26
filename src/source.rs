@@ -681,6 +681,12 @@ impl Source {
         let mut stylesheets = Vec::new();
         if let Some(head) = head {
             for node in head.children() {
+                if node
+                    .attribute("media")
+                    .is_some_and(crate::book_style::stylesheet_known_nonmatching)
+                {
+                    continue;
+                }
                 if node.has_tag_name("style")
                     && let Some(css) = node.text()
                 {

@@ -15,6 +15,16 @@ Unsupported alternatives are false without suppressing another supported,
 matching alternative in the same comma-separated list. Strict user CSS remains unchanged.
 Source text, chapter revisions and saved positions are unchanged.
 
+HTML head `link` and `style` elements also exclude a stylesheet when their
+`media` attribute contains only known nonmatching simple media types, such as
+`print` or `not screen`. A missing or empty attribute, a matching alternative,
+or an unknown, malformed or over-1,024-byte condition keeps the earlier
+stylesheet behavior. This conservative filter avoids suppressing a publisher
+sheet on an unsupported feature query; it is not full media-query evaluation.
+An affected book can repaginate, while source text and saved anchors stay
+unchanged. Chapter-discovered fonts use the filtered stylesheet list; the
+publication-wide font inventory can still report faces from manifest sheets.
+
 Top-level local `@import` rules can also use these simple media types, for
 example `@import url("reading.css") screen;`. Matching imports retain their
 position in the cascade and use the existing relative-path, cycle, import-count,

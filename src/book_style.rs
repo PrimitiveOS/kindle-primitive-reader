@@ -11,6 +11,7 @@ pub(crate) mod flow;
 mod flow_tests;
 mod font_shorthand;
 mod media;
+pub(crate) use media::stylesheet_known_nonmatching;
 mod semantic_type;
 use crate::float_layout::{Clear, Side};
 use flow::{Display, Visibility};

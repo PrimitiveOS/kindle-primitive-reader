@@ -167,7 +167,9 @@ impl Verification {
                                     continue;
                                 }
                             }
-                            result.marks.push((first, flags));
+                            if flags != 0 {
+                                result.marks.push((first, flags));
+                            }
                             if let Some(saved) = quote
                                 && verify_selection(&recipe, &cancel, first, last, &saved)
                             {
@@ -245,6 +247,13 @@ fn verify_selection(
     {
         return false;
     }
+    if recipe
+        .verify_quote_span(&saved.start, &saved.end, first, last, cancel)
+        .is_err()
+    {
+        return false;
+    }
+    let raw = saved.start.raw_caret.is_some() || saved.end.raw_caret.is_some();
     let mut text = String::new();
     for index in first..=last {
         if cancel.load(Ordering::Relaxed) {
@@ -253,7 +262,12 @@ fn verify_selection(
         let Ok(probe) = recipe.chapter(index, cancel) else {
             return false;
         };
-        let Some(fragment) = probe.raw_chapter_fragment(&saved.start, &saved.end) else {
+        let fragment = if raw {
+            probe.raw_chapter_fragment(&saved.start, &saved.end)
+        } else {
+            probe.select_source_range(&saved.start, &saved.end)
+        };
+        let Some(fragment) = fragment else {
             return false;
         };
         let joins = probe

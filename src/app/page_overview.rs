@@ -508,7 +508,11 @@ impl Reader {
             } else {
                 let selection =
                     &state.highlights[index - state.bookmarks.len() - history].selection;
-                if selection.start.raw_caret.is_none() && selection.end.raw_caret.is_none() {
+                let raw = selection.start.raw_caret.is_some() || selection.end.raw_caret.is_some();
+                if !raw
+                    && (selection.start.chapter == selection.end.chapter
+                        || !job.recipe.has_verified_sources())
+                {
                     continue;
                 }
                 if selection.start.book != probe.book || selection.end.book != probe.book {
@@ -534,6 +538,12 @@ impl Reader {
                 } else {
                     None
                 };
+                // Canonical selections need a complete quote proof only for
+                // the currently displayed thumbnail chapter; their ribbon
+                // chapter cue is handled by the existing canonical path.
+                if !raw && quote.is_none() {
+                    continue;
+                }
                 let noted = state.highlights[index - state.bookmarks.len() - history]
                     .note
                     .as_ref()
@@ -543,7 +553,11 @@ impl Reader {
                     last,
                     start: selection.start.clone(),
                     end: Some(selection.end.clone()),
-                    flags: 1 | if noted { 2 } else { 0 },
+                    flags: if raw {
+                        1 | if noted { 2 } else { 0 }
+                    } else {
+                        0
+                    },
                     quote,
                 });
             }
@@ -713,9 +727,7 @@ impl Reader {
                 'marks: for mark in &state.highlights {
                     let saved = &mark.selection;
                     let local;
-                    let selection = if saved.start.chapter != saved.end.chapter
-                        && (saved.start.raw_caret.is_some() || saved.end.raw_caret.is_some())
-                    {
+                    let selection = if saved.start.chapter != saved.end.chapter {
                         let (Some(first), Some(last)) = (
                             probe.chapter_index(&saved.start.chapter),
                             probe.chapter_index(&saved.end.chapter),
@@ -737,8 +749,13 @@ impl Reader {
                         {
                             continue;
                         }
-                        let Some(fragment) = probe.raw_chapter_fragment(&saved.start, &saved.end)
-                        else {
+                        let fragment =
+                            if saved.start.raw_caret.is_some() || saved.end.raw_caret.is_some() {
+                                probe.raw_chapter_fragment(&saved.start, &saved.end)
+                            } else {
+                                probe.select_source_range(&saved.start, &saved.end)
+                            };
+                        let Some(fragment) = fragment else {
                             continue;
                         };
                         local = fragment;

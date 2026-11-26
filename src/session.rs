@@ -462,6 +462,83 @@ impl SearchLayoutRecipe {
         }
     }
 
+    /// Verify the exact publication and every chapter in a bounded quote span.
+    /// Run only on a worker: opening a package and checking folder inventories
+    /// can perform storage I/O. Recovered notice pages are not source text.
+    pub(crate) fn verify_quote_span(
+        &self,
+        start: &Anchor,
+        end: &Anchor,
+        first: usize,
+        last: usize,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<()> {
+        use std::sync::atomic::Ordering;
+        if !self.has_verified_sources()
+            || first >= last
+            || last.saturating_sub(first) >= 8
+            || start.book != end.book
+        {
+            return Err("The saved passage cannot be verified".into());
+        }
+        let check = || -> io::Result<()> {
+            if cancelled.load(Ordering::Relaxed) {
+                Err(io::Error::other("Verification was cancelled"))
+            } else {
+                Ok(())
+            }
+        };
+        if self.folder_snapshot.is_some() {
+            self.verify_bound_folder_snapshot(cancelled)?;
+        }
+        with_storage(|| {
+            check()?;
+            let expected = self.foreground_sources.as_ref();
+            if self.folder_snapshot.is_none()
+                && screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts).as_ref()
+                    != expected
+            {
+                return Err(io::Error::other("The book or fonts changed"));
+            }
+            let book = self
+                .open_search_book(&self.book)
+                .map_err(io::Error::other)?;
+            let span = book
+                .chapters
+                .get(first..=last)
+                .ok_or_else(|| io::Error::other("The saved passage is unavailable"))?;
+            if book.revision() != start.book
+                || span.first().is_none_or(|entry| entry.href != start.chapter)
+                || span.last().is_none_or(|entry| entry.href != end.chapter)
+                || span.iter().any(|entry| {
+                    book.recovered_placeholder(entry)
+                        || book
+                            .chapters
+                            .iter()
+                            .filter(|other| other.href == entry.href)
+                            .take(2)
+                            .count()
+                            != 1
+                })
+            {
+                return Err(io::Error::other("The saved passage is unavailable"));
+            }
+            check()?;
+            if self.folder_snapshot.is_none()
+                && screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts).as_ref()
+                    != expected
+            {
+                return Err(io::Error::other("The book or fonts changed"));
+            }
+            Ok(())
+        })?;
+        if self.folder_snapshot.is_some() {
+            self.verify_bound_folder_snapshot(cancelled)?;
+        }
+        check()?;
+        Ok(())
+    }
+
     pub(crate) fn chapter(
         &self,
         index: usize,

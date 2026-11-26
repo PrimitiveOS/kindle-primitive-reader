@@ -15,18 +15,22 @@ struct PublisherParser<'a> {
 }
 
 fn media_query(input: &mut Parser<'_>) -> CssResult<bool> {
+    media_query_known(input).map(|value| value.unwrap_or(false))
+}
+
+fn media_query_known(input: &mut Parser<'_>) -> CssResult<Option<bool>> {
     let Ok(first) = input.try_parse(Parser::expect_ident_cloned) else {
         // Feature-only or unknown branches are false independently; another
         // supported alternative in this comma-separated list may still match.
         while input.next().is_ok() {}
-        return Ok(false);
+        return Ok(None);
     };
     let first = first.to_ascii_lowercase();
     let (modifier, medium) = match first.as_str() {
         "only" | "not" => {
             let Ok(medium) = input.try_parse(Parser::expect_ident_cloned) else {
                 while input.next().is_ok() {}
-                return Ok(false);
+                return Ok(None);
             };
             (first.as_str(), medium.to_ascii_lowercase())
         }
@@ -36,14 +40,28 @@ fn media_query(input: &mut Parser<'_>) -> CssResult<bool> {
         // Includes feature queries and unknown conjunctions. Never invert an
         // unsupported condition, even when the query starts with `not`.
         while input.next().is_ok() {}
-        return Ok(false);
+        return Ok(None);
     }
     let matches = match medium.as_str() {
         "all" | "screen" => true,
         "print" => false,
-        _ => return Ok(false),
+        _ => return Ok(None),
     };
-    Ok(if modifier == "not" { !matches } else { matches })
+    Ok(Some(if modifier == "not" { !matches } else { matches }))
+}
+
+/// Only discard an HTML stylesheet when every media alternative is known not
+/// to match. Unknown, malformed and oversized attributes retain old behavior.
+pub(crate) fn stylesheet_known_nonmatching(value: &str) -> bool {
+    if value.is_empty() || value.len() > 1024 {
+        return false;
+    }
+    let mut parser = Parser::new(value);
+    parser
+        .parse_comma_separated(media_query_known)
+        .is_ok_and(|queries| {
+            !queries.is_empty() && queries.iter().all(|query| *query == Some(false))
+        })
 }
 
 // Only invert a proven result. Unknown or incompletely implemented conditions
