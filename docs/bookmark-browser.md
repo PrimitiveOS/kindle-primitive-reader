@@ -86,7 +86,7 @@ For a mark in the open book, **Remove** asks for confirmation over its preview.
 Confirming deletes that one bookmark or highlight and its note; Cancel leaves
 it untouched. Reader captures the entire mark before the prompt, then checks
 the same open book, focused mark, saved target and source again before saving.
-A failed save restores the previous in-memory state. Other marks and books are
+For a highlight crossing chapters, a cancellable background check verifies the complete saved quote before showing the confirmation and again before deletion. It requires a verified source and fonts, checks at most eight uniquely identified supported chapters, and refuses unresolved or over-limit selections. A failed save restores the previous in-memory state. Other marks and books are
 unaffected. The behavior follows KOReader's [individual mark removal](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L1315-L1333).
 This control has not yet been validated in simulation or on Kindle.
 

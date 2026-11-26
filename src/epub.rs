@@ -780,6 +780,65 @@ impl Book {
         self.revision
     }
 
+    /// Add a manifest-only XHTML note to a private, snapshot-backed Book.
+    /// This temporary chapter is for popup rendering and is never persisted.
+    #[cfg(feature = "kindle")]
+    pub(crate) fn append_detached_note(&mut self, path: &str) -> Result<usize> {
+        if self.is_fixed_layout()
+            || !is_archive_path(path)
+            || self.chapters.iter().any(|chapter| chapter.href == path)
+        {
+            return Err("The note target is unavailable".into());
+        }
+        let Content::Archive {
+            archive,
+            package_path,
+            ..
+        } = &mut self.content
+        else {
+            return Err("This note needs a packaged EPUB".into());
+        };
+        if !matches!(&*archive, Archive::Zip(_)) || archive.missing_after_recovery(path) {
+            return Err("This note needs an intact packaged EPUB".into());
+        }
+        // Read package metadata again inside the immutable worker snapshot;
+        // only one exact, local, plain XHTML manifest href may identify it.
+        let xml = xml_entry(archive, package_path)?;
+        let document = parse_xml(&xml)?;
+        let manifest = child(document.root_element(), "manifest")?;
+        let mut found = false;
+        for item in manifest.children().filter(|node| node.has_tag_name("item")) {
+            let Some(href) = item.attribute("href") else {
+                continue;
+            };
+            if Self::resolve(package_path, href).ok().as_deref() != Some(path) {
+                continue;
+            }
+            if found
+                || href.contains(['#', '?'])
+                || !item.attribute("media-type").is_some_and(|media| {
+                    media.eq_ignore_ascii_case("application/xhtml+xml")
+                        || media.eq_ignore_ascii_case("text/html")
+                })
+            {
+                return Err("The note manifest target is ambiguous or unsupported".into());
+            }
+            found = true;
+        }
+        if !found {
+            return Err("The note target is not in the EPUB manifest".into());
+        }
+        let index = self.chapters.len();
+        self.chapters.push(Chapter {
+            href: path.to_owned(),
+            label: "Footnote".to_owned(),
+            is_svg: false,
+            unsupported: false,
+            nonlinear: true,
+        });
+        Ok(index)
+    }
+
     #[cfg(feature = "kindle")]
     pub(crate) fn supports_screen_page_count(&self) -> bool {
         matches!(

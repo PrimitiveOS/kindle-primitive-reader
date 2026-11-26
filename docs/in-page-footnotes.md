@@ -502,3 +502,23 @@ array. Each chapter entry contains its archive `href`, an array of note IDs in
 `notes`, and the numeric `media` count. Run the opt-in test with
 `cargo test --locked --features kindle --lib original_epub_in_page_notes -- --ignored`.
 The test reports aggregate counts and skips screenshot capture for private books.
+# Explicit notes outside the EPUB spine
+
+An explicit EPUB noteref can open a popup for a uniquely identified local
+XHTML or HTML manifest item outside the spine. A cancellable worker reads an
+immutable ZIP snapshot, extracts the existing bounded note fragment and
+prepares the popup before checking the book, fonts, reading position and
+settings again. The temporary chapter exists only inside that worker and
+popup; the book's actual spine, saved location and history are unchanged.
+Close the popup before changing the viewport. The popup supports selection and
+dictionary lookup; its Open in book action is unavailable because the target
+is outside the reading spine. Links to ordinary spine targets retain the
+existing navigation behavior.
+
+The candidate currently requires an explicit noteref, a fragment and a local
+packaged EPUB of at most 16 MiB with a verified source and fonts. Folder EPUBs,
+ambiguous or non-XHTML manifest entries, damaged or missing note resources,
+oversized snapshots and unsupported source layouts retain the existing
+fallback. ZIP parsing, font loading and an individual layout operation are
+not interruptible, although cancellation is checked between stages. This
+implementation has not been behaviorally tested or validated on Kindle.

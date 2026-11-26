@@ -1220,6 +1220,8 @@ pub struct Reader {
     pending_highlight_color: Option<crate::highlight_style::HighlightColor>,
     pending_selection_action: Option<SelectionLongPressAction>,
     footnote: Option<footnote_popup::Footnote>,
+    detached_note: Option<footnote_popup::detached::Job>,
+    detached_note_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     highlight_index: usize,
     bookmark_note_index: Option<usize>,
     range_edit: Option<extend_highlight::RangeEdit>,
@@ -1512,6 +1514,8 @@ impl Reader {
             pending_highlight_color: None,
             pending_selection_action: None,
             footnote: None,
+            detached_note: None,
+            detached_note_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             highlight_index: 0,
             bookmark_note_index: None,
             range_edit: None,
@@ -1645,6 +1649,7 @@ impl Reader {
         password: Option<&str>,
         check_archive: bool,
     ) -> Result<()> {
+        self.cancel_detached_note();
         self.cancel_annotation_preview();
         self.eager_typography.cancel();
         self.closing_profile = None;
@@ -2249,6 +2254,7 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        self.cancel_detached_note();
         self.defer_folder_activation();
         self.page_bookmark_search = None;
         self.bookmark_focus = None;
@@ -6295,6 +6301,7 @@ impl Reader {
     }
 
     fn close_book_to_library(&mut self) {
+        self.cancel_detached_note();
         self.cancel_annotation_preview();
         self.cancel_annotation_discovery();
         self.eager_typography.cancel();
@@ -10398,6 +10405,7 @@ impl App for Reader {
         self.draw_page_bookmark_search(canvas);
         self.draw_bookmark_focus(canvas);
         self.draw_note_verification(canvas);
+        self.draw_detached_note(canvas);
         self.draw_folder_resume_gate(canvas);
         self.draw_folder_open(canvas);
     }
@@ -10444,6 +10452,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.detached_note_input(input) {
+            return change;
+        }
         if let Some(change) = self.note_verification_input(input) {
             return change;
         }
@@ -10743,9 +10754,15 @@ impl App for Reader {
 
     fn input(&mut self, input: Input) -> Change {
         if input == Input::Sleep {
+            self.cancel_detached_note();
             self.cancel_annotation_preview();
             self.cancel_annotation_discovery();
             self.cancel_note_verification();
+        }
+        if !matches!(input, Input::Sleep | Input::Wake)
+            && let Some(change) = self.detached_note_input(input)
+        {
+            return change;
         }
         if !matches!(input, Input::Sleep | Input::Wake)
             && let Some(change) = self.note_verification_input(input)
@@ -11627,6 +11644,11 @@ impl App for Reader {
             .chain(self.notifications.deadline())
             .chain(self.annotation_discovery_deadline())
             .chain(self.annotation_preview_deadline())
+            .chain(
+                self.detached_note
+                    .as_ref()
+                    .map(footnote_popup::detached::Job::deadline),
+            )
             .chain(self.eager_font_deadline())
             .chain(self.embedded_font_report_deadline())
             .chain(self.export_deadline())
@@ -11729,6 +11751,9 @@ impl App for Reader {
             return change;
         }
         if let Some(change) = self.poll_annotation_preview(now) {
+            return change;
+        }
+        if let Some(change) = self.poll_detached_note(now) {
             return change;
         }
         if let Some(change) = self.poll_note_verification(now) {
@@ -11983,6 +12008,7 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
+        self.cancel_detached_note();
         self.cancel_annotation_preview();
         self.cancel_annotation_discovery();
         self.cancel_folder_open();
@@ -12024,6 +12050,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.cancel_detached_note();
         self.cancel_annotation_preview();
         self.cancel_annotation_discovery();
         self.nearby.cancel_page_marks();

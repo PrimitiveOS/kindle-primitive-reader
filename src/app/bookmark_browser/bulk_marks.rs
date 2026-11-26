@@ -220,7 +220,7 @@ pub(super) struct Pending {
     pub(super) book: u64,
     pub(super) title: String,
     pub(super) targets: Vec<ReviewedMark>,
-    detail: Option<MarkKey>,
+    pub(super) detail: Option<MarkKey>,
 }
 
 impl Pending {
@@ -298,7 +298,11 @@ pub(super) fn ask_detail(reader: &mut Reader) -> Result<()> {
         .state(key.book)
         .ok_or("That book is unavailable")?;
     let target = Snapshot::capture(book, key.locator)?;
-    target.verify_source(reader)?;
+    let verify_async = matches!(&target, Snapshot::Reflow(_, mark)
+        if mark.selection.start.chapter != mark.selection.end.chapter);
+    if !verify_async {
+        target.verify_source(reader)?;
+    }
     reader.bookmark_browser.pending_mark_removal = Some(Pending {
         book: key.book,
         title: book.title.clone(),
@@ -308,12 +312,36 @@ pub(super) fn ask_detail(reader: &mut Reader) -> Result<()> {
         }],
         detail: Some(key),
     });
-    reader.bookmark_browser.confirmation = Some(super::confirmation::Confirmation::SingleMark);
+    if verify_async {
+        if let Err(error) = reader.start_mark_removal_verification(false) {
+            reader.bookmark_browser.pending_mark_removal = None;
+            return Err(error);
+        }
+    } else {
+        reader.bookmark_browser.confirmation = Some(super::confirmation::Confirmation::SingleMark);
+    }
     reader.notice = None;
     Ok(())
 }
 
 pub(super) fn confirm(reader: &mut Reader) -> Result<()> {
+    let cross_chapter = reader.bookmark_browser.pending_mark_removal.as_ref().is_some_and(|pending| {
+        pending.detail.is_some() && pending.targets.len() == 1 && matches!(
+            &pending.targets[0].target,
+            Snapshot::Reflow(_, mark) if mark.selection.start.chapter != mark.selection.end.chapter
+        )
+    });
+    if cross_chapter {
+        return reader.start_mark_removal_verification(true);
+    }
+    confirm_inner(reader, false)
+}
+
+pub(super) fn confirm_verified(reader: &mut Reader) -> Result<()> {
+    confirm_inner(reader, true)
+}
+
+fn confirm_inner(reader: &mut Reader, verified: bool) -> Result<()> {
     let pending = reader
         .bookmark_browser
         .pending_mark_removal
@@ -335,6 +363,14 @@ pub(super) fn confirm(reader: &mut Reader) -> Result<()> {
     };
     if !valid_screen {
         return Err("Review the marks before removing them".into());
+    }
+    if verified
+        && !(pending.detail.is_some()
+            && pending.targets.len() == 1
+            && matches!(&pending.targets[0].target, Snapshot::Reflow(_, mark)
+            if mark.selection.start.chapter != mark.selection.end.chapter))
+    {
+        return Err("Review the mark before removing it".into());
     }
     if reader.open_book_id() != Some(pending.book)
         || !matches!(reader.bookmark_browser.origin, Screen::Book | Screen::Fixed)
@@ -358,7 +394,9 @@ pub(super) fn confirm(reader: &mut Reader) -> Result<()> {
         .iter()
         .filter(|item| item.selected && (pending.detail.is_some() || item.target.has_raw()))
     {
-        item.target.verify_source(reader)?;
+        if !verified {
+            item.target.verify_source(reader)?;
+        }
     }
     let mut bookmarks = Vec::new();
     let mut highlights = Vec::new();

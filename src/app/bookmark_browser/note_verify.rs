@@ -17,6 +17,8 @@ const TICK: Duration = Duration::from_millis(100);
 pub(in crate::app) enum Intent {
     Open,
     Save,
+    RemoveReview,
+    RemoveCommit,
 }
 struct Guard(Arc<AtomicBool>);
 impl Drop for Guard {
@@ -107,6 +109,176 @@ fn panel(reader: &Reader) -> (Rect, Rect) {
 }
 
 impl Reader {
+    pub(super) fn start_mark_removal_verification(
+        &mut self,
+        committing: bool,
+    ) -> crate::Result<()> {
+        if self.note_verify_busy.swap(true, Ordering::AcqRel) {
+            return Err("Previous mark verification is still stopping".into());
+        }
+        let build = (|| -> crate::Result<_> {
+            let pending = self
+                .bookmark_browser
+                .pending_mark_removal
+                .as_ref()
+                .ok_or("Review the mark before removing it")?;
+            let key = pending.detail.ok_or("Review the mark before removing it")?;
+            let active = self.active.as_ref().ok_or("Open a book first")?;
+            let expected_confirmation = committing.then_some(Confirmation::SingleMark);
+            if self.screen != Screen::BookmarkBrowser(Page::Detail)
+                || self.bookmark_browser.confirmation != expected_confirmation
+                || self.bookmark_browser.focus != Some(key)
+                || active.id != pending.book
+                || key.book != pending.book
+                || pending.targets.len() != 1
+                || !pending.targets[0].selected
+            {
+                return Err("The mark or open book changed; review it again".into());
+            }
+            let target = pending.targets[0].target.clone();
+            let Snapshot::Reflow(_, mark) = &target else {
+                return Err("This saved mark cannot be checked".into());
+            };
+            let probe = &active.reading.probe;
+            let first = probe
+                .chapter_index(&mark.selection.start.chapter)
+                .ok_or("That chapter is unavailable")?;
+            let last = probe
+                .chapter_index(&mark.selection.end.chapter)
+                .ok_or("That chapter is unavailable")?;
+            if first >= last
+                || mark.selection.start.book != probe.book
+                || mark.selection.end.book != probe.book
+            {
+                return Err("The saved passage is unavailable".into());
+            }
+            if last - first >= 8 {
+                return Err("This passage exceeds the eight-chapter verification limit".into());
+            }
+            let state = self
+                .library
+                .state(pending.book)
+                .ok_or("That book is unavailable")?;
+            if state.title != pending.title || !target.matches(state) {
+                return Err("The saved mark changed; review it again".into());
+            }
+            let recipe = Arc::new(active.reading.config.search_layout_recipe(probe));
+            if !recipe.has_verified_sources() {
+                return Err("The book or reading fonts cannot be verified".into());
+            }
+            let origin = self.current_history_location().ok_or("Open a book first")?;
+            Ok((
+                pending.book,
+                key,
+                pending.title.clone(),
+                target,
+                recipe,
+                first,
+                last,
+                origin,
+                crate::epub_members::is_folder_book(&active.reading.config.book),
+            ))
+        })();
+        let (book, key, title, target, recipe, first, last, origin, folder) = match build {
+            Ok(value) => value,
+            Err(error) => {
+                self.note_verify_busy.store(false, Ordering::Release);
+                return Err(error);
+            }
+        };
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::clone(&cancelled);
+        let worker_recipe = Arc::clone(&recipe);
+        let work = target.clone();
+        let busy = Arc::clone(&self.note_verify_busy);
+        let (tx, receiver) = mpsc::sync_channel(1);
+        if std::thread::Builder::new()
+            .name("reader-mark-removal-check".into())
+            .spawn(move || {
+                let _guard = Guard(busy);
+                let result = (|| {
+                    let Snapshot::Reflow(_, mark) = &work else {
+                        return Err("The saved mark is unavailable");
+                    };
+                    worker_recipe
+                        .verify_quote_span(
+                            &mark.selection.start,
+                            &mark.selection.end,
+                            first,
+                            last,
+                            &cancel,
+                        )
+                        .map_err(|_| "The passage cannot be verified; review the mark again")?;
+                    let probe = worker_recipe
+                        .chapter(first, &cancel)
+                        .map_err(|_| "The book changed; review the mark again")?;
+                    let verified = super::super::page_bookmark_navigation::verify_winning_quote(
+                        &worker_recipe,
+                        &probe,
+                        mark,
+                        None,
+                        &cancel,
+                    )
+                    .map_err(|error| match error {
+                        focus::Failure::Limit => "This passage exceeds the verification limit",
+                        focus::Failure::Changed => "The book changed; review the mark again",
+                    })?;
+                    if !verified {
+                        return Err("This saved mark no longer matches the open document");
+                    }
+                    worker_recipe
+                        .verify_quote_span(
+                            &mark.selection.start,
+                            &mark.selection.end,
+                            first,
+                            last,
+                            &cancel,
+                        )
+                        .map_err(|_| "The book changed; review the mark again")?;
+                    if folder {
+                        worker_recipe
+                            .verify_bound_folder_snapshot(&cancel)
+                            .map_err(|_| "The book changed; review the mark again")?;
+                    }
+                    Ok(None)
+                })();
+                if !cancel.load(Ordering::Relaxed) {
+                    let _ = tx.send(result);
+                }
+            })
+            .is_err()
+        {
+            self.note_verify_busy.store(false, Ordering::Release);
+            return Err("Unable to start mark verification".into());
+        }
+        self.note_verification = Some(Verification {
+            intent: if committing {
+                Intent::RemoveCommit
+            } else {
+                Intent::RemoveReview
+            },
+            book,
+            key,
+            title,
+            target,
+            desired: None,
+            confirmation: committing.then_some(Confirmation::SingleMark),
+            screen: Screen::BookmarkBrowser(Page::Detail),
+            origin_book: Some(book),
+            origin: Some(origin),
+            origin_fixed_view: None,
+            recipe: Some(recipe),
+            other_path: None,
+            other_digest: None,
+            other_context: None,
+            other_fonts: None,
+            cancelled,
+            receiver,
+            deadline: Instant::now() + TICK,
+        });
+        Ok(())
+    }
+
     pub(in crate::app) fn start_note_verification(&mut self, intent: Intent) -> crate::Result<()> {
         if self.note_verify_busy.swap(true, Ordering::AcqRel) {
             return Err("Previous note verification is still stopping".into());
@@ -124,6 +296,9 @@ impl Reader {
             let expected_screen = match intent {
                 Intent::Open => Page::Detail,
                 Intent::Save => Page::EditNote,
+                Intent::RemoveReview | Intent::RemoveCommit => {
+                    return Err("Review the note first".into());
+                }
             };
             if self.screen != Screen::BookmarkBrowser(expected_screen) {
                 return Err("Review the note first".into());
@@ -330,6 +505,9 @@ impl Reader {
             let expected_screen = match intent {
                 Intent::Open => Page::Detail,
                 Intent::Save => Page::EditNote,
+                Intent::RemoveReview | Intent::RemoveCommit => {
+                    return Err("Review the note first".into());
+                }
             };
             if self.screen != Screen::BookmarkBrowser(expected_screen)
                 || self.bookmark_browser.focus != Some(pending.key)
@@ -455,10 +633,12 @@ impl Reader {
     }
 
     pub(in crate::app) fn cancel_note_verification(&mut self) {
-        if let Some(job) = self.note_verification.take()
-            && job.intent == Intent::Open
-        {
-            self.bookmark_browser.pending_note_edit = None;
+        if let Some(job) = self.note_verification.take() {
+            match job.intent {
+                Intent::Open => self.bookmark_browser.pending_note_edit = None,
+                Intent::RemoveReview => self.bookmark_browser.pending_mark_removal = None,
+                _ => {}
+            }
         }
     }
     pub(in crate::app) fn note_verification_input(&mut self, input: Input) -> Option<Change> {
@@ -520,6 +700,63 @@ impl Reader {
             }
             Err(mpsc::TryRecvError::Disconnected) => Err("Note verification stopped"),
         };
+        if matches!(job.intent, Intent::RemoveReview | Intent::RemoveCommit) {
+            let valid = self.screen == job.screen
+                && self.open_book_id() == job.origin_book
+                && self.current_history_location() == job.origin
+                && self.bookmark_browser.focus == Some(job.key)
+                && self.bookmark_browser.confirmation == job.confirmation
+                && matches!(self.bookmark_browser.origin, Screen::Book | Screen::Fixed)
+                && self
+                    .bookmark_browser
+                    .pending_mark_removal
+                    .as_ref()
+                    .is_some_and(|pending| {
+                        pending.book == job.book
+                            && pending.title == job.title
+                            && pending.detail == Some(job.key)
+                            && pending.targets.len() == 1
+                            && pending.targets[0].selected
+                            && pending.targets[0].target == job.target
+                    })
+                && self
+                    .library
+                    .state(job.book)
+                    .is_some_and(|book| book.title == job.title && job.target.matches(book))
+                && job.recipe.as_ref().is_some_and(|recipe| {
+                    self.active.as_ref().is_some_and(|active| {
+                        active
+                            .reading
+                            .config
+                            .search_layout_recipe(&active.reading.probe)
+                            == **recipe
+                    })
+                });
+            if !valid || !matches!(result, Ok(None)) {
+                if job.intent == Intent::RemoveReview {
+                    self.bookmark_browser.pending_mark_removal = None;
+                }
+                let message = if valid {
+                    result
+                        .err()
+                        .unwrap_or("The book changed; review the mark again")
+                } else {
+                    "The book or mark changed; review it again"
+                };
+                return Some(self.report(message));
+            }
+            return Some(match job.intent {
+                Intent::RemoveReview => {
+                    self.bookmark_browser.confirmation = Some(Confirmation::SingleMark);
+                    Change::Partial
+                }
+                Intent::RemoveCommit => match super::bulk_marks::confirm_verified(self) {
+                    Ok(()) => Change::Partial,
+                    Err(error) => self.report(error),
+                },
+                _ => unreachable!(),
+            });
+        }
         let valid = self.screen == job.screen
             && self.open_book_id() == job.origin_book
             && self.current_history_location() == job.origin
@@ -544,6 +781,7 @@ impl Reader {
                             == match job.intent {
                                 Intent::Open => None,
                                 Intent::Save => job.other_context.as_ref(),
+                                Intent::RemoveReview | Intent::RemoveCommit => unreachable!(),
                             }
                         && (job.other_path.is_none()
                             || (pending.origin_book == job.origin_book
@@ -584,6 +822,7 @@ impl Reader {
                             job.other_digest == Some(proof.digest())
                                 && job.other_fonts.as_deref() == proof.epub_fonts()
                         }
+                        Intent::RemoveReview | Intent::RemoveCommit => false,
                     }
             }
             _ => false,
@@ -617,6 +856,7 @@ impl Reader {
                 Ok(()) => Change::Partial,
                 Err(error) => self.report(error),
             }),
+            Intent::RemoveReview | Intent::RemoveCommit => unreachable!(),
         }
     }
 }

@@ -9,6 +9,7 @@ use primitive_app::with_storage;
 use primitive_app::{HEIGHT, WIDTH};
 use primitive_ui::{Canvas, GrayImage, Rect, TextStyle};
 use std::io;
+pub(super) mod detached;
 
 const INSET: i32 = 16;
 const HEADER: i32 = 76;
@@ -49,6 +50,7 @@ pub(super) struct Footnote {
     page: usize,
     frame: GrayImage,
     selection: Option<TextSelection>,
+    detached: bool,
 }
 
 impl Footnote {
@@ -136,12 +138,14 @@ impl Footnote {
             false,
             false,
         );
-        canvas.button(
-            self.follow_button(),
-            language.navigation_popup_text("Open in book"),
-            false,
-            false,
-        );
+        if !self.detached {
+            canvas.button(
+                self.follow_button(),
+                language.navigation_popup_text("Open in book"),
+                false,
+                false,
+            );
+        }
         if self.selection.is_some() {
             canvas.button(
                 self.lookup_button(),
@@ -283,9 +287,7 @@ impl Reader {
             return false;
         };
         let reading = &active.reading;
-        let Some(index) = reading.probe.chapter_index(&target.path) else {
-            return false;
-        };
+        let index = reading.probe.chapter_index(&target.path);
         let (mut context, reference) = reading
             .note_reference_at(x, y)
             .map(|(context, selected)| (context, Some(selected)))
@@ -308,6 +310,10 @@ impl Reader {
         if context.kind == Reference::Ordinary {
             return false;
         }
+        let Some(index) = index else {
+            return context.kind == Reference::Explicit
+                && self.start_detached_note(target, context, reference);
+        };
         let viewport = self.reading_viewport();
         let toc_target = reading
             .probe
@@ -372,6 +378,7 @@ impl Reader {
             page: 0,
             frame,
             selection: None,
+            detached: false,
         });
         true
     }
@@ -384,33 +391,7 @@ impl Reader {
         excerpt: &str,
         viewport: ReadingViewport,
     ) -> io::Result<Probe> {
-        let (width, height) = viewport.dimensions();
-        let font = self
-            .controls
-            .footnote_font_size
-            .requested_pixels(reading.config.settings);
-        let settings = Settings {
-            width: width - 4 * INSET as u32,
-            height: height / 3 - 112,
-            status_header_height: 0,
-            margin: 16,
-            margin_sides: Some(22),
-            margin_left: None,
-            margin_right: None,
-            margin_top: Some(8),
-            margin_bottom: Some(8),
-            font_size: font.clamp(MIN_FONT_PIXELS, MAX_FONT_PIXELS),
-            logical_font_size: None,
-            // The popup uses its own text defaults. Keep inline publisher
-            // styles, without inheriting the book's base stylesheet or alignment.
-            base_stylesheet: crate::BaseStylesheet::None,
-            alignment: if self.controls.footnote_justify.unwrap_or(true) {
-                crate::TextAlignment::FootnoteJustify
-            } else {
-                crate::TextAlignment::Publisher
-            },
-            ..reading.config.settings
-        };
+        let settings = self.footnote_settings(reading, viewport);
         let render = |book, settings| {
             Probe::from_book_with_font_loader(
                 book,
@@ -419,7 +400,6 @@ impl Reader {
                 index,
                 Some(excerpt.to_owned()),
                 &reading.config.user_hyphenation,
-                // The popup has an independent stylesheet context.
                 &crate::user_styles::Snapshot::default(),
                 || {
                     if self.controls.footnote_book_font
@@ -456,6 +436,36 @@ impl Reader {
         }
     }
 
+    fn footnote_settings(&self, reading: &Reading, viewport: ReadingViewport) -> Settings {
+        let (width, height) = viewport.dimensions();
+        let font = self
+            .controls
+            .footnote_font_size
+            .requested_pixels(reading.config.settings);
+        Settings {
+            width: width - 4 * INSET as u32,
+            height: height / 3 - 112,
+            status_header_height: 0,
+            margin: 16,
+            margin_sides: Some(22),
+            margin_left: None,
+            margin_right: None,
+            margin_top: Some(8),
+            margin_bottom: Some(8),
+            font_size: font.clamp(MIN_FONT_PIXELS, MAX_FONT_PIXELS),
+            logical_font_size: None,
+            // The popup uses its own text defaults. Keep inline publisher
+            // styles, without inheriting the book's base stylesheet or alignment.
+            base_stylesheet: crate::BaseStylesheet::None,
+            alignment: if self.controls.footnote_justify.unwrap_or(true) {
+                crate::TextAlignment::FootnoteJustify
+            } else {
+                crate::TextAlignment::Publisher
+            },
+            ..reading.config.settings
+        }
+    }
+
     pub(super) fn resize_footnote(
         &self,
         viewport: ReadingViewport,
@@ -467,6 +477,9 @@ impl Reader {
         else {
             return Ok(None);
         };
+        if note.detached {
+            return Err("Close the footnote before changing the viewport".into());
+        }
         let reading = &self
             .active
             .as_ref()
@@ -508,6 +521,7 @@ impl Reader {
             page,
             frame,
             selection,
+            detached: false,
         }))
     }
 
@@ -530,8 +544,10 @@ impl Reader {
                 }
                 Change::Partial
             }
-            Input::Tap(x, y) if note.follow_button().contains(x, y) => self.follow_preview(),
-            Input::Swipe { dx, dy, .. } if dx < -60.0 && dx.abs() > dy.abs() => {
+            Input::Tap(x, y) if !note.detached && note.follow_button().contains(x, y) => {
+                self.follow_preview()
+            }
+            Input::Swipe { dx, dy, .. } if !note.detached && dx < -60.0 && dx.abs() > dy.abs() => {
                 self.follow_preview()
             }
             Input::Tap(x, y) if note.selection.is_some() && note.lookup_button().contains(x, y) => {
