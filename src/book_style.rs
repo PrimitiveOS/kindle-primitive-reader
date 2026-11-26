@@ -3218,6 +3218,30 @@ impl<'i> DeclarationParser<'i> for Properties {
                 }
                 "font-size" => {
                     let size = match input.next()?.clone() {
+                        Token::Ident(name) if name.eq_ignore_ascii_case("xx-small") => {
+                            Size::Reference(153.0 / 256.0)
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("x-small") => {
+                            Size::Reference(192.0 / 256.0)
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("small") => {
+                            Size::Reference(227.0 / 256.0)
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("medium") => {
+                            Size::Reference(1.0)
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("large") => {
+                            Size::Reference(307.0 / 256.0)
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("x-large") => {
+                            Size::Reference(384.0 / 256.0)
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("xx-large") => {
+                            Size::Reference(2.0)
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("xxx-large") => {
+                            Size::Reference(3.0)
+                        }
                         Token::Ident(name) if name.eq_ignore_ascii_case("smaller") => {
                             Size::Parent(1.0 / 1.2)
                         }

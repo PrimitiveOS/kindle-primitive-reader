@@ -817,14 +817,21 @@ impl Reader {
         let anchor = if from_edge {
             None
         } else if continuing {
-            let selection = self
-                .result_selection
+            self.result_selection
                 .as_ref()
                 .ok_or("The current match has moved")?;
-            Some(match direction {
-                SearchDirection::Previous => selection.start.clone(),
-                SearchDirection::Next => selection.end.clone(),
-            })
+            // KOReader continues beyond the current visible page, not the
+            // previous occurrence. Use the far edge in the search direction.
+            let edge = match direction {
+                SearchDirection::Previous => SearchDirection::Next,
+                SearchDirection::Next => SearchDirection::Previous,
+            };
+            Some(
+                active
+                    .reading
+                    .visible_search_boundary(edge)
+                    .ok_or("The current page has no searchable position")?,
+            )
         } else {
             Some(
                 active

@@ -80,6 +80,20 @@ pub(crate) fn without_plain_doctype(xml: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
+/// Admit only these exact declarations for malformed-chapter recovery. The
+/// ordinary XML preparation masks them; their URLs are never fetched.
+pub(crate) fn known_xhtml_public_doctype(xml: &str) -> bool {
+    let Some((start, end, true)) = declaration(xml, false) else {
+        return false;
+    };
+    matches!(
+        &xml[start..end],
+        "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">"
+            | "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">"
+            | "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" \"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd\">"
+    )
+}
+
 /// Repair only unclosed HTML void start tags in an otherwise XML-compatible
 /// chapter. Already parseable input is returned by the caller unchanged.
 fn parse_recovery_xml(

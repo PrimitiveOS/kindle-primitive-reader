@@ -2288,6 +2288,22 @@ impl Reading {
         &self,
         direction: crate::search::SearchDirection,
     ) -> Option<Anchor> {
+        self.search_boundary_with_fallback(direction, true)
+    }
+
+    /// An exact visible text edge, without falling back to a saved position.
+    pub(crate) fn visible_search_boundary(
+        &self,
+        direction: crate::search::SearchDirection,
+    ) -> Option<Anchor> {
+        self.search_boundary_with_fallback(direction, false)
+    }
+
+    fn search_boundary_with_fallback(
+        &self,
+        direction: crate::search::SearchDirection,
+        fallback: bool,
+    ) -> Option<Anchor> {
         let previous = direction == crate::search::SearchDirection::Previous;
         let column_count = if self.probe.in_page_notes.is_some() {
             1
@@ -2330,7 +2346,7 @@ impl Reading {
         if raw_failure {
             None
         } else {
-            result.or_else(|| self.anchor())
+            result.or_else(|| fallback.then(|| self.anchor()).flatten())
         }
     }
 

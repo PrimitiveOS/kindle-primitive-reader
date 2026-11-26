@@ -9,8 +9,10 @@ processing instructions and CDATA are handled separately; ambiguous markup
 and scripts are rejected. A style block is accepted by this repair only when
 its contents contain no literal `<` character. A single exact plain HTML doctype
 is permitted only when verified against the original bytes before XML
-preparation; other DTDs, entity declarations and ambiguous declarations do not
-use this repair.
+preparation. The exact standard W3C XHTML 1.0 Strict/Transitional and XHTML 1.1
+PUBLIC declarations are also accepted: Reader masks them locally and never
+fetches their URLs. Different spellings, other DTDs, entity declarations and
+ambiguous declarations do not use this repair.
 
 The applicable XML limit includes inserted characters: 1 MiB for reflow spine
 chapters and 512 KiB for navigation documents. Already

@@ -2220,7 +2220,7 @@ fn reflow_svg_chapter(bytes: &[u8]) -> Result<String> {
 }
 
 fn archive_html_recovery(archive: &mut Archive, path: &str, limit: usize) -> Result<String> {
-    let (xml, had_declaration, plain_html_doctype) =
+    let (xml, had_declaration, safe_html_doctype) =
         xml_entry_with_declaration(archive, path, true, limit)?;
     let xml = if had_declaration {
         xml
@@ -2228,8 +2228,8 @@ fn archive_html_recovery(archive: &mut Archive, path: &str, limit: usize) -> Res
         crate::epub_xml::recover_html_names(xml, limit)
     };
     // The original bytes, before XML preparation, must contain either no
-    // DTD/entity declaration or exactly one verified plain HTML doctype.
-    Ok(if !had_declaration || plain_html_doctype {
+    // DTD/entity declaration or exactly one verified known HTML doctype.
+    Ok(if !had_declaration || safe_html_doctype {
         crate::epub_xml::recover_html_voids(&xml, limit)
             .or_else(|| crate::epub_xml::recover_html_bare_ampersands(&xml, limit))
             .or_else(|| crate::epub_xml::recover_html_voids_and_ampersands(&xml, limit))
@@ -2342,17 +2342,17 @@ fn xml_entry_with_declaration(
             .windows(8)
             .any(|bytes| bytes.eq_ignore_ascii_case(b"<!entity"));
     let had_declaration = has_doctype || has_entity;
-    let plain_html_doctype = has_doctype
+    let safe_html_doctype = has_doctype
         && !multiple_doctypes
         && !has_entity
-        && matches!(
+        && (matches!(
             crate::epub_xml::without_plain_doctype(&text),
             std::borrow::Cow::Owned(_)
-        );
+        ) || crate::epub_xml::known_xhtml_public_doctype(&text));
     Ok((
         crate::epub_xml::prepare(text, limit)?,
         had_declaration,
-        plain_html_doctype,
+        safe_html_doctype,
     ))
 }
 
