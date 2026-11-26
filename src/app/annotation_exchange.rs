@@ -216,7 +216,7 @@ impl Reader {
             rows.extend([
                 Item::new(
                     language.annotation_exchange_text("Import annotation transfer"),
-                    Action::AnnotationExchange(Command::Preview),
+                    Action::AnnotationExchange(Command::PreviewBackground),
                 )
                 .detail(
                     language.annotation_exchange_text(
