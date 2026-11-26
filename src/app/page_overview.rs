@@ -940,11 +940,19 @@ impl Reader {
         } else {
             overview.first
         };
-        let (selected, count, title) = overview
-            .chapter
-            .map_or((page, overview.count, "Skim pages"), |chapter| {
-                (chapter, chapters, "Skim chapters")
+        let single_spine = overview.chapter == Some(0)
+            && self.active.as_ref().is_some_and(|active| {
+                active.reading.chapter == 0 && active.reading.probe.chapter_count() == 1
             });
+        let (selected, count, title) = if single_spine {
+            (page, overview.count, "Skim pages")
+        } else {
+            overview
+                .chapter
+                .map_or((page, overview.count, "Skim pages"), |chapter| {
+                    (chapter, chapters, "Skim chapters")
+                })
+        };
         let mut section_title = None;
         let mut closest_section_page = None;
         let mut ticks = BTreeSet::new();
@@ -996,6 +1004,9 @@ impl Reader {
             // The reflow track represents spine chapters, not pages within a
             // chapter. Its markers show which chapters contain TOC entries.
             let mut add_chapter = |chapter: usize| {
+                if single_spine {
+                    return;
+                }
                 if chapter >= count {
                     return;
                 }
@@ -1056,7 +1067,7 @@ impl Reader {
             // spine label instead of implying the heading has started.
             section_title = probe
                 .chapter_entries()
-                .get(selected)
+                .get(if single_spine { 0 } else { selected })
                 .map(|entry| entry.label.clone());
         }
         let mut detail = format!(
@@ -1091,9 +1102,32 @@ impl Reader {
             let offset = (portion * (track.w - 20).max(0) as f64).round() as i32;
             *saved.entry(offset / 5 * 5).or_default() |= flags;
         };
+        // `page_for` scans line geometry and a highlight comparison also
+        // inspects source blocks. Bound aggregate synchronous work per draw,
+        // including history, rather than only bounding the mark count.
+        let cue_work = std::cell::Cell::new(0usize);
         let chapter_for = |anchor: &Anchor| {
             let reading = &self.active.as_ref()?.reading;
             let probe = &reading.probe;
+            if single_spine {
+                if anchor.raw_caret.is_some() {
+                    return None;
+                }
+                let cost = probe
+                    .lines
+                    .len()
+                    .saturating_mul(4)
+                    .saturating_add(probe.source.blocks.len().saturating_mul(16))
+                    .saturating_add(probe.source.raw_only_blocks.len().saturating_mul(16))
+                    .saturating_add(probe.source.elements.len().saturating_mul(16))
+                    .max(1);
+                let next = cue_work.get().saturating_add(cost);
+                if next > 65_536 {
+                    return None;
+                }
+                cue_work.set(next);
+                return probe.page_for(anchor);
+            }
             if anchor.book != probe.book {
                 return None;
             }
@@ -1147,21 +1181,42 @@ impl Reader {
         } else if let Some(active) = self.active.as_ref().filter(|_| overview.chapter.is_some())
             && let Some(state) = self.library.state(active.id)
         {
-            for bookmark in &state.bookmarks {
+            let limit = if single_spine { 512 } else { usize::MAX };
+            for bookmark in state.bookmarks.iter().take(limit) {
                 let chapter = match &bookmark.position.anchor {
                     Some(anchor) => chapter_for(anchor),
+                    None if single_spine => {
+                        (bookmark.position.chapter == 0).then_some(bookmark.position.page)
+                    }
                     None => Some(bookmark.position.chapter),
                 };
                 if let Some(chapter) = chapter {
                     mark_page(chapter, 4);
                 }
             }
-            for highlight in &state.highlights {
+            let highlight_limit = if single_spine {
+                limit.saturating_sub(state.bookmarks.len().min(limit))
+            } else {
+                usize::MAX
+            };
+            for highlight in state.highlights.iter().take(highlight_limit) {
                 let selection = &highlight.selection;
                 if selection.start.raw_caret.is_some() || selection.end.raw_caret.is_some() {
                     continue;
                 }
-                if let Some(chapter) = chapter_for(&highlight.selection.start) {
+                let start = chapter_for(&selection.start);
+                if single_spine
+                    && (start.is_none()
+                        || chapter_for(&selection.end).is_none()
+                        || active
+                            .reading
+                            .probe
+                            .compare_text_anchors(&selection.start, &selection.end)
+                            != Some(std::cmp::Ordering::Less))
+                {
+                    continue;
+                }
+                if let Some(chapter) = start {
                     let noted = highlight
                         .note
                         .as_ref()
@@ -1169,7 +1224,7 @@ impl Reader {
                     mark_page(chapter, 1 | if noted { 2 } else { 0 });
                 }
             }
-            if let Some(job) = &self.overview_raw {
+            if !single_spine && let Some(job) = &self.overview_raw {
                 for (bin, &flags) in job.bins().iter().enumerate() {
                     if flags != 0 {
                         let chapter = bin
@@ -1226,6 +1281,9 @@ impl Reader {
                     } else {
                         match &position.anchor {
                             Some(anchor) => chapter_for(anchor),
+                            None if single_spine => {
+                                (position.chapter == 0).then_some(position.page)
+                            }
                             None => Some(position.chapter),
                         }
                     };
@@ -1251,7 +1309,13 @@ impl Reader {
         let reading = if overview.chapter.is_none() {
             self.fixed.as_ref().map(|book| book.reading.page())
         } else {
-            self.active.as_ref().map(|book| book.reading.chapter)
+            self.active.as_ref().map(|book| {
+                if single_spine {
+                    book.reading.page
+                } else {
+                    book.reading.chapter
+                }
+            })
         };
         if let Some(reading) = reading.filter(|&reading| reading < count) {
             let x = track.x + 10 + marker_offset(reading);
@@ -1299,6 +1363,28 @@ impl Reader {
     }
 
     fn scrub_overview(&mut self, x: f32) -> Change {
+        if let (Some(active), Some(overview)) = (&self.active, &self.overview)
+            && overview.chapter == Some(0)
+            && active.reading.chapter == 0
+            && active.reading.probe.chapter_count() == 1
+        {
+            let track = OverviewLayout::new(self.navigation_layout()).track();
+            let width = (track.w - 20).max(1) as f32;
+            let fraction = ((x - (track.x + 10) as f32) / width).clamp(0.0, 1.0);
+            let fraction = if self.navigation_layout().mirrored {
+                1.0 - fraction
+            } else {
+                fraction
+            };
+            let page = (fraction * overview.count.saturating_sub(1) as f32).round() as usize;
+            if page == overview.first {
+                return Change::None;
+            }
+            return match self.update_overview(Some(0), Some(page)) {
+                Ok(()) => Change::Partial,
+                Err(error) => self.report(error),
+            };
+        }
         let result = match self.overview_ribbon_target(x) {
             Some(RibbonMapTarget::Chapter(chapter)) => {
                 if self

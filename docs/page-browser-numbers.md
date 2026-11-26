@@ -22,4 +22,18 @@ For a canonical or raw highlight crossing chapter boundaries, the worker verifie
 
 The Grid panel's **Help** button explains the implemented thumbnail, page-button, edge-swipe and ribbon controls, visual cues, and settings. Back returns to Grid without changing the book or browser position. This follows the intent of KOReader's [Page Browser About and gestures help](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1145-L1207); Reader's text describes its own behavior. The layout and translations still require simulation and Kindle validation.
 
+For a reflow book with exactly one spine chapter, the ribbon instead maps to
+the pages already laid out in that chapter. A tap or ribbon swipe moves the
+thumbnail window; opening a thumbnail remains the action that moves the reading
+position. Mirrored layouts reverse the ribbon as usual, and holding it still
+opens Book Map for the chapter. The handle and reading caret use page positions.
+Up to 512 saved bookmarks and highlights are considered for page cues; a
+shared per-draw estimate of line, block and element work also limits anchor
+resolution, so additional cues may be omitted in larger chapters. Canonical
+anchors must resolve in the current layout, while raw-anchor cues are omitted.
+Legacy anchorless bookmarks use their saved page. Chapter-only outline ticks
+are omitted in this mode rather than implying an exact heading position.
+Multi-chapter and fixed-document ribbon behavior is unchanged. This candidate
+has not yet had behavioral, simulator or Kindle verification.
+
 The visible **Return to book** button closes the Page Browser and any nested Book Map/Page Browser stack, returning to the existing reading location rather than opening the browsed thumbnail. **Back** retains its normal one-level navigation. KOReader supports [closing parent browsers together](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/pagebrowserwidget.lua#L1209-L1220); Reader exposes a separate touch control for this action. The new control still requires simulation and Kindle validation.

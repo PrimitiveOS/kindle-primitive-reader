@@ -5,6 +5,8 @@
 //! a future continuation/index pass must prove that separately.
 #![allow(dead_code)]
 
+pub(crate) mod pagination;
+
 use crate::book_style::{CssLength, Style, WhiteSpace, WritingMode, flow::Display};
 use crate::epub::Book;
 use crate::flow_projection::{ElementFlow, SourceBinding};

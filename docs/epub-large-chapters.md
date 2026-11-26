@@ -54,3 +54,16 @@ and text. It does not detect in-place changes to element, link, flow or style
 metadata, and does not bind fonts or reading settings. It is therefore not
 enough to authorize a layout handoff; that later stage needs a full
 source/metadata, computed-style, font and settings proof.
+
+An isolated incremental paginator can consume a complete, source-ordered
+stream of already-positioned simple lines. It carries the last overlapping
+interval and page origin across work batches and uses the ordinary paginator's
+rules for layouts without publisher breaks, split spaces or fitted tails.
+It checks the borrowed source, original block keys and UTF-8 boundaries, limits
+the stream to 30,000 lines and 16,384 pages, and returns no partial bounds on
+cancellation or failure. It also applies the existing Parley unpainted-tail
+trim when given the final layout's exact painted bottom. A batch boundary
+never creates a page boundary. This
+component is not connected to reading: it cannot prove that a layout stream is
+complete, that its absolute geometry is continuous, or that fonts and styles
+match. The continuation layout and those proofs remain required before use.
