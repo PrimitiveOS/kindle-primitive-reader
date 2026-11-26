@@ -9,6 +9,7 @@
 pub(crate) mod font_snapshot;
 pub(crate) mod index;
 pub(crate) mod pagination;
+pub(crate) mod shape_witness;
 
 use crate::book_style::{CssLength, Style, WhiteSpace, WritingMode, flow::Display};
 use crate::epub::Book;

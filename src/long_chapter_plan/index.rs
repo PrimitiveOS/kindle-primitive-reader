@@ -2,7 +2,10 @@
 //!
 //! This proves only the inputs used to build this index. It does not bind them
 //! to a live Reader, verify filesystem state, or authorize a reading handoff.
-use super::{LayoutMode, LongChapterPlan, cancelled, pagination::SimplePagination};
+use super::{
+    LayoutMode, LongChapterPlan, cancelled, pagination::SimplePagination,
+    shape_witness::ShapeWitness,
+};
 use crate::book_style::BookStyle;
 use crate::epub::Book;
 use crate::parley_layout::long_chapter::SimpleLayoutStream;
@@ -29,6 +32,8 @@ struct LineRecord {
 pub(crate) struct BatchIndex {
     pub blocks: Range<usize>,
     pub lines: Range<usize>,
+    /// Compact layout transcript used to reject a mismatched future replay.
+    pub shape_digest: [u8; 32],
 }
 
 pub(crate) struct PageIndex {
@@ -216,7 +221,9 @@ impl PageIndex {
         for batch in plan.batches() {
             cancelled(cancel)?;
             let first = records.len();
+            let mut witness = ShapeWitness::new(batch.blocks.clone());
             let produced = stream.next_batch(|paragraphs, lines| {
+                witness.observe(paragraphs, lines, &identities, &font_digests)?;
                 for paragraph in paragraphs {
                     for line in paragraph.layout.lines() {
                         for run in line.runs() {
@@ -248,6 +255,7 @@ impl PageIndex {
             batches.push(BatchIndex {
                 blocks: batch.blocks.clone(),
                 lines: first..records.len(),
+                shape_digest: witness.finish()?,
             });
         }
         let (extent, painted_bottom) = stream.finish()?;
@@ -344,6 +352,10 @@ impl PageIndex {
 
     pub(crate) fn batches(&self) -> &[BatchIndex] {
         &self.batches
+    }
+
+    pub(crate) fn batch_shape_digest(&self, index: usize) -> Option<[u8; 32]> {
+        self.batches.get(index).map(|batch| batch.shape_digest)
     }
 
     /// Rows touching an actual page, preserving original line ordering.

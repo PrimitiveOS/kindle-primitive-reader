@@ -95,9 +95,13 @@ source and computed styles from the same snapshot and exact settings. It stores
 original-source line ranges, exact simple-page bounds and batch-to-line ranges;
 these ranges are not resumable layout checkpoints. It returns nothing if a
 batch fails or is cancelled. Digests check cancellation between 64 KiB
-chunks; a single ZIP parse, font registration or paragraph shape is not
-interruptible. Scroll, facing-page, hidden-flow, nonlinear-hiding and in-page
-note modes remain excluded.
+chunks; every bounded batch also retains a SHA-256 transcript of its original
+source ranges, line and paragraph geometry, selected captured font face,
+variation and synthesis settings, clusters and positioned glyphs. A future
+window replay must reproduce that transcript before displaying the batch.
+A single ZIP parse, font registration or paragraph shape is not interruptible.
+Scroll, facing-page, hidden-flow, nonlinear-hiding and in-page note modes
+remain excluded.
 
 The proof covers these in-memory EPUB/font bytes and the supplied settings,
 user-style and hyphenation snapshots. It does not prove that they are the live
@@ -105,8 +109,10 @@ open book or that this isolated font context is equivalent to Reader's normal
 firmware-mapped or system-fallback font context. It also does not provide a
 windowed renderer, interactive navigation, Find, selections or saved-position
 handoff. Peak allocator and device memory remain unmeasured. No reader path
-uses this index; source and font handoff proofs and all those consumers remain
-prerequisites to user-visible support. No behavioral or device tests have run.
+uses this index; the transcript proves replay only within its isolated input
+snapshot and does not establish live Reader font equivalence. Source and font
+handoff proofs and all those consumers remain prerequisites to user-visible
+support. No behavioral or device tests have run.
 
 An additional unwired font capture helper can retain the configured font files
 in order as immutable byte snapshots. It allows at most eight regular files and
