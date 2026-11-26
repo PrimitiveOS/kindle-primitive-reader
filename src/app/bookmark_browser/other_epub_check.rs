@@ -115,21 +115,30 @@ impl Context {
         let fonts = self
             .font_stamps()
             .ok_or("Reading fonts cannot be verified")?;
-        let Snapshot::Reflow(_, mark) = target else {
-            return Err("This mark is unavailable".into());
+        let (start, selection) = match target {
+            Snapshot::Bookmark(_, mark) => (
+                mark.position
+                    .anchor
+                    .as_ref()
+                    .ok_or("Open this book to resolve this bookmark")?,
+                None,
+            ),
+            Snapshot::Reflow(_, mark) => (&mark.selection.start, Some(&mark.selection)),
+            Snapshot::Fixed(..) => return Err("This mark is unavailable".into()),
         };
-        let selection = &mark.selection;
-        let start = &selection.start;
-        let end = &selection.end;
-        if start.raw_caret.is_some()
-            || end.raw_caret.is_some()
-            || start.illustration.is_some()
-            || end.illustration.is_some()
-            || start.book != end.book
-            || start.chapter != end.chapter
-            || selection.text.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES
-        {
-            return Err("Open this book to edit this saved passage".into());
+        if start.raw_caret.is_some() || start.illustration.is_some() {
+            return Err("Open this book to edit this saved location".into());
+        }
+        if let Some(selection) = selection {
+            let end = &selection.end;
+            if end.raw_caret.is_some()
+                || end.illustration.is_some()
+                || start.book != end.book
+                || start.chapter != end.chapter
+                || selection.text.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES
+            {
+                return Err("Open this book to edit this saved passage".into());
+            }
         }
         let mut book = crate::epub::Book::open_snapshot(bytes)?;
         if book.is_fixed_layout() || !book.is_reflowable_epub() || book.revision() != start.book {
@@ -141,7 +150,7 @@ impl Context {
             .enumerate()
             .filter(|(_, entry)| entry.href == start.chapter);
         let (index, entry) = matches.next().ok_or("That chapter is unavailable")?;
-        if entry.unsupported || matches.next().is_some() {
+        if book.recovered_placeholder(entry) || matches.next().is_some() {
             return Err("That chapter is unavailable".into());
         }
         let settings = if self.settings.publisher_render_mode.is_some()
@@ -186,11 +195,15 @@ impl Context {
             false,
             &check,
         )?;
-        if probe.page_for(start).is_none()
-            || probe.page_for(end).is_none()
-            || probe.compare_text_anchors(start, end) != Some(std::cmp::Ordering::Less)
-            || probe.select_source_range(start, end).as_ref() != Some(selection)
-        {
+        if probe.page_for(start).is_none() {
+            return Err("This saved location no longer matches the EPUB".into());
+        }
+        if selection.is_some_and(|selection| {
+            let end = &selection.end;
+            probe.page_for(end).is_none()
+                || probe.compare_text_anchors(start, end) != Some(std::cmp::Ordering::Less)
+                || probe.select_source_range(start, end).as_ref() != Some(selection)
+        }) {
             return Err("This saved passage no longer matches the EPUB".into());
         }
         check()?;

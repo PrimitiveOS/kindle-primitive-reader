@@ -346,8 +346,10 @@ impl Reader {
             let context = match crate::library::DocumentFormat::for_path(&path) {
                 Some(crate::library::DocumentFormat::Pdf) => None,
                 Some(crate::library::DocumentFormat::Epub)
-                    if matches!(&pending.target, Snapshot::Reflow(..))
-                        && !crate::epub_members::is_folder_book(&path) =>
+                    if matches!(
+                        &pending.target,
+                        Snapshot::Reflow(..) | Snapshot::Bookmark(..)
+                    ) && !crate::epub_members::is_folder_book(&path) =>
                 {
                     Some(super::other_epub_check::Context::capture(
                         self,

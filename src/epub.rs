@@ -396,7 +396,10 @@ impl Book {
         let mut cover = package_cover(metadata, &manifest);
         let spine = child(root, "spine")?;
         if cover.is_none() {
-            cover = infer_first_spine_cover(&mut archive, root, metadata, spine, &manifest);
+            cover = infer_first_spine_cover(&mut archive, root, metadata, spine, &manifest)
+                .or_else(|| {
+                    infer_first_spine_svg_cover(&mut archive, root, metadata, spine, &manifest)
+                });
         }
         let navigation = manifest.values().find(|item| item.navigation);
         let ncx = spine.attribute("toc").and_then(|id| manifest.get(id));
@@ -1908,6 +1911,156 @@ fn infer_first_spine_cover(
                 return None;
             }
             image = Some(Book::resolve(&item.path, src).ok()?);
+        }
+    }
+    let path = image?;
+    let mut matches = manifest.values().filter(|item| item.path == path);
+    let image_item = matches.next()?;
+    if matches.next().is_some()
+        || !image_item.plain_href
+        || !matches!(
+            image_item.media.as_str(),
+            "image/jpeg" | "image/png" | "image/gif"
+        )
+    {
+        return None;
+    }
+    cover_item(image_item, false)
+}
+
+/// A later inference candidate for the conventional single-image SVG wrapper.
+fn infer_first_spine_svg_cover(
+    archive: &mut Archive,
+    root: Node<'_, '_>,
+    metadata: Node<'_, '_>,
+    spine: Node<'_, '_>,
+    manifest: &BTreeMap<&str, Item>,
+) -> Option<BookCover> {
+    const XHTML: &str = "http://www.w3.org/1999/xhtml";
+    const SVG: &str = "http://www.w3.org/2000/svg";
+    const XLINK: &str = "http://www.w3.org/1999/xlink";
+    if metadata
+        .children()
+        .any(|node| node.has_tag_name("meta") && node.attribute("name") == Some("cover"))
+        || child(root, "manifest").ok()?.children().any(|node| {
+            node.has_tag_name("item")
+                && node.attribute("properties").is_some_and(|value| {
+                    value
+                        .split_ascii_whitespace()
+                        .any(|property| property == "cover-image")
+                })
+        })
+    {
+        return None;
+    }
+    let mut references = spine.children().filter(|node| node.has_tag_name("itemref"));
+    let first = references.next()?;
+    references.next()?;
+    let first_id = first.attribute("idref")?;
+    let item = manifest.get(first_id)?;
+    if !item.plain_href
+        || !matches!(item.media.as_str(), "application/xhtml+xml" | "text/html")
+        || manifest
+            .values()
+            .filter(|other| other.path == item.path)
+            .take(2)
+            .count()
+            != 1
+        || spine
+            .children()
+            .filter(|node| {
+                node.has_tag_name("itemref") && node.attribute("idref") == Some(first_id)
+            })
+            .take(2)
+            .count()
+            != 1
+    {
+        return None;
+    }
+    let xhtml = archive_html_recovery(archive, &item.path, 5_000).ok()?;
+    let checked = crate::epub_xml::without_plain_doctype(&xhtml);
+    let document = parse_xml(&checked).ok()?;
+    let root = document.root_element();
+    if root.tag_name().name() != "html"
+        || !matches!(root.tag_name().namespace(), None | Some(XHTML))
+    {
+        return None;
+    }
+    let mut bodies = root.children().filter(|node| node.has_tag_name("body"));
+    let body = bodies.next()?;
+    if bodies.next().is_some() {
+        return None;
+    }
+    let mut svg_root = None;
+    let mut image = None;
+    for node in body.descendants() {
+        if node.is_text() && !node.text().unwrap_or("").trim().is_empty() {
+            return None;
+        }
+        if !node.is_element() {
+            continue;
+        }
+        match node.tag_name().namespace() {
+            None | Some(XHTML) => {
+                if node
+                    .ancestors()
+                    .skip(1)
+                    .any(|parent| parent.tag_name().namespace() == Some(SVG))
+                    || node.tag_name().name().eq_ignore_ascii_case("img")
+                    || node.tag_name().name().eq_ignore_ascii_case("script")
+                    || node.tag_name().name().eq_ignore_ascii_case("style")
+                {
+                    return None;
+                }
+            }
+            Some(SVG) => {
+                match node.tag_name().name() {
+                    "svg" if svg_root.is_none() => svg_root = Some(node),
+                    "g" | "image"
+                        if svg_root.is_some_and(|root| node.ancestors().any(|n| n == root)) =>
+                    {
+                        ()
+                    }
+                    _ => return None,
+                }
+                for attr in node.attributes() {
+                    if node.tag_name().name() == "image"
+                        && attr.name() == "href"
+                        && matches!(attr.namespace(), None | Some(XLINK))
+                    {
+                        continue;
+                    }
+                    if attr.namespace().is_some()
+                        || !matches!(
+                            attr.name(),
+                            "id" | "version"
+                                | "x"
+                                | "y"
+                                | "width"
+                                | "height"
+                                | "viewBox"
+                                | "preserveAspectRatio"
+                                | "transform"
+                        )
+                    {
+                        return None;
+                    }
+                }
+                if node.tag_name().name() == "image" {
+                    if image.is_some() || node.children().any(|child| child.is_element()) {
+                        return None;
+                    }
+                    let src = match (node.attribute("href"), node.attribute((XLINK, "href"))) {
+                        (Some(src), None) | (None, Some(src)) => src,
+                        _ => return None,
+                    };
+                    if src.is_empty() || src.contains(['#', '?']) {
+                        return None;
+                    }
+                    image = Some(Book::resolve(&item.path, src).ok()?);
+                }
+            }
+            _ => return None,
         }
     }
     let path = image?;

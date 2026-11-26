@@ -89,8 +89,10 @@ pub(super) fn can_edit(reader: &Reader) -> bool {
                         super::Locator::Bookmark(_) | super::Locator::Fixed(_)
                     ),
                     Some(crate::library::DocumentFormat::Epub) => {
-                        matches!(key.locator, super::Locator::Reflow(_))
-                            && !crate::epub_members::is_folder_book(&book.path)
+                        matches!(
+                            key.locator,
+                            super::Locator::Reflow(_) | super::Locator::Bookmark(_)
+                        ) && !crate::epub_members::is_folder_book(&book.path)
                     }
                     _ => false,
                 }

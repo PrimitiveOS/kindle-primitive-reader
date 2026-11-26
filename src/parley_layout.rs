@@ -5011,24 +5011,24 @@ impl ImageSizing {
             .and_then(|value| value.pixels(height, font_size))
             .filter(|v| v.is_finite() && *v > 0.0)
             .map(f64::from);
-        // Conflicting constraints require the full replaced-element algorithm.
-        // Preserve the existing image path until that broader case is supported.
-        let min_width = if style.image_max_width.is_none()
-            && style.image_max_height.is_none()
-            && style.min_height.is_none()
-        {
-            style
-                .image_min_width
-                .map(|value| value.pixels(width, settings.font_size))
-                .filter(|value| value.is_finite() && *value > 0.0)
-                .map(f64::from)
-        } else {
-            None
-        };
+        // Cross-axis or inverted constraints need the full replaced-element
+        // algorithm; keep those cases on the existing image path.
+        let min_width = style
+            .image_min_width
+            .map(|value| value.pixels(width, settings.font_size))
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .map(f64::from)
+            .filter(|minimum| {
+                style.image_max_height.is_none()
+                    && style.min_height.is_none()
+                    && match style.image_max_width {
+                        None => true,
+                        Some(_) => max_width.is_some_and(|maximum| *minimum <= maximum),
+                    }
+            });
         // Percentage heights have no definite container; font-relative and
         // conflicting constraints remain on the existing sizing path.
         let min_height = if style.image_max_width.is_none()
-            && style.image_max_height.is_none()
             && style.image_min_width.is_none()
             && !matches!(style.image_width, Some(ImageLength::FitContent))
         {
@@ -5042,7 +5042,11 @@ impl ImageSizing {
             }
         } else {
             None
-        };
+        }
+        .filter(|minimum| match style.image_max_height {
+            None => true,
+            Some(_) => max_height.is_some_and(|maximum| *minimum <= maximum),
+        });
         Self {
             width,
             height,
