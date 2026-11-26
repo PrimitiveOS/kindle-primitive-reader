@@ -97,11 +97,13 @@ page-to-line ranges, and scalar layout state at each source-block batch
 boundary. It rejects any line that crosses a page bound and can request the
 exact source batches needed for one page. Those checkpoints can replay one
 bounded batch in the isolated stream; they are not page-start checkpoints and
-do not provide a page renderer or reusable window cache. A replay must match the batch's
-SHA-256 transcript of its original
-source ranges, line and paragraph geometry, selected captured font face,
-variation and synthesis settings, clusters and positioned glyphs. A future
-window renderer must reproduce that transcript before displaying the batch.
+do not provide a live Reader page renderer or reusable window cache. The
+isolated index can rasterize a verified page with Parley's grayscale painter.
+Before rasterizing, replay must match the batch's SHA-256 transcript of its
+original source ranges, line and paragraph geometry, selected captured font
+face, variation and synthesis settings, clusters and positioned glyphs. A
+live Reader path must bind and enforce that same proof before it can use the
+window.
 The index returns nothing if a batch fails or is cancelled. A page replay
 registers its captured font stack once and reuses that context across the
 page's batches. Digests check cancellation between 64 KiB chunks; a single ZIP
@@ -112,13 +114,13 @@ remain excluded.
 The proof covers these in-memory EPUB/font bytes and the supplied settings,
 user-style and hyphenation snapshots. It does not prove that they are the live
 open book or that this isolated font context is equivalent to Reader's normal
-firmware-mapped or system-fallback font context. It does not provide a page
-window renderer, interactive navigation, Find, selections or saved-position
-handoff. Peak allocator and device memory remain unmeasured. No reader path
-uses this index; the transcript proves replay only within its isolated input
-snapshot and does not establish live Reader font equivalence. Source and font
-handoff proofs and all those consumers remain prerequisites to user-visible
-support. No behavioral or device tests have run.
+firmware-mapped or system-fallback font context. It does not provide live
+Reader navigation, Find, selections or saved-position handoff. Peak allocator
+and device memory remain unmeasured. No reader path uses this index; the
+transcript proves replay only within its isolated input snapshot and does not
+establish live Reader font equivalence. Source and font handoff proofs and all
+those consumers remain prerequisites to user-visible support. No behavioral
+or device tests have run.
 
 An additional unwired font capture helper can retain the configured font files
 in order as immutable byte snapshots. It allows at most eight regular files and

@@ -691,6 +691,52 @@ impl ParleyChapter {
         self.glyphs.release_masks();
     }
 
+    /// Rasterize a fully verified long-chapter page window using the regular
+    /// grayscale painter. The page remains isolated from the live Reader.
+    pub(crate) fn capture_verified_page(
+        page: crate::long_chapter_plan::index::VerifiedPage,
+        settings: Settings,
+        styles: &[Style],
+    ) -> Result<Vec<u8>> {
+        let bounds = page.bounds;
+        let mut paragraphs = Vec::new();
+        let count = page
+            .batches
+            .iter()
+            .try_fold(0usize, |total, batch| {
+                total.checked_add(batch.paragraphs.len())
+            })
+            .ok_or("The long chapter page is too large")?;
+        paragraphs
+            .try_reserve_exact(count)
+            .map_err(|_| "The long chapter page cannot be reserved")?;
+        for batch in page.batches {
+            paragraphs.extend(batch.paragraphs);
+        }
+        let mut chapter = Self {
+            paragraphs,
+            illustrations: Vec::new(),
+            markers: Vec::new(),
+            table_frames: Vec::new(),
+            in_page_table_extents: HashMap::new(),
+            note_table_fit_failed: false,
+            padded_backgrounds: Vec::new(),
+            physical_break_runs: Vec::new(),
+            publisher_height_spaces: Vec::new(),
+            fitted_height_tails: Vec::new(),
+            float_geometry: false,
+            limitations: Vec::new(),
+            glyphs: GlyphCache::with_hinting(
+                settings.logical_font_size.is_some(),
+                settings.font_hinting,
+                styles
+                    .first()
+                    .map_or_else(Default::default, |style| style.font_weights.clone()),
+            ),
+        };
+        chapter.capture(bounds, settings)
+    }
+
     pub fn new(
         book: &mut Book,
         href: &str,

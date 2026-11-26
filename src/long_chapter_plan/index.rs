@@ -503,6 +503,21 @@ impl PageIndex {
         Ok(VerifiedPage { bounds, batches })
     }
 
+    /// Render one page only after every contributing batch matches its
+    /// captured transcript. The caller must still bind the result to a live
+    /// book and Reader session before showing it.
+    pub(crate) fn render_page(&self, page: usize, cancel: &AtomicBool) -> Result<Vec<u8>> {
+        let verified = self.replay_page(page, cancel)?;
+        cancelled(cancel)?;
+        let pixels = crate::parley_layout::ParleyChapter::capture_verified_page(
+            verified,
+            self.settings,
+            &self.styles,
+        )?;
+        cancelled(cancel)?;
+        Ok(pixels)
+    }
+
     pub(crate) fn page_count(&self) -> usize {
         self.bounds.len().saturating_sub(1)
     }
