@@ -19,10 +19,13 @@ The adjacent-owner and retained-carriage-return behavior follows the
 
 Native `<pre>` defaults to preserved, non-wrapping whitespace before the CSS
 cascade; explicit author or user `white-space` declarations still take priority.
-For a bounded horizontal LTR ASCII passage with publisher styles disabled, one
-text owner, a single shaped font run, no complex layout or indent, a measurable
-standalone zero glyph and a consistently measured space glyph, Reader can
-apply tab stops without changing source characters or caret offsets. The default
+For a bounded horizontal LTR ASCII passage with publisher styles disabled, or
+with a complete source that has no `style` attribute, `<style>` or `<link>`
+element, or stylesheet processing instruction, Reader can use the same tab path
+while publisher styles are enabled. It also requires one text owner, a single
+shaped font run, no complex layout or indent, a measurable
+standalone zero glyph and a consistently measured space glyph. Tab stops do not
+change source characters or caret offsets. The default
 is eight spaces. Strictly validated user CSS may set an inherited numeric
 `tab-size` from 0 to 32, or use `inherit`, `initial`, and
 `unset`; unsupported values and pseudo-element declarations are rejected. The
@@ -34,7 +37,8 @@ advance policies leave it unchanged; otherwise it retains the previous path.
 The same cluster advances drive line fitting, drawing
 and hit-testing. Reader keeps the old path if a line would overflow or the
 mapping cannot be proved. Publisher `tab-size` overrides, lengths, wrapped lines, RTL text,
-mixed styles and complex layouts are not yet supported by this path. The probe
+mixed styles and complex layouts are not yet supported by this path; author
+style evidence retains the previous behavior. The probe
 and admitted ASCII text both resolve to Latin under Parley's current itemizer;
 other scripts and custom synthetic-weight and cluster-spacing advances remain
 on the prior path. This tab behavior and the native `<pre>` default require

@@ -708,7 +708,8 @@ pub(crate) struct Style {
     pub writing_mode: WritingMode,
     /// Whether spacing-sensitive rendering is requested by HTML pre or CSS.
     pub preformatted_spaces: bool,
-    /// Publisher CSS is disabled and user CSS is strictly validated.
+    /// Publisher CSS is disabled or the complete source proves it is absent;
+    /// user CSS is strictly validated.
     pub(crate) simple_default_tab_stops: bool,
     /// Inherited numeric CSS tab size, measured in the block's spaces.
     pub(crate) tab_size_spaces: f32,
@@ -817,6 +818,7 @@ impl Style {
 #[derive(Default)]
 pub(crate) struct BookStyle {
     author_inline: bool,
+    no_publisher_styles: bool,
     media_context: Option<MediaContext>,
     rules: Vec<Rule>,
     base_rules: Vec<Rule>,
@@ -995,6 +997,7 @@ impl BookStyle {
     ) -> (Self, Vec<FontFace>) {
         let mut styled = Self {
             author_inline: true,
+            no_publisher_styles: source.no_publisher_styles,
             media_context: context,
             ..Self::default()
         };
@@ -1256,7 +1259,7 @@ impl BookStyle {
             cjk_tailored: self.layout_tweaks.cjk_tailored,
             ignore_table_hints: !self.author_inline || self.layout_tweaks.ignore_table_hints,
             native_table_widths: self.layout_tweaks.native_table_widths,
-            simple_default_tab_stops: !self.author_inline,
+            simple_default_tab_stops: !self.author_inline || self.no_publisher_styles,
             ..Style::default()
         };
         let mut pseudo_rules = pseudo::Rules::new(self);

@@ -109,7 +109,7 @@ fn block(node: Node<'_, '_>) -> bool {
     )
 }
 
-fn looks_like_marker(text: &str) -> bool {
+pub(crate) fn looks_like_marker(text: &str) -> bool {
     let text = text.trim().trim_matches(|c: char| !c.is_alphanumeric());
     if text.is_empty() || text.len() > 4 || !text.is_ascii() {
         return false;
@@ -198,6 +198,97 @@ pub(crate) fn extract_with_layout(
         prefer,
         Some(roots),
     )
+}
+
+/// Require a unique note target and either explicit target semantics or a
+/// backlink to the exact source anchor before treating an EPUB 2 link as a
+/// detached footnote. Ambiguous or unparseable documents do not qualify.
+pub(crate) fn detached_legacy_evidence(
+    xhtml: &str,
+    fragment: &str,
+    note_path: &str,
+    reference: &crate::Anchor,
+    host: &crate::source::Source,
+    host_xhtml: &str,
+    roots: &LayoutRoots<'_>,
+) -> bool {
+    if !roots.matches(xhtml) || reference.revision != host.revision {
+        return false;
+    }
+    let stripped;
+    let xml = if xhtml.contains("<!DOCTYPE html>") {
+        stripped = xhtml.replacen("<!DOCTYPE html>", "               ", 1);
+        stripped.as_str()
+    } else {
+        xhtml
+    };
+    let Ok(document) = Document::parse_with_options(
+        xml,
+        ParsingOptions {
+            nodes_limit: 100_000,
+            ..Default::default()
+        },
+    ) else {
+        return false;
+    };
+    let mut targets = document.descendants().filter(|node| {
+        node.is_element()
+            && (node.attribute("id") == Some(fragment)
+                || node.attribute((XML, "id")) == Some(fragment)
+                || node.has_tag_name("a") && node.attribute("name") == Some(fragment))
+    });
+    let Some(target) = targets.next() else {
+        return false;
+    };
+    if targets.next().is_some() {
+        return false;
+    }
+    let Some(container) = roots.root(target, fragment) else {
+        return false;
+    };
+    if target.ancestors().any(note_container) {
+        return true;
+    }
+    let host_stripped;
+    let host_xml = if host_xhtml.contains("<!DOCTYPE html>") {
+        host_stripped = host_xhtml.replacen("<!DOCTYPE html>", "               ", 1);
+        host_stripped.as_str()
+    } else {
+        host_xhtml
+    };
+    let Ok(host_document) = Document::parse_with_options(
+        host_xml,
+        ParsingOptions {
+            nodes_limit: 100_000,
+            ..Default::default()
+        },
+    ) else {
+        return false;
+    };
+    container
+        .descendants()
+        .filter(|node| node.has_tag_name("a"))
+        .filter_map(|node| node.attribute("href"))
+        .take(16)
+        .filter_map(|href| crate::epub::Book::resolve_link(note_path, href).ok())
+        .any(|target| {
+            let Some(id) = target.fragment.as_deref() else {
+                return false;
+            };
+            target.path == reference.chapter
+                && host.fragments.get(id).copied() == Some((reference.block, reference.offset))
+                && host_document
+                    .descendants()
+                    .filter(|node| {
+                        node.is_element()
+                            && (node.attribute("id") == Some(id)
+                                || node.attribute((XML, "id")) == Some(id)
+                                || node.has_tag_name("a") && node.attribute("name") == Some(id))
+                    })
+                    .take(2)
+                    .count()
+                    == 1
+        })
 }
 
 fn extract_inner(

@@ -515,7 +515,15 @@ dictionary lookup; its Open in book action is unavailable because the target
 is outside the reading spine. Links to ordinary spine targets retain the
 existing navigation behavior.
 
-The candidate currently requires an explicit noteref, a fragment and a local
+Short or raised EPUB 2-style references in prose can also open this popup when
+the target is a unique semantic note or contains a backlink to the exact,
+uniquely identified source anchor. Contents destinations, ambiguous IDs,
+ordinary links and links lacking this evidence retain the existing fallback.
+Backlink inspection is limited to the first 16 links in the extracted note.
+The backlink's mapped source offset must equal the selected reference start;
+leading whitespace inside a reference link can therefore cause a safe fallback.
+
+The candidate currently requires a verified note reference, a fragment and a local
 packaged EPUB of at most 16 MiB with a verified source and fonts. Folder EPUBs,
 ambiguous or non-XHTML manifest entries, damaged or missing note resources,
 oversized snapshots and unsupported source layouts retain the existing

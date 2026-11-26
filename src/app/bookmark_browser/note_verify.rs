@@ -146,7 +146,7 @@ impl Reader {
             let last = probe
                 .chapter_index(&mark.selection.end.chapter)
                 .ok_or("That chapter is unavailable")?;
-            if first >= last
+            if first > last
                 || mark.selection.start.book != probe.book
                 || mark.selection.end.book != probe.book
             {
@@ -225,6 +225,19 @@ impl Reader {
                     })?;
                     if !verified {
                         return Err("This saved mark no longer matches the open document");
+                    }
+                    if first == last {
+                        let selection = &mark.selection;
+                        let resolved = if selection.start.raw_caret.is_some()
+                            || selection.end.raw_caret.is_some()
+                        {
+                            probe.select_raw_anchors(&selection.start, &selection.end)
+                        } else {
+                            probe.select_source_range(&selection.start, &selection.end)
+                        };
+                        if resolved.as_ref() != Some(selection) {
+                            return Err("This saved mark no longer matches the open document");
+                        }
                     }
                     worker_recipe
                         .verify_quote_span(

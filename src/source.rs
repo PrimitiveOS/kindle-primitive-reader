@@ -247,6 +247,8 @@ pub(crate) struct Source {
     fragment_owners: BTreeMap<String, usize>,
     pub list_counters: Vec<crate::list_marker::CounterGroup>,
     pub stylesheets: Vec<Stylesheet>,
+    /// Complete chapter-wide proof for the conservative default-tab path.
+    pub(crate) no_publisher_styles: bool,
     // Parallel to stylesheets; unknown or oversized attributes remain absent
     // so consumers without a media context retain the previous behavior.
     pub(crate) stylesheet_media: Vec<Option<String>>,
@@ -663,6 +665,19 @@ impl Source {
             outcome => outcome?,
         };
         let root = html.root_element();
+        // Keep this stricter than the supported stylesheet collector: an
+        // ignored or hidden author style is still evidence that the source is
+        // not unstyled. This never changes the canonical text or identities.
+        let no_publisher_styles = !html.descendants().any(|node| {
+            node.pi()
+                .is_some_and(|pi| pi.target.eq_ignore_ascii_case("xml-stylesheet"))
+                || (node.is_element()
+                    && (node.tag_name().name().eq_ignore_ascii_case("style")
+                        || node.tag_name().name().eq_ignore_ascii_case("link")
+                        || node
+                            .attributes()
+                            .any(|attr| attr.name().eq_ignore_ascii_case("style"))))
+        });
         let mut origins = Vec::new();
         let mut node_origins = HashMap::new();
         if extraction.origins {
@@ -1579,6 +1594,7 @@ impl Source {
             fragment_owners,
             list_counters: list_items.counters,
             stylesheets,
+            no_publisher_styles,
             stylesheet_media,
             table_cells: tables.by_element(&element_ids),
             elements,

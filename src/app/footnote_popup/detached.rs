@@ -49,6 +49,10 @@ impl Job {
 struct Output {
     proof: super::super::bookmark_browser::other_epub::Proof,
     stamps: Vec<FileStamp>,
+    note: Option<PreparedNote>,
+}
+
+struct PreparedNote {
     excerpt: String,
     preview: crate::PreparedParleyChapter,
     frame: GrayImage,
@@ -127,6 +131,7 @@ impl Reader {
             .any(|entry| entry.destination.as_ref() == Some(&target));
         let prefer = self.controls.prefer_footnotes;
         let worker_target = target.clone();
+        let worker_reference = reference.clone();
         let worker_fonts = fonts.clone();
         let worker_fallback = fallback_fonts.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -158,6 +163,22 @@ impl Reader {
                             id,
                             &worker_cancelled,
                         )?;
+                    // A negative note classification follows the old link
+                    // path only after the same source and font checks.
+                    let decline = || -> crate::Result<Output> {
+                        check()?;
+                        if with_storage(|| font_stamps(&worker_fonts, &worker_fallback))? != stamps
+                        {
+                            return Err("The footnote fonts changed".into());
+                        }
+                        proof.revalidate()?;
+                        check()?;
+                        Ok(Output {
+                            proof: proof.clone(),
+                            stamps: stamps.clone(),
+                            note: None,
+                        })
+                    };
                     let mut book = Book::open_snapshot(bytes)?;
                     if book.revision() != publication {
                         return Err("The book changed; reopen it first".into());
@@ -182,6 +203,66 @@ impl Reader {
                         .fragment
                         .as_deref()
                         .ok_or("The footnote has no target")?;
+                    if context.kind != Reference::Explicit {
+                        let reference = worker_reference
+                            .as_ref()
+                            .ok_or("The note reference is unavailable")?;
+                        if toc_target {
+                            return decline();
+                        }
+                        if !context.in_prose
+                            || reference.start.book != publication
+                            || reference.end.book != publication
+                            || reference.start.chapter != reference.end.chapter
+                            || reference.start.block != context.source_block
+                            || reference.start.raw_caret.is_some()
+                            || reference.end.raw_caret.is_some()
+                        {
+                            return Err("The link cannot be verified as a footnote".into());
+                        }
+                        let mut matches = book
+                            .chapters
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, entry)| entry.href == reference.start.chapter);
+                        let (host_index, host_entry) =
+                            matches.next().ok_or("The note reference is unavailable")?;
+                        if matches.next().is_some()
+                            || book.recovered_placeholder(host_entry)
+                            || book.is_manifest_fallback(host_entry)
+                        {
+                            return Err("The note reference is ambiguous".into());
+                        }
+                        let host_path = host_entry.href.clone();
+                        let host_xml = book.chapter(host_index)?;
+                        let language = settings
+                            .typography
+                            .resolve(book.language.map(crate::TypographyLocale::publication))
+                            .map(crate::TypographyLocale::shaping_language);
+                        let host = book.chapter_source_with_language(
+                            &host_path,
+                            &host_xml,
+                            language,
+                            settings.typography.respect_embedded,
+                        )?;
+                        check()?;
+                        if reference.start.revision != host.revision
+                            || reference.end.revision != host.revision
+                        {
+                            return Err("The note reference changed".into());
+                        }
+                        if !footnotes::detached_legacy_evidence(
+                            &xhtml,
+                            fragment,
+                            &worker_target.path,
+                            &reference.start,
+                            &host,
+                            &host_xml,
+                            &roots,
+                        ) {
+                            return decline();
+                        }
+                    }
                     let excerpt = footnotes::extract_with_layout(
                         &xhtml,
                         fragment,
@@ -190,8 +271,13 @@ impl Reader {
                         toc_target,
                         prefer,
                         &roots,
-                    )
-                    .ok_or("The footnote could not be extracted")?;
+                    );
+                    let Some(excerpt) = excerpt else {
+                        if context.kind != Reference::Explicit {
+                            return decline();
+                        }
+                        return Err("The footnote could not be extracted".into());
+                    };
                     check()?;
                     let mut opened = Some(book);
                     let mut preview = Probe::layout_opened_book_cancellable(
@@ -226,9 +312,11 @@ impl Reader {
                     Ok(Output {
                         proof,
                         stamps,
-                        excerpt,
-                        preview,
-                        frame,
+                        note: Some(PreparedNote {
+                            excerpt,
+                            preview,
+                            frame,
+                        }),
                     })
                 })();
                 if !worker_cancelled.load(Ordering::Relaxed) {
@@ -362,21 +450,25 @@ impl Reader {
                         .as_ref()
                         == Some(&output.stamps) =>
             {
-                let preview = output.preview.into_probe();
-                let cursor = preview.page_anchor(0);
-                self.show(Screen::Footnote);
-                self.footnote = Some(Footnote {
-                    target: job.target.clone(),
-                    reference: job.reference.clone(),
-                    preview,
-                    viewport: job.viewport,
-                    source: output.excerpt,
-                    cursor,
-                    page: 0,
-                    frame: output.frame,
-                    selection: None,
-                    detached: true,
-                });
+                if let Some(note) = output.note {
+                    let preview = note.preview.into_probe();
+                    let cursor = preview.page_anchor(0);
+                    self.show(Screen::Footnote);
+                    self.footnote = Some(Footnote {
+                        target: job.target.clone(),
+                        reference: job.reference.clone(),
+                        preview,
+                        viewport: job.viewport,
+                        source: note.excerpt,
+                        cursor,
+                        page: 0,
+                        frame: note.frame,
+                        selection: None,
+                        detached: true,
+                    });
+                } else if let Err(error) = self.follow(job.target.clone()) {
+                    self.notice = Some(error.to_string());
+                }
             }
             Ok(_) => self.notice = Some("The book or footnote fonts changed".into()),
             Err(error) => self.notice = Some(error.to_string()),

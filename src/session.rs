@@ -475,7 +475,7 @@ impl SearchLayoutRecipe {
     ) -> Result<()> {
         use std::sync::atomic::Ordering;
         if !self.has_verified_sources()
-            || first >= last
+            || first > last
             || last.saturating_sub(first) >= 8
             || start.book != end.book
         {

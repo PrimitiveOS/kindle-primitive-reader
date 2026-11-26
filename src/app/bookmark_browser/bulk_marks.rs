@@ -298,8 +298,7 @@ pub(super) fn ask_detail(reader: &mut Reader) -> Result<()> {
         .state(key.book)
         .ok_or("That book is unavailable")?;
     let target = Snapshot::capture(book, key.locator)?;
-    let verify_async = matches!(&target, Snapshot::Reflow(_, mark)
-        if mark.selection.start.chapter != mark.selection.end.chapter);
+    let verify_async = matches!(&target, Snapshot::Reflow(..));
     if !verify_async {
         target.verify_source(reader)?;
     }
@@ -325,13 +324,16 @@ pub(super) fn ask_detail(reader: &mut Reader) -> Result<()> {
 }
 
 pub(super) fn confirm(reader: &mut Reader) -> Result<()> {
-    let cross_chapter = reader.bookmark_browser.pending_mark_removal.as_ref().is_some_and(|pending| {
-        pending.detail.is_some() && pending.targets.len() == 1 && matches!(
-            &pending.targets[0].target,
-            Snapshot::Reflow(_, mark) if mark.selection.start.chapter != mark.selection.end.chapter
-        )
-    });
-    if cross_chapter {
+    let reflow_highlight = reader
+        .bookmark_browser
+        .pending_mark_removal
+        .as_ref()
+        .is_some_and(|pending| {
+            pending.detail.is_some()
+                && pending.targets.len() == 1
+                && matches!(&pending.targets[0].target, Snapshot::Reflow(..))
+        });
+    if reflow_highlight {
         return reader.start_mark_removal_verification(true);
     }
     confirm_inner(reader, false)
@@ -367,8 +369,7 @@ fn confirm_inner(reader: &mut Reader, verified: bool) -> Result<()> {
     if verified
         && !(pending.detail.is_some()
             && pending.targets.len() == 1
-            && matches!(&pending.targets[0].target, Snapshot::Reflow(_, mark)
-            if mark.selection.start.chapter != mark.selection.end.chapter))
+            && matches!(&pending.targets[0].target, Snapshot::Reflow(..)))
     {
         return Err("Review the mark before removing it".into());
     }

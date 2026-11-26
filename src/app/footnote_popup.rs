@@ -311,8 +311,14 @@ impl Reader {
             return false;
         }
         let Some(index) = index else {
-            return context.kind == Reference::Explicit
-                && self.start_detached_note(target, context, reference);
+            let short_raised = context.kind == Reference::Raised
+                && !context.label.trim().is_empty()
+                && context.label.chars().count() <= 8;
+            let candidate = context.kind == Reference::Explicit
+                || (context.in_prose
+                    && reference.is_some()
+                    && (short_raised || footnotes::looks_like_marker(&context.label)));
+            return candidate && self.start_detached_note(target, context, reference);
         };
         let viewport = self.reading_viewport();
         let toc_target = reading

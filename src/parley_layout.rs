@@ -4624,11 +4624,10 @@ fn shape_paragraph(
         );
     }
     let Some(width) = width else { return layout };
-    // Numeric tab stops are admitted only without publisher styles, using
-    // strictly validated user CSS. Commit nothing unless every shaped atom
-    // maps exactly and each unwrapped line fits this viewport.
-    if !settings.publisher_styles
-        && style.simple_default_tab_stops
+    // Publisher styles must be disabled or proven absent from the complete
+    // source; user CSS is strictly validated. Commit nothing unless every
+    // shaped atom maps exactly and each unwrapped line fits this viewport.
+    if style.simple_default_tab_stops
         && style.preformatted_spaces
         && matches!(
             style.white_space,
