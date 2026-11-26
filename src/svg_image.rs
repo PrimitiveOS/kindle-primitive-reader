@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::sync::Arc;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use image::{GrayImage, ImageDecoder};
 use resvg::{tiny_skia, usvg};
 use roxmltree::{Document, ParsingOptions};
@@ -179,10 +180,16 @@ fn inline_pixmap(
         if images.len() >= 8 {
             return Err("The inline SVG has too many image resources".into());
         }
-        let path = crate::epub::Book::resolve(chapter, href)?;
-        let data =
-            book.resource_limited(&path, (8 * 1024 * 1024usize).saturating_sub(source_bytes))?;
-        source_bytes += data.len();
+        let remaining = (8 * 1024 * 1024usize).saturating_sub(source_bytes);
+        let data = if href.starts_with("data:") {
+            svg_data_image(href, remaining)?
+        } else {
+            let path = crate::epub::Book::resolve(chapter, href)?;
+            book.resource_limited(&path, remaining)?
+        };
+        source_bytes = source_bytes
+            .checked_add(data.len())
+            .ok_or("The SVG raster resource budget overflowed")?;
         let (w, h) = crate::epub_raster_dimensions(&data)?;
         source_pixels += w as usize * h as usize;
         if source_pixels > budget {
@@ -243,6 +250,32 @@ fn inline_pixmap(
     )?;
     let cost = source_pixels.max(viewport.width() as usize * viewport.height() as usize);
     Ok((viewport, cost))
+}
+
+// Restrict embedded images to canonical base64 of the three existing raster
+// types. The same image and aggregate budgets apply as for local book paths.
+fn svg_data_image(href: &str, limit: usize) -> Result<Vec<u8>> {
+    let (mime, encoded) = href
+        .strip_prefix("data:")
+        .and_then(|value| value.split_once(";base64,"))
+        .ok_or("The SVG data image must use canonical base64")?;
+    if !matches!(mime, "image/png" | "image/jpeg" | "image/gif") || encoded.len() > MAX_SVG_BYTES {
+        return Err("The SVG data image type or size is unsupported".into());
+    }
+    let bytes = STANDARD.decode(encoded)?;
+    if bytes.len() > limit || STANDARD.encode(&bytes) != encoded {
+        return Err("The SVG data image is noncanonical or exceeds its resource budget".into());
+    }
+    let valid_signature = match mime {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.starts_with(b"\xff\xd8\xff"),
+        "image/gif" => crate::gif_image::has_signature(&bytes),
+        _ => false,
+    };
+    if !valid_signature {
+        return Err("The SVG data image does not match its declared type".into());
+    }
+    Ok(bytes)
 }
 
 // Limit PNG output while encoding, rather than allocating an unbounded result
@@ -323,7 +356,17 @@ fn render_pixmap(
     let options = usvg::Options {
         max_depth: MAX_DEPTH,
         image_href_resolver: usvg::ImageHrefResolver {
-            resolve_data: Box::new(|_, _, _| None),
+            resolve_data: Box::new(|mime, data, _| {
+                // usvg decodes data URLs itself; allow only the exact canonical
+                // URL already parsed, budgeted and validated by inline_pixmap.
+                if data.len() > MAX_SVG_BYTES
+                    || !matches!(mime, "image/png" | "image/jpeg" | "image/gif")
+                {
+                    return None;
+                }
+                let key = format!("data:{mime};base64,{}", STANDARD.encode(data.as_ref()));
+                images.and_then(|images| images.get(&key).cloned())
+            }),
             resolve_string: Box::new(|href, _| images.and_then(|images| images.get(href).cloned())),
         },
         ..Default::default()

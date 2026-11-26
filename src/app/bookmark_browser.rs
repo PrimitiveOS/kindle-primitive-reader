@@ -23,6 +23,7 @@ use std::io::Read;
 use std::ops::Range;
 use std::path::PathBuf;
 
+#[cfg(test)]
 const CASE: Rect = Rect::new(40, 314, 386, 72);
 const FIRST_MARK: Rect = Rect::new(40, 147, 210, 70);
 const CONTROL_WIDTH: i32 = 386;
@@ -33,6 +34,17 @@ const REVIEW_SELECTION_CONTROL_ROWS: usize = 3;
 struct BrowserLayout(NavigationLayout);
 
 impl BrowserLayout {
+    fn search_option(self, index: usize) -> Rect {
+        let gap = 12;
+        let width = ((self.0.width - 80 - gap * 3) / 4).max(1);
+        self.0.horizontal(Rect::new(
+            40 + index as i32 * (width + gap),
+            314,
+            width,
+            100,
+        ))
+    }
+
     fn body(self, y: i32, height: i32) -> Rect {
         self.0.body(y, height)
     }
@@ -160,6 +172,14 @@ pub(super) enum Kind {
 }
 
 impl Kind {
+    fn index(self) -> usize {
+        match self {
+            Self::Bookmark => 0,
+            Self::Highlight => 1,
+            Self::Note => 2,
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Bookmark => "Page bookmark",
@@ -195,8 +215,8 @@ struct Mark<'a> {
 impl Mark<'_> {
     fn kind(&self) -> Kind {
         match (self.style, self.note) {
-            (_, Some(_)) => Kind::Note,
             (None, _) => Kind::Bookmark,
+            (Some(_), Some(_)) => Kind::Note,
             _ => Kind::Highlight,
         }
     }
@@ -462,6 +482,8 @@ pub(super) struct Browser {
     query_text: String,
     query: Option<Query>,
     case_sensitive: bool,
+    search_types: [bool; 3],
+    draft_search_types: [bool; 3],
     kind: Option<Kind>,
     style: Option<HighlightStyle>,
     color: Option<HighlightColor>,
@@ -527,6 +549,8 @@ impl Default for Browser {
             query_text: String::new(),
             query: None,
             case_sensitive: false,
+            search_types: [true; 3],
+            draft_search_types: [true; 3],
             kind: None,
             style: None,
             color: None,
@@ -761,6 +785,8 @@ impl Reader {
                 browser.query_text.clear();
                 browser.query = None;
                 browser.case_sensitive = false;
+                browser.search_types = [true; 3];
+                browser.draft_search_types = [true; 3];
                 browser.restricted = None;
                 browser.after_password = None;
                 browser.sources_from_results = false;
@@ -786,6 +812,7 @@ impl Reader {
                     self.editor = Editor::new(crate::search::MAX_QUERY_BYTES);
                     self.editor.text = self.bookmark_browser.query_text.chars().collect();
                     self.editor.caret = self.editor.text.len();
+                    self.bookmark_browser.draft_search_types = self.bookmark_browser.search_types;
                 }
                 if page == Page::ChooseBooks {
                     self.bookmark_browser.picking = None;
@@ -1410,6 +1437,8 @@ impl Reader {
                 }
                 browser.query_text.clear();
                 browser.query = None;
+                browser.search_types = [true; 3];
+                browser.draft_search_types = [true; 3];
                 browser.restricted = None;
                 self.refresh_bookmark_browser();
             }
@@ -1504,7 +1533,8 @@ impl Reader {
                 ) else {
                     continue;
                 };
-                if browser.kind.is_some_and(|kind| mark.kind() != kind)
+                if !browser.search_types[mark.kind().index()]
+                    || browser.kind.is_some_and(|kind| mark.kind() != kind)
                     || browser.style.is_some_and(|style| mark.style != Some(style))
                     || browser.color.is_some_and(|color| mark.color != Some(color))
                     || browser.query.as_ref().is_some_and(|query| {
@@ -2218,15 +2248,21 @@ impl Reader {
             Page::Results => {
                 let browser = &self.bookmark_browser;
                 let books = browser.books.iter().filter(|book| book.count > 0).count();
-                canvas.text(
-                    layout.0.footer_text(40, 246, 40),
-                    &format!(
-                        "{} · {}",
-                        browser.source_label,
-                        language.bookmark_counts(browser.marks.len(), books)
-                    ),
-                    CAPTION,
+                let types = if browser.search_types == [true; 3] {
+                    ""
+                } else {
+                    language.bookmark_text("Types filtered")
+                };
+                let mut summary = format!(
+                    "{} · {}",
+                    browser.source_label,
+                    language.bookmark_counts(browser.marks.len(), books)
                 );
+                if !types.is_empty() {
+                    summary.push_str(" · ");
+                    summary.push_str(types);
+                }
+                canvas.text(layout.0.footer_text(40, 246, 40), &summary, CAPTION);
                 canvas.button(
                     layout.control(0, 198, 72),
                     language.bookmark_text("Sources"),
@@ -2254,12 +2290,25 @@ impl Reader {
                     language.bookmark_text("Bookmark, highlighted text or note"),
                     false,
                 );
+                canvas.text(
+                    layout.body(284, 28),
+                    language.bookmark_text("Search options"),
+                    CAPTION,
+                );
                 canvas.button(
-                    CASE,
-                    language.bookmark_text("Match case"),
+                    layout.search_option(0),
+                    language.bookmark_text("Case"),
                     self.bookmark_browser.case_sensitive,
                     false,
                 );
+                for (index, label) in ["Bookmark", "Highlight", "Note"].into_iter().enumerate() {
+                    canvas.button(
+                        layout.search_option(index + 1),
+                        language.bookmark_text(label),
+                        self.bookmark_browser.draft_search_types[index],
+                        false,
+                    );
+                }
                 canvas.keyboard(self.editor.layer, language.bookmark_text("Find"), None);
                 true
             }
@@ -2494,11 +2543,19 @@ impl Reader {
         let Input::Tap(x, y) = input else {
             return Change::None;
         };
-        if contains(CASE, x, y) {
+        let layout = BrowserLayout(self.navigation_layout());
+        if contains(layout.search_option(0), x, y) {
             self.bookmark_browser.case_sensitive = !self.bookmark_browser.case_sensitive;
             return Change::Partial;
         }
-        let layout = self.navigation_layout().keyboard();
+        for index in 0..3 {
+            if contains(layout.search_option(index + 1), x, y) {
+                self.bookmark_browser.draft_search_types[index] =
+                    !self.bookmark_browser.draft_search_types[index];
+                return Change::Partial;
+            }
+        }
+        let layout = layout.0.keyboard();
         let action = self.controls.interface_language.bookmark_text("Find");
         let Some(key) = keyboard_key(&layout, &self.editor, action, x, y) else {
             return Change::None;
@@ -2515,6 +2572,7 @@ impl Reader {
                 }
             };
             self.bookmark_browser.query_text = query.to_owned();
+            self.bookmark_browser.search_types = self.bookmark_browser.draft_search_types;
             self.refresh_bookmark_browser();
             self.show(Screen::BookmarkBrowser(Page::Results));
         }

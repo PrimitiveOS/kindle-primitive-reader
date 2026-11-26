@@ -54,6 +54,7 @@ mod fixed_book_map;
 #[cfg(test)]
 mod fixed_results_tests;
 mod flexible_results;
+mod folder_lifecycle;
 #[cfg(test)]
 mod font_render_tests;
 mod footer_custom_text;
@@ -1033,6 +1034,7 @@ pub struct Reader {
     book_map_raw_history: Option<reflow_book_map_history::Verification>,
     book_map_raw_counts: Option<reflow_book_map_raw_counts::Verification>,
     page_bookmark_search: Option<page_bookmark_navigation::Search>,
+    folder_resume_gate: Option<folder_lifecycle::Gate>,
     page_bookmark_worker_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     skim: Option<skim::Session>,
     staged_viewport: Option<(
@@ -1305,6 +1307,7 @@ impl Reader {
             book_map_raw_history: None,
             book_map_raw_counts: None,
             page_bookmark_search: None,
+            folder_resume_gate: None,
             page_bookmark_worker_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
@@ -10082,6 +10085,7 @@ impl App for Reader {
         self.draw_menu_search_preview(canvas);
         self.draw_bookmark_confirmation(canvas);
         self.draw_page_bookmark_search(canvas);
+        self.draw_folder_resume_gate(canvas);
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
@@ -10126,6 +10130,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.folder_resume_input(input) {
+            return change;
+        }
         if let Some(change) = self.page_bookmark_search_input(input) {
             return change;
         }
@@ -10262,6 +10269,9 @@ impl App for Reader {
     }
 
     fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        if self.folder_resume_gate.is_some() {
+            return Change::None;
+        }
         if self.page_bookmark_search.is_some() {
             return Change::None;
         }
@@ -10398,6 +10408,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.folder_resume_input(input) {
+            return change;
+        }
         if input == Input::Sleep {
             self.page_bookmark_search = None;
         }
@@ -11219,6 +11232,9 @@ impl App for Reader {
     }
 
     fn deadline(&self) -> Option<Instant> {
+        if let Some(gate) = &self.folder_resume_gate {
+            return gate.deadline();
+        }
         let page = self
             .active
             .as_ref()
@@ -11306,6 +11322,9 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if self.folder_resume_gate.is_some() {
+            return self.poll_folder_resume(now).unwrap_or(Change::None);
+        }
         if let Some(change) = self.poll_page_bookmark_search(now) {
             return change;
         }
@@ -11552,6 +11571,12 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
+        if self.folder_resume_gate.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "The folder book is being verified",
+            ));
+        }
         self.finish_interrupted_scroll();
         self.overview_raw = None;
         self.book_map_raw_history = None;
@@ -11574,76 +11599,10 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
-        self.overview_raw = None;
-        self.book_map_raw_history = None;
-        self.book_map_raw_counts = None;
-        self.page_bookmark_search = None;
-        self.gestures.multiswipes.clear_contact();
-        self.finish_interrupted_scroll();
-        self.embedded_font_report = None;
-        self.gestures.clear_assigned_corner_hold();
-        if let Some(book) = &mut self.active {
-            book.embedded_font_inventory = None;
+        if self.start_folder_resume_gate()? {
+            return Ok(());
         }
-        self.eager_typography.cancel();
-        self.alternative_contents = Default::default();
-        self.sync_alternative_contents();
-        if self.screen.is_contents() {
-            self.prepare_contents(true);
-            self.list_page = self.current_contents_row.unwrap_or_default() / self.contents_rows();
-        }
-        self.close_dictionary_font_size();
-        if matches!(self.screen, Screen::DictionaryButtons(_)) {
-            self.show(Screen::Dictionaries);
-        }
-        self.closing_profile = None;
-        if self.closing_before_switch.is_some() && self.screen == Screen::PdfPassword {
-            self.handle_pdf_password(Input::PageBack);
-        }
-        self.closing_before_switch = None;
-        self.opening_execution = None;
-        self.install_opening_profile_plan(None);
-        self.screen_page_worker.cancel();
-        self.quote_repair.cancel();
-        self.cancel_screen_page_jump();
-        self.document_defaults.reload();
-
-        self.cjk_selection_lookup = None;
-        self.spelling_lookup = None;
-        self.cancel_ocr_selection();
-        self.pages_since_refresh = 0;
-        let now = Instant::now();
-        self.auto_turn.activity(now);
-        self.sync_auto_turn(now);
-        if self.screen == Screen::GeneratedContents {
-            self.show(Screen::Contents);
-        }
-        self.stats.discard_active();
-        self.reading_history.discard_active();
-        self.pace.storage_returned();
-        self.update_stats_activity(Instant::now());
-        self.ocr_assets = self
-            .ocr_root
-            .parent()
-            .and_then(Path::parent)
-            .and_then(OcrAssets::discover);
-        if let Some(active) = &mut self.active {
-            active.reading.storage_returned()?;
-        }
-        if let Some(fixed) = &mut self.fixed {
-            fixed.reading.pause();
-        }
-        self.save()?;
-        with_storage(|| self.library.scan())?;
-        self.refresh_browser()?;
-        if self.screen == Screen::PageOverview {
-            self.start_overview_raw_verification();
-        }
-        if self.screen == Screen::BookMap {
-            self.start_book_map_raw_history();
-            self.start_book_map_raw_counts();
-        }
-        Ok(())
+        self.finish_folder_storage_returned()
     }
 }
 

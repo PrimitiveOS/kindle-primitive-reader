@@ -171,6 +171,7 @@ fn open_word(
         docm.then_some((&types, &blocked)),
         false,
         false,
+        false,
     )?;
     let output = match convert_main_with_images(&main, &styles, images, false, false) {
         Ok(output) => output,
@@ -184,6 +185,7 @@ fn open_word(
                 &main_relations.images,
                 docm.then_some((&types, &blocked)),
                 true,
+                false,
                 false,
             )?;
             match convert_main_with_images(&main, &styles, images, false, false) {
@@ -202,17 +204,41 @@ fn open_word(
                         docm.then_some((&types, &blocked)),
                         true,
                         true,
+                        false,
                     )?;
-                    let output =
+                    let (output, selected_resources) =
                         match convert_main_with_images(&main, &styles, images.clone(), true, false)
                         {
-                            Ok(output) => output,
+                            Ok(output) => (output, vml_resources),
                             Err(error) if error.downcast_ref::<NoReadableContent>().is_some() => {
-                                convert_main_with_images(&main, &styles, images, true, true)?
+                                match convert_main_with_images(&main, &styles, images, true, true) {
+                                    Ok(output) => (output, vml_resources),
+                                    Err(error)
+                                        if error.downcast_ref::<NoReadableContent>().is_some() =>
+                                    {
+                                        // Only books rejected by every earlier conversion
+                                        // can use the additional still-image formats.
+                                        let (images, extra_resources) = read_images(
+                                            &mut archive,
+                                            &parts,
+                                            &main,
+                                            &main_relations.images,
+                                            docm.then_some((&types, &blocked)),
+                                            true,
+                                            true,
+                                            true,
+                                        )?;
+                                        let output = convert_main_with_images(
+                                            &main, &styles, images, true, true,
+                                        )?;
+                                        (output, extra_resources)
+                                    }
+                                    Err(error) => return Err(error),
+                                }
                             }
                             Err(error) => return Err(error),
                         };
-                    resources = vml_resources;
+                    resources = selected_resources;
                     output
                 }
                 Err(error) => return Err(error),
@@ -342,6 +368,7 @@ fn read_images<R: Read + Seek>(
     docm_policy: Option<(&ContentTypes, &BTreeSet<String>)>,
     extended: bool,
     vml: bool,
+    extra_raster: bool,
 ) -> Result<(BTreeMap<String, String>, BTreeMap<String, Vec<u8>>)> {
     let xml = xml(main)?;
     let mut images = BTreeMap::new();
@@ -365,6 +392,8 @@ fn read_images<R: Read + Seek>(
             Some("jpg" | "jpeg") => "jpg",
             Some("bmp") if extended => "bmp",
             Some("gif") if extended => "gif",
+            Some("tif" | "tiff") if extra_raster => "tiff",
+            Some("webp") if extra_raster => "webp",
             _ => continue,
         };
         if let Some((types, blocked)) = docm_policy {
@@ -377,6 +406,8 @@ fn read_images<R: Read + Seek>(
                     "jpg" => "image/jpeg",
                     "bmp" => "image/bmp",
                     "gif" => "image/gif",
+                    "tiff" => "image/tiff",
+                    "webp" => "image/webp",
                     _ => unreachable!(),
                 },
             )?;
@@ -405,10 +436,26 @@ fn read_images<R: Read + Seek>(
             "jpg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
             "bmp" => bytes.starts_with(b"BM"),
             "gif" => crate::gif_image::has_signature(&bytes),
+            "tiff" => bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*"),
+            "webp" => bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP"),
             _ => false,
         };
         if !valid_signature {
             return Err("A Word image does not match its declared format".into());
+        }
+        // Reject malformed/unsupported extra formats before generating an
+        // apparently readable image-only document. Keep the original payload.
+        match extension {
+            "tiff" => {
+                crate::tiff_image::decode(&bytes)?;
+            }
+            "webp" => {
+                let png = crate::comic::ImagePage::webp_as_png(&bytes)?;
+                if png.len() as u64 > crate::comic::MAX_WEBP_BYTES {
+                    return Err("The converted Word WebP exceeds its image limit".into());
+                }
+            }
+            _ => {}
         }
         remaining -= bytes.len() as u64;
         let name = format!("reader-docx-image-{}.{}", images.len(), extension);

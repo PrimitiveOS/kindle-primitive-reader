@@ -75,3 +75,15 @@ the supported subset to its existing reflowable document pipeline. [Provider](ht
 This implementation has not yet been compared with KOReader or exercised in
 the simulator or on Kindle. DOCM behavior has not yet been tested. Full Word
 format parity is not claimed.
+
+After all earlier Word conversions report no readable content, a further
+image-only fallback can attempt local TIFF and simple still WebP drawings. It
+uses the same package relationship, blocked-target and DOCM content-type
+checks, 4 MiB per-image and 16 MiB total resource limits. TIFF and WebP
+payloads are preflighted with Reader's existing bounded decoders, while the
+original image bytes and resource keys remain in the in-memory document.
+Unsupported/malformed TIFF, extended or animated WebP, and other variants
+remain unavailable. A Word document that previously opened successfully keeps
+its prior XHTML and anchors; images in such mixed documents are not added by
+this fallback. Decoder and PNG-conversion peak memory, exact KOReader behavior,
+and real-document, simulator and Kindle results remain unverified.

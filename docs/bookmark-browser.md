@@ -18,6 +18,21 @@ Result rows use the Reader's **Show in items** preference: highlighted text, hig
 
 Reading order follows source positions. **Date added** sorts each book's marks by their creation time. **Sort direction** reverses that order. Earlier marks without a recorded creation time appear after dated marks. The original reading order resolves equal or missing dates. The type, style and sorting preferences persist between sessions. Search text and the temporary book filter clear when the browser opens again.
 
+The **Find** screen can independently include page bookmarks, highlights
+without notes, and highlights with notes; any combination, including none,
+can be selected. Changes apply only when Find is submitted and intersect the
+existing source and Filters selections. Results indicate when search types are
+restricted. **Clear filters** restores all three search types, and reopening
+the browser resets them. A page bookmark with a note remains a page bookmark
+for type filtering, matching KOReader's distinction; its note is not removed
+or changed. This also corrects Reader's existing single-type filter, so a saved
+Note filter no longer includes page bookmarks with notes. Reviewed destructive
+actions still operate only on their explicitly selected, revalidated targets.
+KOReader's [search type checkboxes](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L1540-L1605)
+and [type classification](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L608-L616)
+are the reference. Search controls and their layout still require simulation
+and Kindle validation.
+
 Tap a mark to preview its full quotation and note. **First**, **Previous mark**, **Next mark** and **Last** move between matching marks and skip book headings. The physical page buttons move between marks. Long text has its own text controls and vertical scrolling. **Back** returns to the result page containing the selected mark.
 
 <img src="screenshots/bookmark-details.png" width="390" alt="A saved PDF note with a View in book action and controls for moving between matching notes">

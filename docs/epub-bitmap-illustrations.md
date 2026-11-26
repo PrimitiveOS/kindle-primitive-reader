@@ -63,7 +63,19 @@ the 8 MiB aggregate SVG raster budget; a capped writer stops PNG output at the
 remaining budget. A conservative 32 MiB accounting limit includes source bytes,
 declared decoder output, RGBA pixels and twice the remaining output allowance
 for vector growth. Decoder/encoder internal scratch and allocator overhead are
-not proven by this accounting. External and data URLs remain unavailable, and
-source paths, XHTML and anchors remain unchanged. Exact KOReader behavior,
+not proven by this accounting. External URLs remain unavailable, and source paths, XHTML and anchors remain
+unchanged. Exact KOReader behavior,
 malformed inputs, alpha fidelity, peak memory and real-book, simulator and
 Kindle behavior are unverified.
+
+Book-aware inline and package SVG rendering can also attempt self-contained
+canonical `data:image/png;base64,...`, `data:image/jpeg;base64,...` and
+`data:image/gif;base64,...` image references. Declared MIME types must match the
+image signature; noncanonical encoding, other MIME types and external URLs are
+rejected. The containing SVG stays within 256 KiB, and embedded images use the
+same eight-image, source-pixel, decoder and aggregate 8 MiB raster budgets as
+local references, including decoded GIF conversion costs. The SVG parser may
+create a second bounded copy of the decoded data. Standalone SVG rendering
+still rejects image elements. The image data is not extracted or fetched, and
+source XML and anchors remain unchanged. KOReader parity, malformed-input and
+memory behavior, and real-book, simulator and Kindle validation remain open.
