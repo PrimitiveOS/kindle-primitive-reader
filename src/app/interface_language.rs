@@ -3133,7 +3133,7 @@ impl InterfaceLanguage {
             "History" => "Lịch sử",
             "Current book" => "Sách đang đọc",
             "Show current page in results" => "Hiện trang đang đọc trong kết quả",
-            "Show latest mark in results" => "Hiện dấu mới nhất trong kết quả",
+            "Latest saved mark" => "Dấu đã lưu mới nhất",
             "No matching marks in the current book" => "Không có dấu phù hợp trong sách đang đọc",
             "No matching marks in the current chapter" => {
                 "Không có dấu phù hợp trong chương đang đọc"

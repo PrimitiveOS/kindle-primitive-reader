@@ -198,13 +198,37 @@ fn inline_pixmap(
         } else {
             let reader = crate::image_reader(&data)?;
             let format = reader.format();
-            if reader.into_decoder()?.total_bytes() > 24 * 1024 * 1024 {
+            let decoded_bytes = reader.into_decoder()?.total_bytes();
+            if decoded_bytes > 24 * 1024 * 1024 {
                 return Err("The inline SVG image is too large to decode".into());
             }
             match format {
                 Some(image::ImageFormat::Png) => usvg::ImageKind::PNG(Arc::new(data)),
                 Some(image::ImageFormat::Jpeg) => usvg::ImageKind::JPEG(Arc::new(data)),
-                _ => return Err("The SVG image needs a PNG, JPEG or GIF".into()),
+                Some(image::ImageFormat::Bmp | image::ImageFormat::Pnm) => {
+                    let remaining = (8 * 1024 * 1024usize)
+                        .checked_sub(source_bytes)
+                        .ok_or("The SVG exceeds its raster resource budget")?;
+                    let rgba = usize::try_from(u64::from(w) * u64::from(h) * 4)
+                        .map_err(|_| "The SVG image dimensions are too large")?;
+                    let declared = usize::try_from(decoded_bytes)
+                        .map_err(|_| "The SVG image is too large to decode")?;
+                    let combined = source_bytes
+                        .checked_add(declared)
+                        .and_then(|value| value.checked_add(rgba))
+                        // Allow for growth of the capped PNG Vec as it encodes.
+                        .and_then(|value| value.checked_add(remaining.checked_mul(2)?))
+                        .ok_or("The SVG image memory budget overflowed")?;
+                    if combined > 32 * 1024 * 1024 {
+                        return Err("The SVG image exceeds its conversion memory budget".into());
+                    }
+                    let png = svg_extra_raster_png(&data, remaining)?;
+                    source_bytes = source_bytes
+                        .checked_add(png.len())
+                        .ok_or("The SVG raster resource budget overflowed")?;
+                    usvg::ImageKind::PNG(Arc::new(png))
+                }
+                _ => return Err("The SVG image format is unsupported".into()),
             }
         };
         images.insert(href.to_owned(), kind);
@@ -219,6 +243,45 @@ fn inline_pixmap(
     )?;
     let cost = source_pixels.max(viewport.width() as usize * viewport.height() as usize);
     Ok((viewport, cost))
+}
+
+// Limit PNG output while encoding, rather than allocating an unbounded result
+// and checking only after it has already been produced.
+struct CappedPng {
+    bytes: Vec<u8>,
+    limit: usize,
+}
+
+impl std::io::Write for CappedPng {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        if data.len() > self.limit.saturating_sub(self.bytes.len()) {
+            return Err(std::io::Error::other(
+                "The SVG PNG conversion exceeds its resource budget",
+            ));
+        }
+        self.bytes.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn svg_extra_raster_png(data: &[u8], limit: usize) -> Result<Vec<u8>> {
+    use image::ImageEncoder;
+    let image = crate::image_reader(data)?.decode()?.into_rgba8();
+    let mut output = CappedPng {
+        bytes: Vec::new(),
+        limit,
+    };
+    image::codecs::png::PngEncoder::new(&mut output).write_image(
+        &image,
+        image.width(),
+        image.height(),
+        image::ExtendedColorType::Rgba8,
+    )?;
+    Ok(output.bytes)
 }
 
 pub(crate) fn png_resource(bytes: &[u8], available_pixels: usize) -> Result<(Vec<u8>, usize)> {

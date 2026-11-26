@@ -255,6 +255,7 @@ fn render_mode_switch_preserves_the_focused_quote_and_returns_to_the_original_fr
         quote_prefixes: Default::default(),
         screen_pages: Default::default(),
         eager_layouts: Default::default(),
+        folder_snapshot: None,
         hidden_flows: Default::default(),
     };
     let mut live = Reading::restore(config, 0, page, Some(&anchor)).unwrap();

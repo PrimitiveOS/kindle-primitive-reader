@@ -52,7 +52,7 @@ struct Entry {
     stamp: Stamp,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) struct FolderProof {
     root: PathBuf,
     inventory: Vec<Entry>,
@@ -60,6 +60,16 @@ pub(crate) struct FolderProof {
     legacy_identity: u64,
     members: Arc<BTreeMap<String, Arc<[u8]>>>,
 }
+
+impl PartialEq for FolderProof {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root
+            && self.inventory == other.inventory
+            && self.digest == other.digest
+            && self.legacy_identity == other.legacy_identity
+    }
+}
+impl Eq for FolderProof {}
 
 fn check(cancel: &AtomicBool) -> io::Result<()> {
     if cancel.load(Ordering::Relaxed) {

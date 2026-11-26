@@ -656,6 +656,7 @@ mod tests {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
+            folder_snapshot: None,
         }
     }
 

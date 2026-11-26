@@ -10,16 +10,15 @@ When Bookmark Browser is opened from a document, Sources also offers **Current b
 
 Bookmark Browser's Filters screen offers **Show current page in results** when opened from a document. It focuses the result-list page containing the nearest visible mark on or after the current page, falling back to the nearest earlier page. Ties use the first row in the existing display order. The command honors the source, search and filters, preserves date or reverse ordering, and does not move the reading position. Fixed-layout books search their matching result rows throughout the book. Reflow books search only the current chapter using its existing layout; source anchors that cannot be resolved are skipped, while legacy page-only bookmarks must identify that chapter and a valid page. Searching adjacent chapters remains open. If no eligible mark matches, Reader reports that instead of guessing. The new behavior has not yet been tested in simulation or on a Kindle.
 
-The adjacent **Show latest mark in results** shortcut focuses the most recently
-created matching mark in the open book, without opening it or altering the
-current filters, sorting or reading position. It searches only the displayed
-filtered rows. Known creation times sort after missing times; equal times
-choose the later entry in Reader's stable bookmark, then applicable highlight,
-and per-kind index order, matching its existing latest-mark selector. KOReader's
-[Latest bookmark list command](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L1024-L1040)
-also opens mark details and is disabled under some filters; Reader's shortcut
-only focuses the existing filtered results. Simulation and Kindle validation
-remain pending.
+The adjacent **Latest saved mark** shortcut opens details for the most recently
+created matching mark in the open book. It searches only the existing filtered
+rows and does not change filters, sorting, the mark or the reading position.
+Back returns to the results page containing that mark. Known creation times
+sort after missing times; equal times choose the later entry in Reader's stable
+bookmark, then applicable highlight, and per-kind index order, matching its
+existing latest-mark selector. KOReader's [Latest bookmark list command](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L1024-L1040)
+also opens mark details but is disabled under some filters; Reader retains the
+existing filtered-results scope. Simulation and Kindle validation remain pending.
 
 Reference: pinned KOReader [`ReaderBookmark` previous/next/first/last bookmarked-page helpers](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L512-L547) select annotations on strictly earlier or later pages, including highlights unless the page-bookmark-only option is set. KOReader's [`getLatestBookmark`](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L619-L628) chooses by recorded annotation time. Reader independently reuses its existing Skim ordering and latest-mark selector; it does not copy upstream source.
 

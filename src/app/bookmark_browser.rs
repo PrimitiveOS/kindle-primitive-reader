@@ -215,7 +215,7 @@ pub(super) enum Command {
     Use(Source),
     UseCurrentBook,
     FocusCurrentPage,
-    FocusLatestMark,
+    InspectLatestMark,
     PreviewRemoveCurrentNotes,
     AskRemoveCurrentNotes,
     ConfirmRemoveCurrentNotes,
@@ -965,7 +965,7 @@ impl Reader {
                     );
                 }
             }
-            Command::FocusLatestMark => {
+            Command::InspectLatestMark => {
                 let target = (|| {
                     let book_id = match self.bookmark_browser.origin {
                         Screen::Fixed => self.fixed.as_ref()?.id,
@@ -1000,15 +1000,14 @@ impl Reader {
                                 }
                                 _ => return None,
                             };
-                            Some(((created, kind, index), ordinal))
+                            Some(((created, kind, index), (ordinal, *key)))
                         })
                         .max_by_key(|(key, _)| *key)
-                        .map(|(_, ordinal)| ordinal)
+                        .map(|(_, target)| target)
                 })();
                 self.show(Screen::BookmarkBrowser(Page::Results));
-                if let Some(ordinal) = target {
-                    let page = ordinal / self.list_geometry().rows;
-                    self.set_bookmark_list_anchor(page, ordinal);
+                if let Some((_, key)) = target {
+                    self.activate_bookmark_browser(Command::Inspect(key))?;
                 } else {
                     self.notice = Some(
                         self.controls
@@ -1839,7 +1838,7 @@ impl Reader {
                     || (browser.origin == Screen::Book && self.active.is_some())
                 {
                     rows.insert(0, item("Show current page in results", C::FocusCurrentPage));
-                    rows.insert(1, item("Show latest mark in results", C::FocusLatestMark));
+                    rows.insert(1, item("Latest saved mark", C::InspectLatestMark));
                 }
                 rows.extend(
                     [Kind::Bookmark, Kind::Highlight, Kind::Note]
@@ -2536,7 +2535,8 @@ impl Reader {
                         .position(|value| *value == RowKey::Mark(key))
                 });
                 self.show(Screen::BookmarkBrowser(Page::Results));
-                self.list_page = row.unwrap_or(0) / self.list_geometry().rows;
+                let ordinal = row.unwrap_or(0);
+                self.set_bookmark_list_anchor(ordinal / self.list_geometry().rows, ordinal);
             }
             Page::ChooseBooks if self.bookmark_browser.picking.take().is_some() => {
                 self.show(Screen::BookmarkBrowser(Page::Filters));

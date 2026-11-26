@@ -2995,6 +2995,7 @@ mod tests {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
+            folder_snapshot: None,
             engine: Engine::Parley,
             book: test_fixture("in-page-footnotes.epub"),
             fonts: vec![test_fixture("fonts/NotoSans-Regular.ttf")],

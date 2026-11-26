@@ -69,6 +69,7 @@ fn css_restore_retains_canonical_focus_across_scroll_spread_reflow_and_reopen_un
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
+            folder_snapshot: None,
         };
         let mut reading = Reading::open(config).unwrap();
         let saved = reading.probe.matches("HIDDEN SAVED PASSAGE")[0].clone();
@@ -157,6 +158,7 @@ fn saved_custom_flow_markers_remain_resolved_when_publisher_css_omits_their_text
         quote_prefixes: Default::default(),
         screen_pages: Default::default(),
         eager_layouts: Default::default(),
+        folder_snapshot: None,
     };
     let reading = Reading::open(config.clone()).unwrap();
     let anchor = reading.probe.matches("HIDDEN SAVED PASSAGE")[0].clone();

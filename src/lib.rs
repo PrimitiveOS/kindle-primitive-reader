@@ -1172,6 +1172,8 @@ chapter_probe! {
     #[cfg(feature = "kindle")]
     raw_layout_sources: Option<session::screen_pages::ScreenPageSources>,
     #[cfg(feature = "kindle")]
+    raw_folder_sources: Option<std::sync::Arc<session::screen_pages::folder_sources::FolderProof>>,
+    #[cfg(feature = "kindle")]
     foreground_font_sources: Option<Vec<session::screen_pages::FileStamp>>,
     settings: Settings,
     spine_rtl: bool,
@@ -1770,6 +1772,8 @@ impl Probe {
             screen_page_sources: None,
             #[cfg(feature = "kindle")]
             raw_layout_sources: None,
+            #[cfg(feature = "kindle")]
+            raw_folder_sources: None,
             #[cfg(feature = "kindle")]
             foreground_font_sources: None,
             settings,

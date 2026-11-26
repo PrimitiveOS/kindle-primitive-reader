@@ -5043,7 +5043,7 @@ fn load_image(
         return cache_vector(path, art);
     }
     let mut bytes = book.resource(&path).ok()?;
-    if let Some(converted) = supported_webp_as_png(&bytes).ok()? {
+    if let Some(converted) = supported_extra_raster_as_png(&bytes).ok()? {
         bytes = converted;
     }
     let (w, h) = crate::epub_raster_dimensions(&bytes).ok()?;
@@ -5065,20 +5065,39 @@ fn load_image(
 }
 
 // Keep the original package bytes and href unchanged; conversion is local to
-// the illustration consumer and uses the bounded still-WebP decoder.
-fn supported_webp_as_png(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
-    if !bytes.starts_with(b"RIFF") || bytes.get(8..12) != Some(b"WEBP") {
-        return Ok(None);
+// illustration consumers and uses the bounded still-WebP and TIFF decoders.
+fn supported_extra_raster_as_png(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
+    if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        let converted = crate::comic::ImagePage::webp_as_png(bytes)?;
+        if converted.len() as u64 > crate::comic::MAX_WEBP_BYTES {
+            return Err("The converted WebP illustration exceeds Reader's size limit".into());
+        }
+        return Ok(Some(converted));
     }
-    let converted = crate::comic::ImagePage::webp_as_png(bytes)?;
-    if converted.len() as u64 > crate::comic::MAX_WEBP_BYTES {
-        return Err("The converted WebP illustration exceeds Reader's size limit".into());
+    if bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*") {
+        use image::ImageEncoder;
+        const MAX_TIFF_ILLUSTRATION: usize = 8 * 1024 * 1024;
+        if bytes.len() > MAX_TIFF_ILLUSTRATION {
+            return Err("The TIFF illustration exceeds Reader's size limit".into());
+        }
+        let gray = crate::tiff_image::decode(bytes)?;
+        let mut converted = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut converted).write_image(
+            &gray,
+            gray.width(),
+            gray.height(),
+            image::ExtendedColorType::L8,
+        )?;
+        if converted.len() > MAX_TIFF_ILLUSTRATION {
+            return Err("The converted TIFF illustration exceeds Reader's size limit".into());
+        }
+        return Ok(Some(converted));
     }
-    Ok(Some(converted))
+    Ok(None)
 }
 
 pub(crate) fn original_illustration(bytes: &[u8]) -> Result<ImagePage> {
-    let converted = supported_webp_as_png(bytes)?;
+    let converted = supported_extra_raster_as_png(bytes)?;
     let bytes = converted.as_deref().unwrap_or(bytes);
     if crate::gif_image::has_signature(bytes) {
         return ImagePage::decode_gif(bytes);

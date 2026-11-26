@@ -213,6 +213,9 @@ pub(crate) struct BookConfig {
     pub(crate) quote_prefixes: quote_prefixes::ForegroundQuotes,
     pub(crate) screen_pages: screen_pages::ScreenPages,
     pub(crate) eager_layouts: screen_pages::eager::Cached,
+    /// Immutable, source-verified folder members, installed only after the
+    /// asynchronous open and lifecycle checks complete.
+    pub(crate) folder_snapshot: Option<std::sync::Arc<screen_pages::folder_sources::FolderProof>>,
 }
 
 /// Send-safe snapshot of the inputs that decide a chapter's raw layout. Rc
@@ -227,6 +230,7 @@ pub(crate) struct SearchLayoutRecipe {
     fonts: Vec<std::path::PathBuf>,
     foreground_sources: Option<screen_pages::ScreenPageSources>,
     current_sources: Option<screen_pages::ScreenPageSources>,
+    folder_snapshot: Option<std::sync::Arc<screen_pages::folder_sources::FolderProof>>,
     font_sources: Option<Vec<screen_pages::FileStamp>>,
     current_font_sources: Option<Vec<screen_pages::FileStamp>>,
     settings: Settings,
@@ -270,6 +274,7 @@ impl SearchLayoutRecipe {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
+            folder_snapshot: self.folder_snapshot.clone(),
         };
         let flows = with_storage(|| {
             self.verify_folder_proof(proof, cancelled)
@@ -332,6 +337,13 @@ impl SearchLayoutRecipe {
         if !self.has_verified_fonts() {
             return Err("Reading fonts changed; reopen the book".into());
         }
+        if self
+            .folder_snapshot
+            .as_ref()
+            .is_some_and(|saved| saved.as_ref() != proof)
+        {
+            return Err("The folder snapshot changed; reopen the book".into());
+        }
         let expected_fonts = self
             .font_sources
             .as_ref()
@@ -359,6 +371,7 @@ impl SearchLayoutRecipe {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
+            folder_snapshot: self.folder_snapshot.clone(),
         };
         Ok(with_storage(|| {
             check().map_err(io::Error::other)?;
@@ -387,9 +400,11 @@ impl SearchLayoutRecipe {
     }
 
     pub(crate) fn has_verified_sources(&self) -> bool {
-        !crate::epub_members::is_folder_book(&self.book)
-            && self.foreground_sources.is_some()
-            && self.foreground_sources == self.current_sources
+        if crate::epub_members::is_folder_book(&self.book) {
+            self.folder_snapshot.is_some() && self.has_verified_fonts()
+        } else {
+            self.foreground_sources.is_some() && self.foreground_sources == self.current_sources
+        }
     }
 
     pub(crate) fn chapter(
@@ -397,6 +412,9 @@ impl SearchLayoutRecipe {
         index: usize,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<Probe> {
+        if let Some(proof) = &self.folder_snapshot {
+            return self.folder_chapter(proof, index, cancelled);
+        }
         let check = || -> Result<()> {
             if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
                 Err("Search was cancelled".into())
@@ -427,6 +445,7 @@ impl SearchLayoutRecipe {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
+            folder_snapshot: None,
         };
         let probe = with_storage(|| {
             check().map_err(io::Error::other)?;
@@ -500,6 +519,7 @@ impl BookConfig {
             fonts: self.fonts.clone(),
             foreground_sources: probe.raw_layout_sources.clone(),
             current_sources: screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts),
+            folder_snapshot: probe.raw_folder_sources.clone(),
             font_sources: probe.foreground_font_sources.clone(),
             current_font_sources: screen_pages::ScreenPageSources::read_fonts(&self.fonts),
             settings: self.settings,
@@ -564,7 +584,14 @@ impl BookConfig {
         let start = Instant::now();
         let probe = with_storage(|| {
             let sources = screen_pages::ScreenPageSources::read(self);
-            let book = Book::open(&self.book).map_err(io::Error::other)?;
+            let book = match &self.folder_snapshot {
+                Some(proof) if crate::epub_members::is_folder_book(&self.book) => {
+                    Book::open_folder_snapshot(proof.members())
+                }
+                Some(_) => return Err(io::Error::other("Folder snapshot does not match the book")),
+                None => Book::open(&self.book),
+            }
+            .map_err(io::Error::other)?;
             self.layout_chapter(book, index, sources)
                 .map_err(io::Error::other)
         });
@@ -621,7 +648,17 @@ impl BookConfig {
     ) -> Result<Probe> {
         check_cancelled()?;
         let folder_snapshot = book.folder_snapshot();
-        let font_sources = screen_pages::ScreenPageSources::read_fonts(&self.fonts);
+        let folder_raw = self.folder_snapshot.as_ref().is_some_and(|proof| {
+            folder_snapshot
+                .as_ref()
+                .is_some_and(|members| std::sync::Arc::ptr_eq(members, &proof.members()))
+        });
+        let font_sources = crate::epub_members::is_folder_book(&self.book)
+            .then(|| screen_pages::ScreenPageSources::read_fonts(&self.fonts))
+            .flatten();
+        if folder_raw && font_sources.is_none() {
+            return Err("Reading fonts cannot be verified for the folder snapshot".into());
+        }
         let raw_sources = crate::parley_layout::RAW_LAYOUT_ENABLED
             .then(|| screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts))
             .flatten();
@@ -677,7 +714,7 @@ impl BookConfig {
             &self.user_hyphenation,
             &user_styles,
             || crate::font_context(&self.fonts),
-            raw_sources.is_some(),
+            raw_sources.is_some() || folder_raw,
             check_cancelled,
         ) {
             Ok(probe) if !narrow || !probe.requests_vertical => Ok(probe),
@@ -704,7 +741,7 @@ impl BookConfig {
                     &self.user_hyphenation,
                     &user_styles,
                     || crate::font_context(&self.fonts),
-                    raw_sources.is_some(),
+                    raw_sources.is_some() || folder_raw,
                     check_cancelled,
                 )
             }
@@ -714,6 +751,12 @@ impl BookConfig {
             && font_sources == screen_pages::ScreenPageSources::read_fonts(&self.fonts)
         {
             probe.foreground_font_sources = font_sources;
+        }
+        if folder_raw && probe.foreground_font_sources.is_none() {
+            return Err("Reading fonts changed during folder snapshot layout".into());
+        }
+        if folder_raw && probe.foreground_font_sources.is_some() {
+            probe.raw_folder_sources = self.folder_snapshot.clone();
         }
         if raw_sources.is_some()
             && raw_sources == screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts)
@@ -3239,6 +3282,7 @@ mod tests {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
+            folder_snapshot: None,
             engine: Engine::Parley,
             book: crate::test_fixture(book),
             fonts: vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],
@@ -4147,6 +4191,7 @@ mod tests {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
+            folder_snapshot: None,
             engine: Engine::Parley,
             book: crate::test_fixture("vertical-chapters.epub"),
             fonts: vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],

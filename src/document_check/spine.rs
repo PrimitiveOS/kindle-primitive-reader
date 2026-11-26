@@ -408,6 +408,7 @@ mod tests {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
+            folder_snapshot: None,
         }
     }
 
@@ -608,6 +609,7 @@ mod logical_configuration_tests {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
+            folder_snapshot: None,
         };
         let json = serde_json::to_value(SessionConfiguration::from(&config)).unwrap();
         assert_eq!(json["font_policy"], "stock_logical");

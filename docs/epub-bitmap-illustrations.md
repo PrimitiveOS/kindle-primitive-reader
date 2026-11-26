@@ -9,8 +9,7 @@ rendering. Existing GIF first-frame and PNG/JPEG handling is unchanged.
 The existing side-length, decoded-image allocation and chapter resource
 budgets still apply. A file must have a recognized image signature; a renamed
 or malformed image does not become a supported image. This change does not
-add BMP or portable-anymap resources inside the separate inline-SVG renderer,
-and it does not expand the supported image types inside FB2 or HTMLZ packages.
+expand the supported image types inside FB2 or HTMLZ packages.
 
 KOReader offers an alternate MuPDF EPUB provider. Its pinned image decoder
 handles BMP and PNM image data; the native Reader uses Rust's existing image
@@ -41,3 +40,30 @@ animated, malformed or otherwise unsupported WebP images remain unavailable.
 The decoder's internal allocation behavior, exact KOReader comparison, and the
 appearance and performance on real EPUBs, in simulation and on Kindle remain
 unverified. This does not add WebP references inside the SVG renderer.
+
+Reader can also attempt TIFF illustrations in EPUB chapters and their
+original-size inspection view. It converts a recognized TIFF payload with the
+existing bounded TIFF decoder to grayscale PNG only at the image-consumer
+boundary; package bytes, resource paths, XHTML and source anchors remain
+unchanged. Input and converted output are each capped at 8 MiB, and the TIFF
+decoder's existing dimension, pixel and strip limits apply. Only that decoder's
+single-page subset is supported; multi-page TIFF, unsupported compression,
+color-management and other unsupported variants remain unavailable. PNG encoder
+and decoder transient memory, image fidelity, real-book appearance, simulation
+and Kindle behavior remain unverified. KOReader registers EPUB with its MuPDF
+provider; the pinned MuPDF image reader routes TIFF to its own decoder, whose
+full behavior has not been compared. [MuPDF TIFF path](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/image.c#L814-L815)
+
+The inline and package SVG renderer can also attempt local BMP and portable
+anymap image resources. Existing PNG, JPEG and GIF handling is unchanged.
+The additional formats use recognized signatures, the existing dimension and
+source-pixel budget, a 24 MiB declared decoder-output limit, and an alpha-
+preserving RGBA PNG conversion. Original and converted bytes both count toward
+the 8 MiB aggregate SVG raster budget; a capped writer stops PNG output at the
+remaining budget. A conservative 32 MiB accounting limit includes source bytes,
+declared decoder output, RGBA pixels and twice the remaining output allowance
+for vector growth. Decoder/encoder internal scratch and allocator overhead are
+not proven by this accounting. External and data URLs remain unavailable, and
+source paths, XHTML and anchors remain unchanged. Exact KOReader behavior,
+malformed inputs, alpha fidelity, peak memory and real-book, simulator and
+Kindle behavior are unverified.

@@ -25,6 +25,7 @@ fn authored_config(scroll: bool, overlap_footer: bool) -> BookConfig {
         quote_prefixes: Default::default(),
         screen_pages: Default::default(),
         eager_layouts: Default::default(),
+        folder_snapshot: None,
     }
 }
 
