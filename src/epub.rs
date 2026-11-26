@@ -121,6 +121,7 @@ enum Content {
         archive: Archive,
         package_path: String,
         fonts: Option<crate::epub_font::EmbeddedFonts>,
+        fallback_paths: BTreeSet<String>,
         #[cfg(feature = "kindle")]
         stylesheets: Vec<String>,
     },
@@ -173,6 +174,8 @@ fn mobi_shadow_resolved(
 struct Item {
     path: String,
     media: String,
+    fallback: Option<String>,
+    plain_href: bool,
     navigation: bool,
     cover_image: bool,
 }
@@ -374,6 +377,8 @@ impl Book {
             let item = Item {
                 path,
                 media: node.attribute("media-type").unwrap_or_default().to_owned(),
+                fallback: node.attribute("fallback").map(str::to_owned),
+                plain_href: !href.contains(['#', '?']),
                 navigation: has_property("nav"),
                 cover_image: has_property("cover-image"),
             };
@@ -560,6 +565,92 @@ impl Book {
         if chapters.is_empty() {
             return Err("The EPUB contains no reading chapters".into());
         }
+        // Preserve every previously opening book. Only an otherwise rejected
+        // reflow spine with no supported linear item can try manifest fallbacks.
+        let mut fallback_paths = BTreeSet::new();
+        if chapters.iter().any(|chapter| chapter.unsupported)
+            && !chapters
+                .iter()
+                .any(|chapter| !chapter.unsupported && !chapter.nonlinear)
+        {
+            let mut manifest_paths = BTreeMap::new();
+            for item in manifest.values() {
+                *manifest_paths.entry(item.path.as_str()).or_insert(0usize) += 1;
+            }
+            let mut original_paths = BTreeMap::new();
+            for chapter in &chapters {
+                *original_paths.entry(chapter.href.clone()).or_insert(0usize) += 1;
+            }
+            let mut examined = 0usize;
+            let mut reads = 0usize;
+            for (chapter, reference) in chapters
+                .iter_mut()
+                .zip(spine.children().filter(|node| node.has_tag_name("itemref")))
+            {
+                if !chapter.unsupported || chapter.nonlinear || examined == 64 || reads == 8 {
+                    continue;
+                }
+                examined += 1;
+                if original_paths.get(&chapter.href) != Some(&1)
+                    || manifest_paths.get(chapter.href.as_str()) != Some(&1)
+                {
+                    continue;
+                }
+                let Some(mut item) = reference.attribute("idref").and_then(|id| manifest.get(id))
+                else {
+                    continue;
+                };
+                if !item.plain_href {
+                    continue;
+                }
+                let mut visited = BTreeSet::new();
+                for _ in 0..32 {
+                    let Some(next) = item.fallback.as_deref() else {
+                        break;
+                    };
+                    if !visited.insert(next) {
+                        break;
+                    }
+                    let Some(target) = manifest.get(next) else {
+                        break;
+                    };
+                    item = target;
+                    if !matches!(target.media.as_str(), "application/xhtml+xml" | "text/html") {
+                        continue;
+                    }
+                    if !target.plain_href
+                        || manifest_paths.get(target.path.as_str()) != Some(&1)
+                        || original_paths.contains_key(&target.path)
+                        || fallback_paths.contains(&target.path)
+                    {
+                        break;
+                    }
+                    reads += 1;
+                    let valid =
+                        archive_html_recovery(&mut archive, &target.path, MAX_REFLOW_CHAPTER_XML)
+                            .ok()
+                            .and_then(|xhtml| crate::source::Source::parse(&xhtml).ok())
+                            .is_some();
+                    if valid {
+                        let old = std::mem::replace(&mut chapter.href, target.path.clone());
+                        chapter.unsupported = false;
+                        chapter.is_svg = false;
+                        fallback_paths.insert(target.path.clone());
+                        // A fragment in a foreign format does not identify an
+                        // equivalent node in its alternate representation.
+                        for entry in &mut toc {
+                            if let Some(destination) = &mut entry.destination
+                                && destination.path == old
+                                && destination.fragment.is_none()
+                            {
+                                destination.path = target.path.clone();
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
         if chapters.iter().any(|chapter| chapter.unsupported)
             && !chapters
                 .iter()
@@ -627,6 +718,7 @@ impl Book {
                 archive,
                 package_path,
                 fonts,
+                fallback_paths,
                 #[cfg(feature = "kindle")]
                 stylesheets: manifest
                     .values()
@@ -1388,6 +1480,13 @@ impl Book {
             || (self.fixed_placements.is_none()
                 && matches!(&self.content,
                 Content::Archive { archive, .. } if archive.missing_after_recovery(&chapter.href)))
+    }
+
+    /// A manifest fallback is a different document, even at the same spine
+    /// ordinal. Stock DOM/CFI positions cannot be projected by ordinal alone.
+    pub(crate) fn is_manifest_fallback(&self, chapter: &Chapter) -> bool {
+        matches!(&self.content, Content::Archive { fallback_paths, .. }
+            if fallback_paths.contains(&chapter.href))
     }
 
     pub fn chapter(&mut self, index: usize) -> Result<String> {

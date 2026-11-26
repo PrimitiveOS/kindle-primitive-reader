@@ -48,7 +48,7 @@ pub fn resolve(book: &mut Book, value: &str) -> Result<CfiPosition> {
         .chapters
         .get(chapter)
         .ok_or("The CFI chapter is unavailable")?;
-    if book.recovered_placeholder(entry) {
+    if book.recovered_placeholder(entry) || book.is_manifest_fallback(entry) {
         return Err("The CFI chapter is unavailable in this edition".into());
     }
     let path = entry.href.clone();

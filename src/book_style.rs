@@ -3255,6 +3255,13 @@ impl<'i> DeclarationParser<'i> for Properties {
                             Size::Parent(value)
                         }
                         Token::Dimension { value, unit, .. }
+                            if unit.eq_ignore_ascii_case("ex")
+                                || unit.eq_ignore_ascii_case("ch") =>
+                        {
+                            // CRE approximates both units as half the parent font size.
+                            Size::Parent(value * 0.5)
+                        }
+                        Token::Dimension { value, unit, .. }
                             if unit.eq_ignore_ascii_case("rem") =>
                         {
                             Size::Root(value)

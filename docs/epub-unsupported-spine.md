@@ -6,8 +6,24 @@ Reader now keeps a local unsupported reflow spine item in its original order and
 shows an explanatory notice, provided at least one linear spine item declares a
 supported reflow format. This does not establish that the supported item itself
 is readable. Fixed or mixed-layout books keep their existing restrictions; no
-remote resource or manifest fallback is fetched. The unsupported payload is
+remote resource is fetched. The unsupported payload is
 not opened to display the notice.
+
+For a reflow book that would otherwise be rejected because it has no supported
+linear spine item, Reader may follow local manifest `fallback` ID chains to an
+XHTML or HTML item. This is limited to 64 linear spine candidates, 32 links per
+chain and eight bounded chapter reads. Duplicate or conflicting manifest/spine
+paths, missing IDs, cycles, external paths, unreadable content, non-HTML
+targets and unsupported layouts are not used as substitutes. Existing books
+that already open do not take this path. A successfully parsed fallback keeps
+the original spine position but uses its own resource path and source identity.
+Only an unambiguous Contents link to the original chapter without a fragment is
+redirected to that fallback; fragment links, publisher page targets and other
+foreign-format links are not assumed equivalent. EPUB CFI and KOReader DOM
+pointer import and export reject positions in substituted chapters rather than
+projecting an original document's ordinal onto different text. This is a
+bounded compatibility candidate, not a claim of full EPUB fallback support or
+KOReader parity; real-book, simulator and Kindle verification remain open.
 
 Publisher page targets, CFI conversion, KOReader pointer conversion and source
 HTML inspection do not treat the notice as publisher text. Reading progress

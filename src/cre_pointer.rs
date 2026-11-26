@@ -353,6 +353,7 @@ pub fn resolve(book: &mut Book, value: &str, version: Option<u32>) -> Result<Epu
         .ok_or("The saved KOReader chapter is unavailable")?;
     let path = chapter.href.clone();
     if book.recovered_placeholder(chapter)
+        || book.is_manifest_fallback(chapter)
         || book.chapters.iter().filter(|ch| ch.href == path).count() != 1
     {
         return Err("The saved KOReader chapter is missing or ambiguous".into());
@@ -396,6 +397,9 @@ pub(crate) fn encode(book: &mut Book, anchor: &Anchor, end: bool) -> Result<Stri
     let chapter = book
         .chapter_index(&anchor.chapter)
         .ok_or("The chapter has changed")?;
+    if book.is_manifest_fallback(&book.chapters[chapter]) {
+        return Err("A manifest fallback has no verified KOReader position".into());
+    }
     let xhtml = book.chapter(chapter)?;
     let source = Source::parse(&xhtml)?;
     if anchor.revision != source.revision {
