@@ -7,8 +7,10 @@ HTML void start tags and accepts the result only if it parses as a complete
 XHTML or unnamespaced HTML document with a body. Quoted attributes, comments,
 processing instructions and CDATA are handled separately; ambiguous markup
 and scripts are rejected. A style block is accepted by this repair only when
-its contents contain no literal `<` character. Chapters with any original DTD
-or entity declaration, including a plain HTML doctype, do not use this repair.
+its contents contain no literal `<` character. A single exact plain HTML doctype
+is permitted only when verified against the original bytes before XML
+preparation; other DTDs, entity declarations and ambiguous declarations do not
+use this repair.
 
 The existing 512 KiB chapter limit includes inserted characters. Already
 parseable chapter content is returned unchanged. Links, image references and

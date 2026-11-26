@@ -1926,6 +1926,7 @@ struct Compound {
     semantic_types: Vec<semantic_type::Selector>,
     is_link: bool,
     empty_element: bool,
+    root_element: bool,
     directions: Vec<parley::BaseDirection>,
     classes: Vec<String>,
     ids: Vec<String>,
@@ -1966,6 +1967,7 @@ impl Compound {
             && self.semantic_types.is_empty()
             && !self.is_link
             && !self.empty_element
+            && !self.root_element
             && self.directions.is_empty()
             && self.classes.is_empty()
             && self.ids.is_empty()
@@ -1993,6 +1995,7 @@ impl Compound {
                 .all(|selector| selector.matches(element))
             && (!self.is_link || (element.tag == "a" && element.has_href))
             && (!self.empty_element || element.selector_empty)
+            && (!self.root_element || element.selector_root)
             && self
                 .directions
                 .iter()
@@ -2179,6 +2182,9 @@ impl Selector {
                         }
                         Token::Ident(name) if name.eq_ignore_ascii_case("empty") => {
                             compound.empty_element = true;
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("root") => {
+                            compound.root_element = true;
                         }
                         Token::Function(name) if name.eq_ignore_ascii_case("dir") => {
                             let direction = input.parse_nested_block(|input| {

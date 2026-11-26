@@ -45,6 +45,15 @@ prevents the requested exact fit. `/FitBH` and `/FitBV` remain unsupported.
 This candidate has not been compared to KOReader or behaviorally verified with
 real PDFs, in the simulator or on Kindle.
 
+Local `/Fit` links and Contents entries now switch to whole-page fit and center
+the target page. This works with the PDF page's intrinsic rotation and preserves
+the prior fit, zoom and pan in jump history when the fit changes. The same
+conservative crop, user-rotation, continuous/spread and render-scale restrictions
+apply; otherwise Reader keeps the page-only fallback. `/FitB` uses a content
+bounding box and remains unsupported. MuPDF distinguishes `/Fit` and `/FitB`
+as separate destination types in its [PDF link resolver](https://github.com/ArtifexSoftware/mupdf/blob/master/source/pdf/pdf-link.c).
+This candidate and its history behavior have not been behaviorally tested.
+
 Pinned KOReader uses MuPDF's link resolver. The reference accepts indexed local
 pages and parses and transforms `/FitR` rectangles. Reader's source test covers
 explicit and named rectangles, rotation, crop, invalid page numbers and an

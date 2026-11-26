@@ -2186,7 +2186,7 @@ fn toc_entry(base: &str, href: Option<&str>, node: Node<'_, '_>, depth: usize) -
 }
 
 fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
-    xml_entry_with_declaration(archive, path, false).map(|(xml, _)| xml)
+    xml_entry_with_declaration(archive, path, false).map(|(xml, _, _)| xml)
 }
 
 /// Keep the original SVG member as the image resource. An empty relative
@@ -2217,15 +2217,16 @@ fn reflow_svg_chapter(bytes: &[u8]) -> Result<String> {
 }
 
 fn archive_html_recovery(archive: &mut Archive, path: &str) -> Result<String> {
-    let (xml, had_declaration) = xml_entry_with_declaration(archive, path, true)?;
+    let (xml, had_declaration, plain_html_doctype) =
+        xml_entry_with_declaration(archive, path, true)?;
     let xml = if had_declaration {
         xml
     } else {
         crate::epub_xml::recover_html_names(xml, MAX_XML)
     };
-    // No DTD/entity declaration, including one later masked by preparation,
-    // is eligible for this compatibility repair.
-    Ok(if !had_declaration {
+    // The original bytes, before XML preparation, must contain either no
+    // DTD/entity declaration or exactly one verified plain HTML doctype.
+    Ok(if !had_declaration || plain_html_doctype {
         crate::epub_xml::recover_html_voids(&xml, MAX_XML).unwrap_or(xml)
     } else {
         xml
@@ -2236,7 +2237,7 @@ fn xml_entry_with_declaration(
     archive: &mut Archive,
     path: &str,
     check_declaration: bool,
-) -> Result<(String, bool)> {
+) -> Result<(String, bool, bool)> {
     let mut bytes = read_entry(archive, path, MAX_XML)?;
     let utf32 = if bytes.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
         Some((true, 4, false))
@@ -2321,16 +2322,30 @@ fn xml_entry_with_declaration(
     };
     // Check the decoded original before `prepare` masks allowed declarations.
     // Otherwise a custom DTD name could be mistaken for a built-in HTML name.
-    let had_declaration = check_declaration
-        && (text
+    let mut doctypes = text
+        .as_bytes()
+        .windows(9)
+        .filter(|bytes| bytes.eq_ignore_ascii_case(b"<!doctype"));
+    let has_doctype = check_declaration && doctypes.next().is_some();
+    let multiple_doctypes = has_doctype && doctypes.next().is_some();
+    let has_entity = check_declaration
+        && text
             .as_bytes()
-            .windows(9)
-            .any(|bytes| bytes.eq_ignore_ascii_case(b"<!doctype"))
-            || text
-                .as_bytes()
-                .windows(8)
-                .any(|bytes| bytes.eq_ignore_ascii_case(b"<!entity")));
-    Ok((crate::epub_xml::prepare(text, MAX_XML)?, had_declaration))
+            .windows(8)
+            .any(|bytes| bytes.eq_ignore_ascii_case(b"<!entity"));
+    let had_declaration = has_doctype || has_entity;
+    let plain_html_doctype = has_doctype
+        && !multiple_doctypes
+        && !has_entity
+        && matches!(
+            crate::epub_xml::without_plain_doctype(&text),
+            std::borrow::Cow::Owned(_)
+        );
+    Ok((
+        crate::epub_xml::prepare(text, MAX_XML)?,
+        had_declaration,
+        plain_html_doctype,
+    ))
 }
 
 fn decode_utf32_epub_xml(input: &[u8], little_endian: bool) -> Result<String> {

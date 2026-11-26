@@ -63,7 +63,7 @@ pub struct PdfOutlineItem {
     pub depth: usize,
     /// Optional destination in the target page's upright, cropped point space.
     pub destination_point: Option<Point>,
-    /// Optional untransformed `/XYZ`, `/FitH` or `/FitV` position.
+    /// Optional `/Fit`, `/XYZ`, `/FitH` or `/FitV` destination.
     pub destination_partial: Option<PartialPdfDestination>,
 }
 
@@ -80,6 +80,7 @@ pub struct PartialPdfDestination {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PdfDestinationFit {
     Current,
+    Page,
     Width,
     Height,
 }
@@ -102,7 +103,7 @@ pub struct PdfLink {
     pub uri: Option<String>,
     /// A supported explicit destination, in the target page's upright, cropped point space.
     pub destination_point: Option<Point>,
-    /// Optional untransformed `/XYZ`, `/FitH` or `/FitV` position.
+    /// Optional `/Fit`, `/XYZ`, `/FitH` or `/FitV` destination.
     pub destination_partial: Option<PartialPdfDestination>,
 }
 
@@ -428,6 +429,8 @@ impl Pdf {
             return None;
         }
         let old = match target.fit {
+            // Whole-page fitting does not require a PDF coordinate.
+            PdfDestinationFit::Page => return None,
             PdfDestinationFit::Current => {
                 let current = self
                     .document
@@ -1053,6 +1056,11 @@ fn explicit_destination(
                     }))
                 }
             }
+            b"Fit" => Some(DestinationPosition::Partial(PartialPdfDestination {
+                left: None,
+                top: None,
+                fit: PdfDestinationFit::Page,
+            })),
             b"FitH" | b"FitV" => {
                 let value = f64::from(read()?.into_f32()?);
                 if !value.is_finite() {

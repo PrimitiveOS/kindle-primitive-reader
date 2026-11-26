@@ -189,6 +189,8 @@ pub(crate) struct Element {
     pub(crate) selector_direction: Option<BaseDirection>,
     /// Publisher DOM has no direct element or nonempty text children.
     pub(crate) selector_empty: bool,
+    /// CRE applies :root to the chapter body below html/DocFragment.
+    pub(crate) selector_root: bool,
     pub(crate) table_hints: Option<crate::book_style::table_hints::TableHints>,
     pub parent: Option<usize>,
     pub previous_sibling: Option<usize>,
@@ -967,6 +969,8 @@ impl Source {
                     child.is_element()
                         || child.is_text() && child.text().is_some_and(|text| !text.is_empty())
                 }),
+                selector_root: node == body
+                    && matches!(root.tag_name().name(), "html" | "DocFragment"),
                 table_hints: if selector_only {
                     None
                 } else {

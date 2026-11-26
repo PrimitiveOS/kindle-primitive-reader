@@ -284,6 +284,8 @@ pub(crate) enum FixedJump {
     LinkPoint(Point),
     /// A PDF FitH/FitV point and the fitting axis to install atomically.
     FitPoint(Point, crate::fixed::PdfDestinationFit),
+    /// A PDF Fit destination: center the whole page at page-fit scale.
+    FitPage,
     /// Source word rectangles in reading order, normalized to the upright page.
     Regions(Vec<PdfTextRect>),
 }
@@ -1950,6 +1952,9 @@ impl FixedReading {
             };
             let metrics = view_metrics(size, &target_view, self.frame_size());
             let expected = match partial.fit {
+                crate::fixed::PdfDestinationFit::Page => {
+                    metrics.width_scale.min(metrics.height_scale)
+                }
                 crate::fixed::PdfDestinationFit::Width => metrics.width_scale,
                 crate::fixed::PdfDestinationFit::Height => metrics.height_scale,
                 crate::fixed::PdfDestinationFit::Current => unreachable!(),
@@ -1959,6 +1964,9 @@ impl FixedReading {
                 || metrics.scale.to_bits() != expected.to_bits()
             {
                 return None;
+            }
+            if partial.fit == crate::fixed::PdfDestinationFit::Page {
+                return Some(FixedJump::FitPage);
             }
             return pdf
                 .complete_partial_destination(self.page, Point::ORIGIN, page, partial)
@@ -2050,6 +2058,13 @@ impl FixedReading {
         original: View,
     ) -> Result<View> {
         let original = match target {
+            Some(FixedJump::FitPage) => View {
+                width_fit: false,
+                height_fit: false,
+                zoom: 0,
+                tile_zoom: None,
+                ..original
+            },
             Some(FixedJump::FitPoint(_, fit)) => View {
                 width_fit: *fit == crate::fixed::PdfDestinationFit::Width,
                 height_fit: *fit == crate::fixed::PdfDestinationFit::Height,
@@ -2078,6 +2093,7 @@ impl FixedReading {
             let correction = scan.correction(page, size, &view, &mut self.deskew_cache)?;
             let transform = request.page_to_viewport(size)? * correction;
             let offset = match target {
+                FixedJump::FitPage => Point::ORIGIN - Point::ORIGIN,
                 FixedJump::LinkPoint(point) | FixedJump::FitPoint(point, _) => {
                     Point::ORIGIN - transform * *point
                 }

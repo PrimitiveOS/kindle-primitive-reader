@@ -6128,7 +6128,15 @@ impl Reader {
 
     fn jump_fixed(&mut self, page: usize, target: Option<FixedJump>) -> Result<HistoryLocation> {
         self.close_fixed_search_fit()?;
-        let fixed_view = if matches!(target.as_ref(), Some(FixedJump::FitPoint(..))) {
+        let changes_fit = match target.as_ref() {
+            Some(FixedJump::FitPoint(..)) => true,
+            Some(FixedJump::FitPage) => self.fixed.as_ref().is_some_and(|fixed| {
+                let view = fixed.reading.preferences();
+                view.width_fit || view.height_fit || view.zoom != 0 || view.tile_zoom.is_some()
+            }),
+            _ => false,
+        };
+        let fixed_view = if changes_fit {
             self.capture_fixed_history_view()
         } else {
             None

@@ -115,7 +115,7 @@ fn fixed_contents_shows_print_labels_and_depth_lengths_without_changing_jumps() 
         .into_iter()
         .find(|row| row.title == "Chart detail")
         .unwrap();
-    assert!(matches!(detail.action, Action::FixedPage(1)));
+    assert!(matches!(detail.action, Action::FixedOutline(1)));
     app.activate(detail.action).unwrap();
     assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
     app.activate(Action::ReturnToLocation).unwrap();
