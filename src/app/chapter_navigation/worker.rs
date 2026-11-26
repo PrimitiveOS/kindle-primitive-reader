@@ -329,15 +329,8 @@ impl Reader {
         } else {
             None
         };
-        if let Some(page) = edge {
-            let previous = position(reading);
-            if page == reading.page {
-                self.show(Screen::Book);
-                return Ok(());
-            }
-            let reading = &mut self.active.as_mut().unwrap().reading;
-            reading.go_to_laid_out_page(reading.chapter, page, None)?;
-            self.finish_reflow_jump(previous);
+        if edge == Some(reading.page) {
+            self.show(Screen::Book);
             return Ok(());
         }
         let origin = self
@@ -657,6 +650,23 @@ fn run_relative(
             .map(|entry| !book.recovered_placeholder(entry))
             .collect::<Vec<_>>())
     })?;
+    if available.get(chapter) != Some(&true) {
+        return Err("The current chapter cannot be counted exactly".into());
+    }
+    // If the current chapter is already at a publication edge, recheck its
+    // source/layout before clamping to its first or last page.
+    if (!forward && chapter == 0) || (forward && chapter + 1 == paths.len()) {
+        let (probe, exact) = recipe.chapter_with_quote_status(chapter, cancel)?;
+        if !exact || probe.is_vertical() || probe.has_raw_layout()
+            || probe.in_page_notes.is_some() || !probe.foreign_note_bands.is_empty()
+            || probe.page_count() != current_count
+        {
+            return Err("The current chapter cannot be counted exactly".into());
+        }
+        let page = if forward { current_count - 1 } else { 0 };
+        let prepared = probe.into_prepared_parley().ok_or("This page cannot be prepared")?;
+        return Ok(Some(Outcome { chapter, page, prepared }));
+    }
     for _ in 0..MAX_CHAPTERS {
         if cancel.load(Ordering::Relaxed) {
             return Err("Page navigation cancelled".into());
