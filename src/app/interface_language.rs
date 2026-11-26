@@ -3097,6 +3097,7 @@ impl InterfaceLanguage {
             "Edit note" => "Sửa ghi chú",
             "Remove note" => "Xóa ghi chú",
             "Save note" => "Lưu ghi chú",
+            "Insert quote" => "Chèn trích dẫn",
             "New line" => "Dòng mới",
             "Keep editing" => "Tiếp tục sửa",
             "Note saved" => "Đã lưu ghi chú",

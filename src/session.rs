@@ -251,6 +251,32 @@ impl SearchLayoutRecipe {
         self.font_sources.is_some() && self.font_sources == self.current_font_sources
     }
 
+    /// Prepare raw-capable layout from the exact immutable folder snapshot.
+    /// The caller binds it to the open library edition and current position
+    /// before installing the returned chapter.
+    pub(crate) fn prepare_folder_raw(
+        &self,
+        proof: std::sync::Arc<screen_pages::folder_sources::FolderProof>,
+        index: usize,
+        anchor: &Anchor,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<PreparedFolderChapter> {
+        self.verify_folder_proof(&proof, cancelled)?;
+        let mut recipe = self.clone();
+        recipe.folder_snapshot = Some(proof.clone());
+        if anchor.raw_caret.is_some()
+            || recipe
+                .folder_chapter(&proof, index, cancelled)?
+                .page_for(anchor)
+                .is_none()
+        {
+            return Err(
+                "The current reading position cannot be restored in the folder snapshot".into(),
+            );
+        }
+        recipe.prepare_folder_chapter(&proof, index, cancelled)
+    }
+
     pub(crate) fn prepare_folder_chapter(
         &self,
         proof: &screen_pages::folder_sources::FolderProof,
@@ -939,6 +965,17 @@ impl Reading {
         anchor: Option<&Anchor>,
         prepared: PreparedFolderChapter,
     ) -> Result<Self> {
+        Self::restore_prepared_folder_at(config, chapter, fallback_page, anchor, None, prepared)
+    }
+
+    pub(crate) fn restore_prepared_folder_at(
+        config: BookConfig,
+        chapter: usize,
+        fallback_page: usize,
+        anchor: Option<&Anchor>,
+        scroll_history_top: Option<f32>,
+        prepared: PreparedFolderChapter,
+    ) -> Result<Self> {
         let layout = ChapterLayout {
             probe: prepared.chapter.into_probe(),
             marker: None,
@@ -948,7 +985,7 @@ impl Reading {
             chapter,
             fallback_page,
             anchor,
-            None,
+            scroll_history_top,
             layout,
             Some(prepared.flows),
         )

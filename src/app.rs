@@ -54,6 +54,7 @@ mod fixed_book_map;
 #[cfg(test)]
 mod fixed_results_tests;
 mod flexible_results;
+mod folder_activation;
 mod folder_lifecycle;
 #[cfg(test)]
 mod font_render_tests;
@@ -1035,6 +1036,8 @@ pub struct Reader {
     book_map_raw_counts: Option<reflow_book_map_raw_counts::Verification>,
     page_bookmark_search: Option<page_bookmark_navigation::Search>,
     folder_resume_gate: Option<folder_lifecycle::Gate>,
+    folder_activation: Option<folder_activation::Activation>,
+    folder_activation_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     page_bookmark_worker_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     skim: Option<skim::Session>,
     staged_viewport: Option<(
@@ -1308,6 +1311,8 @@ impl Reader {
             book_map_raw_counts: None,
             page_bookmark_search: None,
             folder_resume_gate: None,
+            folder_activation: None,
+            folder_activation_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             page_bookmark_worker_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
@@ -2114,10 +2119,12 @@ impl Reader {
                 .cache_author(active.id, active.reading.probe.author.as_deref());
         }
         self.library.request_live_metadata(id);
+        self.start_folder_activation();
         Ok(())
     }
 
     fn show(&mut self, screen: Screen) {
+        self.folder_activation = None;
         self.page_bookmark_search = None;
         self.bookmark_browser.clear_confirmation();
         self.menu_search.clear_overlays();
@@ -10130,6 +10137,7 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        self.folder_activation = None;
         if let Some(change) = self.folder_resume_input(input) {
             return change;
         }
@@ -10269,6 +10277,7 @@ impl App for Reader {
     }
 
     fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        self.folder_activation = None;
         if self.folder_resume_gate.is_some() {
             return Change::None;
         }
@@ -10408,6 +10417,13 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if input == Input::Sleep {
+            self.folder_activation = None;
+        } else if input == Input::Wake && self.folder_resume_gate.is_none() {
+            self.start_folder_activation();
+        } else if input != Input::Wake {
+            self.folder_activation = None;
+        }
         if let Some(change) = self.folder_resume_input(input) {
             return change;
         }
@@ -11292,6 +11308,11 @@ impl App for Reader {
                     .as_ref()
                     .map(page_bookmark_navigation::Search::deadline),
             )
+            .chain(
+                self.folder_activation
+                    .as_ref()
+                    .map(folder_activation::Activation::deadline),
+            )
             .chain(self.spelling_lookup.as_ref().map(|job| job.deadline))
             .chain(self.cjk_selection_lookup.as_ref().map(|job| job.deadline))
             .chain(self.outline.as_ref().and_then(|outline| outline.deadline))
@@ -11324,6 +11345,9 @@ impl App for Reader {
     fn tick(&mut self, now: Instant) -> Change {
         if self.folder_resume_gate.is_some() {
             return self.poll_folder_resume(now).unwrap_or(Change::None);
+        }
+        if let Some(change) = self.poll_folder_activation(now) {
+            return change;
         }
         if let Some(change) = self.poll_page_bookmark_search(now) {
             return change;
@@ -11571,6 +11595,7 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
+        self.folder_activation = None;
         if self.folder_resume_gate.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
@@ -11599,6 +11624,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.folder_activation = None;
         if self.start_folder_resume_gate()? {
             return Ok(());
         }

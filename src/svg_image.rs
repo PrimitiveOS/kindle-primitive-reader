@@ -42,15 +42,44 @@ pub(crate) fn rasterize_with_size(
     available_pixels: usize,
     css_size: Option<&dyn Fn(u32, u32) -> (u32, u32)>,
 ) -> Result<GrayImage> {
-    let viewport = render_pixmap(
+    let viewport = standalone_pixmap(bytes, max_width, max_height, available_pixels, css_size)?;
+    grayscale_pixmap(viewport)
+}
+
+// Preserve vector-only rendering exactly. Only previously rejected standalone
+// documents may take the self-contained data-image fallback.
+fn standalone_pixmap(
+    bytes: &[u8],
+    max_width: u32,
+    max_height: u32,
+    available_pixels: usize,
+    css_size: Option<&dyn Fn(u32, u32) -> (u32, u32)>,
+) -> Result<tiny_skia::Pixmap> {
+    match render_pixmap(
         bytes,
         max_width,
         max_height,
         available_pixels,
         css_size,
         None,
-    )?;
-    grayscale_pixmap(viewport)
+    ) {
+        Ok(viewport) => Ok(viewport),
+        Err(original) => {
+            let fallback = std::str::from_utf8(bytes).ok().and_then(|xml| {
+                pixmap_with_images(
+                    None,
+                    "",
+                    xml,
+                    max_width,
+                    max_height,
+                    available_pixels,
+                    css_size,
+                )
+                .ok()
+            });
+            fallback.map(|(viewport, _)| viewport).ok_or(original)
+        }
+    }
 }
 
 fn grayscale_pixmap(viewport: tiny_skia::Pixmap) -> Result<GrayImage> {
@@ -152,6 +181,19 @@ fn inline_pixmap(
     budget: usize,
     css_size: Option<&dyn Fn(u32, u32) -> (u32, u32)>,
 ) -> Result<(tiny_skia::Pixmap, usize)> {
+    pixmap_with_images(Some(book), chapter, xml, width, height, budget, css_size)
+}
+
+fn pixmap_with_images(
+    mut book: Option<&mut crate::epub::Book>,
+    chapter: &str,
+    xml: &str,
+    width: u32,
+    height: u32,
+    budget: usize,
+    css_size: Option<&dyn Fn(u32, u32) -> (u32, u32)>,
+) -> Result<(tiny_skia::Pixmap, usize)> {
+    let standalone = book.is_none();
     if xml.len() > MAX_SVG_BYTES || xml.contains("<!DOCTYPE") {
         return Err("The SVG must be static UTF-8 within 256 KiB".into());
     }
@@ -185,7 +227,9 @@ fn inline_pixmap(
             svg_data_image(href, remaining)?
         } else {
             let path = crate::epub::Book::resolve(chapter, href)?;
-            book.resource_limited(&path, remaining)?
+            book.as_deref_mut()
+                .ok_or("Standalone SVG images must use embedded data")?
+                .resource_limited(&path, remaining)?
         };
         source_bytes = source_bytes
             .checked_add(data.len())
@@ -239,6 +283,9 @@ fn inline_pixmap(
             }
         };
         images.insert(href.to_owned(), kind);
+    }
+    if standalone && images.is_empty() {
+        return Err("The SVG has no embedded images".into());
     }
     let viewport = render_pixmap(
         xml.as_bytes(),
@@ -318,14 +365,7 @@ fn svg_extra_raster_png(data: &[u8], limit: usize) -> Result<Vec<u8>> {
 }
 
 pub(crate) fn png_resource(bytes: &[u8], available_pixels: usize) -> Result<(Vec<u8>, usize)> {
-    let viewport = render_pixmap(
-        bytes,
-        MAX_SVG_SIDE,
-        MAX_SVG_SIDE,
-        available_pixels,
-        None,
-        None,
-    )?;
+    let viewport = standalone_pixmap(bytes, MAX_SVG_SIDE, MAX_SVG_SIDE, available_pixels, None)?;
     let pixels = viewport.width() as usize * viewport.height() as usize;
     Ok((viewport.encode_png()?, pixels))
 }

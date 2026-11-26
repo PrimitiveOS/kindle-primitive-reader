@@ -17,9 +17,24 @@ pub(super) struct Pending {
 }
 
 fn save_button(layout: BrowserLayout) -> Rect {
+    let width = ((layout.0.width - 96) / 2).min(260).max(1);
     layout
         .0
-        .horizontal(Rect::new(layout.0.width - 300, 160, 260, 90))
+        .horizontal(Rect::new(layout.0.width - 40 - width, 150, width, 100))
+}
+
+fn quote_button(layout: BrowserLayout) -> Rect {
+    let width = ((layout.0.width - 96) / 2).min(260).max(1);
+    layout.0.horizontal(Rect::new(40, 150, width, 100))
+}
+
+fn saved_quote(target: &Snapshot) -> Option<&str> {
+    let quote = match target {
+        Snapshot::Bookmark(..) => return None,
+        Snapshot::Reflow(_, mark) => &mark.selection.text,
+        Snapshot::Fixed(_, mark) => &mark.text,
+    };
+    (!quote.is_empty()).then_some(quote)
 }
 
 fn text_area(layout: BrowserLayout) -> (Rect, usize) {
@@ -72,6 +87,14 @@ pub(super) fn draw(reader: &Reader, canvas: &mut Canvas, layout: BrowserLayout) 
     let Some(pending) = &reader.bookmark_browser.pending_note_edit else {
         return;
     };
+    if saved_quote(&pending.target).is_some() {
+        canvas.button(
+            quote_button(layout),
+            language.bookmark_text("Insert quote"),
+            false,
+            false,
+        );
+    }
     canvas.button(
         save_button(layout),
         language.bookmark_text("Save note"),
@@ -221,6 +244,28 @@ pub(super) fn input(reader: &mut Reader, input: Input, layout: BrowserLayout) ->
         if let Input::Tap(x, y) = input {
             if save_button(layout).contains(x, y) {
                 request_save(reader)?;
+                return Ok(Change::Partial);
+            }
+            if quote_button(layout).contains(x, y) {
+                let pending = reader
+                    .bookmark_browser
+                    .pending_note_edit
+                    .as_mut()
+                    .ok_or("Open the note editor first")?;
+                let Some(quote) = saved_quote(&pending.target) else {
+                    return Ok(Change::None);
+                };
+                let editor = &mut pending.editor.editor;
+                let current_bytes: usize = editor.text.iter().map(|ch| ch.len_utf8()).sum();
+                if current_bytes.saturating_add(quote.len()) > crate::library::MAX_NOTE_BYTES {
+                    return Err("The note exceeds the saved note size limit".into());
+                }
+                let caret = editor.caret.min(editor.text.len());
+                let added = quote.chars().count();
+                editor.text.splice(caret..caret, quote.chars());
+                editor.caret = caret + added;
+                pending.editor.show_caret(COLUMNS, rows);
+                reader.notice = None;
                 return Ok(Change::Partial);
             }
             let pending = reader

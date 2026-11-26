@@ -75,7 +75,17 @@ image signature; noncanonical encoding, other MIME types and external URLs are
 rejected. The containing SVG stays within 256 KiB, and embedded images use the
 same eight-image, source-pixel, decoder and aggregate 8 MiB raster budgets as
 local references, including decoded GIF conversion costs. The SVG parser may
-create a second bounded copy of the decoded data. Standalone SVG rendering
-still rejects image elements. The image data is not extracted or fetched, and
-source XML and anchors remain unchanged. KOReader parity, malformed-input and
+create a second bounded copy of the decoded data. Standalone SVG and SVG-only comic pages can use this same embedded-image
+subset as a fallback when the vector-only path fails. Standalone resources
+must be embedded data: relative paths, file URLs and network URLs are rejected.
+The image data is not extracted or fetched, and source XML and anchors remain
+unchanged. KOReader parity, malformed-input and
 memory behavior, and real-book, simulator and Kindle validation remain open.
+
+Standalone SVG embedded-image fallback uses the same 256 KiB input, eight
+unique images, pixel and 8 MiB aggregate raster limits, plus the existing GIF
+conversion checks. Previously successful vector-only output is tried first.
+Reader may hold decoded payload and parser copies concurrently; GIF conversion,
+decoder internals and allocator overhead still need peak-memory validation.
+KOReader registers SVG with its MuPDF provider, but its exact embedded-image
+behavior has not been compared. [Pinned SVG provider](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L413)
