@@ -6,6 +6,7 @@ use primitive_ui::{BODY, CAPTION};
 pub(super) enum Confirmation {
     Notes,
     Marks,
+    SingleMark,
     ClearNote,
 }
 
@@ -38,6 +39,9 @@ fn active(reader: &Reader) -> Option<Confirmation> {
         ) | (
             Confirmation::ClearNote,
             Screen::BookmarkBrowser(Page::EditNote)
+        ) | (
+            Confirmation::SingleMark,
+            Screen::BookmarkBrowser(Page::Detail)
         )
     );
     correct.then_some(confirmation)
@@ -70,6 +74,12 @@ pub(super) fn draw(reader: &Reader, canvas: &mut Canvas) {
                 .map_or(0, |p| p.selected_count()),
             "Delete marks",
         ),
+        Confirmation::SingleMark => (
+            "Remove mark",
+            "This mark and its note will be deleted.",
+            1,
+            "Remove",
+        ),
         Confirmation::ClearNote => (
             "Remove note",
             "Remove this note? The saved mark will remain.",
@@ -93,6 +103,7 @@ pub(super) fn draw(reader: &Reader, canvas: &mut Canvas) {
         }
         Confirmation::Marks => format!("Xóa {count} dấu đã chọn trong sách này?"),
         Confirmation::ClearNote => language.bookmark_text(consequence).to_owned(),
+        Confirmation::SingleMark => language.bookmark_text("Remove this mark?").to_owned(),
     };
     canvas.text(
         Rect::new(panel.x + 36, panel.y + 94, panel.w - 72, 80),
@@ -122,6 +133,9 @@ fn cancel(reader: &mut Reader, confirmation: Confirmation) {
     if confirmation == Confirmation::ClearNote {
         edit_note::cancel_confirmation(reader);
     }
+    if confirmation == Confirmation::SingleMark {
+        reader.bookmark_browser.pending_mark_removal = None;
+    }
     reader.notice = None;
 }
 
@@ -133,6 +147,7 @@ pub(super) fn input(reader: &mut Reader, input: Input) -> Option<Change> {
             let command = match confirmation {
                 Confirmation::Notes => Command::ConfirmRemoveCurrentNotes,
                 Confirmation::Marks => Command::ConfirmRemoveCurrentMarks,
+                Confirmation::SingleMark => Command::ConfirmRemoveFocusedMark,
                 Confirmation::ClearNote => Command::ConfirmClearCurrentNote,
             };
             reader.bookmark_change(command)

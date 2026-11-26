@@ -40,3 +40,14 @@ simulator and on Kindle. [KOReader CHM topic selection](https://github.com/korea
 This implementation has not yet been compared with KOReader on sample CHM
 files or tested in the simulator or on Kindle. Other CHM variants, merged
 help files and active content remain outside the current adapter.
+
+When both the ordinary and BMP fallback topic conversions report no readable
+content, Reader can also retain local TIFF and simple still WebP references.
+The original topic choice and XHTML for any previously readable topic stay
+unchanged. CHM resource reads enforce the existing 4 MiB member limit, verify
+format signatures and preflight the supported TIFF or WebP decoder before
+returning the original bytes for display. Unsupported, malformed, animated or
+over-budget images remain unavailable and may leave the recovered topic
+blank. This can decode an image again when it is rendered; decoder peak memory,
+exact KOReader behavior and real-book, simulator and Kindle results have not
+been verified.

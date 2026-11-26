@@ -1,7 +1,7 @@
 //! Explicitly reviewed, current-book removal of filtered saved marks.
 use super::{
-    BookState, Bookmark, Highlight, Locator, Page, PdfHighlight, Reader, Result, ReviewLocation,
-    Screen,
+    BookState, Bookmark, Highlight, Locator, MarkKey, Page, PdfHighlight, Reader, Result,
+    ReviewLocation, Screen,
 };
 use std::collections::BTreeSet;
 
@@ -219,6 +219,7 @@ pub(super) struct Pending {
     pub(super) book: u64,
     pub(super) title: String,
     pub(super) targets: Vec<ReviewedMark>,
+    detail: Option<MarkKey>,
 }
 
 impl Pending {
@@ -270,21 +271,70 @@ pub(super) fn preview(reader: &mut Reader) -> Result<()> {
         book: id,
         title: book.title.clone(),
         targets,
+        detail: None,
     });
     reader.notice = None;
     reader.show(Screen::BookmarkBrowser(Page::RemoveMarksConfirm));
     Ok(())
 }
 
-pub(super) fn confirm(reader: &mut Reader) -> Result<()> {
-    if reader.screen != Screen::BookmarkBrowser(Page::RemoveMarksConfirm) {
-        return Err("Review the marks before removing them".into());
+/// Review exactly the visible mark before opening its floating confirmation.
+pub(super) fn ask_detail(reader: &mut Reader) -> Result<()> {
+    if reader.screen != Screen::BookmarkBrowser(Page::Detail)
+        || !matches!(reader.bookmark_browser.origin, Screen::Book | Screen::Fixed)
+    {
+        return Err("Open this book before removing its mark".into());
     }
+    let key = reader
+        .bookmark_browser
+        .focus
+        .ok_or("That mark is unavailable")?;
+    if reader.open_book_id() != Some(key.book) {
+        return Err("Open this book before removing its mark".into());
+    }
+    let book = reader
+        .library
+        .state(key.book)
+        .ok_or("That book is unavailable")?;
+    let target = Snapshot::capture(book, key.locator)?;
+    target.verify_source(reader)?;
+    reader.bookmark_browser.pending_mark_removal = Some(Pending {
+        book: key.book,
+        title: book.title.clone(),
+        targets: vec![ReviewedMark {
+            target,
+            selected: true,
+        }],
+        detail: Some(key),
+    });
+    reader.bookmark_browser.confirmation = Some(super::confirmation::Confirmation::SingleMark);
+    reader.notice = None;
+    Ok(())
+}
+
+pub(super) fn confirm(reader: &mut Reader) -> Result<()> {
     let pending = reader
         .bookmark_browser
         .pending_mark_removal
         .as_ref()
         .ok_or("Review the marks before removing them")?;
+    let valid_screen = match pending.detail {
+        Some(key) => {
+            reader.screen == Screen::BookmarkBrowser(Page::Detail)
+                && reader.bookmark_browser.confirmation
+                    == Some(super::confirmation::Confirmation::SingleMark)
+                && reader.bookmark_browser.focus == Some(key)
+                && pending.targets.len() == 1
+        }
+        None => {
+            reader.screen == Screen::BookmarkBrowser(Page::RemoveMarksConfirm)
+                && reader.bookmark_browser.confirmation
+                    == Some(super::confirmation::Confirmation::Marks)
+        }
+    };
+    if !valid_screen {
+        return Err("Review the marks before removing them".into());
+    }
     if reader.open_book_id() != Some(pending.book)
         || !matches!(reader.bookmark_browser.origin, Screen::Book | Screen::Fixed)
     {
@@ -305,7 +355,7 @@ pub(super) fn confirm(reader: &mut Reader) -> Result<()> {
     for item in pending
         .targets
         .iter()
-        .filter(|item| item.selected && item.target.has_raw())
+        .filter(|item| item.selected && (pending.detail.is_some() || item.target.has_raw()))
     {
         item.target.verify_source(reader)?;
     }

@@ -52,6 +52,14 @@ and Kindle validation.
 
 Tap a mark to preview its full quotation and note. **First**, **Previous mark**, **Next mark** and **Last** move between matching marks and skip book headings. The physical page buttons move between marks. Long text has its own text controls and vertical scrolling. **Back** returns to the result page containing the selected mark.
 
+For a mark in the open book, **Remove** asks for confirmation over its preview.
+Confirming deletes that one bookmark or highlight and its note; Cancel leaves
+it untouched. Reader captures the entire mark before the prompt, then checks
+the same open book, focused mark, saved target and source again before saving.
+A failed save restores the previous in-memory state. Other marks and books are
+unaffected. The behavior follows KOReader's [individual mark removal](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L1315-L1333).
+This control has not yet been validated in simulation or on Kindle.
+
 <img src="screenshots/bookmark-details.png" width="390" alt="A saved PDF note with a View in book action and controls for moving between matching notes">
 
 **View in book** opens the source edition and jumps to the saved page or anchored text. Reader retains the target book's previous location in its navigation history. A protected PDF asks for its password before completing the jump. Cancel returns to the mark preview. Archived records remain readable while their source file is unavailable.

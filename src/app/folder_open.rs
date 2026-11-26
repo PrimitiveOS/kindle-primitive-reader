@@ -55,12 +55,22 @@ impl Reader {
         entry: &LibraryBook,
         check_archive: bool,
     ) -> crate::Result<bool> {
+        self.start_folder_open(entry, check_archive, false)
+    }
+
+    pub(super) fn start_folder_open(
+        &mut self,
+        entry: &LibraryBook,
+        check_archive: bool,
+        identified_raw: bool,
+    ) -> crate::Result<bool> {
         if self.folder_open_bypass
             || !crate::parley_layout::RAW_LAYOUT_ENABLED
             || !crate::epub_members::is_folder_book(&entry.path)
-            || !self.library.recents().iter().any(|state| {
-                state.path == entry.path && self.library.has_raw_whitespace_state(state.id)
-            })
+            || (!identified_raw
+                && !self.library.recents().iter().any(|state| {
+                    state.path == entry.path && self.library.has_raw_whitespace_state(state.id)
+                }))
         {
             return Ok(false);
         }

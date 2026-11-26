@@ -221,7 +221,9 @@ impl Chm {
         let entry = self
             .members
             .get(path)
-            .filter(|_| is_image(path) || extension(path) == "bmp")
+            .filter(|_| {
+                is_image(path) || matches!(extension(path), "bmp" | "tif" | "tiff" | "webp")
+            })
             .ok_or("The CHM resource is unavailable")?;
         let bytes = read_limited(&mut self.archive, entry, cap.min(MAX_ASSET_BYTES))?;
         let expected = if path.ends_with(".png") {
@@ -230,6 +232,10 @@ impl Chm {
             crate::gif_image::has_signature(&bytes)
         } else if path.ends_with(".bmp") {
             bytes.starts_with(b"BM")
+        } else if matches!(extension(path), "tif" | "tiff") {
+            bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*")
+        } else if path.ends_with(".webp") {
+            bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP")
         } else {
             bytes.starts_with(b"\xff\xd8\xff")
         };
@@ -244,6 +250,14 @@ impl Chm {
             let (width, height) = reader.into_dimensions()?;
             if !crate::comic::image_dimensions_valid(width, height) {
                 return Err("The CHM bitmap exceeds Reader's decoded image limits".into());
+            }
+        }
+        if matches!(extension(path), "tif" | "tiff") {
+            crate::tiff_image::decode(&bytes)?;
+        } else if extension(path) == "webp" {
+            let png = crate::comic::ImagePage::webp_as_png(&bytes)?;
+            if png.len() as u64 > crate::comic::MAX_WEBP_BYTES {
+                return Err("The converted CHM WebP exceeds its image limit".into());
             }
         }
         Ok(bytes)
@@ -640,7 +654,7 @@ struct Topic<'a> {
     in_head: bool,
     invalid: bool,
     content: bool,
-    bmp_fallback: bool,
+    image_mode: u8,
     alternate_topics: Option<&'a BTreeSet<String>>,
 }
 
@@ -741,7 +755,9 @@ impl Topic<'_> {
                 .and_then(|value| destination(self.base, value))
                 .filter(|target| {
                     (is_image(&target.path)
-                        || (self.bmp_fallback && extension(&target.path) == "bmp"))
+                        || (self.image_mode >= 1 && extension(&target.path) == "bmp")
+                        || (self.image_mode >= 2
+                            && matches!(extension(&target.path), "tif" | "tiff" | "webp")))
                         && target.fragment.is_none()
                         && self.members.contains_key(&target.path)
                 });
@@ -873,9 +889,14 @@ fn read_topic_allowed(
     members: &BTreeMap<String, Entry>,
     alternate_topics: Option<&BTreeSet<String>>,
 ) -> Result<String> {
-    match read_topic_mode(input, base, members, alternate_topics, false) {
+    match read_topic_mode(input, base, members, alternate_topics, 0) {
         Err(error) if error.is::<EmptyTopic>() => {
-            read_topic_mode(input, base, members, alternate_topics, true)
+            match read_topic_mode(input, base, members, alternate_topics, 1) {
+                Err(error) if error.is::<EmptyTopic>() => {
+                    read_topic_mode(input, base, members, alternate_topics, 2)
+                }
+                result => result,
+            }
         }
         result => result,
     }
@@ -886,7 +907,7 @@ fn read_topic_mode(
     base: &str,
     members: &BTreeMap<String, Entry>,
     alternate_topics: Option<&BTreeSet<String>>,
-    bmp_fallback: bool,
+    image_mode: u8,
 ) -> Result<String> {
     let topic = Topic {
         base,
@@ -897,7 +918,7 @@ fn read_topic_mode(
         in_head: false,
         invalid: false,
         content: false,
-        bmp_fallback,
+        image_mode,
         alternate_topics,
     };
     let mut topic = tokenize(input, TopicSink(RefCell::new(topic)))

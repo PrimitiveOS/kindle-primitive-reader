@@ -1572,6 +1572,9 @@ impl Reader {
             self.metadata_archive.abandon_archive_consumption();
         }
         let opened = self.open_with_archive_check(entry, password, check_archive);
+        if self.folder_open.is_some() {
+            return opened;
+        }
         if opened.is_ok() {
             self.complete_archive_consumption();
         } else if self.screen != Screen::PdfPassword {
@@ -1629,6 +1632,9 @@ impl Reader {
                 .as_ref()
                 .is_some_and(|(path, expected, _)| path == &entry.path && *expected == id)
         {
+            if self.start_folder_open(&entry, check_archive, true)? {
+                return Ok(());
+            }
             return Err("This folder book has saved raw positions and needs a verified snapshot; its saved data was kept".into());
         }
         if !crate::parley_layout::RAW_LAYOUT_ENABLED && self.library.has_raw_whitespace_state(id) {

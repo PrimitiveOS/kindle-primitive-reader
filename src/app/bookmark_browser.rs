@@ -91,6 +91,11 @@ impl BrowserLayout {
         self.0
             .horizontal(Rect::new(self.0.width - 560, 40, 260, 100))
     }
+
+    fn detail_action(self, index: i32) -> Rect {
+        self.0
+            .horizontal(Rect::new(self.0.width - 560 + index * 138, 40, 122, 100))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -261,6 +266,8 @@ pub(super) enum Command {
     PreviewRemoveCurrentMarks,
     AskRemoveCurrentMarks,
     ConfirmRemoveCurrentMarks,
+    AskRemoveFocusedMark,
+    ConfirmRemoveFocusedMark,
     ToggleReviewedMark(usize),
     SetAllReviewedMarks(bool),
     SelectReviewedMarkPage,
@@ -1241,6 +1248,15 @@ impl Reader {
             Command::ConfirmRemoveCurrentMarks => {
                 if self.bookmark_browser.confirmation != Some(confirmation::Confirmation::Marks) {
                     return Err("Confirm removal before deleting marks".into());
+                }
+                bulk_marks::confirm(self)?;
+            }
+            Command::AskRemoveFocusedMark => bulk_marks::ask_detail(self)?,
+            Command::ConfirmRemoveFocusedMark => {
+                if self.bookmark_browser.confirmation
+                    != Some(confirmation::Confirmation::SingleMark)
+                {
+                    return Err("Confirm removal before deleting this mark".into());
                 }
                 bulk_marks::confirm(self)?;
             }
@@ -2340,8 +2356,14 @@ impl Reader {
                 self.draw_bookmark_detail(canvas);
                 if edit_note::can_edit(self) {
                     canvas.button(
-                        layout.select_note_page(),
-                        language.bookmark_text("Edit note"),
+                        layout.detail_action(0),
+                        language.bookmark_text("Edit"),
+                        false,
+                        false,
+                    );
+                    canvas.button(
+                        layout.detail_action(1),
+                        language.bookmark_text("Remove"),
                         false,
                         false,
                     );
@@ -2485,9 +2507,15 @@ impl Reader {
         }
         if page == Page::Detail
             && edit_note::can_edit(self)
-            && matches!(input, Input::Tap(x, y) if layout.select_note_page().contains(x, y))
+            && matches!(input, Input::Tap(x, y) if layout.detail_action(0).contains(x, y))
         {
             return Some(self.bookmark_change(Command::EditCurrentNote));
+        }
+        if page == Page::Detail
+            && edit_note::can_edit(self)
+            && matches!(input, Input::Tap(x, y) if layout.detail_action(1).contains(x, y))
+        {
+            return Some(self.bookmark_change(Command::AskRemoveFocusedMark));
         }
         if page == Page::EditNote {
             return edit_note::input(self, input, layout);

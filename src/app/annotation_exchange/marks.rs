@@ -37,7 +37,15 @@ impl Reader {
                     .filter_map(|mark| export_fixed_highlight(mark, &fixed.reading));
                 points.chain(ranges).collect::<Vec<_>>()
             } else {
-                let mut book = Book::open(source).map_err(io::Error::other)?;
+                let mut book = match self
+                    .active
+                    .as_ref()
+                    .filter(|active| active.reading.config.book.as_path() == source)
+                {
+                    Some(active) => active.reading.config.open_book(),
+                    None => Book::open(source),
+                }
+                .map_err(io::Error::other)?;
                 let mut marks = Vec::new();
                 for mark in &state.bookmarks {
                     if raw_bookmark(mark) {
@@ -131,7 +139,11 @@ impl Reader {
             }
         } else if let Some(active) = &self.active {
             let (mapped, missing) = with_storage(|| {
-                let mut book = Book::open(source).map_err(io::Error::other)?;
+                let mut book = active
+                    .reading
+                    .config
+                    .open_book()
+                    .map_err(io::Error::other)?;
                 let mut mapped = Vec::new();
                 let mut missing = 0;
                 for mark in snapshot.marks {

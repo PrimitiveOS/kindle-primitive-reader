@@ -11,7 +11,7 @@ impl Reader {
         is_new: bool,
     ) -> Option<Metadata> {
         self.opening_needs_metadata(is_new, |profile| matches!(profile, Profile::Text { .. }))
-            .then(|| self.effective_opening_metadata(&config.book, text_metadata(&config.book)))
+            .then(|| self.effective_opening_metadata(&config.book, text_metadata(config)))
     }
 
     pub(in crate::app) fn opening_fixed_metadata(
@@ -41,7 +41,7 @@ impl Reader {
         if let Some(active) = &self.active {
             Some(self.effective_opening_metadata(
                 active.entry.library_path(),
-                text_metadata(&active.reading.config.book),
+                text_metadata(&active.reading.config),
             ))
         } else if let Some(fixed) = &self.fixed {
             let path = fixed.entry.library_path();
@@ -79,10 +79,10 @@ impl Reader {
 #[path = "opening_custom_metadata_tests.rs"]
 mod tests;
 
-fn text_metadata(path: &Path) -> Metadata {
+fn text_metadata(config: &BookConfig) -> Metadata {
     let mut metadata = Metadata::default();
     let book = primitive_app::with_storage(|| {
-        let mut book = crate::epub::Book::open(path).map_err(std::io::Error::other)?;
+        let mut book = config.open_book().map_err(std::io::Error::other)?;
         let package = book.package_xml().ok();
         Ok((book, package))
     });
@@ -102,7 +102,7 @@ fn text_metadata(path: &Path) -> Metadata {
             .find(|node| node.has_tag_name("title"))
             .and_then(|node| node.text())
             .filter(|title| !title.trim().is_empty())
-            .unwrap_or_else(|| filename_title(path))
+            .unwrap_or_else(|| filename_title(&config.book))
     } else {
         &book.title
     };

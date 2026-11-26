@@ -696,11 +696,12 @@ impl BookConfig {
     ) -> Result<Probe> {
         check_cancelled()?;
         let folder_snapshot = book.folder_snapshot();
-        let folder_raw = self.folder_snapshot.as_ref().is_some_and(|proof| {
-            folder_snapshot
-                .as_ref()
-                .is_some_and(|members| std::sync::Arc::ptr_eq(members, &proof.members()))
-        });
+        let folder_raw = crate::parley_layout::RAW_LAYOUT_ENABLED
+            && self.folder_snapshot.as_ref().is_some_and(|proof| {
+                folder_snapshot
+                    .as_ref()
+                    .is_some_and(|members| std::sync::Arc::ptr_eq(members, &proof.members()))
+            });
         let font_sources = crate::epub_members::is_folder_book(&self.book)
             .then(|| screen_pages::ScreenPageSources::read_fonts(&self.fonts))
             .flatten();
