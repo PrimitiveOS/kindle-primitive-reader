@@ -52,6 +52,15 @@ fit-relative zoom. Complete coordinate destinations keep their earlier
 behavior. This path has not been compared to KOReader or behaviorally verified
 with real PDFs, in the simulator or on Kindle.
 
+An explicit positive `/XYZ` zoom remains a possible PDF-standards extension:
+Reader currently keeps its existing view scale for complete coordinates and
+uses the page-only fallback for partial coordinates with a positive zoom. The
+pinned KOReader link handler passes the target page and position to its page
+navigation, without forwarding the destination zoom, so honoring that zoom is
+not claimed as a stock KOReader parity requirement. Any future implementation
+needs an independently verified zoom-to-render-scale policy and history,
+rotation, crop and viewport checks. [Pinned link handler](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerlink.lua)
+
 Local `/FitH top` and `/FitV left` links and Contents entries switch to width
 fit or height fit, respectively, and position the specified finite coordinate.
 The candidate uses the target page's unrotated crop edge for the unspecified

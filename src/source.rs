@@ -247,6 +247,9 @@ pub(crate) struct Source {
     fragment_owners: BTreeMap<String, usize>,
     pub list_counters: Vec<crate::list_marker::CounterGroup>,
     pub stylesheets: Vec<Stylesheet>,
+    // Parallel to stylesheets; unknown or oversized attributes remain absent
+    // so consumers without a media context retain the previous behavior.
+    pub(crate) stylesheet_media: Vec<Option<String>>,
     pub elements: Vec<Element>,
     pub table_cells: Vec<(usize, crate::table_layout::Cell)>,
     insertions: Vec<(usize, usize)>,
@@ -679,6 +682,7 @@ impl Source {
         }
         let head = root.children().find(|node| node.has_tag_name("head"));
         let mut stylesheets = Vec::new();
+        let mut stylesheet_media = Vec::new();
         if let Some(head) = head {
             for node in head.children() {
                 if node
@@ -691,6 +695,11 @@ impl Source {
                     && let Some(css) = node.text()
                 {
                     stylesheets.push(Stylesheet::Inline(css.to_owned()));
+                    stylesheet_media.push(
+                        node.attribute("media")
+                            .filter(|value| !value.is_empty() && value.len() <= 1024)
+                            .map(str::to_owned),
+                    );
                 }
                 if node.has_tag_name("link")
                     && node.attribute("rel").is_some_and(|rel| {
@@ -700,6 +709,11 @@ impl Source {
                     && let Some(href) = node.attribute("href")
                 {
                     stylesheets.push(Stylesheet::Linked(href.to_owned()));
+                    stylesheet_media.push(
+                        node.attribute("media")
+                            .filter(|value| !value.is_empty() && value.len() <= 1024)
+                            .map(str::to_owned),
+                    );
                 }
             }
         }
@@ -1565,6 +1579,7 @@ impl Source {
             fragment_owners,
             list_counters: list_items.counters,
             stylesheets,
+            stylesheet_media,
             table_cells: tables.by_element(&element_ids),
             elements,
             insertions,

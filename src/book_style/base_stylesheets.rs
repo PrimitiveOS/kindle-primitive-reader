@@ -43,6 +43,8 @@ h6 { font-size: 100%; }
 p { text-indent: 1.2em; }
 blockquote { padding: 0.5em 1em 0.5em 2em; }
 ol, ul { padding-left: 1em; }
+pre, listing, plaintext, xmp, samp, tt, kbd, code { font-family: monospace; }
+pre, xmp { text-align: left; }
 q::before { content: open-quote; }
 q::after { content: close-quote; }
 "#;
@@ -61,6 +63,7 @@ p { padding-bottom: 1em; }
 blockquote, figure { padding: 1em 40px; }
 address { font-style: italic; }
 pre, listing, plaintext, xmp { font-family: monospace; padding-top: 1em; padding-bottom: 1em; }
+samp, tt, kbd, code { font-family: monospace; }
 q::before { content: open-quote; }
 q::after { content: close-quote; }
 "#;

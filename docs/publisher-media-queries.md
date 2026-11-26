@@ -30,14 +30,19 @@ matching faces. This increment has received source review only and needs
 behavioral and device validation.
 
 HTML head `link` and `style` elements also exclude a stylesheet when their
-`media` attribute contains only known nonmatching simple media types, such as
-`print` or `not screen`. A missing or empty attribute, a matching alternative,
-or an unknown, malformed or over-1,024-byte condition keeps the earlier
-stylesheet behavior. This conservative filter avoids suppressing a publisher
-sheet on an unsupported feature query; it is not full media-query evaluation.
+`media` attribute contains only known nonmatching alternatives. Alongside
+simple media types, this includes the supported viewport and orientation
+features evaluated using the same context as the surrounding stylesheet.
+A missing or empty attribute, a matching alternative, or an unknown,
+malformed or over-1,024-byte condition keeps the earlier stylesheet behavior.
+When a consumer has no viewport context it retains feature-qualified sheets.
+This conservative filter is not full media-query evaluation.
 An affected book can repaginate, while source text and saved anchors stay
-unchanged. Chapter-discovered fonts use the filtered stylesheet list; the
-publication-wide font inventory can still report faces from manifest sheets.
+unchanged. Chapter font discovery uses the original context-free sheet filter,
+so its inventory can include viewport-nonmatching faces; the publication-wide
+inventory can also report faces from manifest sheets.
+The viewport-aware attribute increment has had source review only and needs
+behavioral and device validation.
 
 Top-level local `@import` rules can also use these simple media types, for
 example `@import url("reading.css") screen;`. Matching imports retain their

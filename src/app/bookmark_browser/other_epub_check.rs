@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 const MAX_FONTS: usize = 16;
 const MAX_FONT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_QUOTE_CHAPTERS: usize = 8;
+const MAX_QUOTE_TIME: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Context {
@@ -138,7 +140,6 @@ impl Context {
             if end.raw_caret.is_some()
                 || end.illustration.is_some()
                 || start.book != end.book
-                || start.chapter != end.chapter
                 || selection.text.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES
             {
                 return Err("Open this book to edit this saved passage".into());
@@ -148,14 +149,32 @@ impl Context {
         if book.is_fixed_layout() || !book.is_reflowable_epub() || book.revision() != start.book {
             return Err("The EPUB no longer matches this passage".into());
         }
-        let mut matches = book
-            .chapters
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| entry.href == start.chapter);
-        let (index, entry) = matches.next().ok_or("That chapter is unavailable")?;
-        if book.recovered_placeholder(entry) || matches.next().is_some() {
-            return Err("That chapter is unavailable".into());
+        let unique_index = |href: &str| -> crate::Result<usize> {
+            let mut matches = book
+                .chapters
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.href == href);
+            let (index, entry) = matches.next().ok_or("That chapter is unavailable")?;
+            if book.recovered_placeholder(entry) || matches.next().is_some() {
+                return Err("That chapter is unavailable".into());
+            }
+            Ok(index)
+        };
+        let first = unique_index(&start.chapter)?;
+        let last = match selection {
+            Some(selection) => unique_index(&selection.end.chapter)?,
+            None => first,
+        };
+        let count = last
+            .checked_sub(first)
+            .and_then(|n| n.checked_add(1))
+            .filter(|n| *n <= MAX_QUOTE_CHAPTERS)
+            .ok_or("Open this book to edit this saved passage")?;
+        for entry in &book.chapters[first..=last] {
+            if unique_index(&entry.href).is_err() {
+                return Err("That chapter is unavailable".into());
+            }
         }
         let settings = if self.settings.publisher_render_mode.is_some()
             && (!self.settings.publisher_styles || !book.is_reflowable_epub() || book.spine_rtl)
@@ -168,52 +187,99 @@ impl Context {
             .typography
             .resolve(book.language.map(crate::TypographyLocale::publication));
         let shaping_language = shaping_main.map(crate::TypographyLocale::shaping_language);
-        let prefix = crate::book_style::pseudo::quotes::prepare_exact(
-            &mut book,
-            index,
-            settings,
-            &self.styles,
-            shaping_language,
-            shaping_main.as_ref().map_or("en", |tag| tag.as_str()),
-            &check,
-        )?;
-        book.quote_prefixes
-            .as_mut()
-            .ok_or("The EPUB snapshot is unavailable")?
-            .install_exact(prefix);
-        check()?;
-        let probe = crate::Probe::layout_opened_book_cancellable(
-            &mut Some(book),
-            crate::Engine::Parley,
-            settings,
-            index,
-            None,
-            &self.rules,
-            &self.styles,
-            || {
-                primitive_app::with_storage(|| {
-                    crate::font_context(&self.fonts).map_err(std::io::Error::other)
-                })
-                .map_err(Into::into)
-            },
-            false,
-            &check,
-        )?;
-        if probe.page_for(start).is_none() {
-            return Err("This saved location no longer matches the EPUB".into());
+        let started = std::time::Instant::now();
+        let check_work = || -> crate::Result<()> {
+            check()?;
+            if count > 1 && started.elapsed() >= MAX_QUOTE_TIME {
+                return Err("Open this book to edit this saved passage".into());
+            }
+            Ok(())
+        };
+        let mut opened = Some(book);
+        let mut text = String::new();
+        for index in first..=last {
+            check_work()?;
+            let book = opened.as_mut().ok_or("The EPUB snapshot is unavailable")?;
+            let prefix = crate::book_style::pseudo::quotes::prepare_exact(
+                book,
+                index,
+                settings,
+                &self.styles,
+                shaping_language,
+                shaping_main.as_ref().map_or("en", |tag| tag.as_str()),
+                &check_work,
+            )?;
+            book.quote_prefixes
+                .as_mut()
+                .ok_or("The EPUB snapshot is unavailable")?
+                .install_exact(prefix);
+            let probe = crate::Probe::layout_opened_book_cancellable(
+                &mut opened,
+                crate::Engine::Parley,
+                settings,
+                index,
+                None,
+                &self.rules,
+                &self.styles,
+                || {
+                    primitive_app::with_storage(|| {
+                        crate::font_context(&self.fonts).map_err(std::io::Error::other)
+                    })
+                    .map_err(Into::into)
+                },
+                false,
+                &check_work,
+            )?;
+            if index == first && probe.page_for(start).is_none() {
+                return Err("This saved location no longer matches the EPUB".into());
+            }
+            if let Some(selection) = selection {
+                let end = &selection.end;
+                if index == last && probe.page_for(end).is_none() {
+                    return Err("This saved passage no longer matches the EPUB".into());
+                }
+                if first == last
+                    && probe.compare_text_anchors(start, end) != Some(std::cmp::Ordering::Less)
+                {
+                    return Err("This saved passage no longer matches the EPUB".into());
+                }
+                match probe.select_source_range(start, end) {
+                    Some(part) => {
+                        if (first == last && part != *selection)
+                            || (index == first && part.start != *start)
+                            || (index == last && part.end != *end)
+                        {
+                            return Err("This saved passage no longer matches the EPUB".into());
+                        }
+                        let separator = usize::from(!text.is_empty());
+                        if text
+                            .len()
+                            .saturating_add(separator)
+                            .saturating_add(part.text.len())
+                            > crate::library::MAX_HIGHLIGHT_TEXT_BYTES
+                        {
+                            return Err("This saved passage exceeds the verification limit".into());
+                        }
+                        if separator != 0 {
+                            text.push('\n');
+                        }
+                        text.push_str(&part.text);
+                    }
+                    None if index == first || index == last || probe.has_raw_layout() => {
+                        return Err("This saved passage no longer matches the EPUB".into());
+                    }
+                    None => {}
+                }
+            }
         }
-        if selection.is_some_and(|selection| {
-            let end = &selection.end;
-            probe.page_for(end).is_none()
-                || probe.compare_text_anchors(start, end) != Some(std::cmp::Ordering::Less)
-                || probe.select_source_range(start, end).as_ref() != Some(selection)
-        }) {
+        if selection.is_some_and(|selection| text.trim().is_empty() || text != selection.text) {
             return Err("This saved passage no longer matches the EPUB".into());
         }
-        check()?;
+        check_work()?;
         if !self.revalidate_fonts(&fonts) {
             return Err("Reading fonts changed during verification".into());
         }
+        check_work()?;
         Ok(fonts)
     }
 }

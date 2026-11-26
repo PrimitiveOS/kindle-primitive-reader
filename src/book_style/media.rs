@@ -160,12 +160,19 @@ fn media_conjunction(
 /// Only discard an HTML stylesheet when every media alternative is known not
 /// to match. Unknown, malformed and oversized attributes retain old behavior.
 pub(crate) fn stylesheet_known_nonmatching(value: &str) -> bool {
+    stylesheet_nonmatching_with_context(value, None)
+}
+
+pub(super) fn stylesheet_nonmatching_with_context(
+    value: &str,
+    context: Option<MediaContext>,
+) -> bool {
     if value.is_empty() || value.len() > 1024 {
         return false;
     }
     let mut parser = Parser::new(value);
     parser
-        .parse_comma_separated(|input| media_query_known(input, None))
+        .parse_comma_separated(|input| media_query_known(input, context))
         .is_ok_and(|queries| {
             !queries.is_empty() && queries.iter().all(|query| *query == Some(false))
         })

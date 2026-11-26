@@ -30,6 +30,17 @@ applied beneath publisher CSS, while inline declarations and publisher
 does not force unsupported properties into the layout engine. This work does
 not bundle KOReader's GPL CSS assets.
 
+Traditional and HTML base styles request a monospace family for unstyled code
+and preformatted elements (`code`, `kbd`, `samp`, `tt`, `pre`, `listing`,
+`plaintext` and `xmp`). Traditional also aligns `pre` and `xmp` text to the
+left. Publisher and user styles can override these defaults; None and the
+FictionBook base are unchanged. The actual face depends on available fonts,
+and changed metrics can repaginate a book without changing its source anchors.
+This aligns with the pinned CREngine's [HTML defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/html5.css#L153-L155)
+and [inline-code defaults](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/html5.css#L200-L202),
+plus the [Traditional preformatted alignment](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/cr3gui/data/epub.css#L106-L111).
+This addition has not yet been behaviorally verified on the simulator or Kindle.
+
 The choice is saved with each book's reading preferences. Hold a stylesheet
 choice to confirm it as the default for newly opened books. FictionBook (FB2
 and FB3) uses its own default, while the other reflowable formats share a

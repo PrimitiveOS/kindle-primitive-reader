@@ -1005,7 +1005,17 @@ impl BookStyle {
         let mut imports = 0;
         let mut active_imports = HashSet::new();
         let names = ChapterNames::new(&source.elements);
-        for sheet in &source.stylesheets {
+        for (index, sheet) in source.stylesheets.iter().enumerate() {
+            if source
+                .stylesheet_media
+                .get(index)
+                .and_then(Option::as_deref)
+                .is_some_and(|condition| {
+                    media::stylesheet_nonmatching_with_context(condition, context)
+                })
+            {
+                continue;
+            }
             match sheet {
                 Stylesheet::Linked(href) if linked < MAX_SHEETS => {
                     linked += 1;
