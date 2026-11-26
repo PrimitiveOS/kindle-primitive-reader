@@ -284,10 +284,10 @@ impl Reader {
     }
 
     pub(super) fn jump_to_latest_bookmark(&mut self) -> Option<Change> {
-        let action = self.latest_bookmark_action()?;
+        self.latest_bookmark_action()?;
         self.auto_turn.activity(Instant::now());
-        Some(match self.activate(action) {
-            Ok(()) => self.applied_change(),
+        Some(match self.start_latest_mark_search() {
+            Ok(()) => Change::Partial,
             Err(error) => self.report(error),
         })
     }

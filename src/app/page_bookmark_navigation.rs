@@ -37,6 +37,14 @@ struct Entry {
 }
 
 impl Entry {
+    fn created_at(&self) -> Option<i64> {
+        match &self.saved {
+            SavedMark::Bookmark(mark) => mark.created_at,
+            SavedMark::Reflow(mark) => mark.created_at,
+            SavedMark::Fixed(mark) => mark.created_at,
+        }
+    }
+
     fn matches(&self, book: &BookState, index: usize, bookmarks: usize) -> bool {
         match &self.saved {
             SavedMark::Bookmark(mark) => book.bookmarks.get(index) == Some(mark),
@@ -95,6 +103,7 @@ pub(super) struct Search {
     original_last_visible: usize,
     direction: Direction,
     boundary: bool,
+    latest: bool,
     publication: Option<u64>,
     fixed_pages: Option<usize>,
     fixed_stamp: Option<FileStamp>,
@@ -151,6 +160,7 @@ fn worker(
     fixed_pages: Option<usize>,
     direction: Direction,
     boundary: bool,
+    latest: bool,
     current: ReadingPosition,
     current_last_visible: usize,
     snapshot: Snapshot,
@@ -199,18 +209,31 @@ fn worker(
     } else {
         None
     };
-    let mut order: Vec<usize> = snapshot
-        .iter()
-        .enumerate()
-        .filter_map(|(index, entry)| {
-            let chapter = entry.chapter?;
-            let relevant = match direction {
-                Direction::Previous => chapter <= current.chapter,
-                Direction::Next => chapter >= current.chapter,
-            };
-            relevant.then_some(index)
-        })
-        .collect();
+    let mut order: Vec<usize> = if latest {
+        // Preserve the existing latest selector: missing timestamps sort
+        // first, and the last entry wins a tie. An unresolved latest mark
+        // must not silently turn into a different (older) saved mark.
+        snapshot
+            .iter()
+            .enumerate()
+            .max_by_key(|(index, entry)| (entry.created_at(), *index))
+            .and_then(|(index, entry)| entry.chapter.map(|_| index))
+            .into_iter()
+            .collect()
+    } else {
+        snapshot
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                let chapter = entry.chapter?;
+                let relevant = match direction {
+                    Direction::Previous => chapter <= current.chapter,
+                    Direction::Next => chapter >= current.chapter,
+                };
+                relevant.then_some(index)
+            })
+            .collect()
+    };
     // Search chapters in the order that can produce the requested extreme.
     // All candidates within the winning chapter still need checking for page
     // and anchor order; only more distant chapters can then be skipped.
@@ -301,10 +324,11 @@ fn worker(
         };
         let page = (key.0, key.1);
         let current_page = (current.chapter, current.page);
-        let beyond = match direction {
-            Direction::Previous => page < current_page,
-            Direction::Next => page > current_page,
-        };
+        let beyond = latest
+            || match direction {
+                Direction::Previous => page < current_page,
+                Direction::Next => page > current_page,
+            };
         if beyond
             && best
                 .as_ref()
@@ -395,7 +419,14 @@ impl Reader {
         include_highlights: bool,
         boundary: bool,
     ) -> crate::Result<()> {
-        self.start_mark_search(direction, include_highlights, boundary, false)
+        self.start_mark_search(direction, include_highlights, boundary, false, false)
+    }
+
+    pub(super) fn start_latest_mark_search(&mut self) -> crate::Result<()> {
+        if self.latest_bookmark_action().is_none() {
+            return Err("No saved marks".into());
+        }
+        self.start_mark_search(Direction::Next, true, false, false, true)
     }
 
     pub(super) fn start_skim_mark_search(
@@ -406,7 +437,7 @@ impl Reader {
         if self.screen != Screen::Skim || self.skim.is_none() {
             return Err("Skim is not open".into());
         }
-        self.start_mark_search(direction, true, boundary, true)
+        self.start_mark_search(direction, true, boundary, true, false)
     }
 
     fn start_mark_search(
@@ -415,6 +446,7 @@ impl Reader {
         include_highlights: bool,
         boundary: bool,
         preview: bool,
+        latest: bool,
     ) -> crate::Result<()> {
         if self.page_bookmark_worker_busy.load(Ordering::Acquire) {
             return Err(self
@@ -501,6 +533,7 @@ impl Reader {
             original_last_visible,
             direction,
             boundary,
+            latest,
             publication,
             fixed_pages,
             fixed_stamp,
@@ -839,6 +872,7 @@ impl Reader {
                     let fixed_pages = search.fixed_pages;
                     let direction = search.direction;
                     let boundary = search.boundary;
+                    let latest = search.latest;
                     let current = search.original.position.clone();
                     let current_last_visible = search.original_last_visible;
                     if self.page_bookmark_worker_busy.swap(true, Ordering::AcqRel) {
@@ -857,6 +891,7 @@ impl Reader {
                                     fixed_pages,
                                     direction,
                                     boundary,
+                                    latest,
                                     current,
                                     current_last_visible,
                                     snapshot_worker,
@@ -1038,6 +1073,9 @@ impl Reader {
         }
         if finished {
             let Some((_, target)) = search.best.take() else {
+                if search.latest {
+                    return Some(self.report("The latest saved mark cannot be verified"));
+                }
                 let message = match (search.direction, search.include_highlights) {
                     (Direction::Previous, true) => "No earlier saved mark",
                     (Direction::Next, true) => "No later saved mark",

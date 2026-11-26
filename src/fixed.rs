@@ -63,17 +63,25 @@ pub struct PdfOutlineItem {
     pub depth: usize,
     /// Optional destination in the target page's upright, cropped point space.
     pub destination_point: Option<Point>,
-    /// Optional untransformed `/XYZ` coordinates when one or both are null.
+    /// Optional untransformed `/XYZ`, `/FitH` or `/FitV` position.
     pub destination_partial: Option<PartialPdfDestination>,
 }
 
-/// A PDF /XYZ location whose missing coordinates retain the current view.
+/// A PDF location whose position requires the current view or target page.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PartialPdfDestination {
-    /// PDF default-user-space coordinate, or the current value if absent.
+    /// PDF default-user-space coordinate; absent for a fitted page edge.
     pub left: Option<f64>,
-    /// PDF default-user-space coordinate, or the current value if absent.
+    /// PDF default-user-space coordinate; absent for a fitted page edge.
     pub top: Option<f64>,
+    pub fit: PdfDestinationFit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PdfDestinationFit {
+    Current,
+    Width,
+    Height,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,7 +102,7 @@ pub struct PdfLink {
     pub uri: Option<String>,
     /// A supported explicit destination, in the target page's upright, cropped point space.
     pub destination_point: Option<Point>,
-    /// Optional untransformed `/XYZ` coordinates when one or both are null.
+    /// Optional untransformed `/XYZ`, `/FitH` or `/FitV` position.
     pub destination_partial: Option<PartialPdfDestination>,
 }
 
@@ -397,8 +405,8 @@ impl Pdf {
         Ok((width, height))
     }
 
-    /// Complete nullable PDF coordinates from the current visible position in
-    /// PDF user space, then convert into the target page's upright crop space.
+    /// Complete nullable PDF coordinates against the current view or the
+    /// target crop edge, then convert into the target's upright crop space.
     pub(crate) fn complete_partial_destination(
         &self,
         current_page: usize,
@@ -406,29 +414,43 @@ impl Pdf {
         target_page: usize,
         target: PartialPdfDestination,
     ) -> Option<Point> {
-        let current = self
-            .document
-            .pages()
-            .get(current_page)?
-            .initial_transform(true)
-            .to_kurbo();
         let target_transform = self
             .document
             .pages()
             .get(target_page)?
             .initial_transform(true)
             .to_kurbo();
-        let determinant = current.determinant();
         let target_determinant = target_transform.determinant();
         if !current_upright.is_finite()
-            || !determinant.is_finite()
-            || determinant.abs() < 1e-12
             || !target_determinant.is_finite()
             || target_determinant.abs() < 1e-12
         {
             return None;
         }
-        let old = current.inverse() * current_upright;
+        let old = match target.fit {
+            PdfDestinationFit::Current => {
+                let current = self
+                    .document
+                    .pages()
+                    .get(current_page)?
+                    .initial_transform(true)
+                    .to_kurbo();
+                let determinant = current.determinant();
+                if !determinant.is_finite() || determinant.abs() < 1e-12 {
+                    return None;
+                }
+                current.inverse() * current_upright
+            }
+            PdfDestinationFit::Width | PdfDestinationFit::Height => {
+                let [a, b, c, d, _, _] = target_transform.as_coeffs();
+                // Only unrotated target pages have the PDF top/left axes
+                // aligned with the upright viewport axes in this candidate.
+                if a <= 0.0 || d >= 0.0 || b != 0.0 || c != 0.0 {
+                    return None;
+                }
+                target_transform.inverse() * Point::ORIGIN
+            }
+        };
         if !old.is_finite() {
             return None;
         }
@@ -1027,8 +1049,25 @@ fn explicit_destination(
                     same_zoom.then_some(DestinationPosition::Partial(PartialPdfDestination {
                         left,
                         top,
+                        fit: PdfDestinationFit::Current,
                     }))
                 }
+            }
+            b"FitH" | b"FitV" => {
+                let value = f64::from(read()?.into_f32()?);
+                if !value.is_finite() {
+                    return None;
+                }
+                let horizontal = kind.as_ref() == b"FitH";
+                Some(DestinationPosition::Partial(PartialPdfDestination {
+                    left: (!horizontal).then_some(value),
+                    top: horizontal.then_some(value),
+                    fit: if horizontal {
+                        PdfDestinationFit::Width
+                    } else {
+                        PdfDestinationFit::Height
+                    },
+                }))
             }
             b"FitR" => {
                 let left = f64::from(read()?.into_f32()?);

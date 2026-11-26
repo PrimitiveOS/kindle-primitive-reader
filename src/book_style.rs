@@ -1937,6 +1937,7 @@ struct Compound {
     nth_child_from_end: Vec<(i32, i32)>,
     nth_type: Vec<(i32, i32)>,
     nth_type_from_end: Vec<(i32, i32)>,
+    negations: Vec<Compound>,
     relation: Relation,
 }
 
@@ -1959,6 +1960,7 @@ impl Compound {
             && self.nth_child_from_end.is_empty()
             && self.nth_type.is_empty()
             && self.nth_type_from_end.is_empty()
+            && self.negations.is_empty()
     }
 
     fn matches(&self, element: &Element) -> bool {
@@ -1994,6 +1996,10 @@ impl Compound {
                 .iter()
                 .all(|&formula| nth_matches(formula, element.type_index_from_end))
             && self
+                .negations
+                .iter()
+                .all(|negative| !negative.matches(element))
+            && self
                 .tag
                 .as_ref()
                 .is_none_or(|tag| tag.eq_ignore_ascii_case(&element.tag))
@@ -2024,6 +2030,10 @@ fn nth_matches((a, b): (i32, i32), index: usize) -> bool {
 
 impl Selector {
     fn parse<'i>(input: &mut Parser<'i>) -> CssResult<Self> {
+        Self::parse_with_depth(input, 0)
+    }
+
+    fn parse_with_depth<'i>(input: &mut Parser<'i>, depth: u8) -> CssResult<Self> {
         let start = input.position().byte_index();
         let mut steps = Vec::new();
         let mut compound = Compound::default();
@@ -2085,7 +2095,26 @@ impl Selector {
                     if doubled {
                         return Err(ParseError::unexpected_token());
                     }
+                    let mut class_specificity = true;
                     match token {
+                        Token::Function(name) if name.eq_ignore_ascii_case("not") => {
+                            if depth >= 4 {
+                                return Err(ParseError::unexpected_token());
+                            }
+                            let mut nested = input.parse_nested_block(|input| {
+                                Self::parse_with_depth(input, depth + 1)
+                            })?;
+                            if nested.steps.len() != 1 || nested.pseudo.is_some() {
+                                return Err(ParseError::unexpected_token());
+                            }
+                            specificity.0 = specificity.0.saturating_add(nested.specificity.0);
+                            specificity.1 = specificity.1.saturating_add(nested.specificity.1);
+                            specificity.2 = specificity.2.saturating_add(nested.specificity.2);
+                            compound
+                                .negations
+                                .push(nested.steps.pop().expect("one checked selector"));
+                            class_specificity = false;
+                        }
                         Token::Ident(name) if name.eq_ignore_ascii_case("first-of-type") => {
                             compound.first_of_type = true;
                         }
@@ -2167,7 +2196,9 @@ impl Selector {
                         }
                         _ => return Err(ParseError::unexpected_token()),
                     }
-                    specificity.1 = specificity.1.saturating_add(1);
+                    if class_specificity {
+                        specificity.1 = specificity.1.saturating_add(1);
+                    }
                 }
                 Token::IDHash(id) => {
                     compound.ids.push(id.to_string());

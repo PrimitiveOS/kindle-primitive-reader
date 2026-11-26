@@ -33,6 +33,18 @@ fit-relative zoom. Complete coordinate destinations keep their earlier
 behavior. This path has not been compared to KOReader or behaviorally verified
 with real PDFs, in the simulator or on Kindle.
 
+Local `/FitH top` and `/FitV left` links and Contents entries now carry their
+finite PDF coordinate to the existing positioned jump when Reader is already
+at exact width fit or height fit respectively. This candidate uses the target
+page's unrotated crop edge for the unspecified axis and converts through its
+PDF page transform. It retains the page-only fallback for null or malformed
+coordinates, rotated target pages, a user rotation, crops, straightening,
+continuous or spread views, tile or extra zoom, a mismatched fit, and cases
+where the render scale cap prevents the requested exact fit. It does not
+automatically change fit mode or implement `/FitBH` and `/FitBV`. These cases
+and the new positioned behavior remain unverified against KOReader, real PDFs,
+the simulator and Kindle.
+
 Pinned KOReader uses MuPDF's link resolver. The reference accepts indexed local
 pages and parses and transforms `/FitR` rectangles. Reader's source test covers
 explicit and named rectangles, rotation, crop, invalid page numbers and an

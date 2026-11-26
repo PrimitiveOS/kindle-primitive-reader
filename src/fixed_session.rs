@@ -1926,6 +1926,45 @@ impl FixedReading {
         let FixedDocument::Pdf(pdf) = &self.source else {
             return None;
         };
+        let partial = partial?;
+        if partial.fit != crate::fixed::PdfDestinationFit::Current {
+            let correct_fit = match partial.fit {
+                crate::fixed::PdfDestinationFit::Width => self.view.width_fit,
+                crate::fixed::PdfDestinationFit::Height => {
+                    self.view.height_fit && !self.view.width_fit
+                }
+                crate::fixed::PdfDestinationFit::Current => unreachable!(),
+            };
+            if !correct_fit
+                || self.view.zoom != 0
+                || self.view.tile_zoom.is_some()
+                || self.view.turns != 0
+                || self.view.crop.is_some()
+                || self.view.straighten_limit != 0
+                || self.view.continuous
+                || self.view.spread
+                || self.view.semi_auto_crop
+                || self.view.continuous_crop.is_some()
+            {
+                return None;
+            }
+            let size = pdf.page_size(page).ok()?;
+            let metrics = view_metrics(size, &self.view, self.frame_size());
+            let expected = match partial.fit {
+                crate::fixed::PdfDestinationFit::Width => metrics.width_scale,
+                crate::fixed::PdfDestinationFit::Height => metrics.height_scale,
+                crate::fixed::PdfDestinationFit::Current => unreachable!(),
+            };
+            if !expected.is_finite()
+                || expected <= 0.0
+                || metrics.scale.to_bits() != expected.to_bits()
+            {
+                return None;
+            }
+            return pdf
+                .complete_partial_destination(self.page, Point::ORIGIN, page, partial)
+                .map(FixedJump::LinkPoint);
+        }
         // Reader's zoom is fit-relative: different page dimensions or a
         // per-page crop can change actual magnification even when the stored
         // zoom setting is unchanged. Only position a partial /XYZ target when
@@ -1942,7 +1981,7 @@ impl FixedReading {
         {
             return None;
         }
-        pdf.complete_partial_destination(self.page, self.history_point()?, page, partial?)
+        pdf.complete_partial_destination(self.page, self.history_point()?, page, partial)
             .map(FixedJump::LinkPoint)
     }
 

@@ -4926,9 +4926,8 @@ impl Reader {
                 self.start_adjacent_mark_search(direction, true, true)?
             }
             Action::LatestSavedMark => {
-                let action = self.latest_bookmark_action().ok_or("No saved marks")?;
                 self.auto_turn.activity(Instant::now());
-                self.activate(action)?;
+                self.start_latest_mark_search()?;
             }
             Action::ChapterLevel(setting) => self.set_chapter_level(setting)?,
             Action::Custom(action) => self.custom_action(action)?,
