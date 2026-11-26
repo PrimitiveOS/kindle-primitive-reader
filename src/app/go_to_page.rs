@@ -198,7 +198,17 @@ impl Reader {
         if reading.whole_book_screen_pages().is_some() {
             return self.follow_screen_ordinal(jump);
         }
-        if active.entry.format == DocumentFormat::Epub && reading.has_exact_local_screen_pages() {
+        let exact_local = reading.has_exact_local_screen_pages();
+        let request_background = active.entry.format == DocumentFormat::Epub && exact_local;
+        if let PageJump::Relative(delta) = jump
+            && exact_local
+            && self.can_defer_relative_page_navigation(delta)
+        {
+            return self.start_relative_page_navigation(delta);
+        }
+        if request_background {
+            let active = self.active.as_mut().ok_or("No open book")?;
+            let reading = &mut active.reading;
             reading.request_screen_page_navigation();
             if wants_background(reading) {
                 self.screen_page_jump = Some(PendingJump {

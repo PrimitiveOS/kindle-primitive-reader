@@ -58,12 +58,13 @@ The Oasis 3 also ran the authored keyboard and matching tests and compared origi
 KOReader defaults to 5,000 entries in **Find all**. Its results menu offers first, previous, next and last page controls. Reader loads results on a background worker and makes the first batch available while the search continues. Press Back to cancel. The list builds the visible rows as needed. Each displayed row retains its start and end positions in the publication, including positions after the first hundred occurrences. [KOReader search limit](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readersearch.lua#L49-L64) · [KOReader list navigation](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/menu.lua#L749-L855)
 
 Find all keeps a completeness indication with its retained results when the
-list is reopened. It reports the known number of scanned chapters skipped as a
-lower bound, alongside any hit or memory limit; a stopped or failed search may
-also have unsearched chapters. Unsupported or missing-spine placeholder notices
-are skipped rather than searched as publication text. Existing verified hits
-remain selectable. The status does not count unscanned chapters and has not yet
-been behaviorally tested.
+list is reopened. Tap **Details** in the results footer to see scanned chapter
+skips as a lower bound alongside any hit or memory limit; a stopped or failed
+search may also have unsearched chapters. Done or Back closes the details without
+moving the result list or reading position. Unsupported or missing-spine
+placeholder notices are skipped rather than searched as publication text.
+Existing verified hits remain selectable. The status does not count unscanned
+chapters and has not yet been behaviorally tested.
 
 ![Last page of 240 search results in an authored coastal journal, with controls for navigating the results](screenshots/full-search-results.png)
 

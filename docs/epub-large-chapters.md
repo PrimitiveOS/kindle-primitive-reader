@@ -107,3 +107,15 @@ windowed renderer, interactive navigation, Find, selections or saved-position
 handoff. Peak allocator and device memory remain unmeasured. No reader path
 uses this index; source and font handoff proofs and all those consumers remain
 prerequisites to user-visible support. No behavioral or device tests have run.
+
+An additional unwired font capture helper can retain the configured font files
+in order as immutable byte snapshots. It allows at most eight regular files and
+16 MiB in total, refuses a symlink as the final path component, hashes each
+file while reading, and checks cancellation between 32 KiB reads. Descriptor
+stamps are checked before and after each file and every named file is checked again after
+capture. This does not snapshot system-discovered or other fallback fonts, or
+prove which faces the live Reader selected. Revalidation compares metadata and
+does not rehash file contents; parent path components are not traversed with
+no-follow descriptors. This is a single-writer, advisory input proof, not a
+security boundary or permission to hand an index to the Reader. The storage
+lease spans the bounded capture, and its latency and peak memory are unmeasured.

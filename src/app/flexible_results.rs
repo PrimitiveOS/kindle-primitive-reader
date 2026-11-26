@@ -457,8 +457,9 @@ impl Reader {
     }
 
     fn draw_flexible_result_notice(&self, canvas: &mut Canvas) {
-        let status = self.reflow_results_completeness();
-        if let Some(notice) = status.as_deref().or(self.notice.as_deref()) {
+        if !self.draw_reflow_completeness_indicator(canvas)
+            && let Some(notice) = self.notice.as_deref()
+        {
             canvas.text(
                 self.search_layout().list_caption(LIST_X, 179, 64),
                 notice,

@@ -352,6 +352,7 @@ pub(super) struct Nearby {
     fixed: Option<FixedPending>,
     all: Option<PendingAll>,
     all_completeness: Option<AllCompleteness>,
+    all_details_open: bool,
     page_pending: Option<PendingPageMarks>,
     page_marks: Option<PageMarks>,
     page_resume: Option<PageMarksResume>,
@@ -409,10 +410,20 @@ impl Nearby {
             status.stopped = true;
         }
         self.cancel_page_marks();
+        self.all_details_open = false;
     }
 
     pub(super) fn discard_all_completeness(&mut self) {
         self.all_completeness = None;
+        self.all_details_open = false;
+    }
+
+    pub(super) fn close_all_details(&mut self) {
+        self.all_details_open = false;
+    }
+
+    pub(super) fn all_details_open(&self) -> bool {
+        self.all_details_open
     }
     pub(super) fn clear(&mut self) {
         self.cancel();
@@ -476,7 +487,102 @@ impl Reader {
                     .to_owned(),
             );
         }
-        Some(parts.join(" · "))
+        Some(parts.join("\n"))
+    }
+
+    fn completeness_indicator_hit(&self) -> Rect {
+        self.search_layout().list_caption(LIST_X, 210, 100)
+    }
+
+    fn completeness_panel(&self) -> (Rect, Rect) {
+        let layout = self.navigation_layout();
+        let width = (layout.width - 80).clamp(200, 900);
+        let height = (layout.height - 80).clamp(360, 760);
+        let panel = Rect::new(
+            (layout.width - width) / 2,
+            (layout.height - height) / 2,
+            width,
+            height,
+        );
+        let close = Rect::new(
+            panel.x + (panel.w - 240) / 2,
+            panel.bottom() - 124,
+            240,
+            100,
+        );
+        (panel, close)
+    }
+
+    /// Draw only a compact control in the existing footer; its details are
+    /// available on demand without reducing the result list's height.
+    pub(super) fn draw_reflow_completeness_indicator(&self, canvas: &mut Canvas) -> bool {
+        if self.reflow_results_completeness().is_none() {
+            return false;
+        }
+        let language = self.controls.interface_language;
+        let area = self.search_layout().list_caption(LIST_X, 179, 64);
+        let full = language.document_search_text("Search incomplete · Details");
+        let short = language.document_search_text("Incomplete · Details");
+        let label = if canvas.measure(full, 28) <= area.w {
+            full
+        } else if canvas.measure(short, 28) <= area.w {
+            short
+        } else {
+            language.document_search_text("Details")
+        };
+        canvas.text(area, label, CAPTION);
+        true
+    }
+
+    pub(super) fn draw_reflow_completeness_details(&self, canvas: &mut Canvas) {
+        if self.screen != Screen::Matches || !self.nearby.all_details_open {
+            return;
+        }
+        let Some(details) = self.reflow_results_completeness() else {
+            return;
+        };
+        let (panel, close) = self.completeness_panel();
+        let language = self.controls.interface_language;
+        canvas.popup(panel);
+        canvas.text(
+            Rect::new(panel.x + 32, panel.y + 24, panel.w - 64, 64),
+            language.document_search_text("Search details"),
+            BODY.bold(),
+        );
+        canvas.text(
+            Rect::new(panel.x + 32, panel.y + 94, panel.w - 64, panel.h - 236),
+            &details,
+            CAPTION.lines(14).break_long_words(),
+        );
+        canvas.button(close, language.document_search_text("Done"), false, false);
+    }
+
+    pub(super) fn reflow_completeness_input(&mut self, input: Input) -> Option<Change> {
+        if self.screen != Screen::Matches || self.read_alarm.modal() {
+            return None;
+        }
+        if self.nearby.all_details_open {
+            if matches!(input, Input::Sleep | Input::Wake) {
+                return None;
+            }
+            let (panel, close) = self.completeness_panel();
+            if matches!(input, Input::PageBack)
+                || matches!(input, Input::Tap(x, y) if close.contains(x, y) || !panel.contains(x, y))
+            {
+                self.nearby.all_details_open = false;
+                return Some(Change::Partial);
+            }
+            return Some(Change::None);
+        }
+        if !self.search_results_navigation.menu_open
+            && self.result_context.is_none()
+            && self.reflow_results_completeness().is_some()
+            && matches!(input, Input::Tap(x, y) if self.completeness_indicator_hit().contains(x, y))
+        {
+            self.nearby.all_details_open = true;
+            return Some(Change::Partial);
+        }
+        None
     }
 
     pub(super) fn resume_page_marks(&mut self) {

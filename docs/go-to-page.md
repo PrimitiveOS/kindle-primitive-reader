@@ -19,6 +19,18 @@ Reader uses the active font stack, dimensions, styles, hyphenation and viewport 
 
 Editing the input, leaving the form, sleeping, changing the layout or returning from USB discards the pending jump. Unavailable counts leave the editor open with alternatives. Whole-document ordinals are currently available for regular, single-page, horizontal EPUB layout. Scroll, spreads, vertical text, special package layouts, hidden flows and books beyond the worker limits can still use `chapter:page`, percentage or labels where supported. Ordinary reading retains its existing pagination policy until a whole-document jump or the optional header requests a count. [Cache and worker](../src/session/screen_pages.rs) · [Background verification](../src/session/screen_pages/background.rs)
 
+When a signed jump crosses a spine boundary and the full page index is not
+available, an eligible verified packaged EPUB can instead count just the
+intervening chapters on a cancellable worker. The candidate accepts at most
+64 crossed chapters and a 100,000-page offset; it stops at the book's ends.
+It requires unique linear spine paths, a regular single-page layout, exact
+source/font and quote-prefix verification, and excludes raw or in-page notes.
+The editor and reading location stay in place until the prepared destination
+and original view are rechecked; a successful jump adds one return-history
+entry. Unsupported layouts retain the earlier counting or unavailable path.
+One chapter's shaping is not interruptible, and this implementation has not
+yet had behavioral, simulator or Kindle verification.
+
 If an indexed destination still needs quote-depth preparation, Reader verifies
 its source and opens the closest available page with an approximate-page
 notice. It preserves the current passage when exact preparation completes;

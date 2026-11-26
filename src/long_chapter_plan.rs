@@ -5,6 +5,8 @@
 //! a future continuation/index pass must prove that separately.
 #![allow(dead_code)]
 
+#[cfg(feature = "kindle")]
+pub(crate) mod font_snapshot;
 pub(crate) mod index;
 pub(crate) mod pagination;
 

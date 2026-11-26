@@ -107,6 +107,7 @@ impl Reader {
             self.cancel_search();
             self.hits.clear();
             self.pdf_hits.clear();
+            self.nearby.discard_all_completeness();
             self.reset_search_chapter();
             self.search_result = None;
             self.result_selection = None;

@@ -2352,6 +2352,9 @@ impl Reader {
     }
 
     fn show(&mut self, screen: Screen) {
+        if screen != Screen::Matches {
+            self.nearby.close_all_details();
+        }
         self.chapter_navigation_job = None;
         self.cancel_detached_note();
         self.defer_folder_activation();
@@ -10150,10 +10153,9 @@ impl Reader {
                 &format!("{first}–{last} of {count}{more}"),
                 self.search_layout().counter_style(),
             );
-            let status = (self.screen == Screen::Matches)
-                .then(|| self.reflow_results_completeness())
-                .flatten();
-            if let Some(notice) = status.as_deref().or(self.notice.as_deref()) {
+            let status =
+                self.screen == Screen::Matches && self.draw_reflow_completeness_indicator(canvas);
+            if !status && let Some(notice) = self.notice.as_deref() {
                 canvas.text(navigation.footer_text(LIST_X, 179, 64), notice, CAPTION);
             }
         } else {
@@ -10175,10 +10177,9 @@ impl Reader {
                 };
                 canvas.button(navigation.next(), label, false, false);
             }
-            let status = (self.screen == Screen::Matches)
-                .then(|| self.reflow_results_completeness())
-                .flatten();
-            if let Some(notice) = status.as_deref().or(self.notice.as_deref()) {
+            let status =
+                self.screen == Screen::Matches && self.draw_reflow_completeness_indicator(canvas);
+            if !status && let Some(notice) = self.notice.as_deref() {
                 let area = if self.screen == Screen::Matches {
                     navigation.footer_text(LIST_X, 179, 64)
                 } else if self.screen == Screen::BookMap
@@ -10492,6 +10493,7 @@ impl App for Reader {
         self.draw_profile_values_button(canvas);
         self.draw_list_density_picker(canvas);
         self.draw_search_results_navigation(canvas);
+        self.draw_reflow_completeness_details(canvas);
         self.draw_top_header_default_prompt(canvas);
         self.draw_base_stylesheet_default_prompt(canvas);
         self.draw_orientation_default_prompt(canvas);
@@ -10566,6 +10568,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.reflow_completeness_input(input) {
+            return change;
+        }
         if let Some(change) = self.chapter_navigation_input(input) {
             return change;
         }
@@ -10724,6 +10729,9 @@ impl App for Reader {
     }
 
     fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        if self.nearby.all_details_open() {
+            return Change::None;
+        }
         if self.chapter_navigation_job.is_some() {
             return Change::None;
         }
@@ -10879,6 +10887,9 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.reflow_completeness_input(input) {
+            return change;
+        }
         if input == Input::Sleep {
             self.chapter_navigation_job = None;
         }
