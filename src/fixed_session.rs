@@ -506,8 +506,19 @@ enum FixedDocument {
 
 /// Read under the caller’s storage guard. The same owned buffer goes to the identity hash and Hayro.
 pub(crate) fn pdf_bytes(path: &Path, expected_size: Option<u64>) -> io::Result<Vec<u8>> {
+    Ok(pdf_bytes_with_stamp(path, expected_size)?.0)
+}
+
+/// Bind the bytes supplied to the PDF parser to a stable descriptor and path.
+/// An unavailable stamp leaves the PDF readable but cannot authorize a later
+/// source-verified jump.
+pub(crate) fn pdf_bytes_with_stamp(
+    path: &Path,
+    expected_size: Option<u64>,
+) -> io::Result<(Vec<u8>, Option<crate::session::screen_pages::FileStamp>)> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
+    let before = crate::session::screen_pages::FileStamp::from_metadata(&metadata);
     let size = metadata.len();
     if size > MAX_PDF_BYTES as u64 {
         return Err(io::Error::other(crate::fixed::PdfError::TooLarge));
@@ -524,7 +535,14 @@ pub(crate) fn pdf_bytes(path: &Path, expected_size: Option<u64>) -> io::Result<V
     if file.read(&mut [0])? != 0 {
         return Err(io::Error::other("The PDF changed while opening"));
     }
-    Ok(bytes)
+    let after = file
+        .metadata()
+        .ok()
+        .and_then(|metadata| crate::session::screen_pages::FileStamp::from_metadata(&metadata));
+    let current = crate::session::screen_pages::FileStamp::read(path);
+    let stamp =
+        before.filter(|stamp| Some(stamp) == after.as_ref() && Some(stamp) == current.as_ref());
+    Ok((bytes, stamp))
 }
 
 impl FixedReading {

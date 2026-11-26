@@ -3655,6 +3655,9 @@ impl InterfaceLanguage {
             }
             "The book or bookmarks changed; try again" => "Sách hoặc dấu trang đã đổi; hãy thử lại",
             "The book changed; try again" => "Sách đã thay đổi; hãy thử lại",
+            "The open PDF changed; reopen it before navigating saved marks" => {
+                "PDF đang mở đã thay đổi; hãy mở lại trước khi tới dấu đã lưu"
+            }
             "The book or reading settings changed; try again" => {
                 "Sách hoặc cài đặt đọc đã đổi; hãy thử lại"
             }

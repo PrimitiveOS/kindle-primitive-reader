@@ -9,6 +9,7 @@ pub(crate) mod borders;
 pub(crate) mod flow;
 #[cfg(test)]
 mod flow_tests;
+mod font_shorthand;
 mod media;
 mod semantic_type;
 use crate::float_layout::{Clear, Side};
@@ -1389,7 +1390,9 @@ impl BookStyle {
                     Property::ResetMany(..) => {
                         unreachable!("reset shorthand is expanded before cascading")
                     }
-                    Property::VariantShorthand(..) | Property::LigatureShorthand(..) => {
+                    Property::VariantShorthand(..)
+                    | Property::LigatureShorthand(..)
+                    | Property::FontShorthand(..) => {
                         unreachable!("font variant shorthand is expanded before cascading")
                     }
                     Property::Display(display) => style.display = *display,
@@ -2678,8 +2681,27 @@ struct Declaration {
 
 fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
     let mut result = Vec::new();
+    // A later shorthand of equal importance replaces every component of an
+    // earlier one. Retain at most one expansion per importance without
+    // removing intervening longhands or unrelated declarations.
+    let mut last_font: [Option<(usize, usize)>; 2] = [None, None];
     for decl in RuleBodyParser::new(input, &mut Properties).flatten() {
-        if let Property::VariantShorthand(
+        if let Property::FontShorthand(properties) = decl.property {
+            let slot = usize::from(decl.important);
+            if let Some((start, len)) = last_font[slot] {
+                result.drain(start..start + len);
+                for entry in last_font.iter_mut().flatten() {
+                    if entry.0 > start {
+                        entry.0 -= len;
+                    }
+                }
+            }
+            last_font[slot] = Some((result.len(), properties.len()));
+            result.extend(properties.into_iter().map(|property| Declaration {
+                property,
+                important: decl.important,
+            }));
+        } else if let Property::VariantShorthand(
             ligatures,
             extra,
             caps,
@@ -2821,6 +2843,7 @@ fn choose<'a>(
             Property::ResetMany(..) => continue,
             Property::VariantShorthand(..) => continue,
             Property::LigatureShorthand(..) => continue,
+            Property::FontShorthand(..) => continue,
             Property::Display(_) => 40,
             Property::Visibility(_) => 41,
             Property::MaxWidth(_) => 42,
@@ -2964,6 +2987,7 @@ enum Property {
     Marker(crate::list_marker::MarkerKind),
     Family(Vec<Family>),
     FontSource(Vec<String>),
+    FontShorthand(Vec<Property>),
     Size(Size),
     LineHeight(Option<f32>),
     LengthLineHeight(LineHeightLength),
@@ -3266,6 +3290,7 @@ impl<'i> DeclarationParser<'i> for Properties {
                     }
                 }
                 "font-family" => Property::Family(input.parse_comma_separated(font_family)?),
+                "font" => Property::FontShorthand(font_shorthand::parse(input)?),
                 "src" => {
                     Property::FontSource(input.parse_comma_separated_ignoring_errors(font_url))
                 }

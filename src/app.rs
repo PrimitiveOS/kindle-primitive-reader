@@ -982,6 +982,7 @@ struct ActiveFixed {
     entry: LibraryBook,
     id: u64,
     reading: FixedReading,
+    pdf_source_stamp: Option<crate::session::screen_pages::FileStamp>,
 }
 
 struct ActiveOcr {
@@ -1624,20 +1625,20 @@ impl Reader {
         self.close_fixed_search_fit()?;
         self.logical_recovery = None;
         self.footer_initial_position = None;
-        let (absolute, id, prepared_pdf) = with_storage(|| {
+        let (absolute, id, prepared_pdf, pdf_source_stamp) = with_storage(|| {
             let absolute = self.library.absolute_path(&entry.path)?;
             if entry.format == DocumentFormat::Pdf
                 && DocumentFormat::for_path(&entry.path) == Some(DocumentFormat::Pdf)
             {
-                let bytes = crate::fixed::pdf_open_timing("read", || {
-                    crate::fixed_session::pdf_bytes(&absolute, Some(entry.size))
+                let (bytes, stamp) = crate::fixed::pdf_open_timing("read", || {
+                    crate::fixed_session::pdf_bytes_with_stamp(&absolute, Some(entry.size))
                 })?;
                 let id = crate::fixed::pdf_open_timing("identify", || {
                     crate::library::fingerprint_bytes(&bytes, entry.format.tag())
                 });
-                Ok((absolute, id, Some(bytes)))
+                Ok((absolute, id, Some(bytes), stamp))
             } else {
-                Ok((absolute, self.library.identify(&entry)?, None))
+                Ok((absolute, self.library.identify(&entry)?, None, None))
             }
         })?;
         if let Some((path, expected, _)) = &self.pending_folder_snapshot
@@ -1897,6 +1898,7 @@ impl Reader {
                 entry,
                 id,
                 reading,
+                pdf_source_stamp,
             });
             self.pdf_result_regions.clear();
             self.pdf_selection = None;

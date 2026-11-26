@@ -259,7 +259,7 @@ impl<'i> DeclarationParser<'i> for StrictProperties {
         let property_name = property_name.as_str();
         if matches!(
             property_name,
-            "margin" | "margin-top" | "margin-bottom" | "clear"
+            "margin" | "margin-top" | "margin-bottom" | "clear" | "font"
         ) || property_name == "float" && !self.first_letter_only
             || !self.pseudo_only && matches!(property_name, "display" | "visibility")
         {

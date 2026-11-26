@@ -15,3 +15,8 @@ Explicit or ambiguous cover declarations are left untouched; stock's
 `alt="cover"` text exception is not inferred. The book, reading
 source and anchors are unchanged. Rendering, memory and parity with real books,
 KOReader, simulator and Kindle remain unverified. [CREngine cover heuristic](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/epubfmt.cpp#L349-L465)
+
+Follow-up: the pinned CREngine heuristic may also use a first image explicitly
+marked `alt="cover"` when title or author text follows it. Reader currently
+does not infer that case; it needs bounded source and ambiguity checks plus
+behavioral comparison before enabling it.

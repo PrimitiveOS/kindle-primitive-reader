@@ -61,3 +61,14 @@ with the existing unquoted-value, void-tag
 and literal-ampersand repairs and must pass their complete-document validation.
 Previously accepted source and anchors are unchanged. Real-book, simulator,
 Kindle and KOReader behavior remain unverified.
+
+As a final bounded fallback, Reader can remove up to 8,192 XML-forbidden C0
+control characters from ordinary character data in an otherwise unreadable
+chapter. Tab, line feed and carriage return are preserved. Controls in tags,
+attribute values, comments, CDATA, processing instructions, declarations,
+stylesheets or entity-like tokens are not repaired; scripts and unsafe
+declarations remain excluded. The candidate may use the earlier repairs and
+must pass the same complete-document validation. Previously readable source
+and anchors remain unchanged; newly readable content uses the deterministic
+repaired source. Real-book, simulator, Kindle and KOReader behavior remain
+unverified.

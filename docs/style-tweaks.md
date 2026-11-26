@@ -106,6 +106,9 @@ by the parser. This also makes formerly ignored author font reset declarations
 effective. `revert`/`revert-layer` are rejected in strict user input until origin
 rollback is implemented.
 
+Publisher CSS also accepts a bounded [font shorthand](publisher-font-shorthand.md);
+the strict user layer continues to require individual font declarations.
+
 | Input | Bound or support |
 | --- | --- |
 | Book snippet/imported file | 8 KiB UTF-8. |

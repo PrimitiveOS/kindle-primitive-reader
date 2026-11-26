@@ -2597,6 +2597,7 @@ fn archive_html_recovery(archive: &mut Archive, path: &str, limit: usize) -> Res
             .or_else(|| crate::epub_xml::recover_html_uppercase_voids(&xml, limit))
             .or_else(|| crate::epub_xml::recover_html_unquoted_attributes(&xml, limit))
             .or_else(|| crate::epub_xml::recover_html_boolean_attributes(&xml, limit))
+            .or_else(|| crate::epub_xml::recover_html_text_controls(&xml, limit))
             .unwrap_or(xml)
     } else {
         xml

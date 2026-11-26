@@ -158,6 +158,149 @@ pub(crate) fn recover_html_boolean_attributes(xml: &str, limit: usize) -> Option
     recover_html_attributes(xml, limit, true)
 }
 
+/// Remove forbidden C0 controls only from character data after all other
+/// recovery paths failed. Attribute values and markup are never changed.
+pub(crate) fn recover_html_text_controls(xml: &str, limit: usize) -> Option<String> {
+    if xml.len() > limit {
+        return None;
+    }
+    let checked = without_plain_doctype(xml);
+    if parse_recovery_xml(&checked).is_ok()
+        || checked
+            .as_bytes()
+            .windows(9)
+            .any(|w| w.eq_ignore_ascii_case(b"<!doctype"))
+        || checked
+            .as_bytes()
+            .windows(8)
+            .any(|w| w.eq_ignore_ascii_case(b"<!entity"))
+    {
+        return None;
+    }
+    let forbidden = |byte: u8| byte < 0x20 && !matches!(byte, b'\t' | b'\n' | b'\r');
+    let bytes = xml.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut cursor = 0usize;
+    let mut removed = 0usize;
+    while cursor < bytes.len() {
+        let end = bytes[cursor..]
+            .iter()
+            .position(|&b| b == b'<')
+            .map_or(bytes.len(), |offset| cursor + offset);
+        let mut entity_candidate = false;
+        for &byte in &bytes[cursor..end] {
+            if forbidden(byte) {
+                // Do not turn an interrupted entity-like token into a valid
+                // reference: that could change more than the removed byte.
+                if entity_candidate {
+                    return None;
+                }
+                removed += 1;
+                if removed > 8_192 {
+                    return None;
+                }
+            } else {
+                output.push(byte);
+                if byte == b'&' {
+                    entity_candidate = true;
+                } else if !(byte.is_ascii_alphanumeric() || byte == b'#') {
+                    entity_candidate = false;
+                }
+            }
+        }
+        if end == bytes.len() {
+            break;
+        }
+        let start = end;
+        let literal_end = if bytes[start..].starts_with(b"<!--") {
+            Some(start + 4 + xml[start + 4..].find("-->")? + 3)
+        } else if bytes[start..].starts_with(b"<![CDATA[") {
+            Some(start + 9 + xml[start + 9..].find("]]>")? + 3)
+        } else if bytes[start..].starts_with(b"<?") {
+            Some(start + 2 + xml[start + 2..].find("?>")? + 2)
+        } else if bytes[start..].starts_with(b"<!DOCTYPE html>") {
+            Some(start + "<!DOCTYPE html>".len())
+        } else {
+            None
+        };
+        if let Some(end) = literal_end {
+            if bytes[start..end].iter().copied().any(forbidden) {
+                return None;
+            }
+            output.extend_from_slice(&bytes[start..end]);
+            cursor = end;
+            continue;
+        }
+        if bytes.get(start + 1) == Some(&b'!') {
+            return None;
+        }
+        let closing = bytes.get(start + 1) == Some(&b'/');
+        let name_start = start + 1 + usize::from(closing);
+        if !bytes.get(name_start).is_some_and(u8::is_ascii_alphabetic) {
+            return None;
+        }
+        let mut name_end = name_start + 1;
+        while bytes
+            .get(name_end)
+            .is_some_and(|b| b.is_ascii_alphanumeric() || matches!(*b, b':' | b'_' | b'-' | b'.'))
+        {
+            name_end += 1;
+        }
+        let name = &xml[name_start..name_end];
+        let local = name.rsplit(':').next()?;
+        if local.eq_ignore_ascii_case("script")
+            || (local.eq_ignore_ascii_case("style") && name != "style")
+        {
+            return None;
+        }
+        let mut tag_end = name_end;
+        let mut quote = None;
+        while tag_end < bytes.len() {
+            let byte = bytes[tag_end];
+            if forbidden(byte) || byte == b'<' {
+                return None;
+            }
+            if let Some(delimiter) = quote {
+                if byte == delimiter {
+                    quote = None;
+                }
+            } else if matches!(byte, b'\'' | b'"') {
+                quote = Some(byte);
+            } else if byte == b'>' {
+                break;
+            }
+            tag_end += 1;
+        }
+        if tag_end == bytes.len() || quote.is_some() {
+            return None;
+        }
+        output.extend_from_slice(&bytes[start..=tag_end]);
+        cursor = tag_end + 1;
+        if !closing && name == "style" && !xml[start + 1..tag_end].trim_end().ends_with('/') {
+            let rest = &xml[cursor..];
+            let close = rest.find("</style>")?;
+            if rest[..close].contains('<')
+                || rest.as_bytes()[..close].iter().copied().any(forbidden)
+            {
+                return None;
+            }
+            output.extend_from_slice(&rest.as_bytes()[..close]);
+            cursor += close;
+        }
+    }
+    if removed == 0 {
+        return None;
+    }
+    let candidate = String::from_utf8(output).ok()?;
+    finish_void_recovery(candidate.clone(), limit)
+        .or_else(|| recover_html_voids(&candidate, limit))
+        .or_else(|| recover_html_bare_ampersands(&candidate, limit))
+        .or_else(|| recover_html_voids_and_ampersands(&candidate, limit))
+        .or_else(|| recover_html_uppercase_voids(&candidate, limit))
+        .or_else(|| recover_html_unquoted_attributes(&candidate, limit))
+        .or_else(|| recover_html_boolean_attributes(&candidate, limit))
+}
+
 fn recover_html_attributes(xml: &str, limit: usize, boolean: bool) -> Option<String> {
     if xml.len() > limit {
         return None;

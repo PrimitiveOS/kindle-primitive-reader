@@ -576,6 +576,16 @@ impl Reader {
                         .skim_text("This book cannot be verified for bookmark navigation")
                         .to_owned()
                 })?;
+                if fixed.entry.format == crate::library::DocumentFormat::Pdf
+                    && fixed.pdf_source_stamp.as_ref() != Some(&stamp)
+                {
+                    return Err(self
+                        .controls
+                        .interface_language
+                        .skim_text("The open PDF changed; reopen it before navigating saved marks")
+                        .to_owned()
+                        .into());
+                }
                 (
                     None,
                     0,
@@ -1301,7 +1311,10 @@ impl Reader {
                 let path = self.library.absolute_path(&fixed.entry.path)?;
                 Ok(FileStamp::read(&path))
             })?;
-            if current.as_ref() != expected_fixed {
+            if current.as_ref() != expected_fixed
+                || (fixed.entry.format == crate::library::DocumentFormat::Pdf
+                    && fixed.pdf_source_stamp.as_ref() != expected_fixed)
+            {
                 return Err("The bookmarked page changed; try again".into());
             }
             if preview {
