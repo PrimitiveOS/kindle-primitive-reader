@@ -50,6 +50,7 @@ impl Reset {
                         | DIRECTION
                         | LETTER_SPACING
                         | WORD_SPACING
+                        | TEXT_COLOR
                         | TAB_SIZE
                         | VARIANT_CAPS
                         | VARIANT_NUMERIC
@@ -79,6 +80,7 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "font-size" => vec![1],
         "line-height" => vec![2],
         "background" | "background-color" => vec![3],
+        "color" => vec![TEXT_COLOR],
         "text-align" => vec![4],
         "text-align-last" | "-epub-text-align-last" => vec![LAST_LINE_ALIGNMENT],
         "text-transform" => vec![TEXT_TRANSFORM],
@@ -162,6 +164,13 @@ pub(super) fn apply_reset(
             style.line_height_relative = value.line_height_relative;
         }
         3 => style.background = value.background,
+        TEXT_COLOR => {
+            style.text_ink = if reset.parent(key) {
+                value.text_ink
+            } else {
+                Some(0)
+            };
+        }
         4 => style.alignment = value.alignment,
         LAST_LINE_ALIGNMENT => style.last_line_alignment = value.last_line_alignment,
         TEXT_TRANSFORM => style.text_transform = value.text_transform,

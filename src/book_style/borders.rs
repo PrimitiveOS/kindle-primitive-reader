@@ -78,7 +78,7 @@ fn pattern(p: &mut Parser<'_>) -> CssResult<Pattern> {
         _ => Err(ParseError::unexpected_token()),
     }
 }
-fn color(p: &mut Parser<'_>) -> CssResult<Option<(u8, u8)>> {
+pub(super) fn color(p: &mut Parser<'_>) -> CssResult<Option<(u8, u8)>> {
     use cssparser::{
         Token,
         color::{parse_hash_color, parse_named_color},

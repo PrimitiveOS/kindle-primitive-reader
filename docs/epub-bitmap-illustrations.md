@@ -127,6 +127,18 @@ the extra rotated buffer, but peak decoder memory and malformed-metadata
 behavior remain unverified. KOReader comparison and real-book, simulator and
 Kindle verification are also open.
 
+The static SVG candidate accepts a bounded inline `style` attribute on SVG
+elements for supported paint, stroke, fill/stroke/stop opacity, visibility and rendering-hint
+properties. Simple colors, numeric values, and local `url(#gradient)` paint
+references are accepted; CSS escapes, quoted strings, comments, external URLs,
+effects, arbitrary functions and unsupported declarations are rejected.
+Each style is limited to 4 KiB, 64 declarations and 256 bytes per value; the
+existing SVG document, pixel, resource and paint-work limits still apply.
+This covers inline styles only, not SVG stylesheet elements. Existing accepted
+SVG paths, package bytes and reading anchors are unchanged. KOReader behavior,
+malformed inputs, memory use and real-book, simulator and Kindle rendering
+remain unverified.
+
 Standalone SVG embedded-image fallback uses the same 256 KiB input, eight
 unique images, pixel and 8 MiB aggregate raster limits, plus the existing GIF
 conversion checks. Previously successful vector-only output is tried first.

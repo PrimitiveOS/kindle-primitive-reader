@@ -237,6 +237,7 @@ struct Typography {
     weight: Option<Weight>,
     slant: Option<FontStyle>,
     decoration: Option<TextDecoration>,
+    text_ink: Option<Option<u8>>,
     line_height: Option<Option<f32>>,
     length_line_height: Option<LineHeightLength>,
     letter_spacing: Option<CssLength>,
@@ -289,6 +290,9 @@ impl Typography {
         }
         if let Some(decoration) = self.decoration {
             style.decoration = base.decoration.including(decoration);
+        }
+        if let Some(ink) = self.text_ink {
+            style.text_ink = ink.or(base.text_ink);
         }
         if let Some(height) = self.line_height {
             style.line_height = height;
@@ -375,6 +379,7 @@ pub(crate) struct FirstLine {
     text_transform: TextTransform,
     root_scale: f32,
     decoration: TextDecoration,
+    text_ink: Option<u8>,
 }
 
 impl FirstLine {
@@ -399,6 +404,7 @@ impl FirstLine {
             text_transform: style.text_transform,
             root_scale,
             decoration: style.decoration,
+            text_ink: style.text_ink,
         }
     }
 
@@ -421,6 +427,7 @@ impl FirstLine {
         style.optical_sizing = self.optical_sizing;
         style.text_transform = self.text_transform;
         style.decoration = style.decoration.including(self.decoration);
+        style.text_ink = self.text_ink;
         style
     }
 
@@ -504,6 +511,11 @@ impl FirstLine {
             variant_historical: inherited_variant!(super::VARIANT_HISTORICAL, variant_historical),
             optical_sizing: inherited_variant!(super::OPTICAL_SIZING, optical_sizing),
             text_transform: inherited_variant!(super::TEXT_TRANSFORM, text_transform),
+            text_ink: match declaration(super::TEXT_COLOR) {
+                Some(Property::TextColor(None)) => self.text_ink,
+                _ if inherits(super::TEXT_COLOR) => self.text_ink,
+                _ => style.text_ink,
+            },
             root_scale: self.root_scale,
             decoration: self.decoration.including(style.decoration),
         }
@@ -608,6 +620,7 @@ fn property_slot(property: &Property) -> Option<usize> {
         Property::VariantHistorical(_) | Property::Reset(super::VARIANT_HISTORICAL, _) => 19,
         Property::OpticalSizing(_) | Property::Reset(super::OPTICAL_SIZING, _) => 20,
         Property::TextTransform(_) | Property::Reset(super::TEXT_TRANSFORM, _) => 21,
+        Property::TextColor(_) | Property::Reset(super::TEXT_COLOR, _) => 22,
         _ => return None,
     })
 }
@@ -632,7 +645,7 @@ pub(super) fn accepts_user_declaration(target: Target, property: &Property) -> b
                 })
         }
         (Target::Generated(_), _) => {
-            property_slot(property).is_some_and(|slot| slot <= 8 || (12..=21).contains(&slot))
+            property_slot(property).is_some_and(|slot| slot <= 8 || (12..=22).contains(&slot))
         }
         (Target::FirstLine, _) => is_first_line_typography(property),
         (
@@ -669,6 +682,7 @@ fn is_first_line_typography(property: &Property) -> bool {
             | Property::VariantHistorical(_)
             | Property::OpticalSizing(_)
             | Property::TextTransform(_)
+            | Property::TextColor(_)
             | Property::Reset(
                 super::COMMON_LIGATURES
                     | super::LETTER_SPACING
@@ -679,13 +693,14 @@ fn is_first_line_typography(property: &Property) -> bool {
                     | super::VARIANT_POSITION
                     | super::VARIANT_HISTORICAL
                     | super::OPTICAL_SIZING
-                    | super::TEXT_TRANSFORM,
+                    | super::TEXT_TRANSFORM
+                    | super::TEXT_COLOR,
                 _,
             )
     )
 }
 
-const SLOTS: usize = 22;
+const SLOTS: usize = 23;
 type Winners<'a> = [Option<(Priority, &'a Property)>; SLOTS];
 
 pub(super) struct Rules<'a> {
@@ -979,6 +994,7 @@ impl<'a> Rules<'a> {
                 Property::VariantHistorical(value) => style.variant_historical = Some(*value),
                 Property::OpticalSizing(value) => style.optical_sizing = Some(*value),
                 Property::TextTransform(value) => style.text_transform = Some(*value),
+                Property::TextColor(value) => style.text_ink = Some(*value),
                 Property::Reset(key, super::user_css::Reset::Initial) => match *key {
                     super::COMMON_LIGATURES => style.common_ligatures = Some(true),
                     super::LIGATURE_EXTRAS => style.ligature_extras = Some(Default::default()),
@@ -994,8 +1010,10 @@ impl<'a> Rules<'a> {
                     super::OPTICAL_SIZING => style.optical_sizing = Some(true),
                     super::TEXT_TRANSFORM => style.text_transform = Some(TextTransform::None),
                     super::LETTER_SPACING => style.letter_spacing = Some(CssLength::default()),
+                    super::TEXT_COLOR => style.text_ink = Some(Some(0)),
                     _ => {}
                 },
+                Property::Reset(super::TEXT_COLOR, _) => style.text_ink = Some(None),
                 _ => (),
             }
         }

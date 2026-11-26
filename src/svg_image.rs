@@ -565,6 +565,12 @@ fn validate(root: roxmltree::Node<'_, '_>, local_images: bool) -> Result<()> {
         for attribute in node.attributes() {
             let name = attribute.name();
             let value = attribute.value();
+            if name == "style" && attribute.namespace().is_none() {
+                if !static_inline_style(value) {
+                    return Err("The SVG inline style is outside the static subset".into());
+                }
+                continue;
+            }
             if local_images
                 && element.name() == "image"
                 && name == "href"
@@ -593,6 +599,86 @@ fn validate(root: roxmltree::Node<'_, '_>, local_images: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// Accept only presentation declarations whose equivalent SVG attributes are
+// already supported. No CSS escapes, comments, imports, quoted strings,
+// external resources, effects or arbitrary functions enter the SVG renderer.
+fn static_inline_style(value: &str) -> bool {
+    if value.len() > 4096 || !value.is_ascii() {
+        return false;
+    }
+    let mut count = 0usize;
+    for declaration in value.split(';') {
+        let declaration = declaration.trim();
+        if declaration.is_empty() {
+            continue;
+        }
+        count += 1;
+        if count > 64 {
+            return false;
+        }
+        let Some((property, value)) = declaration.split_once(':') else {
+            return false;
+        };
+        let property = property.trim();
+        let value = value.trim();
+        if !matches!(
+            property,
+            "fill"
+                | "fill-opacity"
+                | "fill-rule"
+                | "stroke"
+                | "stroke-opacity"
+                | "stroke-width"
+                | "stroke-linecap"
+                | "stroke-linejoin"
+                | "stroke-miterlimit"
+                | "stop-color"
+                | "stop-opacity"
+                | "color"
+                | "display"
+                | "visibility"
+                | "shape-rendering"
+        ) || value.is_empty()
+            || value.len() > 256
+        {
+            return false;
+        }
+        let color = matches!(property, "fill" | "stroke" | "stop-color" | "color");
+        if value.bytes().all(|b| {
+            b.is_ascii_alphanumeric()
+                || b.is_ascii_whitespace()
+                || matches!(b, b'#' | b',' | b'.' | b'%' | b'+' | b'-')
+        }) {
+            continue;
+        }
+        if color
+            && matches!(property, "fill" | "stroke")
+            && value.starts_with("url(#")
+            && local_paint(value)
+        {
+            continue;
+        }
+        let valid_color_function = color
+            && ["rgb(", "rgba(", "hsl(", "hsla("].iter().any(|prefix| {
+                value
+                    .strip_prefix(prefix)
+                    .and_then(|v| v.strip_suffix(')'))
+                    .is_some_and(|v| {
+                        !v.is_empty()
+                            && v.bytes().all(|b| {
+                                b.is_ascii_digit()
+                                    || b.is_ascii_whitespace()
+                                    || matches!(b, b',' | b'.' | b'%' | b'+' | b'-')
+                            })
+                    })
+            });
+        if !valid_color_function {
+            return false;
+        }
+    }
+    true
 }
 
 fn is_static_attribute(name: &str) -> bool {

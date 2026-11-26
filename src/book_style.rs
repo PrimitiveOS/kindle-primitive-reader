@@ -636,6 +636,8 @@ pub(crate) struct Style {
     pub text_rise: TextRise,
     pub decoration: TextDecoration,
     pub(crate) link_ink: Option<u8>,
+    pub(crate) text_ink: Option<u8>,
+    pub(crate) monochrome_text: bool,
     pub(crate) ignore_table_hints: bool,
     pub(crate) native_table_widths: bool,
     pub(crate) generated: Option<Arc<pseudo::Pair>>,
@@ -723,6 +725,8 @@ impl Default for Style {
             text_rise: TextRise::default(),
             decoration: TextDecoration::default(),
             link_ink: None,
+            text_ink: None,
+            monochrome_text: false,
             ignore_table_hints: false,
             native_table_widths: false,
             generated: None,
@@ -1178,6 +1182,7 @@ impl BookStyle {
             )
         };
         let defaults = Style {
+            monochrome_text: self.layout_tweaks.monochrome,
             normal_line_height_percent: self.layout_tweaks.normal_line_height_percent,
             steady_line_heights: self.layout_tweaks.steady_line_heights,
             font_weights: self.font_weights.clone(),
@@ -1501,6 +1506,7 @@ impl BookStyle {
                     }
                     Property::Marker(kind) => style.marker = *kind,
                     Property::Background(gray) => style.background = *gray,
+                    Property::TextColor(gray) => style.text_ink = (*gray).or(parent.text_ink),
                     Property::Alignment(alignment) => style.alignment = Some(*alignment),
                     Property::LastLineAlignment(alignment) => {
                         style.last_line_alignment = *alignment
@@ -2742,7 +2748,8 @@ const OPTICAL_SIZING: usize = 66;
 const RUBY_POSITION: usize = 67;
 const TAB_SIZE: usize = 68;
 const WORD_SPACING: usize = 69;
-const CASCADE_PROPERTY_COUNT: usize = 70;
+const TEXT_COLOR: usize = 70;
+const CASCADE_PROPERTY_COUNT: usize = 71;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2801,6 +2808,7 @@ fn choose<'a>(
             Property::Size(_) => 1,
             Property::LineHeight(_) | Property::LengthLineHeight(_) => 2,
             Property::Background(_) => 3,
+            Property::TextColor(_) => TEXT_COLOR,
             Property::Alignment(_) => 4,
             Property::LastLineAlignment(_) => LAST_LINE_ALIGNMENT,
             Property::TextTransform(_) => TEXT_TRANSFORM,
@@ -2929,6 +2937,8 @@ enum Property {
     LineHeight(Option<f32>),
     LengthLineHeight(LineHeightLength),
     Background(Option<u8>),
+    /// None is currentColor, which inherits the parent foreground.
+    TextColor(Option<u8>),
     Alignment(Alignment),
     LastLineAlignment(Option<Alignment>),
     TextTransform(TextTransform),
@@ -3526,6 +3536,21 @@ impl<'i> DeclarationParser<'i> for Properties {
                     Property::Marker(marker.ok_or_else(ParseError::unexpected_token)?)
                 }
                 "background" | "background-color" => Property::Background(background(input)?),
+                "color" => {
+                    if input
+                        .try_parse(|p| p.expect_ident_matching("currentcolor"))
+                        .is_ok()
+                    {
+                        Property::TextColor(None)
+                    } else {
+                        let (gray, alpha) =
+                            borders::color(input)?.ok_or_else(ParseError::unexpected_token)?;
+                        if alpha != 255 {
+                            return Err(ParseError::unexpected_token());
+                        }
+                        Property::TextColor(Some(gray))
+                    }
+                }
                 "text-align" => {
                     Property::Alignment(match input.expect_ident()?.to_ascii_lowercase().as_str() {
                         "start" => Alignment::Start,

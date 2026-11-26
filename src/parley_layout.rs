@@ -281,6 +281,7 @@ fn apply_kerning<B: parley::Brush>(
 pub(crate) struct PaintBrush {
     pub(crate) decoration: TextDecoration,
     pub(crate) link_ink: Option<u8>,
+    pub(crate) text_ink: Option<u8>,
     pub(crate) painted: bool,
 }
 
@@ -289,6 +290,7 @@ impl Default for PaintBrush {
         Self {
             decoration: Default::default(),
             link_ink: None,
+            text_ink: None,
             painted: true,
         }
     }
@@ -2941,8 +2943,15 @@ fn paint_text_run(
             let start = y.round().clamp(0.0, visible_height as f32) as usize;
             let end = (y.round() + thickness).clamp(0.0, visible_height as f32) as usize;
             for row in start..end {
-                page[row * stride + x0..row * stride + x1]
-                    .fill(run.style().brush.link_ink.unwrap_or(48));
+                let brush = run.style().brush;
+                let ink = brush.link_ink.or_else(|| {
+                    if settings.text_contrast {
+                        None
+                    } else {
+                        brush.text_ink
+                    }
+                });
+                page[row * stride + x0..row * stride + x1].fill(ink.unwrap_or(48));
             }
         }
     }
@@ -4314,6 +4323,11 @@ fn shape_paragraph(
     builder.push_default(StyleProperty::Brush(PaintBrush {
         decoration: style.decoration,
         link_ink: style.link_ink,
+        text_ink: if style.monochrome_text {
+            None
+        } else {
+            style.text_ink
+        },
         painted: style.flow.painted,
     }));
     builder.push_default(StyleProperty::FontWeight(weight(style)));
@@ -4407,12 +4421,26 @@ fn shape_paragraph(
         }
         if run.decoration != base.decoration
             || run.link_ink != base.link_ink
+            || (if run.monochrome_text {
+                None
+            } else {
+                run.text_ink
+            }) != (if base.monochrome_text {
+                None
+            } else {
+                base.text_ink
+            })
             || run.flow.painted != base.flow.painted
         {
             builder.push(
                 StyleProperty::Brush(PaintBrush {
                     decoration: run.decoration,
                     link_ink: run.link_ink,
+                    text_ink: if run.monochrome_text {
+                        None
+                    } else {
+                        run.text_ink
+                    },
                     painted: run.flow.painted,
                 }),
                 bytes.clone(),

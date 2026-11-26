@@ -15,7 +15,7 @@ The authored table uses a 4 px dark gray outer line and 2 px cell lines. The sep
 - Merged cells keep their edge across the rows or columns they occupy. A rule continues across visible portions of a multi-page table. Source ranges, search and selection still use the original publication text. [Reader stroke placement](../src/table_borders.rs)
 - Hidden and zero-width strokes take no space. A transparent color keeps the width and skips the paint. [CREngine measurement](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L4873-L4926) · [CREngine transparent strokes](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L9290-L9323)
 
-Reader caps stroke width and table spacing at 64 px. Tables that do not fit the horizontal layout continue using the narrow-screen text view. CSS relief patterns such as groove and ridge, full CSS text color inheritance and entirely empty source rows remain outside this implementation.
+Reader caps stroke width and table spacing at 64 px. Tables that do not fit the horizontal layout continue using the narrow-screen text view. CSS relief patterns such as groove and ridge, border `currentColor` inheritance and entirely empty source rows remain outside this implementation. [Publisher text color](publisher-text-color.md) is handled separately.
 
 ## Table style tweaks
 

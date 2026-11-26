@@ -403,6 +403,10 @@ impl Nearby {
     pub(super) fn result(&self) -> bool {
         self.current.is_some()
     }
+
+    pub(super) fn clear_exhaustion(&mut self) {
+        self.end = None;
+    }
     pub(super) fn can_step(&self, direction: SearchDirection) -> bool {
         self.current.is_some() && self.end != Some(direction)
     }
@@ -978,6 +982,26 @@ impl Reader {
         }
     }
     fn fixed_navigation(&mut self, step: FixedNavigation, continuing: bool) -> Change {
+        if continuing
+            && !step.from_edge()
+            && !self.controls.fixed_search_full_page
+            && !self.fixed_search_fit_active()
+        {
+            let direction = match step {
+                FixedNavigation::Previous => -1,
+                FixedNavigation::Next => 1,
+                FixedNavigation::First | FixedNavigation::Last => unreachable!(),
+            };
+            let pan = self.fixed.as_mut().map(|fixed| {
+                let page = fixed.reading.page();
+                (page, fixed.reading.search_view_step(direction))
+            });
+            match pan {
+                Some((page, Ok(true))) => return self.finish_fixed_update(Ok(true), page),
+                Some((_, Err(error))) => return self.report(error),
+                _ => {}
+            }
+        }
         match self.begin_search_from(step.direction(), continuing, step.from_edge()) {
             Ok(()) => Change::Partial,
             Err(error) => self.report(error),

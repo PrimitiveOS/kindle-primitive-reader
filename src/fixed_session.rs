@@ -2405,7 +2405,7 @@ impl FixedReading {
         let mut end_attempt = false;
         for step in self.turns.take_due(now) {
             let candidate = if !self.is_spread() {
-                self.fixed_view_step(page, view, step as f32)?
+                self.fixed_view_step(page, view, step as f32, false)?
             } else {
                 let next = if let Some(flows) = self
                     .hidden_flows
@@ -2562,7 +2562,28 @@ impl FixedReading {
 
     /// Apply the book's KOReader-compatible overlap and pan order for fixed-page AutoTurn.
     fn automatic_fixed_view(&self, distance: f32) -> Result<Option<(usize, View)>> {
-        self.fixed_view_step(self.page, self.view, distance)
+        self.fixed_view_step(self.page, self.view, distance, false)
+    }
+
+    /// Traverse a search page's remaining fitted views without turning a page.
+    /// Manual/free zoom and precise PDF destinations keep their existing path.
+    pub(crate) fn search_view_step(&mut self, direction: i8) -> Result<bool> {
+        if !matches!(direction, -1 | 1)
+            || self.is_continuous()
+            || self.is_spread()
+            || self.view.precise_scale.is_some()
+            || (self.view.tile_zoom.is_none() && self.view.zoom != 0)
+        {
+            return Ok(false);
+        }
+        let Some((page, view)) =
+            self.fixed_view_step(self.page, self.view, f32::from(direction), true)?
+        else {
+            return Ok(false);
+        };
+        self.present_page_turn(page, view)?;
+        self.pause();
+        Ok(true)
     }
 
     /// Apply one fixed-page navigation step, panning through the current viewport first.
@@ -2571,6 +2592,7 @@ impl FixedReading {
         page: usize,
         current_view: View,
         distance: f32,
+        same_page_only: bool,
     ) -> Result<Option<(usize, View)>> {
         const EDGE_EPSILON: f32 = 0.5;
         let origin_page = page;
@@ -2666,6 +2688,9 @@ impl FixedReading {
             }
         }
 
+        if same_page_only {
+            return Ok(None);
+        }
         let direction = if distance > 0.0 { 1 } else { -1 };
         let page_steps = distance.abs().ceil().max(1.0) as usize;
         let mut page = page;

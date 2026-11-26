@@ -7324,6 +7324,10 @@ impl Reader {
                         self.pdf_selection = None;
                     }
                     self.pdf_result_regions.clear();
+                } else if self.nearby.result() {
+                    // A manual pan can make an exhausted search direction
+                    // useful again within this same matching page.
+                    self.nearby.clear_exhaustion();
                 }
                 self.record_position();
                 self.reading_update(changed && !continuous)

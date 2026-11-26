@@ -139,7 +139,18 @@ impl GlyphCache {
             .positioned_glyphs()
             .map(|glyph| (glyph.id, origin.0 + glyph.x, origin.1 + glyph.y));
         let ink = Ink {
-            gray: glyphs.style().brush.link_ink.unwrap_or(0),
+            gray: glyphs
+                .style()
+                .brush
+                .link_ink
+                .or_else(|| {
+                    if contrast {
+                        None
+                    } else {
+                        glyphs.style().brush.text_ink
+                    }
+                })
+                .unwrap_or(0),
             contrast,
             gamma: crate::font_render::gamma_table(gamma),
         };
