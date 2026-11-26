@@ -179,7 +179,10 @@ pub(crate) struct Element {
     pub parent: Option<usize>,
     pub previous_sibling: Option<usize>,
     pub odd_sibling: bool,
+    pub odd_sibling_from_end: bool,
+    pub last_child: bool,
     pub first_of_type: bool,
+    pub last_of_type: bool,
     pub selector_only: bool,
     pub anonymous: bool,
 }
@@ -702,6 +705,7 @@ impl Source {
         let mut languages = Vec::new();
         let mut selector_only_nodes = Vec::new();
         let mut seen_types = HashSet::new();
+        let mut last_types = HashMap::new();
         let mut last_children = HashMap::new();
         let mut pseudo_attribute_bytes = crate::book_style::pseudo::MAX_ATTRIBUTE_BYTES;
         for node in root.descendants().filter(Node::is_element) {
@@ -738,9 +742,18 @@ impl Source {
             } else {
                 None
             };
+            if let Some(previous) = previous_sibling {
+                elements[previous].last_child = false;
+            }
             let tag = node.tag_name();
             let first_of_type =
                 structural_element && seen_types.insert((parent, tag.namespace(), tag.name()));
+            if structural_element
+                && let Some(previous) =
+                    last_types.insert((parent, tag.namespace(), tag.name()), elements.len())
+            {
+                elements[previous].last_of_type = false;
+            }
             // CRE inserts an implicit tbody for consecutive direct table rows.
             let direct_row =
                 tag.name() == "tr" && parent.is_some_and(|i| elements[i].tag == "table");
@@ -799,12 +812,34 @@ impl Source {
                 parent,
                 previous_sibling,
                 odd_sibling,
+                odd_sibling_from_end: true,
+                last_child: structural_element,
                 first_of_type,
+                last_of_type: structural_element,
                 selector_only,
                 anonymous,
             });
         }
+        // Walk each real sibling chain once from its final child. Anonymous
+        // wrappers have no structural sibling link and cannot match selectors.
+        for &last in last_children.values() {
+            let mut current = Some(last);
+            let mut next: Option<usize> = None;
+            while let Some(index) = current {
+                let direct_row = elements[index].tag == "tr"
+                    && elements[index]
+                        .parent
+                        .is_some_and(|parent| elements[parent].tag == "table");
+                let odd_from_end = next
+                    .filter(|&i| !direct_row || elements[i].tag == "tr")
+                    .is_none_or(|i| !elements[i].odd_sibling_from_end);
+                elements[index].odd_sibling_from_end = odd_from_end;
+                next = Some(index);
+                current = elements[index].previous_sibling;
+            }
+        }
         drop(seen_types);
+        drop(last_types);
         drop(last_children);
         for id in selector_only_nodes {
             element_ids.remove(&id);

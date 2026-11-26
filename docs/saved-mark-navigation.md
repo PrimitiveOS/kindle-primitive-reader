@@ -75,3 +75,6 @@ The shortcut follows the intent of KOReader's [Current page bookmark-list comman
 
 
 Navigation's **Previous**, **Next**, **First** and **Last saved mark** use the cancellable, source-verified background navigator for page bookmarks and the open provider's highlights. Candidates with missing or stale start anchors are skipped; fixed highlights must have valid page geometry. The worker preserves the original position until final snapshot and source checks, then uses the normal jump history. It snapshots marks within the existing 4 MiB budget and rechecks their complete saved values before committing. Skim retains its existing preview path. These changes are implementation-only and require simulator and Kindle validation.
+
+
+The adjacent and outermost mark navigator orders candidate chapters toward the requested result and checks every candidate in the first chapter with a valid target. Remaining candidate chapters are skipped once the winning chapter is fully checked; stale anchors do not stop the search. Fixed-page entries still share one page-ordered candidate set. Snapshot, source and cancellation checks remain unchanged. This performance change is unverified in the simulator and on Kindle.

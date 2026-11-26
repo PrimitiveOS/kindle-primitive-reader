@@ -1929,8 +1929,11 @@ struct Compound {
     classes: Vec<String>,
     ids: Vec<String>,
     first_child: bool,
+    last_child: bool,
     first_of_type: bool,
+    last_of_type: bool,
     odd_child: Option<bool>,
+    odd_child_from_end: Option<bool>,
     relation: Relation,
 }
 
@@ -1944,8 +1947,11 @@ impl Compound {
             && self.classes.is_empty()
             && self.ids.is_empty()
             && !self.first_child
+            && !self.last_child
             && !self.first_of_type
+            && !self.last_of_type
             && self.odd_child.is_none()
+            && self.odd_child_from_end.is_none()
     }
 
     fn matches(&self, element: &Element) -> bool {
@@ -1957,8 +1963,13 @@ impl Compound {
                 .all(|selector| selector.matches(element))
             && (!self.is_link || (element.tag == "a" && element.has_href))
             && (!self.first_child || element.previous_sibling.is_none())
+            && (!self.last_child || element.last_child)
             && (!self.first_of_type || element.first_of_type)
+            && (!self.last_of_type || element.last_of_type)
             && self.odd_child.is_none_or(|odd| odd == element.odd_sibling)
+            && self
+                .odd_child_from_end
+                .is_none_or(|odd| odd == element.odd_sibling_from_end)
             && self
                 .tag
                 .as_ref()
@@ -2040,6 +2051,20 @@ impl Selector {
                         Token::Ident(name) if name.eq_ignore_ascii_case("first-of-type") => {
                             compound.first_of_type = true;
                         }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("last-child") => {
+                            compound.last_child = true;
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("only-child") => {
+                            compound.first_child = true;
+                            compound.last_child = true;
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("last-of-type") => {
+                            compound.last_of_type = true;
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("only-of-type") => {
+                            compound.first_of_type = true;
+                            compound.last_of_type = true;
+                        }
                         Token::Ident(name)
                             if name.eq_ignore_ascii_case("link")
                                 || name.eq_ignore_ascii_case("any-link") =>
@@ -2066,6 +2091,24 @@ impl Selector {
                                 return Err(ParseError::unexpected_token());
                             }
                             compound.odd_child = Some(odd);
+                        }
+                        Token::Function(name) if name.eq_ignore_ascii_case("nth-last-child") => {
+                            let odd = input.parse_nested_block(|input| {
+                                let name = input
+                                    .expect_ident()
+                                    .map_err(|_| ParseError::unexpected_token())?;
+                                if name.eq_ignore_ascii_case("odd") {
+                                    Ok(true)
+                                } else if name.eq_ignore_ascii_case("even") {
+                                    Ok(false)
+                                } else {
+                                    Err(ParseError::unexpected_token())
+                                }
+                            })?;
+                            if compound.odd_child_from_end.is_some_and(|old| old != odd) {
+                                return Err(ParseError::unexpected_token());
+                            }
+                            compound.odd_child_from_end = Some(odd);
                         }
                         _ => return Err(ParseError::unexpected_token()),
                     }

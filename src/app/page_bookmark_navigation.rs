@@ -205,19 +205,40 @@ fn worker(
             relevant.then_some(index)
         })
         .collect();
-    order.sort_unstable_by_key(|&index| (snapshot[index].chapter.unwrap_or(usize::MAX), index));
+    // Search chapters in the order that can produce the requested extreme.
+    // All candidates within the winning chapter still need checking for page
+    // and anchor order; only more distant chapters can then be skipped.
+    let prefer_later = matches!(
+        (direction, boundary),
+        (Direction::Previous, false) | (Direction::Next, true)
+    );
+    order.sort_unstable_by(|&left, &right| {
+        let left_chapter = snapshot[left].chapter.unwrap_or(usize::MAX);
+        let right_chapter = snapshot[right].chapter.unwrap_or(usize::MAX);
+        let chapter_order = if prefer_later {
+            right_chapter.cmp(&left_chapter)
+        } else {
+            left_chapter.cmp(&right_chapter)
+        };
+        chapter_order.then_with(|| left.cmp(&right))
+    });
     let mut cached_chapter = origin_probe.as_ref().map(|_| current.chapter);
     let mut cached_probe = origin_probe;
     let mut best: Option<((usize, usize, usize, usize), Candidate)> = None;
+    let mut previous_chapter = None;
     for (processed, index) in order.into_iter().enumerate() {
         if cancelled.load(Ordering::Relaxed) {
             return;
         }
+        let entry = &snapshot[index];
+        let chapter = entry.chapter.unwrap_or(0);
+        if previous_chapter.is_some_and(|previous| previous != chapter) && best.is_some() {
+            break;
+        }
+        previous_chapter = Some(chapter);
         if processed % 256 == 255 && tx.send(Message::Progress(processed + 1)).is_err() {
             return;
         }
-        let entry = &snapshot[index];
-        let chapter = entry.chapter.unwrap_or(0);
         let mut target = entry.position.clone();
         let key = if let Some(recipe) = &recipe {
             if cached_chapter != Some(chapter) {

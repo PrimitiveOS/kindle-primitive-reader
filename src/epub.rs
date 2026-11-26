@@ -535,8 +535,13 @@ impl Book {
                 }
                 placements.push(item_placement(reference, default_spread));
             }
-            if !fixed && !matches!(item.media.as_str(), "application/xhtml+xml" | "text/html") {
-                return Err("Reader supports XHTML or HTML in a reflowable spine".into());
+            if !fixed
+                && !matches!(item.media.as_str(), "application/xhtml+xml" | "text/html")
+                && !(is_svg && crate::svg_image::is_package_svg(&item.path))
+            {
+                return Err(
+                    "Reader supports XHTML, HTML or static SVG in a reflowable spine".into(),
+                );
             }
             let label = labels
                 .get(item.path.as_str())
@@ -1374,7 +1379,13 @@ impl Book {
         match &mut self.content {
             Content::Archive { archive, .. } => {
                 if self.fixed_placements.is_none() {
-                    archive_html_recovery(archive, &chapter.href)
+                    if chapter.is_svg {
+                        let bytes =
+                            read_entry(archive, &chapter.href, crate::svg_image::MAX_SVG_BYTES)?;
+                        reflow_svg_chapter(&bytes)
+                    } else {
+                        archive_html_recovery(archive, &chapter.href)
+                    }
                 } else {
                     xml_entry(archive, &chapter.href)
                 }
@@ -2147,6 +2158,33 @@ fn toc_entry(base: &str, href: Option<&str>, node: Node<'_, '_>, depth: usize) -
 
 fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
     xml_entry_with_declaration(archive, path, false).map(|(xml, _)| xml)
+}
+
+/// Keep the original SVG member as the image resource. An empty relative
+/// reference resolves to the owning chapter path in `Book::resolve`.
+fn reflow_svg_chapter(bytes: &[u8]) -> Result<String> {
+    if bytes.len() > crate::svg_image::MAX_SVG_BYTES {
+        return Err("The SVG spine item exceeds the illustration limit".into());
+    }
+    let xml = std::str::from_utf8(bytes)?;
+    let document = Document::parse_with_options(
+        xml,
+        ParsingOptions {
+            nodes_limit: 4096,
+            ..Default::default()
+        },
+    )?;
+    if crate::svg_image::inline_source(document.root_element(), xml).is_none() {
+        return Err(
+            "The SVG spine item is outside the supported static illustration subset".into(),
+        );
+    }
+    // The source-derived marker participates in the synthetic revision so a
+    // changed SVG will ordinarily reject the previous chapter's anchors.
+    Ok(format!(
+        "<html><head><!-- SVG source {:016x} --></head><body><p><img src=\"\" alt=\"Illustration\" /></p></body></html>",
+        crate::revision_bytes(bytes)
+    ))
 }
 
 fn archive_html_recovery(archive: &mut Archive, path: &str) -> Result<String> {
