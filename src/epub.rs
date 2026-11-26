@@ -393,8 +393,11 @@ impl Book {
                 .values()
                 .map(|item| (item.path.as_str(), item.media.as_str())),
         );
-        let cover = package_cover(metadata, &manifest);
+        let mut cover = package_cover(metadata, &manifest);
         let spine = child(root, "spine")?;
+        if cover.is_none() {
+            cover = infer_first_spine_cover(&mut archive, root, metadata, spine, &manifest);
+        }
         let navigation = manifest.values().find(|item| item.navigation);
         let ncx = spine.attribute("toc").and_then(|id| manifest.get(id));
         // Optional navigation can be missing or malformed even when the spine is readable.
@@ -1814,6 +1817,112 @@ fn package_cover(metadata: Node<'_, '_>, manifest: &BTreeMap<&str, Item>) -> Opt
     // Keep previously supported EPUB 3 / EPUB 2 cover selection first.
     package_cover_with_extra(metadata, manifest, false)
         .or_else(|| package_cover_with_extra(metadata, manifest, true))
+}
+
+/// Stock CREngine also looks for an image-only first spine item when a book
+/// does not declare a cover. Keep this fallback narrow and entirely local.
+fn infer_first_spine_cover(
+    archive: &mut Archive,
+    root: Node<'_, '_>,
+    metadata: Node<'_, '_>,
+    spine: Node<'_, '_>,
+    manifest: &BTreeMap<&str, Item>,
+) -> Option<BookCover> {
+    if metadata
+        .children()
+        .any(|node| node.has_tag_name("meta") && node.attribute("name") == Some("cover"))
+        || child(root, "manifest").ok()?.children().any(|node| {
+            node.has_tag_name("item")
+                && node.attribute("properties").is_some_and(|value| {
+                    value
+                        .split_ascii_whitespace()
+                        .any(|property| property == "cover-image")
+                })
+        })
+    {
+        return None;
+    }
+    let mut references = spine.children().filter(|node| node.has_tag_name("itemref"));
+    let first = references.next()?;
+    references.next()?;
+    let first_id = first.attribute("idref")?;
+    let item = manifest.get(first_id)?;
+    if !item.plain_href
+        || !matches!(item.media.as_str(), "application/xhtml+xml" | "text/html")
+        || manifest
+            .values()
+            .filter(|other| other.path == item.path)
+            .take(2)
+            .count()
+            != 1
+        || spine
+            .children()
+            .filter(|node| {
+                node.has_tag_name("itemref") && node.attribute("idref") == Some(first_id)
+            })
+            .take(2)
+            .count()
+            != 1
+    {
+        return None;
+    }
+    let xhtml = archive_html_recovery(archive, &item.path, 5_000).ok()?;
+    let checked = crate::epub_xml::without_plain_doctype(&xhtml);
+    let document = parse_xml(&checked).ok()?;
+    let root = document.root_element();
+    if root.tag_name().name() != "html"
+        || !matches!(
+            root.tag_name().namespace(),
+            None | Some("http://www.w3.org/1999/xhtml")
+        )
+    {
+        return None;
+    }
+    let mut bodies = root.children().filter(|node| node.has_tag_name("body"));
+    let body = bodies.next()?;
+    if bodies.next().is_some() {
+        return None;
+    }
+    let mut image = None;
+    for node in body.descendants() {
+        if node.is_text() && !node.text().unwrap_or("").trim().is_empty() {
+            return None;
+        }
+        if !node.is_element() {
+            continue;
+        }
+        if !matches!(
+            node.tag_name().namespace(),
+            None | Some("http://www.w3.org/1999/xhtml")
+        ) || node.tag_name().name().eq_ignore_ascii_case("script")
+            || node.tag_name().name().eq_ignore_ascii_case("style")
+        {
+            return None;
+        }
+        if node.has_tag_name("img") {
+            if image.is_some() || node.children().any(|child| child.is_element()) {
+                return None;
+            }
+            let src = node.attribute("src")?;
+            if src.is_empty() || src.contains(['#', '?']) {
+                return None;
+            }
+            image = Some(Book::resolve(&item.path, src).ok()?);
+        }
+    }
+    let path = image?;
+    let mut matches = manifest.values().filter(|item| item.path == path);
+    let image_item = matches.next()?;
+    if matches.next().is_some()
+        || !image_item.plain_href
+        || !matches!(
+            image_item.media.as_str(),
+            "image/jpeg" | "image/png" | "image/gif"
+        )
+    {
+        return None;
+    }
+    cover_item(image_item, false)
 }
 
 fn package_cover_with_extra(

@@ -1,0 +1,202 @@
+//! Source-bound layout verification for a highlight in another ZIP EPUB.
+use super::{Reader, bulk_marks::Snapshot};
+use crate::session::screen_pages::FileStamp;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+const MAX_FONTS: usize = 16;
+const MAX_FONT_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Context {
+    preferences: crate::library::BookPreferences,
+    settings: crate::Settings,
+    styles: crate::user_styles::Snapshot,
+    rules: crate::user_hyphenation::Rules,
+    fonts: Vec<PathBuf>,
+}
+
+impl Context {
+    pub(super) fn capture(reader: &Reader, id: u64) -> crate::Result<Self> {
+        let state = reader.library.state(id).ok_or("That book is unavailable")?;
+        if reader.profiles.iter().any(|profile| {
+            matches!(profile, crate::reading_profiles::Profile::Text { .. })
+                && (profile.applies_on_open() || profile.opening_conditions().is_some())
+        }) {
+            return Err(
+                "Open this book to apply its reading profiles before editing its note".into(),
+            );
+        }
+        if state.preferences.scroll
+            || state.preferences.facing_pages
+            || state.hidden_flows.enabled
+            || state
+                .hide_nonlinear
+                .unwrap_or(reader.controls.hide_nonlinear_default)
+        {
+            return Err("Open this book to edit notes with its reading layout".into());
+        }
+        let mut settings = state.preferences.apply_to(reader.device_reading_settings());
+        settings.status_header_height = crate::reading_controls::TopHeader::height(
+            reader.top_header_for_book(id),
+            state.preferences.scroll,
+        );
+        if settings.in_page_footnotes {
+            return Err("Open this book to edit notes with in-page notes enabled".into());
+        }
+        settings.validate()?;
+        let styles = reader
+            .style_store
+            .data
+            .snapshot(id)?
+            .for_note_layout(true)
+            .for_nonlinear_notes(false);
+        if styles.in_page_epub_footnotes() {
+            return Err("Open this book to edit notes with in-page notes enabled".into());
+        }
+        let mut fonts = reader.fonts.clone();
+        if let Some(file) = state.preferences.font_file.as_deref() {
+            let path = crate::reading_fonts::resolve(&reader.fonts_directory, file)
+                .map_err(|_| "The target book's reading font is unavailable")?;
+            fonts.insert(0, path);
+        }
+        if fonts.is_empty() || fonts.len() > MAX_FONTS {
+            return Err("The target book's reading fonts exceed the verification limit".into());
+        }
+        Ok(Self {
+            preferences: state.preferences.clone(),
+            settings,
+            styles,
+            rules: reader.user_hyphenation.as_ref().clone(),
+            fonts,
+        })
+    }
+
+    fn font_stamps(&self) -> Option<Vec<FileStamp>> {
+        primitive_app::with_storage(|| {
+            let mut stamps = Vec::with_capacity(self.fonts.len());
+            let mut bytes = 0_u64;
+            for path in &self.fonts {
+                let metadata = std::fs::metadata(path)?;
+                bytes = bytes
+                    .checked_add(metadata.len())
+                    .ok_or_else(|| std::io::Error::other("Reading fonts exceed the limit"))?;
+                if bytes > MAX_FONT_BYTES {
+                    return Err(std::io::Error::other("Reading fonts exceed the limit"));
+                }
+                stamps
+                    .push(FileStamp::from_metadata(&metadata).ok_or_else(|| {
+                        std::io::Error::other("Reading fonts cannot be verified")
+                    })?);
+            }
+            Ok(stamps)
+        })
+        .ok()
+    }
+
+    pub(super) fn revalidate_fonts(&self, stamps: &[FileStamp]) -> bool {
+        self.font_stamps().as_deref() == Some(stamps)
+    }
+
+    pub(super) fn verify(
+        &self,
+        bytes: std::sync::Arc<[u8]>,
+        target: &Snapshot,
+        cancel: &AtomicBool,
+    ) -> crate::Result<Vec<FileStamp>> {
+        let check = || -> crate::Result<()> {
+            if cancel.load(Ordering::Relaxed) {
+                Err("Verification was cancelled".into())
+            } else {
+                Ok(())
+            }
+        };
+        check()?;
+        let fonts = self
+            .font_stamps()
+            .ok_or("Reading fonts cannot be verified")?;
+        let Snapshot::Reflow(_, mark) = target else {
+            return Err("This mark is unavailable".into());
+        };
+        let selection = &mark.selection;
+        let start = &selection.start;
+        let end = &selection.end;
+        if start.raw_caret.is_some()
+            || end.raw_caret.is_some()
+            || start.illustration.is_some()
+            || end.illustration.is_some()
+            || start.book != end.book
+            || start.chapter != end.chapter
+            || selection.text.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES
+        {
+            return Err("Open this book to edit this saved passage".into());
+        }
+        let mut book = crate::epub::Book::open_snapshot(bytes)?;
+        if book.is_fixed_layout() || !book.is_reflowable_epub() || book.revision() != start.book {
+            return Err("The EPUB no longer matches this passage".into());
+        }
+        let mut matches = book
+            .chapters
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.href == start.chapter);
+        let (index, entry) = matches.next().ok_or("That chapter is unavailable")?;
+        if entry.unsupported || matches.next().is_some() {
+            return Err("That chapter is unavailable".into());
+        }
+        let settings = if self.settings.publisher_render_mode.is_some()
+            && (!self.settings.publisher_styles || !book.is_reflowable_epub() || book.spine_rtl)
+        {
+            crate::PublisherRenderMode::Reader.apply(self.settings)
+        } else {
+            self.settings
+        };
+        let shaping_main = settings
+            .typography
+            .resolve(book.language.map(crate::TypographyLocale::publication));
+        let shaping_language = shaping_main.map(crate::TypographyLocale::shaping_language);
+        let prefix = crate::book_style::pseudo::quotes::prepare_exact(
+            &mut book,
+            index,
+            settings,
+            &self.styles,
+            shaping_language,
+            shaping_main.as_ref().map_or("en", |tag| tag.as_str()),
+            &check,
+        )?;
+        book.quote_prefixes
+            .as_mut()
+            .ok_or("The EPUB snapshot is unavailable")?
+            .install_exact(prefix);
+        check()?;
+        let probe = crate::Probe::layout_opened_book_cancellable(
+            &mut Some(book),
+            crate::Engine::Parley,
+            settings,
+            index,
+            None,
+            &self.rules,
+            &self.styles,
+            || {
+                primitive_app::with_storage(|| {
+                    crate::font_context(&self.fonts).map_err(std::io::Error::other)
+                })
+                .map_err(Into::into)
+            },
+            false,
+            &check,
+        )?;
+        if probe.page_for(start).is_none()
+            || probe.page_for(end).is_none()
+            || probe.compare_text_anchors(start, end) != Some(std::cmp::Ordering::Less)
+            || probe.select_source_range(start, end).as_ref() != Some(selection)
+        {
+            return Err("This saved passage no longer matches the EPUB".into());
+        }
+        check()?;
+        if !self.revalidate_fonts(&fonts) {
+            return Err("Reading fonts changed during verification".into());
+        }
+        Ok(fonts)
+    }
+}

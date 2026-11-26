@@ -25,6 +25,37 @@ impl Drop for Guard {
     }
 }
 
+enum OtherProof {
+    Pdf(super::other_pdf::Proof),
+    Epub(
+        super::other_epub::Proof,
+        Vec<crate::session::screen_pages::FileStamp>,
+    ),
+}
+impl OtherProof {
+    fn digest(&self) -> [u8; 32] {
+        match self {
+            Self::Pdf(proof) => proof.digest(),
+            Self::Epub(proof, _) => proof.digest(),
+        }
+    }
+    fn revalidate(&self, context: Option<&super::other_epub_check::Context>) -> bool {
+        match self {
+            Self::Pdf(proof) => context.is_none() && proof.revalidate().is_ok(),
+            Self::Epub(proof, fonts) => {
+                proof.revalidate().is_ok()
+                    && context.is_some_and(|context| context.revalidate_fonts(fonts))
+            }
+        }
+    }
+    fn epub_fonts(&self) -> Option<&[crate::session::screen_pages::FileStamp]> {
+        match self {
+            Self::Epub(_, fonts) => Some(fonts),
+            Self::Pdf(_) => None,
+        }
+    }
+}
+
 pub(in crate::app) struct Verification {
     intent: Intent,
     book: u64,
@@ -40,8 +71,10 @@ pub(in crate::app) struct Verification {
     recipe: Option<Arc<crate::session::SearchLayoutRecipe>>,
     other_path: Option<std::path::PathBuf>,
     other_digest: Option<[u8; 32]>,
+    other_context: Option<super::other_epub_check::Context>,
+    other_fonts: Option<Vec<crate::session::screen_pages::FileStamp>>,
     cancelled: Arc<AtomicBool>,
-    receiver: mpsc::Receiver<Result<Option<super::other_pdf::Proof>, &'static str>>,
+    receiver: mpsc::Receiver<Result<Option<OtherProof>, &'static str>>,
     deadline: Instant,
 }
 impl Drop for Verification {
@@ -264,6 +297,8 @@ impl Reader {
             recipe: Some(recipe),
             other_path: None,
             other_digest: None,
+            other_context: None,
+            other_fonts: None,
             cancelled,
             receiver,
             deadline: Instant::now() + TICK,
@@ -271,7 +306,7 @@ impl Reader {
         Ok(())
     }
 
-    pub(in crate::app) fn start_other_pdf_note_verification(
+    pub(in crate::app) fn start_other_note_verification(
         &mut self,
         intent: Intent,
     ) -> crate::Result<()> {
@@ -284,7 +319,10 @@ impl Reader {
                 .pending_note_edit
                 .as_ref()
                 .ok_or("Review the note first")?;
-            let path = pending.other_pdf.clone().ok_or("That PDF is unavailable")?;
+            let path = pending
+                .other_path
+                .clone()
+                .ok_or("That book is unavailable")?;
             let state = self
                 .library
                 .state(pending.book)
@@ -305,6 +343,24 @@ impl Reader {
             {
                 return Err("The book or mark changed; review the note again".into());
             }
+            let context = match crate::library::DocumentFormat::for_path(&path) {
+                Some(crate::library::DocumentFormat::Pdf) => None,
+                Some(crate::library::DocumentFormat::Epub)
+                    if matches!(&pending.target, Snapshot::Reflow(..))
+                        && !crate::epub_members::is_folder_book(&path) =>
+                {
+                    Some(super::other_epub_check::Context::capture(
+                        self,
+                        pending.book,
+                    )?)
+                }
+                _ => return Err("This book cannot be verified".into()),
+            };
+            if (intent == Intent::Open && pending.other_epub_context.is_some())
+                || (intent == Intent::Save && pending.other_epub_context != context)
+            {
+                return Err("The book's reading settings changed; review the note again".into());
+            }
             Ok((
                 pending.book,
                 pending.key,
@@ -317,8 +373,10 @@ impl Reader {
                 pending.origin.clone(),
                 pending.origin_fixed_view,
                 pending.other_digest,
+                pending.other_epub_fonts.clone(),
                 self.library.verification_root().to_owned(),
                 path,
+                context,
             ))
         })();
         let (
@@ -333,8 +391,10 @@ impl Reader {
             origin,
             origin_fixed_view,
             other_digest,
+            other_fonts,
             root,
             path,
+            context,
         ) = match build {
             Ok(value) => value,
             Err(error) => {
@@ -346,13 +406,23 @@ impl Reader {
         let cancel = Arc::clone(&cancelled);
         let worker_path = path.clone();
         let work = target.clone();
+        let worker_context = context.clone();
         let busy = Arc::clone(&self.note_verify_busy);
         let (tx, receiver) = mpsc::sync_channel(1);
         if std::thread::Builder::new().name("reader-other-pdf-note-check".into()).spawn(move || {
             let _guard = Guard(busy);
-            let result = super::other_pdf::Proof::verify(root, worker_path, book, &work, &cancel)
-                .map(Some)
-                .map_err(|_| "The PDF is unavailable, changed, protected, or exceeds the verification limit");
+            let result = match worker_context {
+                None => super::other_pdf::Proof::verify(root, worker_path, book, &work, &cancel)
+                    .map(OtherProof::Pdf).map_err(|_| "The PDF is unavailable, changed, protected, or exceeds the verification limit"),
+                Some(context) => (|| {
+                    let (proof, bytes) = super::other_epub::Proof::capture(root, worker_path, book, &cancel)
+                        .map_err(|_| "The EPUB is unavailable, changed, protected, or exceeds the verification limit")?;
+                    let fonts = context.verify(bytes, &work, &cancel)
+                        .map_err(|_| "The EPUB passage or its reading settings cannot be verified")?;
+                    proof.revalidate().map_err(|_| "The EPUB changed; review the note again")?;
+                    Ok(OtherProof::Epub(proof, fonts))
+                })(),
+            }.map(Some);
             if !cancel.load(Ordering::Relaxed) { let _ = tx.send(result); }
         }).is_err() {
             self.note_verify_busy.store(false, Ordering::Release);
@@ -373,6 +443,8 @@ impl Reader {
             recipe: None,
             other_path: Some(path),
             other_digest,
+            other_context: context,
+            other_fonts,
             cancelled,
             receiver,
             deadline: Instant::now() + TICK,
@@ -463,8 +535,14 @@ impl Reader {
                         && pending.title == job.title
                         && pending.target == job.target
                         && pending.desired == job.desired
-                        && pending.other_pdf == job.other_path
+                        && pending.other_path == job.other_path
                         && pending.other_digest == job.other_digest
+                        && pending.other_epub_fonts == job.other_fonts
+                        && pending.other_epub_context.as_ref()
+                            == match job.intent {
+                                Intent::Open => None,
+                                Intent::Save => job.other_context.as_ref(),
+                            }
                         && (job.other_path.is_none()
                             || (pending.origin_book == job.origin_book
                                 && pending.origin == job.origin
@@ -486,15 +564,24 @@ impl Reader {
                         .search_layout_recipe(&active.reading.probe)
                         == **recipe
                 }),
-                None => job.other_path.is_some(),
+                None => {
+                    job.other_path.is_some()
+                        && job.other_context.as_ref().is_none_or(|context| {
+                            super::other_epub_check::Context::capture(self, job.book)
+                                .is_ok_and(|current| &current == context)
+                        })
+                }
             };
         let source_valid = match (&job.recipe, &result) {
             (Some(_), Ok(None)) => true,
             (None, Ok(Some(proof))) => {
-                proof.revalidate().is_ok()
+                proof.revalidate(job.other_context.as_ref())
                     && match job.intent {
-                        Intent::Open => job.other_digest.is_none(),
-                        Intent::Save => job.other_digest == Some(proof.digest()),
+                        Intent::Open => job.other_digest.is_none() && job.other_fonts.is_none(),
+                        Intent::Save => {
+                            job.other_digest == Some(proof.digest())
+                                && job.other_fonts.as_deref() == proof.epub_fonts()
+                        }
                     }
             }
             _ => false,
@@ -506,7 +593,7 @@ impl Reader {
             let message = if valid {
                 result
                     .err()
-                    .unwrap_or("The PDF changed; review the note again")
+                    .unwrap_or("The book changed; review the note again")
             } else {
                 "The book or mark changed; review the note again"
             };
@@ -518,6 +605,8 @@ impl Reader {
                     && let Some(pending) = &mut self.bookmark_browser.pending_note_edit
                 {
                     pending.other_digest = Some(proof.digest());
+                    pending.other_epub_context = job.other_context.clone();
+                    pending.other_epub_fonts = proof.epub_fonts().map(|fonts| fonts.to_vec());
                 }
                 self.show(Screen::BookmarkBrowser(Page::EditNote));
                 Some(Change::Partial)

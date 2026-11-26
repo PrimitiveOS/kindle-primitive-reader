@@ -6,6 +6,8 @@ pub(super) mod focus;
 mod metadata;
 mod metadata_view;
 pub(super) mod note_verify;
+mod other_epub;
+mod other_epub_check;
 mod other_pdf;
 use super::{
     Action, AnnotationListText, Book, Canvas, Change, Editor, Input, Item, Reader, Rect, Result,
