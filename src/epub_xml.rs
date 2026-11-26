@@ -95,7 +95,11 @@ fn parse_recovery_xml(
 }
 
 pub(crate) fn recover_html_voids(xml: &str, limit: usize) -> Option<String> {
-    let repaired = html_void_candidate(xml, limit)?;
+    let repaired = html_void_candidate(xml, limit, false)?;
+    finish_void_recovery(repaired, limit)
+}
+
+fn finish_void_recovery(repaired: String, limit: usize) -> Option<String> {
     let repaired = recover_html_names(repaired, limit);
     let checked = without_plain_doctype(&repaired);
     let doc = parse_recovery_xml(&checked).ok()?;
@@ -117,11 +121,18 @@ pub(crate) fn recover_html_voids(xml: &str, limit: usize) -> Option<String> {
 /// Reuse the exact void-tag scan and only return after the existing
 /// ampersand repair validates the entire combined result.
 pub(crate) fn recover_html_voids_and_ampersands(xml: &str, limit: usize) -> Option<String> {
-    let candidate = html_void_candidate(xml, limit)?;
+    let candidate = html_void_candidate(xml, limit, false)?;
     recover_html_bare_ampersands(&candidate, limit)
 }
 
-fn html_void_candidate(xml: &str, limit: usize) -> Option<String> {
+/// Try ASCII-case variants only after the existing recovery paths failed.
+pub(crate) fn recover_html_uppercase_voids(xml: &str, limit: usize) -> Option<String> {
+    let candidate = html_void_candidate(xml, limit, true)?;
+    finish_void_recovery(candidate.clone(), limit)
+        .or_else(|| recover_html_bare_ampersands(&candidate, limit))
+}
+
+fn html_void_candidate(xml: &str, limit: usize, fold_void_case: bool) -> Option<String> {
     if xml.len() > limit {
         return None;
     }
@@ -143,6 +154,7 @@ fn html_void_candidate(xml: &str, limit: usize) -> Option<String> {
     }
     let bytes = xml.as_bytes();
     let mut insertions = Vec::new();
+    let mut replacements: Vec<(usize, &'static str)> = Vec::new();
     let mut cursor = 0;
     while cursor < bytes.len() {
         let Some(offset) = bytes[cursor..].iter().position(|&byte| byte == b'<') else {
@@ -209,26 +221,21 @@ fn html_void_candidate(xml: &str, limit: usize) -> Option<String> {
             cursor = end + 1 + close;
             continue;
         }
-        if matches!(
-            name,
-            "area"
-                | "base"
-                | "br"
-                | "col"
-                | "embed"
-                | "hr"
-                | "img"
-                | "input"
-                | "link"
-                | "meta"
-                | "param"
-                | "source"
-                | "track"
-                | "wbr"
-        ) && !token.trim_end().ends_with('/')
-        {
+        let void = [
+            "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+            "source", "track", "wbr",
+        ]
+        .into_iter()
+        .find(|tag| *tag == name || fold_void_case && tag.eq_ignore_ascii_case(name));
+        if let Some(canonical) = void.filter(|_| !token.trim_end().ends_with('/')) {
             if xml.len().saturating_add(insertions.len() + 1) > limit {
                 return None;
+            }
+            if canonical != name {
+                if replacements.len() == 8_192 {
+                    return None;
+                }
+                replacements.push((start + 1, canonical));
             }
             insertions.push(end);
         }
@@ -239,7 +246,16 @@ fn html_void_candidate(xml: &str, limit: usize) -> Option<String> {
     }
     let mut repaired = String::with_capacity(xml.len() + insertions.len());
     let mut last = 0;
+    let mut replacement_index = 0;
     for at in insertions {
+        if let Some(&(start, canonical)) = replacements.get(replacement_index)
+            && start < at
+        {
+            repaired.push_str(&xml[last..start]);
+            repaired.push_str(canonical);
+            last = start + canonical.len();
+            replacement_index += 1;
+        }
         repaired.push_str(&xml[last..at]);
         repaired.push('/');
         last = at;

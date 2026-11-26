@@ -1,5 +1,17 @@
 # Line spacing parity
 
+Publisher `line-height` percentages and `em` values have a bounded
+implementation candidate in the horizontal Parley renderer. Their height is resolved from the declaring
+element's font and inherited as a fixed computed height, so changing a
+descendant's font size does not rescale that inherited height. Unitless and
+`normal` declarations retain their existing behavior. The reader's line-spacing
+control and existing minimum/maximum line-height limits still apply. Generated
+content and supported first-line/first-letter styles use the same model.
+Absolute CSS lengths such as `px` and `pt`, other relative units, and values
+outside the bounded 0–8 range remain unsupported. This change does not alter
+source text or saved positions and has not yet been behaviorally tested.
+Vertical and Blitz rendering do not yet consume this new computed height.
+
 KOReader v2026.07.1 exposes thirteen Text/Layout presets from 70% to 130%,
 defaults to 100%, and offers a custom range from 50% to 200%. A tap changes
 the value by 1%; a held control changes it by 5%. The values and bounds are in

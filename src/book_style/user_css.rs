@@ -157,7 +157,10 @@ pub(super) fn apply_reset(
         52 => style.min_height = value.min_height,
         0 => style.font_family = value.font_family.clone(),
         1 => style.size_scale = value.size_scale,
-        2 => style.line_height = value.line_height,
+        2 => {
+            style.line_height = value.line_height;
+            style.line_height_relative = value.line_height_relative;
+        }
         3 => style.background = value.background,
         4 => style.alignment = value.alignment,
         LAST_LINE_ALIGNMENT => style.last_line_alignment = value.last_line_alignment,

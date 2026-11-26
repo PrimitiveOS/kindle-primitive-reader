@@ -6128,11 +6128,22 @@ impl Reader {
 
     fn jump_fixed(&mut self, page: usize, target: Option<FixedJump>) -> Result<HistoryLocation> {
         self.close_fixed_search_fit()?;
+        let target = self
+            .fixed
+            .as_ref()
+            .ok_or("No open document")?
+            .reading
+            .revalidate_fixed_jump(page, target);
         let changes_fit = match target.as_ref() {
             Some(FixedJump::FitPoint(..)) => true,
+            Some(FixedJump::FitRectangle(..)) => true,
             Some(FixedJump::FitPage) => self.fixed.as_ref().is_some_and(|fixed| {
                 let view = fixed.reading.preferences();
-                view.width_fit || view.height_fit || view.zoom != 0 || view.tile_zoom.is_some()
+                view.width_fit
+                    || view.height_fit
+                    || view.zoom != 0
+                    || view.tile_zoom.is_some()
+                    || view.precise_scale.is_some()
             }),
             _ => false,
         };

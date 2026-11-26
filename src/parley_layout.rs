@@ -4255,6 +4255,9 @@ fn shape_paragraph(
     };
     builder.push_default(StyleProperty::FontFamily(family));
     let line_height = |style: &Style| {
+        if let Some(height) = style.line_height_relative {
+            return LineHeight::Absolute(height.pixels(settings));
+        }
         let default_spacing = Settings::default().line_height;
         let publisher = style.line_height.unwrap_or_else(|| {
             style
@@ -4454,7 +4457,9 @@ fn shape_paragraph(
                 ),
             }
         }
-        if run.line_height != base.line_height {
+        if run.line_height != base.line_height
+            || run.line_height_relative != base.line_height_relative
+        {
             builder.push(StyleProperty::LineHeight(line_height(run)), bytes.clone());
         }
         if letter_spacing(run) != letter_spacing(base) {

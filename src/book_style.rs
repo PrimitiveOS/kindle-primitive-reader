@@ -157,6 +157,30 @@ pub(crate) enum CssLength {
     Fraction(f32),
 }
 
+/// A percentage or em line-height computed against its declaring font.
+/// Keeping that font's scale preserves CSS inheritance across size changes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ComputedLineHeight {
+    pub(crate) factor: f32,
+    pub(crate) font_scale: f32,
+    pub(crate) allow_small: bool,
+}
+
+impl ComputedLineHeight {
+    pub(crate) fn pixels(self, settings: crate::Settings) -> f32 {
+        let mut font = settings.styled_font(self.font_scale);
+        if self.allow_small {
+            font = font.min((settings.font_size * self.font_scale).max(4.0));
+        }
+        let minimum = if settings.line_spacing_percent.is_some() {
+            0.5
+        } else {
+            1.0
+        };
+        font * (self.factor * settings.line_height_scale()).clamp(minimum, 3.0)
+    }
+}
+
 impl Default for CssLength {
     fn default() -> Self {
         Self::Pixels(0.0)
@@ -606,6 +630,7 @@ pub(crate) struct Style {
     pub(crate) ruby_size_explicit: bool,
     pub(crate) direction: parley::BaseDirection,
     pub line_height: Option<f32>,
+    pub(crate) line_height_relative: Option<ComputedLineHeight>,
     pub(crate) normal_line_height_percent: Option<u8>,
     pub(crate) steady_line_heights: bool,
     pub text_indent: TextIndent,
@@ -691,6 +716,7 @@ impl Default for Style {
             ruby_size_explicit: false,
             direction: parley::BaseDirection::Auto,
             line_height: None,
+            line_height_relative: None,
             normal_line_height_percent: None,
             steady_line_heights: false,
             text_indent: TextIndent::default(),
@@ -1430,7 +1456,22 @@ impl BookStyle {
                             style.text_indent = indent.computed(font, root_font);
                         }
                     }
-                    Property::LineHeight(height) => style.line_height = *height,
+                    Property::LineHeight(height) => {
+                        style.line_height = *height;
+                        style.line_height_relative = None;
+                    }
+                    Property::RelativeLineHeight(factor) => {
+                        style.line_height = None;
+                        style.line_height_relative = Some(ComputedLineHeight {
+                            factor: *factor,
+                            font_scale: if logical.is_some() {
+                                style.size_scale.clamp(f32::MIN_POSITIVE, f32::MAX)
+                            } else {
+                                style.size_scale.clamp(0.125, 8.0)
+                            },
+                            allow_small: style.allow_small_note_text,
+                        });
+                    }
                     Property::Marker(kind) => style.marker = *kind,
                     Property::Background(gray) => style.background = *gray,
                     Property::Alignment(alignment) => style.alignment = Some(*alignment),
@@ -1610,6 +1651,7 @@ impl BookStyle {
                 }
                 if regularize {
                     style.line_height = parent.line_height;
+                    style.line_height_relative = parent.line_height_relative;
                     style.image_align = parley::VerticalAlign::BASELINE;
                 }
             }
@@ -2730,7 +2772,7 @@ fn choose<'a>(
             Property::MinHeight(_) => 52,
             Property::Family(_) => 0,
             Property::Size(_) => 1,
-            Property::LineHeight(_) => 2,
+            Property::LineHeight(_) | Property::RelativeLineHeight(_) => 2,
             Property::Background(_) => 3,
             Property::Alignment(_) => 4,
             Property::LastLineAlignment(_) => LAST_LINE_ALIGNMENT,
@@ -2858,6 +2900,7 @@ enum Property {
     FontSource(Vec<String>),
     Size(Size),
     LineHeight(Option<f32>),
+    RelativeLineHeight(f32),
     Background(Option<u8>),
     Alignment(Alignment),
     LastLineAlignment(Option<Alignment>),
@@ -3347,11 +3390,29 @@ impl<'i> DeclarationParser<'i> for Properties {
                     {
                         Property::LineHeight(None)
                     } else {
-                        let height = input.expect_number()?;
-                        if !(1.0..=3.0).contains(&height) {
-                            return Err(ParseError::unexpected_token());
+                        let before = input.state();
+                        let relative = match input.next()?.clone() {
+                            Token::Percentage { unit_value, .. } => Some(unit_value),
+                            Token::Dimension { value, unit, .. }
+                                if unit.eq_ignore_ascii_case("em") =>
+                            {
+                                Some(value)
+                            }
+                            _ => None,
+                        };
+                        if let Some(factor) = relative {
+                            if !(0.0..=8.0).contains(&factor) {
+                                return Err(ParseError::unexpected_token());
+                            }
+                            Property::RelativeLineHeight(factor)
+                        } else {
+                            input.reset(&before);
+                            let height = input.expect_number()?;
+                            if !(1.0..=3.0).contains(&height) {
+                                return Err(ParseError::unexpected_token());
+                            }
+                            Property::LineHeight(Some(height))
                         }
-                        Property::LineHeight(Some(height))
                     }
                 }
                 "list-style-type" | "list-style" => {

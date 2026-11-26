@@ -1,10 +1,15 @@
 # PDF link destination candidates
 
 Reader resolves local PDF links and Contents entries that identify their target
-by an indirect page reference or a zero-based page index. For a `/FitR` link,
-Reader transforms the target rectangle through the destination page's crop
-and intrinsic rotation and navigates to its upright top-left point. It retains
-the current reading zoom; automatic rectangle fitting is not implemented.
+by an indirect page reference or a zero-based page index. For supported `/FitR`
+links and Contents entries, Reader transforms the destination rectangle through
+the target page's crop and intrinsic rotation, fits it to the viewport and
+centers it. It records the prior viewing geometry for Back and forward. The
+precise scale is stored as an optional bounded fixed-view setting; existing
+saved views without it retain their original meaning. Explicit fit or zoom
+controls replace it. Because reusable page defaults and reading profiles use
+standard fit/zoom presets, choose one of those presets before saving either;
+Reader does not silently save the document-specific region scale as page fit.
 Other unsupported or malformed position values retain the existing page-only
 fallback. Out-of-range or negative page numbers remain unavailable rather than
 being redirected to a different page.
@@ -13,11 +18,20 @@ The local candidate also retains a resolved `/XYZ` point or `/FitR` rectangle
 position from a PDF Contents entry. Selecting that entry uses the existing
 positioned PDF jump, including the destination page's crop and intrinsic
 rotation; a missing or unsupported position still opens the page as before.
-This does not implement automatic `/FitR` zoom or positional DjVu and
-fixed-layout EPUB outlines. Page labels, saved
+Positional DjVu and fixed-layout EPUB outlines remain unsupported. Page labels, saved
 bookmarks and source PDF bytes are unchanged. The Contents routing and its
 interaction with zoom, rotation, reading history and scrolling remain
 behaviorally unverified on the simulator and Kindle.
+
+The `/FitR` path requires a finite nonempty rectangle fully inside the upright
+page, a scale between 0.001 and 64 pixels per PDF point, and a view whose
+center is reachable without violating the page-pan or render-size limits.
+Crop, user rotation, straightening, spread and continuous views keep the
+existing top-left-position fallback. If any check fails, Reader preserves its
+current zoom and uses that fallback. Changing viewport size retains the saved
+absolute scale and source position rather than recalculating the rectangle fit.
+This candidate has not been behaviorally tested against real PDFs, KOReader,
+the simulator or Kindle.
 
 For PDF `/XYZ` links and Contents entries with a null left or top coordinate
 and a null or zero zoom, the candidate retains the corresponding coordinate

@@ -776,6 +776,9 @@ impl FixedTileZoom {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct FixedPreferences {
     pub zoom: usize,
+    /// Absolute screen pixels per PDF point for a bounded destination fit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub precise_scale: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tile_zoom: Option<FixedTileZoom>,
     pub turns: u8,
@@ -880,21 +883,31 @@ impl FixedPreferences {
     }
 
     pub fn normalized(self) -> Self {
-        let tile_zoom = self.tile_zoom.filter(FixedTileZoom::is_valid);
-        let width_fit = self.width_fit && tile_zoom.is_none();
+        let precise_scale = self
+            .precise_scale
+            .filter(|value| value.is_finite() && (0.001..=64.0).contains(value));
+        let tile_zoom = self
+            .tile_zoom
+            .filter(FixedTileZoom::is_valid)
+            .filter(|_| precise_scale.is_none());
+        let width_fit = self.width_fit && tile_zoom.is_none() && precise_scale.is_none();
         let scan_gamma = self.scan_gamma_tenths.filter(valid_scan_gamma);
         Self {
-            zoom: if tile_zoom.is_some() {
+            zoom: if tile_zoom.is_some() || precise_scale.is_some() {
                 0
             } else {
                 self.zoom.min(MAX_FIXED_ZOOM)
             },
             tile_zoom,
+            precise_scale,
             turns: self.turns % 4,
             width_fit,
-            height_fit: self.height_fit && !width_fit && tile_zoom.is_none(),
-            continuous: self.continuous && tile_zoom.is_none(),
-            spread: self.spread && tile_zoom.is_none(),
+            height_fit: self.height_fit
+                && !width_fit
+                && tile_zoom.is_none()
+                && precise_scale.is_none(),
+            continuous: self.continuous && tile_zoom.is_none() && precise_scale.is_none(),
+            spread: self.spread && tile_zoom.is_none() && precise_scale.is_none(),
             continuous_gap: self.continuous_gap.min(MAX_CONTINUOUS_GAP),
             straighten_limit: self.straighten_limit.min(MAX_STRAIGHTEN_DEGREES),
             scan_white_level: self.scan_white_level.filter(valid_white_level),
@@ -954,6 +967,10 @@ impl<'de> Deserialize<'de> for FixedPreferences {
         let width_fit = switch("width_fit");
         Ok(Self {
             zoom: integer("zoom").min(MAX_FIXED_ZOOM as u64) as usize,
+            precise_scale: values
+                .get("precise_scale")
+                .and_then(serde_json::Value::as_f64)
+                .map(|value| value as f32),
             tile_zoom: values
                 .get("tile_zoom")
                 .and_then(|value| serde_json::from_value(value.clone()).ok()),
@@ -4538,6 +4555,7 @@ mod tests {
             state.fixed_preferences,
             FixedPreferences {
                 zoom: 4,
+                precise_scale: None,
                 tile_zoom: None,
                 turns: 3,
                 width_fit: true,

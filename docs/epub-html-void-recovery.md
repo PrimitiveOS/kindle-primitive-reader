@@ -30,6 +30,10 @@ references, complete unknown names and semicolonless names that could be HTML
 entities are not guessed; malformed markup continues to fail. If neither
 individual repair succeeds, the same bounded void-tag scan can be combined
 with the ampersand repair; the combined result must pass full validation.
+After those paths fail, the scanner can also normalize and close up to 8,192
+ASCII-case variants such as `<BR>` and `<IMG src="…">`. Other mixed-case
+elements and uppercase attributes are not normalized. This fallback also
+requires the same complete-document validation.
 Source text and anchors for previously readable chapters remain unchanged;
 newly readable chapters use the deterministic repaired source. This path is
 also untested on real books, simulator and Kindle.

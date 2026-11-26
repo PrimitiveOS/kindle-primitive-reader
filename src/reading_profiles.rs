@@ -428,6 +428,7 @@ impl FixedProfile {
         }
         let tile = if fields.contains(&Field::FitAndZoom) {
             view.tile_zoom = None;
+            view.precise_scale = None;
             self.tile
         } else {
             view.tile_zoom.map(|tile| Tile {

@@ -107,6 +107,7 @@ pub(super) fn with_fixed_geometry(
     saved: FixedPreferences,
 ) -> FixedPreferences {
     current.zoom = saved.zoom;
+    current.precise_scale = saved.precise_scale;
     current.tile_zoom = saved.tile_zoom;
     current.turns = saved.turns;
     current.width_fit = saved.width_fit;

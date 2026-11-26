@@ -2,9 +2,9 @@
 pub(crate) mod quotes;
 
 use super::{
-    BookStyle, BoxMargin, CascadeOrigin, CssLength, CssResult, Display, Element, Family,
-    LigatureExtras, Priority, Property, Rule, Size, Style, TextDecoration, TextTransform,
-    VariantCaps, VariantEastAsian, VariantNumeric, VariantPosition, Weight, flow,
+    BookStyle, BoxMargin, CascadeOrigin, ComputedLineHeight, CssLength, CssResult, Display,
+    Element, Family, LigatureExtras, Priority, Property, Rule, Size, Style, TextDecoration,
+    TextTransform, VariantCaps, VariantEastAsian, VariantNumeric, VariantPosition, Weight, flow,
 };
 use cssparser::{Parser, Token};
 use parley::{FontStyle, FontWeight, GenericFamily};
@@ -237,6 +237,7 @@ struct Typography {
     slant: Option<FontStyle>,
     decoration: Option<TextDecoration>,
     line_height: Option<Option<f32>>,
+    relative_line_height: Option<f32>,
     letter_spacing: Option<CssLength>,
     common_ligatures: Option<bool>,
     ligature_extras: Option<LigatureExtras>,
@@ -290,6 +291,15 @@ impl Typography {
         }
         if let Some(height) = self.line_height {
             style.line_height = height;
+            style.line_height_relative = None;
+        }
+        if let Some(factor) = self.relative_line_height {
+            style.line_height = None;
+            style.line_height_relative = Some(ComputedLineHeight {
+                factor,
+                font_scale: style.size_scale,
+                allow_small: style.allow_small_note_text,
+            });
         }
         if let Some(length) = self.letter_spacing {
             style.letter_spacing =
@@ -351,6 +361,7 @@ pub(crate) struct FirstLine {
     weight: FontWeight,
     slant: FontStyle,
     line_height: Option<f32>,
+    line_height_relative: Option<ComputedLineHeight>,
     letter_spacing: CssLength,
     common_ligatures: bool,
     ligature_extras: LigatureExtras,
@@ -374,6 +385,7 @@ impl FirstLine {
             weight: style.font_weight,
             slant: style.font_style,
             line_height: style.line_height,
+            line_height_relative: style.line_height_relative,
             letter_spacing: style.letter_spacing,
             common_ligatures: style.common_ligatures,
             ligature_extras: style.ligature_extras,
@@ -396,6 +408,7 @@ impl FirstLine {
         style.font_weight = self.weight;
         style.font_style = self.slant;
         style.line_height = self.line_height;
+        style.line_height_relative = self.line_height_relative;
         style.letter_spacing = self.letter_spacing;
         style.common_ligatures = self.common_ligatures;
         style.ligature_extras = self.ligature_extras;
@@ -464,6 +477,15 @@ impl FirstLine {
                 self.line_height
             } else {
                 style.line_height
+            },
+            line_height_relative: match declaration(2) {
+                Some(Property::RelativeLineHeight(factor)) => Some(ComputedLineHeight {
+                    factor: *factor,
+                    font_scale: size,
+                    allow_small: style.allow_small_note_text,
+                }),
+                _ if inherits(2) => self.line_height_relative,
+                _ => style.line_height_relative,
             },
             letter_spacing: match declaration(super::LETTER_SPACING) {
                 Some(Property::LetterSpacing(length)) => {
@@ -571,7 +593,7 @@ fn property_slot(property: &Property) -> Option<usize> {
         Property::Weight(_) => 5,
         Property::Slant(_) => 6,
         Property::Decoration(_) => 7,
-        Property::LineHeight(_) => 8,
+        Property::LineHeight(_) | Property::RelativeLineHeight(_) => 8,
         Property::Float(_) => 9,
         Property::InitialLetter(_) => 10,
         Property::HorizontalMargin(1, _) => 11,
@@ -635,6 +657,7 @@ fn is_first_line_typography(property: &Property) -> bool {
             | Property::Slant(_)
             | Property::Decoration(_)
             | Property::LineHeight(_)
+            | Property::RelativeLineHeight(_)
             | Property::LetterSpacing(_)
             | Property::CommonLigatures(_)
             | Property::LigatureExtras(_)
@@ -944,6 +967,7 @@ impl<'a> Rules<'a> {
                 Property::Slant(value) => style.slant = Some(*value),
                 Property::Decoration(value) => style.decoration = *value,
                 Property::LineHeight(value) => style.line_height = Some(*value),
+                Property::RelativeLineHeight(factor) => style.relative_line_height = Some(*factor),
                 Property::LetterSpacing(value) => style.letter_spacing = Some(*value),
                 Property::CommonLigatures(value) => style.common_ligatures = Some(*value),
                 Property::LigatureExtras(value) => style.ligature_extras = Some(*value),

@@ -2230,6 +2230,7 @@ fn archive_html_recovery(archive: &mut Archive, path: &str) -> Result<String> {
         crate::epub_xml::recover_html_voids(&xml, MAX_XML)
             .or_else(|| crate::epub_xml::recover_html_bare_ampersands(&xml, MAX_XML))
             .or_else(|| crate::epub_xml::recover_html_voids_and_ampersands(&xml, MAX_XML))
+            .or_else(|| crate::epub_xml::recover_html_uppercase_voids(&xml, MAX_XML))
             .unwrap_or(xml)
     } else {
         xml

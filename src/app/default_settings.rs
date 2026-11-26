@@ -118,6 +118,9 @@ impl Reader {
                     .fixed
                     .as_ref()
                     .ok_or("Open a fixed-page document first")?;
+                if fixed.reading.preferences().precise_scale.is_some() {
+                    return Err("Choose a standard fit or zoom before saving page defaults".into());
+                }
                 templates.fixed = Some(FixedDefaults::from_view(fixed.reading.preferences()));
                 self.document_defaults.save(templates)?;
                 "Page settings saved for new documents; crop and view offset excluded"

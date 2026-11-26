@@ -324,6 +324,9 @@ impl Reader {
         if let Some(book) = &self.fixed
             && let Some(provider) = book.reading.profile_provider()
         {
+            if book.reading.preferences().precise_scale.is_some() {
+                return Err("Choose a standard fit or zoom before saving a reading profile".into());
+            }
             return Ok(Profile::Fixed {
                 name: name.into(),
                 fixed: FixedProfile::from_view(provider, book.reading.preferences()),

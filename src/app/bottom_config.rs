@@ -1034,6 +1034,7 @@ impl Reader {
                                     Action::FitPage(false),
                                     prefs.zoom == 0
                                         && prefs.tile_zoom.is_none()
+                                        && prefs.precise_scale.is_none()
                                         && !prefs.width_fit
                                         && !prefs.height_fit,
                                 )
@@ -1053,7 +1054,9 @@ impl Reader {
                                     Choice::option(
                                         title,
                                         Action::SetFixedZoom(index),
-                                        prefs.zoom == index && prefs.tile_zoom.is_none(),
+                                        prefs.zoom == index
+                                            && prefs.tile_zoom.is_none()
+                                            && prefs.precise_scale.is_none(),
                                     )
                                 }),
                         ));

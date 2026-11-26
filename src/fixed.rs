@@ -77,12 +77,14 @@ pub struct PartialPdfDestination {
     pub fit: PdfDestinationFit,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PdfDestinationFit {
     Current,
     Page,
     Width,
     Height,
+    /// Rectangle already transformed to upright target-page coordinates.
+    Rectangle(Rect),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -444,7 +446,7 @@ impl Pdf {
         };
         let old = match target.fit {
             // Whole-page fitting does not require a PDF coordinate.
-            PdfDestinationFit::Page => return None,
+            PdfDestinationFit::Page | PdfDestinationFit::Rectangle(_) => return None,
             PdfDestinationFit::Current => current_pdf_point()?,
             PdfDestinationFit::Width | PdfDestinationFit::Height => {
                 let [a, b, c, d, _, _] = target_transform.as_coeffs();
@@ -919,6 +921,21 @@ impl<'a> DestinationResolver<'a> {
         };
         let partial = match target.pdf_position {
             Some(DestinationPosition::Partial(value)) => Some(value),
+            Some(DestinationPosition::Rectangle(rect)) => self
+                .document
+                .pages()
+                .get(target.page)
+                .map(|page| {
+                    page.initial_transform(true)
+                        .to_kurbo()
+                        .transform_rect_bbox(rect)
+                })
+                .filter(|rect| rect.is_finite() && rect.width() > 0.0 && rect.height() > 0.0)
+                .map(|rect| PartialPdfDestination {
+                    left: None,
+                    top: None,
+                    fit: PdfDestinationFit::Rectangle(rect),
+                }),
             _ => None,
         };
         let upright = target.pdf_position.and_then(|position| {

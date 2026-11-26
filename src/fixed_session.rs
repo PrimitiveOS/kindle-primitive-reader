@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use crate::scan_deskew::{DeskewCache, FULL_PAGE, Quad, source_rect};
-use hayro::kurbo::{Affine, Point};
+use hayro::kurbo::{Affine, Point, Rect as SourceRect};
 use primitive_app::{WIDTH, with_storage};
 use primitive_ui::{CAPTION, Canvas, GrayImage, Input, Rect, TextStyle};
 
@@ -286,6 +286,8 @@ pub(crate) enum FixedJump {
     FitPoint(Point, crate::fixed::PdfDestinationFit),
     /// A PDF Fit destination: center the whole page at page-fit scale.
     FitPage,
+    /// A validated upright PDF rectangle and its exact fitted scale.
+    FitRectangle(SourceRect, f32),
     /// Source word rectangles in reading order, normalized to the upright page.
     Regions(Vec<PdfTextRect>),
 }
@@ -984,6 +986,7 @@ impl FixedReading {
             view.width_fit = true;
             view.height_fit = false;
             view.tile_zoom = None;
+            view.precise_scale = None;
         } else {
             view.offset_y += center;
         }
@@ -1501,6 +1504,7 @@ impl FixedReading {
         let view = View {
             zoom: 0,
             tile_zoom: None,
+            precise_scale: None,
             width_fit: false,
             height_fit: false,
             continuous: false,
@@ -1924,6 +1928,15 @@ impl FixedReading {
         point: Option<Point>,
         partial: Option<crate::fixed::PartialPdfDestination>,
     ) -> Option<FixedJump> {
+        if let Some(crate::fixed::PartialPdfDestination {
+            fit: crate::fixed::PdfDestinationFit::Rectangle(rect),
+            ..
+        }) = partial
+        {
+            return self
+                .fit_pdf_rectangle(page, rect)
+                .or_else(|| point.map(FixedJump::LinkPoint));
+        }
         if let Some(point) = point {
             return Some(FixedJump::LinkPoint(point));
         }
@@ -1948,6 +1961,7 @@ impl FixedReading {
                 height_fit: partial.fit == crate::fixed::PdfDestinationFit::Height,
                 zoom: 0,
                 tile_zoom: None,
+                precise_scale: None,
                 ..self.view
             };
             let metrics = view_metrics(size, &target_view, self.frame_size());
@@ -1957,6 +1971,7 @@ impl FixedReading {
                 }
                 crate::fixed::PdfDestinationFit::Width => metrics.width_scale,
                 crate::fixed::PdfDestinationFit::Height => metrics.height_scale,
+                crate::fixed::PdfDestinationFit::Rectangle(_) => unreachable!(),
                 crate::fixed::PdfDestinationFit::Current => unreachable!(),
             };
             if !expected.is_finite()
@@ -1984,6 +1999,7 @@ impl FixedReading {
                         && self.view.height_fit == target_view.height_fit
                         && self.view.zoom == 0
                         && self.view.tile_zoom.is_none()
+                        && self.view.precise_scale.is_none()
                     {
                         FixedJump::LinkPoint(point)
                     } else {
@@ -2011,8 +2027,93 @@ impl FixedReading {
             .map(FixedJump::LinkPoint)
     }
 
+    /// Return a fit only when the exact rectangle and centered view are
+    /// representable without changing crop, rotation or rendering limits.
+    fn fit_pdf_rectangle(&self, page: usize, rect: SourceRect) -> Option<FixedJump> {
+        let FixedDocument::Pdf(pdf) = &self.source else {
+            return None;
+        };
+        if self.view.turns != 0
+            || self.view.crop.is_some()
+            || self.view.straighten_limit != 0
+            || self.view.continuous
+            || self.view.spread
+            || self.view.semi_auto_crop
+            || self.view.continuous_crop.is_some()
+            || !rect.is_finite()
+        {
+            return None;
+        }
+        let size = pdf.page_size(page).ok()?;
+        if rect.x0 < 0.0
+            || rect.y0 < 0.0
+            || rect.x1 > f64::from(size.0)
+            || rect.y1 > f64::from(size.1)
+            || rect.width() <= 0.0
+            || rect.height() <= 0.0
+        {
+            return None;
+        }
+        let scale = (f64::from(self.frame.width) / rect.width())
+            .min(f64::from(self.frame.height) / rect.height()) as f32;
+        if !scale.is_finite() || !(0.001..=64.0).contains(&scale) {
+            return None;
+        }
+        let mut view = View {
+            zoom: 0,
+            tile_zoom: None,
+            precise_scale: Some(scale),
+            width_fit: false,
+            height_fit: false,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            ..self.view
+        };
+        let metrics = view_metrics(size, &view, self.frame_size());
+        if metrics.scale.to_bits() != scale.to_bits() {
+            return None;
+        }
+        let request = viewport(size, &mut view, self.frame_size());
+        let projected = request
+            .page_to_viewport(size)
+            .ok()?
+            .transform_rect_bbox(rect);
+        let delta = self.frame_center() - projected.center();
+        let x = delta.x as f32;
+        let y = delta.y as f32;
+        if !x.is_finite()
+            || !y.is_finite()
+            || (x - clamp_offset(x, metrics.width, self.frame.width as f32)).abs() > 0.5
+            || (y - clamp_offset(y, metrics.height, self.frame.height as f32)).abs() > 0.5
+        {
+            return None;
+        }
+        Some(FixedJump::FitRectangle(rect, scale))
+    }
+
     pub(crate) fn jump(&mut self, page: usize) -> Result<()> {
         self.jump_to(page, None)
+    }
+
+    /// Recheck a region fit after any transient view has been closed, so the
+    /// caller can classify history using the destination actually applied.
+    pub(crate) fn revalidate_fixed_jump(
+        &self,
+        page: usize,
+        target: Option<FixedJump>,
+    ) -> Option<FixedJump> {
+        match target {
+            Some(FixedJump::FitRectangle(rect, scale)) => {
+                if matches!(self.fit_pdf_rectangle(page, rect),
+                    Some(FixedJump::FitRectangle(_, checked)) if checked.to_bits() == scale.to_bits())
+                {
+                    Some(FixedJump::FitRectangle(rect, scale))
+                } else {
+                    Some(FixedJump::LinkPoint(Point::new(rect.x0, rect.y0)))
+                }
+            }
+            other => other,
+        }
     }
 
     #[cfg(test)]
@@ -2028,6 +2129,19 @@ impl FixedReading {
     }
 
     pub(crate) fn jump_to(&mut self, page: usize, target: Option<&FixedJump>) -> Result<()> {
+        if let Some(FixedJump::FitRectangle(rect, scale)) = target {
+            let still_valid = matches!(
+                self.fit_pdf_rectangle(page, *rect),
+                Some(FixedJump::FitRectangle(_, checked)) if checked.to_bits() == scale.to_bits()
+            );
+            if !still_valid {
+                return self.jump_to_view(
+                    page,
+                    Some(&FixedJump::LinkPoint(Point::new(rect.x0, rect.y0))),
+                    self.view,
+                );
+            }
+        }
         if self.page == page
             && let Some(FixedJump::Regions(regions)) = target
             && regions.iter().all(|&region| {
@@ -2067,11 +2181,20 @@ impl FixedReading {
         original: View,
     ) -> Result<View> {
         let original = match target {
+            Some(FixedJump::FitRectangle(_, scale)) => View {
+                width_fit: false,
+                height_fit: false,
+                zoom: 0,
+                tile_zoom: None,
+                precise_scale: Some(*scale),
+                ..original
+            },
             Some(FixedJump::FitPage) => View {
                 width_fit: false,
                 height_fit: false,
                 zoom: 0,
                 tile_zoom: None,
+                precise_scale: None,
                 ..original
             },
             Some(FixedJump::FitPoint(_, fit)) => View {
@@ -2079,6 +2202,7 @@ impl FixedReading {
                 height_fit: *fit == crate::fixed::PdfDestinationFit::Height,
                 zoom: 0,
                 tile_zoom: None,
+                precise_scale: None,
                 ..original
             },
             _ => original,
@@ -2103,6 +2227,9 @@ impl FixedReading {
             let transform = request.page_to_viewport(size)? * correction;
             let offset = match target {
                 FixedJump::FitPage => Point::ORIGIN - Point::ORIGIN,
+                FixedJump::FitRectangle(rect, _) => {
+                    self.frame_center() - transform.transform_rect_bbox(*rect).center()
+                }
                 FixedJump::LinkPoint(point) | FixedJump::FitPoint(point, _) => {
                     Point::ORIGIN - transform * *point
                 }
@@ -2160,7 +2287,9 @@ impl FixedReading {
     }
 
     fn tiled_metrics(&self) -> Option<ViewMetrics> {
-        self.view.tile_zoom?;
+        if self.view.tile_zoom.is_none() && self.view.precise_scale.is_none() {
+            return None;
+        }
         self.visible
             .iter()
             .find(|page| page.index == self.page)
@@ -2182,6 +2311,7 @@ impl FixedReading {
         let tile_zoom = tile_zoom(size, &self.view, self.frame_size(), axis, count_tenths);
         let view = View {
             tile_zoom: Some(tile_zoom),
+            precise_scale: None,
             zoom: 0,
             width_fit: false,
             height_fit: false,
@@ -2210,6 +2340,7 @@ impl FixedReading {
             View {
                 zoom: 0,
                 tile_zoom: None,
+                precise_scale: None,
                 width_fit,
                 height_fit: matches!(fit, Fit::Height),
                 continuous: width_fit && self.view.continuous,
@@ -2627,7 +2758,11 @@ impl FixedReading {
     }
 
     pub(crate) fn set_zoom(&mut self, zoom: usize) -> Result<bool> {
-        if self.is_spread() || (zoom == self.view.zoom && self.view.tile_zoom.is_none()) {
+        if self.is_spread()
+            || (zoom == self.view.zoom
+                && self.view.tile_zoom.is_none()
+                && self.view.precise_scale.is_none())
+        {
             return Ok(false);
         }
         if zoom >= ZOOM.len() {
@@ -2636,6 +2771,7 @@ impl FixedReading {
         let mut view = View {
             zoom,
             tile_zoom: None,
+            precise_scale: None,
             ..self.view
         };
         if self.is_continuous()
@@ -2716,6 +2852,7 @@ impl FixedReading {
         let (size, source_point) = self.page_center_source()?;
         let mut view = View {
             zoom,
+            precise_scale: None,
             offset_x: 0.0,
             offset_y: 0.0,
             ..self.view
@@ -3290,16 +3427,20 @@ impl FixedReading {
 
     pub(crate) fn page_status(&self) -> String {
         let physical = self.page + 1;
-        let zoom = self.view.tile_zoom.map_or_else(
-            || format!("{}%", (ZOOM[self.view.zoom] * 100.0) as u32),
-            |tile| {
-                format!(
-                    "{:.1} {}",
-                    f32::from(tile.count_tenths) / 10.0,
-                    tile.axis.label().to_ascii_lowercase()
-                )
-            },
-        );
+        let zoom = if self.view.precise_scale.is_some() {
+            "Fit region".to_owned()
+        } else {
+            self.view.tile_zoom.map_or_else(
+                || format!("{}%", (ZOOM[self.view.zoom] * 100.0) as u32),
+                |tile| {
+                    format!(
+                        "{:.1} {}",
+                        f32::from(tile.count_tenths) / 10.0,
+                        tile.axis.label().to_ascii_lowercase()
+                    )
+                },
+            )
+        };
         if self.is_spread() {
             match self.spread_pages() {
                 [Some(first), Some(last)] => {
@@ -4151,11 +4292,13 @@ fn view_metrics(
         width_scale.min(height_scale)
     };
     let scale = view
-        .tile_zoom
-        .map_or_else(
-            || fit * ZOOM[view.zoom],
-            |tile| width_scale * tile.width_factor,
-        )
+        .precise_scale
+        .unwrap_or_else(|| {
+            view.tile_zoom.map_or_else(
+                || fit * ZOOM[view.zoom],
+                |tile| width_scale * tile.width_factor,
+            )
+        })
         .min(24_000.0 / width.max(height));
     ViewMetrics {
         scale,
