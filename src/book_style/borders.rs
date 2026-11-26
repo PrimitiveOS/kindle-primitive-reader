@@ -92,13 +92,30 @@ fn pattern(p: &mut Parser<'_>) -> CssResult<Pattern> {
     }
 }
 pub(super) fn color(p: &mut Parser<'_>) -> CssResult<Option<(u8, u8)>> {
+    let (gray, alpha) = color_unquantized(p)?;
+    let alpha = (255. * alpha).round() as u8;
+    Ok((alpha > 0).then_some((gray, alpha)))
+}
+
+pub(super) fn opaque_or_transparent(p: &mut Parser<'_>) -> CssResult<Option<u8>> {
+    let (gray, alpha) = color_unquantized(p)?;
+    if alpha == 0.0 {
+        Ok(None)
+    } else if alpha == 1.0 {
+        Ok(Some(gray))
+    } else {
+        Err(ParseError::unexpected_token())
+    }
+}
+
+fn color_unquantized(p: &mut Parser<'_>) -> CssResult<(u8, f32)> {
     use cssparser::{
         Token,
         color::{parse_hash_color, parse_named_color},
     };
     let (r, g, b, a) = match p.next()?.clone() {
         Token::Ident(name) if name.eq_ignore_ascii_case("currentcolor") => (0, 0, 0, 1.),
-        Token::Ident(name) if name.eq_ignore_ascii_case("transparent") => return Ok(None),
+        Token::Ident(name) if name.eq_ignore_ascii_case("transparent") => (0, 0, 0, 0.),
         Token::Ident(name) => {
             let (r, g, b) = parse_named_color(&name).map_err(|_| ParseError::unexpected_token())?;
             (r, g, b, 1.)
@@ -144,11 +161,10 @@ pub(super) fn color(p: &mut Parser<'_>) -> CssResult<Option<(u8, u8)>> {
         }
         _ => return Err(ParseError::unexpected_token()),
     };
-    let alpha = (255. * a).round() as u8;
-    Ok((alpha > 0).then_some((
+    Ok((
         ((77 * u32::from(r) + 150 * u32::from(g) + 29 * u32::from(b) + 128) >> 8) as u8,
-        alpha,
-    )))
+        a,
+    ))
 }
 fn initial(component: usize) -> Value {
     let b = Border::default();

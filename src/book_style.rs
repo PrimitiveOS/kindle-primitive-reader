@@ -3993,34 +3993,15 @@ fn font_url<'i>(input: &mut Parser<'i>) -> CssResult<String> {
 }
 
 fn background<'i>(input: &mut Parser<'i>) -> CssResult<Option<u8>> {
-    match input.next()?.clone() {
-        Token::Hash(value) | Token::IDHash(value) => {
-            let (r, g, b) = match value.len() {
-                3 => {
-                    let rgb = u16::from_str_radix(&value, 16)
-                        .map_err(|_| ParseError::unexpected_token())?;
-                    ((rgb >> 8) * 17, ((rgb >> 4) & 15) * 17, (rgb & 15) * 17)
-                }
-                6 => {
-                    let rgb = u32::from_str_radix(&value, 16)
-                        .map_err(|_| ParseError::unexpected_token())?;
-                    (
-                        (rgb >> 16) as u16,
-                        ((rgb >> 8) & 255) as u16,
-                        (rgb & 255) as u16,
-                    )
-                }
-                _ => return Err(ParseError::unexpected_token()),
-            };
-            Ok(Some(((r * 77 + g * 150 + b * 29 + 128) >> 8) as u8))
-        }
-        Token::Ident(value) if value.eq_ignore_ascii_case("transparent") => Ok(None),
-        Token::Ident(value) if value.eq_ignore_ascii_case("white") => Ok(Some(255)),
-        Token::Ident(value) if value.eq_ignore_ascii_case("lightgray") => Ok(Some(211)),
-        Token::Ident(value) if value.eq_ignore_ascii_case("gray") => Ok(Some(128)),
-        Token::Ident(value) if value.eq_ignore_ascii_case("black") => Ok(Some(0)),
-        _ => Err(ParseError::unexpected_token()),
+    // Background currentColor needs a distinct computed-value and inheritance
+    // path. The border parser's legacy black fallback is not appropriate here.
+    if input
+        .try_parse(|p| p.expect_ident_matching("currentcolor"))
+        .is_ok()
+    {
+        return Err(ParseError::unexpected_token());
     }
+    borders::opaque_or_transparent(input)
 }
 
 #[cfg(test)]

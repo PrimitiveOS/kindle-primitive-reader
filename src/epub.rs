@@ -571,6 +571,46 @@ impl Book {
         if chapters.is_empty() {
             return Err("The EPUB contains no reading chapters".into());
         }
+        // Some publishers label XHTML as generic XML. Only promote a unique
+        // local spine resource after a bounded strict XHTML/source parse; every
+        // other unsupported item retains its existing notice and identity.
+        if chapters.iter().any(|chapter| chapter.unsupported) {
+            let mut manifest_paths = BTreeMap::new();
+            for item in manifest.values() {
+                *manifest_paths.entry(item.path.as_str()).or_insert(0usize) += 1;
+            }
+            let mut spine_paths = BTreeMap::new();
+            for chapter in &chapters {
+                *spine_paths.entry(chapter.href.clone()).or_insert(0usize) += 1;
+            }
+            let mut reads = 0usize;
+            for (chapter, reference) in chapters
+                .iter_mut()
+                .zip(spine.children().filter(|node| node.has_tag_name("itemref")))
+            {
+                if reads == 8 {
+                    break;
+                }
+                if !chapter.unsupported {
+                    continue;
+                }
+                let Some(item) = reference.attribute("idref").and_then(|id| manifest.get(id))
+                else {
+                    continue;
+                };
+                if !item.plain_href
+                    || !matches!(item.media.as_str(), "application/xml" | "text/xml")
+                    || manifest_paths.get(item.path.as_str()) != Some(&1)
+                    || spine_paths.get(&chapter.href) != Some(&1)
+                {
+                    continue;
+                }
+                reads += 1;
+                if strict_xml_spine_xhtml(&mut archive, &item.path) {
+                    chapter.unsupported = false;
+                }
+            }
+        }
         // Preserve every previously opening book. Only an otherwise rejected
         // reflow spine with no supported linear item can try manifest fallbacks.
         let mut fallback_paths = BTreeSet::new();
@@ -2578,6 +2618,46 @@ fn reflow_svg_chapter(bytes: &[u8]) -> Result<String> {
         "<html><head><!-- SVG source {:016x} --></head><body><p><img src=\"\" alt=\"Illustration\" /></p></body></html>",
         crate::revision_bytes(bytes)
     ))
+}
+
+fn strict_xml_spine_xhtml(archive: &mut Archive, path: &str) -> bool {
+    let Ok((xhtml, declared, safe_html_doctype)) =
+        xml_entry_with_declaration(archive, path, true, MAX_REFLOW_CHAPTER_XML)
+    else {
+        return false;
+    };
+    if declared && !safe_html_doctype {
+        return false;
+    }
+    let checked = crate::epub_xml::without_plain_doctype(&xhtml);
+    let Ok(document) = parse_xml(&checked) else {
+        return false;
+    };
+    let root = document.root_element();
+    if root.tag_name().name() != "html"
+        || !matches!(
+            root.tag_name().namespace(),
+            None | Some("http://www.w3.org/1999/xhtml")
+        )
+    {
+        return false;
+    }
+    let mut bodies = root
+        .descendants()
+        .filter(|node| node.is_element() && node.tag_name().name() == "body");
+    let Some(body) = bodies.next() else {
+        return false;
+    };
+    if body.parent() != Some(root)
+        || bodies.next().is_some()
+        || !matches!(
+            body.tag_name().namespace(),
+            None | Some("http://www.w3.org/1999/xhtml")
+        )
+    {
+        return false;
+    }
+    crate::source::Source::parse(&xhtml).is_ok()
 }
 
 fn archive_html_recovery(archive: &mut Archive, path: &str, limit: usize) -> Result<String> {

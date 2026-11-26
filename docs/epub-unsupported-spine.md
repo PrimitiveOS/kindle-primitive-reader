@@ -9,6 +9,17 @@ is readable. Fixed or mixed-layout books keep their existing restrictions; no
 remote resource is fetched. The unsupported payload is
 not opened to display the notice.
 
+For a uniquely identified local spine item declared as `application/xml` or
+`text/xml`, Reader may instead recognize strictly parseable XHTML or HTML with
+a body. At most eight such resources are inspected, each under the existing
+1 MiB reflow XML limit and source-parser limits; custom or ambiguous document
+declarations, repeated paths, missing members and non-HTML XML keep the
+unsupported notice. This is a compatibility extension for mislabeled chapters,
+not a claim that KOReader recognizes the same media types. The original chapter
+path, prepared source bytes and ordinary anchors are retained. Previously saved
+synthetic notice anchors still fail closed. Real-book, simulator, Kindle and
+KOReader verification remain open.
+
 For a reflow book that would otherwise be rejected because it has no supported
 linear spine item, Reader may follow local manifest `fallback` ID chains to an
 XHTML or HTML item. This is limited to 64 linear spine candidates, 32 links per

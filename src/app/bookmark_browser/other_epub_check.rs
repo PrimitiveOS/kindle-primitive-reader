@@ -27,8 +27,7 @@ impl Context {
                 "Open this book to apply its reading profiles before editing its note".into(),
             );
         }
-        if state.preferences.scroll
-            || state.preferences.facing_pages
+        if state.preferences.facing_pages
             || state.hidden_flows.enabled
             || state
                 .hide_nonlinear
@@ -41,6 +40,11 @@ impl Context {
             reader.top_header_for_book(id),
             state.preferences.scroll,
         );
+        let single_page_layout = !state.preferences.scroll;
+        settings.in_page_footnotes &= single_page_layout;
+        if settings.publisher_render_mode.is_some() && !single_page_layout {
+            settings = crate::PublisherRenderMode::Reader.apply(settings);
+        }
         if settings.in_page_footnotes {
             return Err("Open this book to edit notes with in-page notes enabled".into());
         }
@@ -49,7 +53,7 @@ impl Context {
             .style_store
             .data
             .snapshot(id)?
-            .for_note_layout(true)
+            .for_note_layout(single_page_layout)
             .for_nonlinear_notes(false);
         if styles.in_page_epub_footnotes() {
             return Err("Open this book to edit notes with in-page notes enabled".into());
