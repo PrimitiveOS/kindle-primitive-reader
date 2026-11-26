@@ -2893,7 +2893,7 @@ impl FixedReading {
                 })?,
                 FixedDocument::Image(image) => image.page_size(),
                 FixedDocument::Gif(gif) => gif.page_size(),
-                FixedDocument::Tiff(tiff) => tiff.image_page(self.page)?.page_size(),
+                FixedDocument::Tiff(tiff) => tiff.page_size(self.page)?,
             };
             let old = view_metrics(size, &view, self.frame_size());
             let new = view_metrics(size, &view, self.frame_size().with_height(viewport_height));
@@ -3390,7 +3390,7 @@ impl FixedDocument {
             })?),
             Self::Image(image) => Ok(image.page_size()),
             Self::Gif(gif) => Ok(gif.page_size()),
-            Self::Tiff(tiff) => Ok(tiff.image_page(page)?.page_size()),
+            Self::Tiff(tiff) => Ok(tiff.page_size(page)?),
         }
     }
 

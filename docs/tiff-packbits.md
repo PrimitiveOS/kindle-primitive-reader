@@ -269,8 +269,9 @@ marked as ordinary full-resolution pages by the TIFF subfile tags are also
 accepted within a multi-page sequence. Pages that use unsupported TIFF
 features remain unavailable; embedded TIFF artwork
 still uses the single-page path. A single-page standalone TIFF continues to
-use its existing image path. No page files are extracted to storage. Repeated
-page-size requests may decode the page again, so performance, peak memory,
+use its existing image path. No page files are extracted to storage. Page-size
+queries inspect bounded dimensions and orientation without decompressing the
+page; rendering still validates and decodes it. Performance, peak memory,
 malformed-file behavior, actual page navigation and KOReader comparison need
 computer, simulator and Kindle validation.
 

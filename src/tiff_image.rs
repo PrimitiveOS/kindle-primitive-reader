@@ -86,6 +86,25 @@ impl Sequence {
         self.offsets.len()
     }
 
+    /// Read bounded geometry without decompressing a page. The actual image
+    /// is still fully validated by the decoder when it is rendered.
+    pub(crate) fn page_size(&self, index: usize) -> Result<(f32, f32), TiffError> {
+        let offset = *self.offsets.get(index).ok_or(TiffError::Directory)?;
+        let (directory, _) = Directory::at_offset(&self.data, self.order, offset)?;
+        let width = directory.required(256, SHORT_OR_LONG)?;
+        let height = directory.required(257, SHORT_OR_LONG)?;
+        let count = width.checked_mul(height).ok_or(TiffError::Limit)?;
+        if width.min(height) == 0 || width.max(height) > MAX_SIDE || count > MAX_PIXELS {
+            return Err(TiffError::Limit);
+        }
+        let orientation = directory.scalar(274, SHORT_ONLY, 1)?;
+        match orientation {
+            1..=4 => Ok((width as f32, height as f32)),
+            5..=8 => Ok((height as f32, width as f32)),
+            _ => Err(TiffError::Unsupported),
+        }
+    }
+
     pub(crate) fn image_page(&self, index: usize) -> crate::Result<crate::comic::ImagePage> {
         let offset = *self.offsets.get(index).ok_or(TiffError::Directory)?;
         let (directory, _) = Directory::at_offset(&self.data, self.order, offset)?;
