@@ -80,6 +80,162 @@ pub(crate) fn without_plain_doctype(xml: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
+/// Repair only unclosed HTML void start tags in an otherwise XML-compatible
+/// chapter. Already parseable input is returned by the caller unchanged.
+fn parse_recovery_xml(
+    text: &str,
+) -> std::result::Result<roxmltree::Document<'_>, roxmltree::Error> {
+    roxmltree::Document::parse_with_options(
+        text,
+        roxmltree::ParsingOptions {
+            nodes_limit: 100_000,
+            ..Default::default()
+        },
+    )
+}
+
+pub(crate) fn recover_html_voids(xml: &str, limit: usize) -> Option<String> {
+    if xml.len() > limit {
+        return None;
+    }
+    let masked = without_plain_doctype(xml);
+    if parse_recovery_xml(&masked).is_ok() {
+        return None;
+    }
+    // Never expand document-defined entities or interpret external DTDs.
+    if masked
+        .as_bytes()
+        .windows(9)
+        .any(|w| w.eq_ignore_ascii_case(b"<!doctype"))
+        || masked
+            .as_bytes()
+            .windows(8)
+            .any(|w| w.eq_ignore_ascii_case(b"<!entity"))
+    {
+        return None;
+    }
+    let bytes = xml.as_bytes();
+    let mut insertions = Vec::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let Some(offset) = bytes[cursor..].iter().position(|&byte| byte == b'<') else {
+            break;
+        };
+        let start = cursor + offset;
+        if bytes[start..].starts_with(b"<!--") {
+            cursor = start + 4 + xml[start + 4..].find("-->")? + 3;
+            continue;
+        }
+        if bytes[start..].starts_with(b"<![CDATA[") {
+            cursor = start + 9 + xml[start + 9..].find("]]>")? + 3;
+            continue;
+        }
+        if bytes[start..].starts_with(b"<?") {
+            cursor = start + 2 + xml[start + 2..].find("?>")? + 2;
+            continue;
+        }
+        if bytes[start..].starts_with(b"<!DOCTYPE html>") {
+            cursor = start + "<!DOCTYPE html>".len();
+            continue;
+        }
+        if bytes.get(start + 1) == Some(&b'!') {
+            return None;
+        }
+        let mut end = start + 1;
+        let mut quote = None;
+        while end < bytes.len() {
+            let byte = bytes[end];
+            if let Some(delimiter) = quote {
+                if byte == delimiter {
+                    quote = None;
+                }
+            } else if byte == b'\'' || byte == b'"' {
+                quote = Some(byte);
+            } else if byte == b'>' {
+                break;
+            } else if byte == b'<' {
+                return None;
+            }
+            end += 1;
+        }
+        if end == bytes.len() || quote.is_some() {
+            return None;
+        }
+        let token = &xml[start + 1..end];
+        let name = token
+            .split(|c: char| c.is_ascii_whitespace() || c == '/')
+            .next()?;
+        let local = name.rsplit(':').next()?;
+        if local.eq_ignore_ascii_case("script") {
+            return None;
+        }
+        // Only the exact unprefixed form has the bounded style-text scan below.
+        if local.eq_ignore_ascii_case("style") && name != "style" {
+            return None;
+        }
+        if name == "style" && !token.trim_end().ends_with('/') {
+            let after = &xml[end + 1..];
+            let close = after.find("</style>")?;
+            if after[..close].contains('<') {
+                return None;
+            }
+            cursor = end + 1 + close;
+            continue;
+        }
+        if matches!(
+            name,
+            "area"
+                | "base"
+                | "br"
+                | "col"
+                | "embed"
+                | "hr"
+                | "img"
+                | "input"
+                | "link"
+                | "meta"
+                | "param"
+                | "source"
+                | "track"
+                | "wbr"
+        ) && !token.trim_end().ends_with('/')
+        {
+            if xml.len().saturating_add(insertions.len() + 1) > limit {
+                return None;
+            }
+            insertions.push(end);
+        }
+        cursor = end + 1;
+    }
+    if insertions.is_empty() {
+        return None;
+    }
+    let mut repaired = String::with_capacity(xml.len() + insertions.len());
+    let mut last = 0;
+    for at in insertions {
+        repaired.push_str(&xml[last..at]);
+        repaired.push('/');
+        last = at;
+    }
+    repaired.push_str(&xml[last..]);
+    let repaired = recover_html_names(repaired, limit);
+    let checked = without_plain_doctype(&repaired);
+    let doc = parse_recovery_xml(&checked).ok()?;
+    let root = doc.root_element();
+    if root.tag_name().name() != "html"
+        || !matches!(
+            root.tag_name().namespace(),
+            None | Some("http://www.w3.org/1999/xhtml")
+        )
+        || !root.children().any(|node| node.has_tag_name("body"))
+    {
+        return None;
+    }
+    drop(doc);
+    drop(checked);
+    Some(repaired)
+}
+
 #[derive(Default)]
 pub(crate) struct SourceOffsets {
     changes: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,

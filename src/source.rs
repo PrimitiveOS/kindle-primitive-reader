@@ -184,6 +184,11 @@ pub(crate) struct Element {
     pub(crate) resolved_hyphenation_language: Option<crate::TypographyLocale>,
     /// This element's own HTML direction hint, independent of inherited style.
     pub(crate) direction_hint: Option<BaseDirection>,
+    /// Nearest explicit HTML dir attribute, for CRE's :dir() selector.
+    /// Invalid/automatic values stop inheritance without matching either direction.
+    pub(crate) selector_direction: Option<BaseDirection>,
+    /// Publisher DOM has no direct element or nonempty text children.
+    pub(crate) selector_empty: bool,
     pub(crate) table_hints: Option<crate::book_style::table_hints::TableHints>,
     pub parent: Option<usize>,
     pub previous_sibling: Option<usize>,
@@ -947,6 +952,21 @@ impl Source {
                 }),
                 resolved_hyphenation_language: None,
                 direction_hint: node.attribute("dir").and_then(parse_direction),
+                selector_direction: match node.attribute("dir") {
+                    Some(value) => {
+                        match parse_direction(value.trim_matches(|c: char| c.is_ascii_whitespace()))
+                        {
+                            Some(BaseDirection::Ltr) => Some(BaseDirection::Ltr),
+                            Some(BaseDirection::Rtl) => Some(BaseDirection::Rtl),
+                            _ => None,
+                        }
+                    }
+                    None => parent.and_then(|i| elements[i].selector_direction),
+                },
+                selector_empty: !node.children().any(|child| {
+                    child.is_element()
+                        || child.is_text() && child.text().is_some_and(|text| !text.is_empty())
+                }),
                 table_hints: if selector_only {
                     None
                 } else {

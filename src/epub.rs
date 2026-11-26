@@ -2218,10 +2218,17 @@ fn reflow_svg_chapter(bytes: &[u8]) -> Result<String> {
 
 fn archive_html_recovery(archive: &mut Archive, path: &str) -> Result<String> {
     let (xml, had_declaration) = xml_entry_with_declaration(archive, path, true)?;
-    Ok(if had_declaration {
+    let xml = if had_declaration {
         xml
     } else {
         crate::epub_xml::recover_html_names(xml, MAX_XML)
+    };
+    // No DTD/entity declaration, including one later masked by preparation,
+    // is eligible for this compatibility repair.
+    Ok(if !had_declaration {
+        crate::epub_xml::recover_html_voids(&xml, MAX_XML).unwrap_or(xml)
+    } else {
+        xml
     })
 }
 

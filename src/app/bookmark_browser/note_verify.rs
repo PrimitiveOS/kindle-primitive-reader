@@ -1,4 +1,4 @@
-//! Cancellable source verification for cross-chapter note edits.
+//! Cancellable source verification for reflow bookmark and highlight notes.
 use super::{
     Page, Reader, Screen, bulk_marks::Snapshot, confirmation::Confirmation, edit_note, focus,
 };
@@ -51,8 +51,8 @@ impl Verification {
     }
 }
 
-pub(super) fn is_reflow_highlight(target: &Snapshot) -> bool {
-    matches!(target, Snapshot::Reflow(..))
+pub(super) fn uses_reflow_worker(reader: &Reader, target: &Snapshot) -> bool {
+    reader.active.is_some() && matches!(target, Snapshot::Bookmark(..) | Snapshot::Reflow(..))
 }
 
 fn panel(reader: &Reader) -> (Rect, Rect) {
@@ -80,9 +80,6 @@ impl Reader {
                 .pending_note_edit
                 .as_ref()
                 .ok_or("Review the note first")?;
-            let Snapshot::Reflow(_, mark) = &pending.target else {
-                return Err("This saved passage cannot be checked".into());
-            };
             let active = self.active.as_ref().ok_or("Open a book first")?;
             if active.id != pending.book || self.bookmark_browser.focus != Some(pending.key) {
                 return Err("The open book changed; review the note again".into());
@@ -94,21 +91,51 @@ impl Reader {
             if self.screen != Screen::BookmarkBrowser(expected_screen) {
                 return Err("Review the note first".into());
             }
-            let first = active
-                .reading
-                .probe
-                .chapter_index(&mark.selection.start.chapter)
-                .ok_or("That chapter is unavailable")?;
-            let last = active
-                .reading
-                .probe
-                .chapter_index(&mark.selection.end.chapter)
-                .ok_or("That chapter is unavailable")?;
-            if first > last
-                || mark.selection.start.book != active.reading.probe.book
-                || mark.selection.end.book != active.reading.probe.book
+            let probe = &active.reading.probe;
+            let first = match &pending.target {
+                Snapshot::Reflow(_, mark) => {
+                    let first = probe
+                        .chapter_index(&mark.selection.start.chapter)
+                        .ok_or("That chapter is unavailable")?;
+                    let last = probe
+                        .chapter_index(&mark.selection.end.chapter)
+                        .ok_or("That chapter is unavailable")?;
+                    if first > last
+                        || mark.selection.start.book != probe.book
+                        || mark.selection.end.book != probe.book
+                    {
+                        return Err("The saved passage is unavailable".into());
+                    }
+                    first
+                }
+                Snapshot::Bookmark(_, mark) => {
+                    if let Some(anchor) = &mark.position.anchor {
+                        if anchor.book != probe.book
+                            || probe
+                                .chapter_entries()
+                                .iter()
+                                .filter(|chapter| chapter.href == anchor.chapter)
+                                .take(2)
+                                .count()
+                                != 1
+                        {
+                            return Err("The saved bookmark is unavailable".into());
+                        }
+                        probe
+                            .chapter_index(&anchor.chapter)
+                            .ok_or("That chapter is unavailable")?
+                    } else {
+                        mark.position.chapter
+                    }
+                }
+                Snapshot::Fixed(..) => return Err("This saved passage cannot be checked".into()),
+            };
+            if probe
+                .chapter_entries()
+                .get(first)
+                .is_none_or(|chapter| chapter.unsupported)
             {
-                return Err("The saved passage is unavailable".into());
+                return Err("The saved section is unavailable".into());
             }
             let recipe = Arc::new(
                 active
@@ -131,7 +158,7 @@ impl Reader {
                 origin,
                 recipe,
                 first,
-                mark.clone(),
+                pending.target.clone(),
                 crate::epub_members::is_folder_book(&active.reading.config.book),
             ))
         })();
@@ -146,7 +173,7 @@ impl Reader {
             origin,
             recipe,
             first,
-            mark,
+            work,
             folder,
         ) = match build {
             Ok(value) => value,
@@ -168,19 +195,39 @@ impl Reader {
                     let probe = worker_recipe
                         .chapter(first, &cancel)
                         .map_err(|_| "The book changed; review the note again")?;
-                    let verified = super::super::page_bookmark_navigation::verify_winning_quote(
-                        &worker_recipe,
-                        &probe,
-                        &mark,
-                        None,
-                        &cancel,
-                    )
-                    .map_err(|error| match error {
-                        focus::Failure::Limit => "This passage exceeds the verification limit",
-                        focus::Failure::Changed => "The book changed; review the note again",
-                    })?;
+                    if probe
+                        .chapter_entries()
+                        .get(first)
+                        .is_none_or(|chapter| chapter.unsupported)
+                    {
+                        return Err("The saved section is unavailable");
+                    }
+                    let verified = match &work {
+                        Snapshot::Bookmark(_, mark) => match &mark.position.anchor {
+                            Some(anchor) => probe.page_for(anchor).is_some(),
+                            None => mark.position.page < probe.page_count(),
+                        },
+                        Snapshot::Reflow(_, mark) => {
+                            super::super::page_bookmark_navigation::verify_winning_quote(
+                                &worker_recipe,
+                                &probe,
+                                mark,
+                                None,
+                                &cancel,
+                            )
+                            .map_err(|error| match error {
+                                focus::Failure::Limit => {
+                                    "This passage exceeds the verification limit"
+                                }
+                                focus::Failure::Changed => {
+                                    "The book changed; review the note again"
+                                }
+                            })?
+                        }
+                        Snapshot::Fixed(..) => false,
+                    };
                     if !verified {
-                        return Err("This saved passage no longer matches the open document");
+                        return Err("This saved mark no longer matches the open document");
                     }
                     if folder {
                         worker_recipe
@@ -239,11 +286,12 @@ impl Reader {
         })
     }
     pub(in crate::app) fn draw_note_verification(&self, canvas: &mut Canvas) {
-        if self.note_verification.is_none() {
+        let Some(job) = &self.note_verification else {
             return;
-        }
+        };
         let (panel, cancel) = panel(self);
         let vi = !self.controls.interface_language.is_english();
+        let bookmark = matches!(&job.target, Snapshot::Bookmark(..));
         canvas.popup(panel);
         canvas.text(
             Rect::new(panel.x + 36, panel.y + 24, panel.w - 72, 64),
@@ -256,10 +304,11 @@ impl Reader {
         );
         canvas.text(
             Rect::new(panel.x + 36, panel.y + 100, panel.w - 72, 64),
-            if vi {
-                "Xác minh sách và đoạn trích"
-            } else {
-                "Verifying the book and quotation"
+            match (vi, bookmark) {
+                (true, true) => "Xác minh sách và vị trí đã lưu",
+                (true, false) => "Xác minh sách và đoạn trích",
+                (false, true) => "Verifying the book and saved location",
+                (false, false) => "Verifying the book and quotation",
             },
             CAPTION,
         );

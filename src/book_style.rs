@@ -1925,6 +1925,8 @@ struct Compound {
     has_href: bool,
     semantic_types: Vec<semantic_type::Selector>,
     is_link: bool,
+    empty_element: bool,
+    directions: Vec<parley::BaseDirection>,
     classes: Vec<String>,
     ids: Vec<String>,
     first_child: bool,
@@ -1963,6 +1965,8 @@ impl Compound {
             && !self.has_href
             && self.semantic_types.is_empty()
             && !self.is_link
+            && !self.empty_element
+            && self.directions.is_empty()
             && self.classes.is_empty()
             && self.ids.is_empty()
             && !self.first_child
@@ -1988,6 +1992,11 @@ impl Compound {
                 .iter()
                 .all(|selector| selector.matches(element))
             && (!self.is_link || (element.tag == "a" && element.has_href))
+            && (!self.empty_element || element.selector_empty)
+            && self
+                .directions
+                .iter()
+                .all(|direction| element.selector_direction.as_ref() == Some(direction))
             && (!self.first_child || element.previous_sibling.is_none())
             && (!self.last_child || element.last_child)
             && (!self.first_of_type || element.first_of_type)
@@ -2167,6 +2176,23 @@ impl Selector {
                         }
                         Token::Ident(name) if name.eq_ignore_ascii_case("first-of-type") => {
                             compound.first_of_type = true;
+                        }
+                        Token::Ident(name) if name.eq_ignore_ascii_case("empty") => {
+                            compound.empty_element = true;
+                        }
+                        Token::Function(name) if name.eq_ignore_ascii_case("dir") => {
+                            let direction = input.parse_nested_block(|input| {
+                                let value = input.expect_ident_cloned()?;
+                                input.expect_exhausted()?;
+                                if value.eq_ignore_ascii_case("ltr") {
+                                    Ok(parley::BaseDirection::Ltr)
+                                } else if value.eq_ignore_ascii_case("rtl") {
+                                    Ok(parley::BaseDirection::Rtl)
+                                } else {
+                                    Err(ParseError::unexpected_token())
+                                }
+                            })?;
+                            compound.directions.push(direction);
                         }
                         Token::Ident(name) if name.eq_ignore_ascii_case("last-child") => {
                             compound.last_child = true;

@@ -1,0 +1,21 @@
+# EPUB chapters with HTML void tags
+
+Some converted EPUB chapters use HTML-style `<br>` or `<img>` tags without
+the XML closing slash. If Reader's existing XML-compatible chapter path fails,
+it can now try a bounded repair that adds the slash to recognized lowercase
+HTML void start tags and accepts the result only if it parses as a complete
+XHTML or unnamespaced HTML document with a body. Quoted attributes, comments,
+processing instructions and CDATA are handled separately; ambiguous markup
+and scripts are rejected. A style block is accepted by this repair only when
+its contents contain no literal `<` character. Chapters with any original DTD
+or entity declaration, including a plain HTML doctype, do not use this repair.
+
+The existing 512 KiB chapter limit includes inserted characters. Already
+parseable chapter content is returned unchanged. Links, image references and
+text in a repaired chapter are retained, and navigation uses the same repaired
+source. New anchors in such previously unreadable chapters address the
+deterministic repaired text; publication files are not modified. This is not
+a general HTML5 parser, does not repair arbitrary mismatched elements, and
+does not establish behavior for every malformed input. Real-book, simulator,
+Kindle and KOReader comparisons remain pending. KOReader's pinned CREngine
+has a permissive [HTML/XML parser](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp).

@@ -82,7 +82,7 @@ pub(super) fn open(reader: &mut Reader) -> Result<()> {
         .state(key.book)
         .ok_or("That book is unavailable")?;
     let target = Snapshot::capture(book, key.locator)?;
-    let verify_async = super::note_verify::is_reflow_highlight(&target);
+    let verify_async = super::note_verify::uses_reflow_worker(reader, &target);
     if !verify_async {
         target.verify_source(reader)?;
     }
@@ -251,7 +251,7 @@ fn commit_inner(reader: &mut Reader, verified: bool) -> Result<()> {
     {
         return Err("The open book changed; review the note again".into());
     }
-    let verify_async = super::note_verify::is_reflow_highlight(&pending.target);
+    let verify_async = super::note_verify::uses_reflow_worker(reader, &pending.target);
     if verify_async && !verified {
         return reader.start_note_verification(super::note_verify::Intent::Save);
     }
