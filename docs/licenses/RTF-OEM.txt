@@ -1,14 +1,27 @@
 RTF DOS code-page mapping data
 
 Reader's RTF decoder uses tables generated from Unicode's published
-Microsoft CP437 and CP850 mapping files, dated 24 April 1996:
+Microsoft CP437, CP850, CP852, CP860, CP863 and CP865 mapping files,
+dated 24 April 1996:
 https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP437.TXT
 https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP850.TXT
+https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP852.TXT
+https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP860.TXT
+https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP863.TXT
+https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP865.TXT
 
 SHA-256 of the unmodified original CP437.TXT:
 6bad4dabcdf5940227c7d81fab130dcb18a77850b5d79de28b5dc4e047b0aaac
 SHA-256 of the unmodified original CP850.TXT:
 ffdcc3c1c72f1aef600a63547100ef3dc452a09ad84923d382085519751c7479
+SHA-256 of the unmodified original CP852.TXT:
+440d098e9f2b79eeacbe2bbc1814960b6554c885740615047f5b528c2947afb6
+SHA-256 of the unmodified original CP860.TXT:
+1b3f983eac02d9ae9fc28106f2f3476ca1e4b337c7287f1a004372e14dd11e6a
+SHA-256 of the unmodified original CP863.TXT:
+f467a2a652ce3f74bb3fa86c8767dd06cbde90edfb73bf3a5541ae4cbe806d7b
+SHA-256 of the unmodified original CP865.TXT:
+e31eeb03a39a5fbdd5e23de60a22af4219c9987de2088386855ab20f273f470a
 
 The source files and Unicode copyright and permission notice in
 UNICODE-DATA.txt accompany the generated tables in Reader packages.

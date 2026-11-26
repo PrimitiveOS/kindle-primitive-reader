@@ -4,11 +4,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 chunks = [
-    "// Generated from Unicode's CP437.TXT and CP850.TXT mapping data.\n",
+    "// Generated from Unicode's CP437, CP850, CP852, CP860, CP863 and CP865 mappings.\n",
     "// Source files and Unicode copyright/permission notice are distributed\n",
     "// in reader/licenses; see docs/licenses/RTF-OEM.txt.\n\n",
 ]
-for page in (437, 850):
+for page in (437, 850, 852, 860, 863, 865):
     source = ROOT / f"assets/rtf-codepages/CP{page}.TXT"
     mapping = {}
     for line in source.read_text(encoding="ascii").removesuffix("\x1a").splitlines():

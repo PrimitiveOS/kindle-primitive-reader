@@ -52,6 +52,16 @@ and Kindle validation.
 
 Tap a mark to preview its full quotation and note. **First**, **Previous mark**, **Next mark** and **Last** move between matching marks and skip book headings. The physical page buttons move between marks. Long text has its own text controls and vertical scrolling. **Back** returns to the result page containing the selected mark.
 
+**Copy quote** and **Copy note** copy the respective complete saved field
+exactly into Reader's temporary in-process clipboard, including from other
+books and archived records. Page bookmarks offer **Copy text** for their saved
+label. Empty fields have no copy button, and saved text larger than 8 KiB is
+refused. Copy does not alter a mark or the current reading position. KOReader's
+mark details use a [text viewer](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L1363-L1369)
+that [copies selected text](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/widget/textviewer.lua#L789-L802).
+Arbitrary selection within the preview and a system clipboard remain open; the
+new controls have not been validated in simulation or on Kindle.
+
 For a mark in the open book, **Remove** asks for confirmation over its preview.
 Confirming deletes that one bookmark or highlight and its note; Cancel leaves
 it untouched. Reader captures the entire mark before the prompt, then checks

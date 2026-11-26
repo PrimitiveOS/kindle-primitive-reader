@@ -11,9 +11,9 @@ use crate::session::screen_pages::folder_sources::FolderProof;
 use crate::session::{PreparedFolderChapter, Reading, SearchLayoutRecipe};
 use primitive_app::Change;
 
-// Saved raw anchors must be restorable through the pre-open worker before this
-// can be enabled. Until then all folder books keep canonical positions.
-const FOLDER_RAW_ACTIVATION_ENABLED: bool = false;
+// The bounded worker activates only after source, font and position checks;
+// unsupported cases retain the canonical layout.
+const FOLDER_RAW_ACTIVATION_ENABLED: bool = true;
 
 pub(super) struct Activation {
     book: u64,

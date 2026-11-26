@@ -24,8 +24,13 @@ is used for content outside these bounds, unsupported projections, images,
 ruby, generated content, unsupported inline styles, transforms, bidi controls, joined
 notes and chapters with detected in-page note targets. The in-page-note setting alone
 does not disable raw layout in chapters without note targets. A layout whose source or ordered font stack cannot
-be stamped also uses the canonical path. Folder-backed EPUBs use canonical layout
-and search because their mimetype marker cannot verify the other folder members.
+be stamped also uses the canonical path. A folder-backed EPUB can use an
+immutable source snapshot prepared in the background and checked against its
+library identity and current reading position. The snapshot includes all
+members, is limited to 512 entries and 16 MiB, and rejects hidden members,
+symlinks, unsupported files and unverifiable fonts. Unsupported cases retain
+canonical reading. Folder snapshot activation, raw-position reopening and USB
+revalidation are implemented locally but have not been behaviorally tested.
 
 The layout-only source map may represent one normalized space with one byte of
 its original ASCII whitespace gap, including a tab or newline. The raw mapper,
@@ -44,8 +49,10 @@ Search workers rebuild the chapter layout under the storage lease and compare
 its book/font stamps and raw source with the foreground layout. Prepared layouts
 carry their verified stamps. Changed inputs or a missing required source mapping
 reject the search; layouts that consistently lack stamps use canonical text.
-The stamps are not an atomic compare-and-swap against non-cooperating external
-writers.
+Folder workers use the same immutable members for source and layout, and
+revalidate their directory inventory and reading fonts at handoff and after USB
+storage returns. These checks are not an atomic compare-and-swap against
+non-cooperating external writers.
 
 Raw-bearing state is saved in version 2. Before promoting an existing v1
 library, Reader verifies the last loaded disk baseline, rejects data that would

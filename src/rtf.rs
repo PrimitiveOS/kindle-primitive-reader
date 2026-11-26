@@ -186,6 +186,7 @@ enum TextEncoding {
     Standard(&'static enc::Encoding),
     Cp437,
     Cp850,
+    Oem(&'static [char; 128]),
 }
 
 #[derive(Clone, Copy)]
@@ -308,10 +309,12 @@ impl Parser {
                 TextEncoding::Standard(charset) => charset
                     .decode_without_bom_handling_and_without_replacement(&self.encoded)
                     .ok_or("An RTF text run contains invalid bytes for its code page")?,
-                mode @ (TextEncoding::Cp437 | TextEncoding::Cp850) => {
+                mode @ (TextEncoding::Cp437 | TextEncoding::Cp850 | TextEncoding::Oem(_)) => {
                     let table = match mode {
                         TextEncoding::Cp437 => &oem_tables::CP437,
-                        _ => &oem_tables::CP850,
+                        TextEncoding::Cp850 => &oem_tables::CP850,
+                        TextEncoding::Oem(table) => table,
+                        TextEncoding::Standard(_) => unreachable!(),
                     };
                     let mut decoded = String::with_capacity(self.encoded.len());
                     for &byte in &self.encoded {
@@ -524,6 +527,10 @@ fn code_page(number: i32) -> Option<TextEncoding> {
     match number {
         437 => return Some(TextEncoding::Cp437),
         850 => return Some(TextEncoding::Cp850),
+        852 => return Some(TextEncoding::Oem(&oem_tables::CP852)),
+        860 => return Some(TextEncoding::Oem(&oem_tables::CP860)),
+        863 => return Some(TextEncoding::Oem(&oem_tables::CP863)),
+        865 => return Some(TextEncoding::Oem(&oem_tables::CP865)),
         _ => {}
     }
     Some(TextEncoding::Standard(match number {

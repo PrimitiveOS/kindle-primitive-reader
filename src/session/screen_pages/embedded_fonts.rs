@@ -61,6 +61,7 @@ impl Job {
             fonts: reading.config.fonts.clone(),
             styles: reading.config.user_styles.clone(),
             hyphenation: (*reading.config.user_hyphenation).clone(),
+            folder_snapshot: reading.config.folder_snapshot.clone(),
         };
         let cancelled = Arc::new(AtomicBool::new(false));
         let token = cancelled.clone();
@@ -97,6 +98,7 @@ struct Request {
     fonts: Vec<PathBuf>,
     styles: user_styles::Snapshot,
     hyphenation: user_hyphenation::Rules,
+    folder_snapshot: Option<Arc<super::folder_sources::FolderProof>>,
 }
 
 impl Request {
@@ -149,11 +151,21 @@ impl Request {
         };
         with_storage(|| {
             check_cancelled(cancelled)?;
-            let mut book = Book::open(&self.path).map_err(io::Error::other)?;
+            let mut book = match &self.folder_snapshot {
+                Some(proof) => {
+                    proof.revalidate(&self.path, cancelled)?;
+                    Book::open_folder_snapshot(proof.members())
+                }
+                None => Book::open(&self.path),
+            }
+            .map_err(io::Error::other)?;
             self.verify_publication(&book).map_err(io::Error::other)?;
             report
                 .families
                 .include_catalog(BookStyle::embedded_font_catalog(&mut book, self.chapter));
+            if let Some(proof) = &self.folder_snapshot {
+                proof.revalidate(&self.path, cancelled)?;
+            }
             check_cancelled(cancelled)
         })?;
         Ok(report)

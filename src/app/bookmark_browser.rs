@@ -66,7 +66,13 @@ impl BrowserLayout {
     }
 
     fn text(self) -> Rect {
-        self.body(258, self.0.height - 538)
+        self.body(370, (self.0.height - 650).max(48))
+    }
+
+    fn copy_action(self, note: bool) -> Rect {
+        let width = ((self.0.width - 96) / 2).min(260).max(1);
+        let x = if note { self.0.width - 40 - width } else { 40 };
+        self.0.horizontal(Rect::new(x, 258, width, 100))
     }
 
     fn control(self, column: i32, inset: i32, height: i32) -> Rect {
@@ -2454,6 +2460,26 @@ impl Reader {
                 CAPTION.center(),
             );
         }
+        if !mark.quote.is_empty() {
+            canvas.button(
+                layout.copy_action(false),
+                language.bookmark_text(if mark.style.is_some() {
+                    "Copy quote"
+                } else {
+                    "Copy text"
+                }),
+                false,
+                false,
+            );
+        }
+        if mark.note.is_some_and(|note| !note.is_empty()) {
+            canvas.button(
+                layout.copy_action(true),
+                language.bookmark_text("Copy note"),
+                false,
+                false,
+            );
+        }
         let text = mark.note.map_or_else(
             || mark.quote.to_owned(),
             |note| format!("{}\n\n{}", note, mark.quote),
@@ -2516,6 +2542,34 @@ impl Reader {
             && matches!(input, Input::Tap(x, y) if layout.detail_action(1).contains(x, y))
         {
             return Some(self.bookmark_change(Command::AskRemoveFocusedMark));
+        }
+        if page == Page::Detail
+            && let Input::Tap(x, y) = input
+        {
+            let note = layout.copy_action(true).contains(x, y);
+            if note || layout.copy_action(false).contains(x, y) {
+                let text = self
+                    .bookmark_browser
+                    .focus
+                    .and_then(|key| self.bookmark_mark(key))
+                    .and_then(|mark| {
+                        let value = if note { mark.note? } else { mark.quote };
+                        (!value.is_empty()).then_some(value)
+                    });
+                if let Some(value) = text {
+                    if value.len() > crate::library::MAX_HIGHLIGHT_TEXT_BYTES {
+                        return Some(self.report("The saved text is too long to copy"));
+                    }
+                    self.clipboard_text = Some(value.to_owned());
+                    self.notice = Some(
+                        self.controls
+                            .interface_language
+                            .bookmark_text(if note { "Note copied" } else { "Text copied" })
+                            .to_owned(),
+                    );
+                    return Some(Change::Partial);
+                }
+            }
         }
         if page == Page::EditNote {
             return edit_note::input(self, input, layout);

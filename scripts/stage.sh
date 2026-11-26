@@ -49,7 +49,7 @@ install -m 644 assets/fonts/PrimitiveSymbols.ttf "$stage/reader/fonts/PrimitiveS
 awk -v icon="$icon" -v icon_dark="$icon_dark" '{ print } /^# Author:/ { print icon; print icon_dark }' deploy/Reader.sh > "$stage/documents/Reader.sh"
 chmod 755 "$stage/documents/Reader.sh"
 install -m 644 LICENSE LICENSE-DOCS "$stage/reader/licenses/"
-install -m 644 docs/licenses/UNICODE-DATA.txt docs/licenses/RTF-OEM.txt assets/rtf-codepages/CP437.TXT assets/rtf-codepages/CP850.TXT "$stage/reader/licenses/"
+install -m 644 docs/licenses/UNICODE-DATA.txt docs/licenses/RTF-OEM.txt assets/rtf-codepages/CP437.TXT assets/rtf-codepages/CP850.TXT assets/rtf-codepages/CP852.TXT assets/rtf-codepages/CP860.TXT assets/rtf-codepages/CP863.TXT assets/rtf-codepages/CP865.TXT "$stage/reader/licenses/"
 install -m 644 docs/licenses/WEBP-LOSSLESS.txt "$stage/reader/licenses/"
 install -m 644 vendor/reader-image-webp/LICENSE-MIT "$stage/reader/licenses/WEBP-LOSSLESS-MIT.txt"
 install -m 644 vendor/reader-image-webp/LICENSE-APACHE "$stage/reader/licenses/WEBP-LOSSLESS-APACHE.txt"

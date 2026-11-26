@@ -592,7 +592,17 @@ impl Reader {
         let state = self.library.state(id).ok_or("That book is unavailable")?;
         let entry = self.locate_tracked(id)?;
         let absolute = with_storage(|| self.library.absolute_path(&entry.path))?;
-        let book = with_storage(|| Ok(Book::open(&absolute).ok()))?;
+        let folder_snapshot = self
+            .active
+            .as_ref()
+            .filter(|active| active.id == id)
+            .and_then(|active| active.reading.config.folder_snapshot.clone());
+        let book = with_storage(|| {
+            Ok(match &folder_snapshot {
+                Some(proof) => Book::open_folder_snapshot(proof.members()).ok(),
+                None => Book::open(&absolute).ok(),
+            })
+        })?;
         let mut marks = VecDeque::new();
         let styles = &self.library_export.styles;
         let colors = &self.library_export.colors;
@@ -733,7 +743,7 @@ impl Reader {
             quote_prefixes: Default::default(),
             screen_pages: Default::default(),
             eager_layouts: Default::default(),
-            folder_snapshot: None,
+            folder_snapshot,
             engine: Engine::Parley,
             book: absolute.clone(),
             fonts,

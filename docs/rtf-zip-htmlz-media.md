@@ -95,3 +95,12 @@ BMP decoder internals and actual rendering have not been measured. The pinned
 KOReader RTF command table explicitly registers PNG and JPEG picture controls;
 its DIB behavior, real-document, simulator and Kindle comparison remain open.
 [KOReader picture commands](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/include/rtfcmd.h#L44-L52)
+
+RTF runs declaring `\ansicpg852`, `\ansicpg860`, `\ansicpg863` or
+`\ansicpg865` can also use generated tables from the retained Unicode DOS
+mappings. They use the existing run and output limits, and previously readable
+ASCII and already-supported code pages keep their output and anchors. Original
+mapping files and Unicode's permission notice are included in the package;
+[provenance and distribution review](licenses/RTF-OEM.txt) remain open. Pinned
+KOReader's exact behavior and real-document, simulator and Kindle comparisons
+have not been verified.
