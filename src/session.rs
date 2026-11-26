@@ -361,6 +361,19 @@ impl SearchLayoutRecipe {
         })?)
     }
 
+    /// Revalidate the folder snapshot already bound to this open reading layout.
+    /// Call only from a worker: the bounded inventory scan can perform I/O.
+    pub(crate) fn verify_bound_folder_snapshot(
+        &self,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<()> {
+        let proof = self
+            .folder_snapshot
+            .as_ref()
+            .ok_or("The open folder book has no verified snapshot")?;
+        self.verify_folder_proof(proof, cancelled)
+    }
+
     /// Lay out an immutable extracted EPUB snapshot on a worker while keeping
     /// the ordinary canonical path. Raw folder positions are not enabled here.
     pub(crate) fn folder_chapter(

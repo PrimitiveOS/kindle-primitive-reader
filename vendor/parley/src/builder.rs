@@ -572,6 +572,27 @@ fn build_into_layout<B: Brush>(
         }
     }
 
+    // The zero probe does not incorporate custom cluster or synthetic-weight
+    // advances. Refuse it if either policy would alter an isolated zero.
+    if let Some(zero) = layout.data.shaped_zero_advance {
+        let run = layout.data.shaped_text.runs().first();
+        let run_data = layout.data.runs.first();
+        let safe = run.zip(run_data).is_some_and(|(run, run_data)| {
+            let cluster_safe = options.cluster_spacing
+                .is_none_or(|policy| policy("0", zero, run.font_size) == 0);
+            let weight_safe = options.font_weight_spacing.is_none_or(|policy| {
+                let Some(font) = layout.data.shaped_text.fonts().get(run.font_index) else {
+                    return false;
+                };
+                policy(&font.font, run_data.font_attrs.weight.value(), run.font_size) == 0.0
+            });
+            cluster_safe && weight_safe
+        });
+        if !safe {
+            layout.data.shaped_zero_advance = None;
+        }
+    }
+
     if let Some(policy) = options.soft_hyphen_policy {
         super::shape::collect_soft_hyphens(text, layout, policy, options.trusted_soft_hyphen_words);
     }

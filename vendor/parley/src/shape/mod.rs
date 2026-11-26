@@ -4,6 +4,8 @@
 //! Text shaping implementation using `harfrust`for shaping
 //! and `icu` for text analysis.
 
+mod tab_probe;
+
 use alloc::vec::Vec;
 use parley_engine::shape::{CharCluster, Coverage};
 use parley_engine::{
@@ -189,6 +191,29 @@ pub(crate) fn shape_text<'a, B: Brush>(
         font_selector,
         &mut layout.data.shaped_text,
     );
+
+    if text.len() <= 16 * 1024 && text.contains('\t') && inline_boxes.is_empty()
+        && text.bytes().all(|byte| matches!(byte, b'\n' | b'\t' | 0x20..=0x7e))
+    {
+        let shaped = &layout.data.shaped_text;
+        if let [run] = shaped.runs() {
+            if let Some(&style_index) = char_style_indices.first() {
+                if char_style_indices.iter().all(|index| *index == style_index) {
+                    let style = &styles[usize::from(style_index)];
+                    if let Some(font) = shaped.fonts().get(run.font_index) {
+                        let options = ShapeOptions {
+                            language: style.locale,
+                            font_size: style.font_size,
+                            features: &style_features[usize::from(style_index)],
+                            variations: rcx.variations(style.font_variations).unwrap_or(&[]),
+                        };
+                        layout.data.shaped_zero_advance =
+                            tab_probe::standalone_zero(scx, font.clone(), options);
+                    }
+                }
+            }
+        }
+    }
 
     let mut inline_box_iter = inline_boxes
         .iter()

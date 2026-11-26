@@ -5,7 +5,6 @@
 use alloc::vec::Vec;
 use super::spacing::{EffectiveSpacing, Gaps, Justification};
 use crate::{Brush, Layout};
-use skrifa::{FontRef, MetadataProvider, instance::{LocationRef, NormalizedCoord, Size}, raw::TableProvider};
 
 const MAX_BYTES: usize = 16 * 1024;
 const MAX_TABS: usize = 256;
@@ -31,27 +30,11 @@ impl<B: Brush> Layout<B> {
         {
             return false;
         }
-        // CSS uses half a `ch`, measured from the zero glyph, for the
-        // minimum distance to a stop. Limit this path to one shaped run so
-        // that the stop and the measured glyph share a font and style.
+        // The standalone zero was shaped with this single run's selected font,
+        // language, features and variations. Missing or unsafe probes fall back.
         let [shaped_run] = self.data.shaped_text.runs() else { return false; };
-        let Some(font) = self.data.shaped_text.fonts().get(shaped_run.font_index) else { return false; };
-        let Ok(face) = FontRef::from_index(font.font.data.as_ref(), font.font.index) else { return false; };
-        // A nominal cmap metric is not necessarily the styled zero's advance
-        // when font layout tables substitute or position the glyph. Until a
-        // standalone zero can be shaped with identical settings, fail closed.
-        if [b"GSUB", b"GPOS", b"kern", b"morx", b"mort", b"kerx", b"trak", b"Silf"]
-            .iter().any(|tag| face.table_data(skrifa::Tag::new(*tag)).is_some())
-        {
-            return false;
-        }
-        let Some(zero) = face.charmap().map('0') else { return false; };
-        let Some(coords) = self.data.shaped_text.normalized_coords().get(shaped_run.normalized_coords_range.clone()) else { return false; };
-        let coords: Vec<NormalizedCoord> = coords.iter()
-            .map(|coord| NormalizedCoord::from_bits(coord.to_bits())).collect();
-        let Some(ch) = face.glyph_metrics(Size::new(shaped_run.font_size), LocationRef::new(&coords))
-            .advance_width(zero).filter(|width| width.is_finite() && *width > 0.0)
-            else { return false; };
+        let Some(ch) = self.data.shaped_zero_advance else { return false; };
+        if !ch.is_finite() || ch <= 0.0 || !shaped_run.font_size.is_finite() { return false; }
         if self.data.runs.first().is_none_or(|run| run.has_mixed_style_atoms) { return false; }
         let mut atoms = Vec::new();
         let mut space: Option<f32> = None;

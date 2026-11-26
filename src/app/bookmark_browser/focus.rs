@@ -85,9 +85,7 @@ impl Reader {
         let Some(active) = self.active.as_ref() else {
             return false;
         };
-        if self.bookmark_browser.origin != Screen::Book
-            || crate::epub_members::is_folder_book(&active.reading.config.book)
-        {
+        if self.bookmark_browser.origin != Screen::Book {
             return false;
         }
         let Some(origin) = self.current_history_location() else {
@@ -190,6 +188,7 @@ impl Reader {
         let worker_recipe = recipe.clone();
         let worker_entries = entries.clone();
         let current = origin.position.clone();
+        let folder = crate::epub_members::is_folder_book(&active.reading.config.book);
         let chapter_total = active.reading.probe.chapter_count();
         let (tx, rx) = mpsc::sync_channel(1);
         let spawn = std::thread::Builder::new()
@@ -301,6 +300,13 @@ impl Reader {
                         {
                             break;
                         }
+                    }
+                    if folder {
+                        // Recheck the original immutable inventory and fonts in
+                        // the worker after the last candidate, never during draw.
+                        worker_recipe
+                            .verify_bound_folder_snapshot(&worker_cancel)
+                            .map_err(|_| ())?;
                     }
                     Ok(best.map(|(_, ordinal)| ordinal))
                 };

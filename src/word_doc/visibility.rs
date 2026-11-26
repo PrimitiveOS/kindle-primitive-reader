@@ -1,6 +1,6 @@
 //! Fail-closed visibility proof for an intentionally minimal MS-DOC subset.
-//! Only default Normal text with no direct character/paragraph properties is
-//! accepted. Complex formatting and inheritance must be handled separately.
+//! Only proven default Normal text and explicitly bounded direct bold/italic
+//! properties are accepted. Complex formatting and inheritance remain unsupported.
 use super::pieces::Analyzed;
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -127,13 +127,64 @@ fn normal_style(sheet: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate FKP coverage and prove there are no direct modifications. PAPX
-/// allows only istd=0 with an empty property list; CHPX only empty runs.
+const MAX_STYLE_RUNS: usize = 32_768;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Emphasis {
+    pub(super) bold: bool,
+    pub(super) italic: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct StyleSpan {
+    pub(super) positions: Range<usize>,
+    pub(super) style: Emphasis,
+}
+
+#[derive(Clone)]
+struct PhysicalRun {
+    bytes: Range<usize>,
+    style: Emphasis,
+}
+
+fn character_properties(group: &[u8]) -> Result<Emphasis, String> {
+    if group.len() % 3 != 0 {
+        return Err("Malformed Word character properties".into());
+    }
+    let mut style = Emphasis::default();
+    let mut seen_bold = false;
+    let mut seen_italic = false;
+    for property in group.chunks_exact(3) {
+        let code = u16::from_le_bytes([property[0], property[1]]);
+        // Both proven base styles have false bold/italic. 0x80 inherits
+        // that false value; 0x81 applies its opposite.
+        let enabled = match property[2] {
+            0x00 | 0x80 => false,
+            0x01 | 0x81 => true,
+            _ => return Err("Unsupported Word toggle operand".into()),
+        };
+        match code {
+            0x0835 if !seen_bold => {
+                style.bold = enabled;
+                seen_bold = true;
+            }
+            0x0836 if !seen_italic => {
+                style.italic = enabled;
+                seen_italic = true;
+            }
+            _ => return Err("Unsupported or repeated Word character property".into()),
+        }
+    }
+    Ok(style)
+}
+
+/// Validate FKP coverage. PAPX allows only istd=0 with no direct properties;
+/// CHPX allows only explicitly decoded bold and italic changes.
 fn property_map(
     doc: &Analyzed,
     range: Range<usize>,
     paragraph: bool,
-) -> Result<BTreeSet<usize>, String> {
+) -> Result<(BTreeSet<usize>, Vec<PhysicalRun>), String> {
     let plc = bytes(&doc.table, range)?;
     if plc.len() < 12 || (plc.len() - 4) % 8 != 0 {
         return Err("Invalid Word property index".into());
@@ -156,6 +207,7 @@ fn property_map(
         }
     }
     let mut pages = BTreeSet::new();
+    let mut styled = Vec::new();
     for i in 0..count {
         let pn = u32le(plc, pn_base + i * 4)?;
         if pn >> 22 != 0 {
@@ -197,11 +249,42 @@ fn property_map(
             return Err("Word property page coverage is invalid".into());
         }
         let base = (runs + 1) * 4;
+        let mut groups: Vec<Range<usize>> = Vec::new();
         for j in 0..runs {
             let offset = usize::from(page[base + j * width]) * 2;
             if !paragraph {
-                if offset != 0 {
-                    return Err("Word has unsupported direct character properties".into());
+                let style = if offset == 0 {
+                    Emphasis::default()
+                } else {
+                    if offset < records || offset >= 511 {
+                        return Err("Word character property offset is invalid".into());
+                    }
+                    let end = offset
+                        .checked_add(1 + usize::from(page[offset]))
+                        .filter(|&end| end <= 511)
+                        .ok_or("Word character property is truncated")?;
+                    let group = offset..end;
+                    if groups
+                        .iter()
+                        .any(|old| old != &group && old.start < group.end && group.start < old.end)
+                    {
+                        return Err("Word character property groups overlap".into());
+                    }
+                    groups.push(group.clone());
+                    character_properties(&page[group.start + 1..group.end])?
+                };
+                if style != Emphasis::default() {
+                    let start = offsets[j].max(boundaries[i]);
+                    let end = offsets[j + 1].min(boundaries[i + 1]);
+                    if start < end {
+                        if styled.len() >= MAX_STYLE_RUNS {
+                            return Err("Word has too many styled runs".into());
+                        }
+                        styled.push(PhysicalRun {
+                            bytes: start..end,
+                            style,
+                        });
+                    }
                 }
             } else {
                 if offset < records
@@ -215,15 +298,58 @@ fn property_map(
             }
         }
     }
-    Ok(pages)
+    Ok((pages, styled))
 }
 
-pub(super) fn prove(doc: &Analyzed) -> Result<(), String> {
+pub(super) fn prove(doc: &Analyzed) -> Result<Vec<StyleSpan>, String> {
     normal_style(bytes(&doc.table, doc.stylesheet.clone())?)?;
-    let chpx = property_map(doc, doc.chpx.clone(), false)?;
-    let papx = property_map(doc, doc.papx.clone(), true)?;
+    let (chpx, runs) = property_map(doc, doc.chpx.clone(), false)?;
+    let (papx, _) = property_map(doc, doc.papx.clone(), true)?;
     if !chpx.is_disjoint(&papx) {
         return Err("Word character and paragraph property pages overlap".into());
     }
-    Ok(())
+    let mut spans = Vec::new();
+    for piece in &doc.pieces {
+        let width = if piece.compressed { 1 } else { 2 };
+        let first = runs.partition_point(|run| run.bytes.end <= piece.bytes.start);
+        for run in runs[first..]
+            .iter()
+            .take_while(|run| run.bytes.start < piece.bytes.end)
+        {
+            let start = run.bytes.start.max(piece.bytes.start) - piece.bytes.start;
+            let end = run.bytes.end.min(piece.bytes.end) - piece.bytes.start;
+            if start % width != 0 || end % width != 0 {
+                return Err("Word style splits a text code unit".into());
+            }
+            let start = piece.positions.start + start / width;
+            let end = piece.positions.start + end / width;
+            // A formatting edge cannot split a UTF-16 surrogate pair.
+            for boundary in [start, end] {
+                if boundary > 0
+                    && boundary < doc.units.len()
+                    && (0xd800..=0xdbff).contains(&doc.units[boundary - 1])
+                    && (0xdc00..=0xdfff).contains(&doc.units[boundary])
+                {
+                    return Err("Word style splits a Unicode character".into());
+                }
+            }
+            if start < end {
+                if spans.len() >= MAX_STYLE_RUNS {
+                    return Err("Word has too many styled spans".into());
+                }
+                spans.push(StyleSpan {
+                    positions: start..end,
+                    style: run.style,
+                });
+            }
+        }
+    }
+    spans.sort_unstable_by_key(|span| span.positions.start);
+    if spans
+        .windows(2)
+        .any(|items| items[0].positions.end > items[1].positions.start)
+    {
+        return Err("Word styled spans overlap".into());
+    }
+    Ok(spans)
 }

@@ -30,9 +30,11 @@ compared with real documents, KOReader or Kindle.
 
 Before text can be converted, a restrictive visibility gate requires complete
 character and paragraph FKP coverage, nonoverlapping property pages and text,
-no direct character or piece properties, default-Normal-only paragraphs with
-no direct paragraph properties, and strictly parsed, no-inheritance/no-property
-Normal and default-character styles. The default character style at index 10
+no piece properties, default-Normal-only paragraphs with no direct paragraph
+properties, and strictly parsed, no-inheritance/no-property Normal and
+default-character styles. Direct character runs may contain only bounded,
+nonoverlapping MS-DOC bold and italic toggle properties; all other character
+properties, including hidden or deleted text flags, remain rejected. The default character style at index 10
 must be present in this initial candidate; an empty, inherited or otherwise
 unsupported default character style is rejected. These restrictions intentionally reject normal formatted, revised,
 hidden, linked, image-bearing or otherwise more complex Word documents. They
@@ -55,3 +57,12 @@ Primary references: [MS-CFB header](https://learn.microsoft.com/en-us/openspecs/
 [default character style](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/7022285b-9621-42e9-ad4d-4e02c115ef18),
 [character FKP](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/f5f10f04-d4cc-4ebd-86df-0de6d227675c)
 and [style inheritance](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/9258b41c-ff0a-4c96-a3a9-610664dabbeb).
+
+The bold/italic candidate maps FKP byte ranges through the original pieces to
+UTF-16 character positions, rejects style boundaries that split code units or
+surrogate pairs, and renders the supported emphasis as XHTML. Existing
+all-default character runs retain their previous XHTML and anchors. Repeated,
+unknown or malformed modifiers are rejected, and the existing visibility,
+whitespace, size and auxiliary-content restrictions remain. This extension has
+not been behaviorally verified or compared with KOReader, real Word files,
+the simulator or Kindle. [Microsoft character properties](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/7022285b-9621-42e9-ad4d-4e02c115ef18) · [Toggle semantics](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-doc/bc4ca98b-68ca-49dc-a091-1460e42d781e)

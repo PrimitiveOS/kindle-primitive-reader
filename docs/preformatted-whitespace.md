@@ -20,22 +20,21 @@ The adjacent-owner and retained-carriage-return behavior follows the
 Native `<pre>` defaults to preserved, non-wrapping whitespace before the CSS
 cascade; explicit author or user `white-space` declarations still take priority.
 For a bounded horizontal LTR ASCII passage with publisher styles disabled, one
-text owner, a single shaped font run without substitution or positioning tables,
-no complex layout or indent, a measurable zero glyph and an actual consistently
-measured space glyph, Reader can apply tab
-stops without changing source characters or caret offsets. The default is eight
-spaces. Strictly validated user CSS may set
-an inherited numeric `tab-size` from 0 to 32, or use `inherit`, `initial`, and
+text owner, a single shaped font run, no complex layout or indent, a measurable
+standalone zero glyph and an actual consistently measured space glyph, Reader can
+apply tab stops without changing source characters or caret offsets. The default
+is eight spaces. Strictly validated user CSS may set an inherited numeric
+`tab-size` from 0 to 32, or use `inherit`, `initial`, and
 `unset`; unsupported values and pseudo-element declarations are rejected. The
-stop threshold uses the font's nominal zero-glyph advance. The same cluster advances
-drive line fitting, drawing and hit-testing. Reader keeps the old path if a line
-would overflow or the mapping cannot be proved. Publisher
-`tab-size` overrides, lengths, font-feature overrides, wrapped lines, RTL text,
-mixed styles and complex layouts are not yet supported by this path. Many fonts
-have substitution or positioning tables and therefore fall back; matching the
-exact standalone zero shaping with the active language and features remains
-future work. This tab behavior and the native `<pre>` default require later
-simulator and device validation.
+stop threshold uses a separately shaped zero with the selected font, language,
+features and variations. The same cluster advances drive line fitting, drawing
+and hit-testing. Reader keeps the old path if a line would overflow or the
+mapping cannot be proved. Publisher `tab-size` overrides, lengths, font-feature overrides, wrapped lines, RTL text,
+mixed styles and complex layouts are not yet supported by this path. The probe
+and admitted ASCII text both resolve to Latin under Parley's current itemizer;
+other scripts and custom synthetic-weight and cluster-spacing advances remain
+on the prior path. This tab behavior and the native `<pre>` default require
+later simulator and device validation.
 
 A snapshot is captured for direct text and a bounded set of inline elements
 when the concatenated text normalizes to the canonical block exactly. Inline
