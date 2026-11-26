@@ -467,8 +467,27 @@ impl SearchLayoutRecipe {
         index: usize,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<Probe> {
+        self.chapter_with_quote_status(index, cancelled)
+            .map(|(probe, _)| probe)
+    }
+
+    /// Whether a worker-prepared chapter can be restored without resolving
+    /// other live chapters for hidden or nonlinear flows on the UI thread.
+    pub(crate) fn allows_prepared_navigation(&self) -> bool {
+        !self.hidden_flows.enabled && !self.hide_nonlinear
+    }
+
+    /// Retain the worker layout only when its generated-quote prefix is exact.
+    /// A provisional marker belongs to the worker and cannot be committed.
+    pub(crate) fn chapter_with_quote_status(
+        &self,
+        index: usize,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<(Probe, bool)> {
         if let Some(proof) = &self.folder_snapshot {
-            return self.folder_chapter(proof, index, cancelled);
+            return self
+                .folder_chapter(proof, index, cancelled)
+                .map(|probe| (probe, false));
         }
         let check = || -> Result<()> {
             if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
@@ -524,7 +543,11 @@ impl SearchLayoutRecipe {
                     "The book or reading fonts changed during search",
                 ));
             }
-            Ok(probe)
+            // Only an archive with an established quote checkpoint can prove
+            // this layout exact; other providers retain foreground restoration.
+            let exact = config.quote_prefixes.stamp().is_some()
+                && config.quote_prefixes.marker(probe.book, index).is_none();
+            Ok((probe, exact))
         })?;
         check()?;
         Ok(probe)
@@ -886,6 +909,13 @@ pub(crate) struct Reading {
 }
 
 impl Reading {
+    pub(crate) fn is_unsupported_spine_notice(&self) -> bool {
+        self.probe
+            .chapters
+            .get(self.chapter)
+            .is_some_and(|chapter| chapter.unsupported)
+    }
+
     pub(crate) fn quote_marker(&self) -> Option<&quote_prefixes::Marker> {
         self.quote_marker.as_ref()
     }
@@ -1047,6 +1077,14 @@ impl Reading {
             mut probe,
             mut marker,
         } = layout;
+        // Do not reinterpret a previously saved synthetic notice as a page
+        // in real content if a later Reader version supports that format.
+        if anchor.is_some_and(|anchor| {
+            anchor.revision == crate::revision(crate::epub::UNSUPPORTED_SPINE_NOTICE)
+                && probe.page_for(anchor).is_none()
+        }) {
+            return Err("The unsupported chapter notice is not a reading position".into());
+        }
         if anchor
             .is_some_and(|anchor| anchor.raw_caret.is_some() && probe.page_for(anchor).is_none())
         {
@@ -1969,12 +2007,35 @@ impl Reading {
         self.collect_anchored_quote(start, end, true)
     }
 
+    pub(crate) fn ensure_supported_quote_span(&self, start: &Anchor, end: &Anchor) -> Result<()> {
+        let first = self
+            .probe
+            .chapter_index(&start.chapter)
+            .ok_or("The saved section is unavailable")?;
+        let last = self
+            .probe
+            .chapters
+            .iter()
+            .rposition(|chapter| chapter.href == end.chapter)
+            .ok_or("The saved section is unavailable")?;
+        let chapters = self
+            .probe
+            .chapters
+            .get(first..=last)
+            .ok_or("The passage endpoints are out of order")?;
+        if chapters.iter().any(|chapter| chapter.unsupported) {
+            return Err("A passage cannot include an unsupported chapter notice".into());
+        }
+        Ok(())
+    }
+
     fn collect_anchored_quote(
         &self,
         start: &Anchor,
         end: &Anchor,
         canonical: bool,
     ) -> Result<TextSelection> {
+        self.ensure_supported_quote_span(start, end)?;
         if start.raw_caret.is_some() || end.raw_caret.is_some() {
             let first = self
                 .probe

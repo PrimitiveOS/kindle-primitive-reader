@@ -52,11 +52,11 @@ The authentic EPUB sample used a peak 4,348 KiB with both builds. The authored s
 Reader supports CSS child (`>`), adjacent-element (`+`) and general-sibling (`~`) relationships, along with `:first-child` and `:first-of-type`. Text, comments and Reader's own anonymous layout boxes do not interrupt sibling order. A hidden element still participates in sibling order, including when finding the first element of a type. General-sibling selectors use a bounded backtracking search of at most 128 candidate nodes per match; if that budget is exhausted, that selector does not match. Other selectors retain their existing matcher. Reader keeps search and bookmark positions tied to the original text. An unsupported selector in an ordinary comma-separated selector list invalidates that group. A following independent rule can still apply. This follows the pinned engine's selector-list error handling. General-sibling behavior is an unverified implementation candidate. [CREngine combinators](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L5999-L6077) · [First-of-type matching](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L6306-L6332) · [Selector-list parsing](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L7466-L7547) · [W3C selector relationships](https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators)
 
 The native selector candidate also supports `:last-child`, `:only-child`,
-`:last-of-type`, `:only-of-type` and numeric or `an+b` forms of `:nth-child()`
-and `:nth-last-child()`. Sibling
+`:last-of-type`, `:only-of-type` and numeric or `an+b` forms of `:nth-child()`,
+`:nth-last-child()`, `:nth-of-type()` and `:nth-last-of-type()`. Sibling
 positions are computed in a linear pass; type comparisons retain namespace
 identity, and non-element nodes and anonymous wrappers do not count. The
-`nth-of-type`, `nth-last-of-type` and `of <selector>` variants remain open.
+`of <selector>` variants remain open.
 These additions have not
 yet been behaviorally tested in simulation or on Kindle.
 

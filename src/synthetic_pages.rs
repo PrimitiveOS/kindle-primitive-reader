@@ -53,6 +53,11 @@ impl CharacterPages {
         if index >= book.chapters.len() {
             return Ok(true);
         }
+        if book.chapters[index].unsupported {
+            return Err(
+                "Character-count pages are unavailable for books with unsupported chapters".into(),
+            );
+        }
         let mut chapter =
             numbered_chapter(&book.chapter(index)?, self.stride, MAX_LABELS - self.count)?;
         chapter.first = self.count;

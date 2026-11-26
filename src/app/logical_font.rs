@@ -139,7 +139,9 @@ impl Reader {
             .ok_or("Reading state unavailable")?;
         let state = self.library.state_mut(owner).unwrap();
         state.preferences.logical_font_size = Some(value);
-        state.position = Some(position(&candidate));
+        if !candidate.is_unsupported_spine_notice() {
+            state.position = Some(position(&candidate));
+        }
         let prior_dirty = self.dirty;
         let prior_save_at = self.save_at;
         self.dirty = true;

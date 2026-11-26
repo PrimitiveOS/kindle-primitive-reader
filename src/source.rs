@@ -185,6 +185,9 @@ pub(crate) struct Element {
     pub last_child: bool,
     pub first_of_type: bool,
     pub last_of_type: bool,
+    pub previous_of_type: Option<usize>,
+    pub type_index: usize,
+    pub type_index_from_end: usize,
     pub selector_only: bool,
     pub anonymous: bool,
 }
@@ -750,12 +753,16 @@ impl Source {
             let tag = node.tag_name();
             let first_of_type =
                 structural_element && seen_types.insert((parent, tag.namespace(), tag.name()));
-            if structural_element
-                && let Some(previous) =
-                    last_types.insert((parent, tag.namespace(), tag.name()), elements.len())
-            {
+            let previous_of_type = if structural_element {
+                last_types.insert((parent, tag.namespace(), tag.name()), elements.len())
+            } else {
+                None
+            };
+            if let Some(previous) = previous_of_type {
                 elements[previous].last_of_type = false;
             }
+            let type_index =
+                previous_of_type.map_or(1, |i| elements[i].type_index.saturating_add(1));
             // CRE inserts an implicit tbody for consecutive direct table rows.
             let direct_row =
                 tag.name() == "tr" && parent.is_some_and(|i| elements[i].tag == "table");
@@ -823,6 +830,9 @@ impl Source {
                 last_child: structural_element,
                 first_of_type,
                 last_of_type: structural_element,
+                previous_of_type,
+                type_index,
+                type_index_from_end: 1,
                 selector_only,
                 anonymous,
             });
@@ -847,6 +857,17 @@ impl Source {
                 elements[index].sibling_index_from_end = index_from_end;
                 next = Some(index);
                 current = elements[index].previous_sibling;
+            }
+        }
+        // Each namespace-qualified type chain is disjoint, so this is linear
+        // in the number of real elements, including retained hidden siblings.
+        for &last in last_types.values() {
+            let mut current = Some(last);
+            let mut index = 1usize;
+            while let Some(element) = current {
+                elements[element].type_index_from_end = index;
+                index = index.saturating_add(1);
+                current = elements[element].previous_of_type;
             }
         }
         drop(seen_types);

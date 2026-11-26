@@ -2697,6 +2697,10 @@ impl Reader {
             || self.fixed_search_fit_active()
             || self.crop_dialog.is_some()
             || self.semi_auto_crop.is_some()
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.reading.is_unsupported_spine_notice())
         {
             return;
         }
@@ -5646,7 +5650,9 @@ impl Reader {
             .ok_or("Reading state unavailable")?;
         let state = self.library.state_mut(id).unwrap();
         state.preferences = preferences;
-        state.position = Some(position(&candidate));
+        if !candidate.is_unsupported_spine_notice() {
+            state.position = Some(position(&candidate));
+        }
         if let Err(error) = self.library.persist() {
             *self.library.state_mut(id).unwrap() = prior;
             return Err(error.into());
@@ -5826,6 +5832,13 @@ impl Reader {
     }
 
     fn add_bookmark(&mut self) -> Result<()> {
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.reading.is_unsupported_spine_notice())
+        {
+            return Err("An unsupported chapter notice cannot be bookmarked".into());
+        }
         let already_bookmarked = self.page_is_bookmarked();
         let (entry, id, title, position, label, screen) = if let Some(fixed) = &self.fixed {
             let position = fixed_position(&fixed.reading);
@@ -5908,6 +5921,9 @@ impl Reader {
             );
         }
         let reading = &self.active.as_ref()?.reading;
+        if reading.is_unsupported_spine_notice() {
+            return None;
+        }
         overview_bookmarks::bookmark_index_for_page(
             book,
             Some(reading.chapter),
@@ -5917,6 +5933,13 @@ impl Reader {
     }
 
     fn toggle_bookmark(&mut self) -> Result<()> {
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.reading.is_unsupported_spine_notice())
+        {
+            return Err("An unsupported chapter notice cannot be bookmarked".into());
+        }
         let Some(index) = self.current_bookmark_index() else {
             return self.add_bookmark();
         };
@@ -8135,6 +8158,15 @@ impl Reader {
     ) -> Result<()> {
         let active = self.active.as_ref().ok_or("No open book")?;
         let selection = self.selection.as_ref().ok_or("Select some text first")?;
+        active
+            .reading
+            .ensure_supported_quote_span(&selection.start, &selection.end)?;
+        if active.reading.is_unsupported_spine_notice()
+            || selection.start.revision == crate::revision(crate::epub::UNSUPPORTED_SPINE_NOTICE)
+            || selection.end.revision == crate::revision(crate::epub::UNSUPPORTED_SPINE_NOTICE)
+        {
+            return Err("An unsupported chapter notice cannot be highlighted".into());
+        }
         if selection.text.len() > 8192 {
             return Err("Select a shorter passage".into());
         }

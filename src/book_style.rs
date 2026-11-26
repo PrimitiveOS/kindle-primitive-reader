@@ -1935,6 +1935,8 @@ struct Compound {
     odd_child_from_end: Option<bool>,
     nth_child: Vec<(i32, i32)>,
     nth_child_from_end: Vec<(i32, i32)>,
+    nth_type: Vec<(i32, i32)>,
+    nth_type_from_end: Vec<(i32, i32)>,
     relation: Relation,
 }
 
@@ -1955,6 +1957,8 @@ impl Compound {
             && self.odd_child_from_end.is_none()
             && self.nth_child.is_empty()
             && self.nth_child_from_end.is_empty()
+            && self.nth_type.is_empty()
+            && self.nth_type_from_end.is_empty()
     }
 
     fn matches(&self, element: &Element) -> bool {
@@ -1981,6 +1985,14 @@ impl Compound {
                 .nth_child_from_end
                 .iter()
                 .all(|&formula| nth_matches(formula, element.sibling_index_from_end))
+            && self
+                .nth_type
+                .iter()
+                .all(|&formula| nth_matches(formula, element.type_index))
+            && self
+                .nth_type_from_end
+                .iter()
+                .all(|&formula| nth_matches(formula, element.type_index_from_end))
             && self
                 .tag
                 .as_ref()
@@ -2136,6 +2148,21 @@ impl Selector {
                                 compound.odd_child_from_end = Some(odd);
                             } else {
                                 compound.nth_child_from_end.push(formula);
+                            }
+                        }
+                        Token::Function(name)
+                            if name.eq_ignore_ascii_case("nth-of-type")
+                                || name.eq_ignore_ascii_case("nth-last-of-type") =>
+                        {
+                            let formula = input.parse_nested_block(|input| {
+                                let formula = cssparser::parse_nth(input)?;
+                                input.expect_exhausted()?;
+                                Ok(formula)
+                            })?;
+                            if name.eq_ignore_ascii_case("nth-of-type") {
+                                compound.nth_type.push(formula);
+                            } else {
+                                compound.nth_type_from_end.push(formula);
                             }
                         }
                         _ => return Err(ParseError::unexpected_token()),

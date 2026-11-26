@@ -44,12 +44,14 @@ pub fn resolve(book: &mut Book, value: &str) -> Result<CfiPosition> {
         let opf = Document::parse_with_options(&package, xml_limits())?;
         authored_chapter(opf.root_element(), &point)?
     };
-    let path = book
+    let entry = book
         .chapters
         .get(chapter)
-        .ok_or("The CFI chapter is unavailable")?
-        .href
-        .clone();
+        .ok_or("The CFI chapter is unavailable")?;
+    if book.recovered_placeholder(entry) {
+        return Err("The CFI chapter is unavailable in this edition".into());
+    }
+    let path = entry.href.clone();
     if book
         .chapters
         .iter()

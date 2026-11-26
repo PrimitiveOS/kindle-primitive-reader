@@ -154,6 +154,7 @@ impl Chm {
                         .get(path.as_str())
                         .map_or_else(|| topic_name(path), |name| (*name).to_owned()),
                     is_svg: false,
+                    unsupported: false,
                 });
             }
         }

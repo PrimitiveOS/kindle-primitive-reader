@@ -24,6 +24,9 @@ const MAX_SERIES_NAME: usize = 256;
 const MAX_SERIES_POSITION: usize = 64;
 const MAX_PAGE_REFERENCES: usize = 8192;
 
+/// Identifiable synthetic content; never treat it as publisher text.
+pub(crate) const UNSUPPORTED_SPINE_NOTICE: &str = "<html><head><!--PrimitiveOS unsupported spine notice v1--><title>Unsupported chapter</title></head><body><h1>Unsupported chapter</h1><p>Reader cannot display this chapter's format. Turn the page to continue.</p></body></html>";
+
 use crate::epub_members::Members as Archive;
 pub(crate) use crate::epub_zip::check_zip_directory;
 
@@ -39,6 +42,7 @@ pub struct Chapter {
     pub href: String,
     pub label: String,
     pub(crate) is_svg: bool,
+    pub(crate) unsupported: bool,
     pub(crate) nonlinear: bool,
 }
 
@@ -535,14 +539,9 @@ impl Book {
                 }
                 placements.push(item_placement(reference, default_spread));
             }
-            if !fixed
+            let unsupported = !fixed
                 && !matches!(item.media.as_str(), "application/xhtml+xml" | "text/html")
-                && !(is_svg && crate::svg_image::is_package_svg(&item.path))
-            {
-                return Err(
-                    "Reader supports XHTML, HTML or static SVG in a reflowable spine".into(),
-                );
-            }
+                && !(is_svg && crate::svg_image::is_package_svg(&item.path));
             let label = labels
                 .get(item.path.as_str())
                 .map(|label| (*label).to_owned())
@@ -551,17 +550,32 @@ impl Book {
                 href: item.path.clone(),
                 label,
                 is_svg,
+                unsupported,
                 nonlinear: reference.attribute("linear") == Some("no"),
             });
         }
         if chapters.is_empty() {
             return Err("The EPUB contains no reading chapters".into());
         }
+        if chapters.iter().any(|chapter| chapter.unsupported)
+            && !chapters
+                .iter()
+                .any(|chapter| !chapter.unsupported && !chapter.nonlinear)
+        {
+            return Err("The EPUB has no supported linear reading chapters".into());
+        }
         let adobe_map = spine.attribute("page-map").and_then(|id| manifest.get(id));
         if !printed_pages.is_empty() || adobe_map.is_some() {
             let mut paths = BTreeMap::new();
+            let unsupported_paths: BTreeSet<_> = chapters
+                .iter()
+                .filter(|chapter| chapter.unsupported)
+                .map(|chapter| chapter.href.as_str())
+                .collect();
             for chapter in &chapters {
-                if !archive.missing_after_recovery(&chapter.href) {
+                if !unsupported_paths.contains(chapter.href.as_str())
+                    && !archive.missing_after_recovery(&chapter.href)
+                {
                     *paths.entry(chapter.href.as_str()).or_insert(0) += 1;
                 }
             }
@@ -785,6 +799,7 @@ impl Book {
             quote_prefixes: None,
             chapters: vec![Chapter {
                 is_svg: false,
+                unsupported: false,
                 nonlinear: false,
                 href: chapter_path.clone(),
                 label: document.title.clone(),
@@ -837,6 +852,7 @@ impl Book {
                     href: part.path.clone(),
                     label: part.label,
                     is_svg: false,
+                    unsupported: false,
                     nonlinear: false,
                 });
                 xhtml.insert(part.path, part.xhtml);
@@ -956,6 +972,7 @@ impl Book {
                 href,
                 label,
                 is_svg: false,
+                unsupported: false,
                 nonlinear: false,
             });
         }
@@ -1116,6 +1133,7 @@ impl Book {
                 href: chapter.path.clone(),
                 label: chapter.label,
                 is_svg: false,
+                unsupported: false,
                 nonlinear: false,
             });
             xhtml.insert(chapter.path, chapter.xhtml);
@@ -1361,11 +1379,12 @@ impl Book {
         Ok(Some((cover.kind, bytes)))
     }
 
-    /// The archive directory declared this chapter, but its payload could not be recovered.
+    /// This chapter is a synthetic notice rather than publisher content.
     pub(crate) fn recovered_placeholder(&self, chapter: &Chapter) -> bool {
-        self.fixed_placements.is_none()
-            && matches!(&self.content,
-            Content::Archive { archive, .. } if archive.missing_after_recovery(&chapter.href))
+        chapter.unsupported
+            || (self.fixed_placements.is_none()
+                && matches!(&self.content,
+                Content::Archive { archive, .. } if archive.missing_after_recovery(&chapter.href)))
     }
 
     pub fn chapter(&mut self, index: usize) -> Result<String> {
@@ -1373,6 +1392,9 @@ impl Book {
             .chapters
             .get(index)
             .ok_or("That EPUB chapter is unavailable")?;
+        if chapter.unsupported {
+            return Ok(UNSUPPORTED_SPINE_NOTICE.to_owned());
+        }
         if self.recovered_placeholder(chapter) {
             return Ok("<html><head><title>Chapter unavailable</title></head><body><h1>Chapter unavailable</h1><p>This chapter is missing from the damaged EPUB. Turn the page to continue.</p></body></html>".to_owned());
         }
@@ -1556,6 +1578,13 @@ impl Book {
         let mut total = 0;
         offsets.push(total);
         for chapter in &self.chapters {
+            // The unsupported member can be absent, binary, or arbitrarily large;
+            // its size is not a measure of readable progress.
+            if chapter.unsupported {
+                total += 1;
+                offsets.push(total);
+                continue;
+            }
             let length = match &mut self.content {
                 Content::Archive { archive, .. } => {
                     archive.size(&chapter.href)?.min(MAX_XML as u64)

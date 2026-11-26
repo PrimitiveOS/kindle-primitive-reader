@@ -63,7 +63,11 @@ struct FolderResult {
 }
 enum Message {
     Progress(usize),
-    Done(Option<Candidate>, Option<FolderResult>),
+    Done(
+        Option<Candidate>,
+        Option<FolderResult>,
+        Option<crate::PreparedParleyChapter>,
+    ),
     FolderVerified(bool),
     FolderUnavailable,
     Failed,
@@ -98,6 +102,7 @@ pub(super) struct Search {
     folder_marker: Option<PathBuf>,
     folder_proof: Option<Arc<FolderProof>>,
     folder_prepared: Option<crate::session::PreparedFolderChapter>,
+    archive_prepared: Option<crate::PreparedParleyChapter>,
     staged: Option<Reading>,
     total: usize,
     bookmarks_total: usize,
@@ -225,6 +230,7 @@ fn worker(
     });
     let mut cached_chapter = origin_probe.as_ref().map(|_| current.chapter);
     let mut cached_probe = origin_probe;
+    let mut cached_exact = false;
     let mut best: Option<((usize, usize, usize, usize), Candidate)> = None;
     let mut previous_chapter = None;
     for (processed, index) in order.into_iter().enumerate() {
@@ -244,14 +250,17 @@ fn worker(
         let key = if let Some(recipe) = &recipe {
             if cached_chapter != Some(chapter) {
                 let result = if let Some(proof) = &folder {
-                    recipe.folder_chapter(proof, chapter, &cancelled)
+                    recipe
+                        .folder_chapter(proof, chapter, &cancelled)
+                        .map(|probe| (probe, false))
                 } else {
-                    recipe.chapter(chapter, &cancelled)
+                    recipe.chapter_with_quote_status(chapter, &cancelled)
                 };
                 match result {
-                    Ok(probe) => {
+                    Ok((probe, exact)) => {
                         cached_probe = Some(probe);
                         cached_chapter = Some(chapter);
+                        cached_exact = exact;
                     }
                     Err(_) => {
                         if !cancelled.load(Ordering::Relaxed) {
@@ -309,6 +318,23 @@ fn worker(
     }
     if !cancelled.load(Ordering::Relaxed) {
         let best = best.map(|(_, value)| value);
+        // Move the existing winning layout rather than cloning or reshaping it.
+        // Provisional quote prefixes and other renderers retain the old path.
+        let archive_prepared = if folder.is_none()
+            && cached_exact
+            && recipe
+                .as_ref()
+                .is_some_and(|recipe| recipe.allows_prepared_navigation())
+            && best
+                .as_ref()
+                .is_some_and(|(_, target)| cached_chapter == Some(target.chapter))
+        {
+            cached_probe
+                .take()
+                .and_then(|probe| probe.into_prepared_parley())
+        } else {
+            None
+        };
         let folder = if let Some(proof) = folder {
             let prepared = if let Some((_, target)) = &best {
                 drop(cached_probe.take());
@@ -331,7 +357,7 @@ fn worker(
         } else {
             None
         };
-        let _ = tx.send(Message::Done(best, folder));
+        let _ = tx.send(Message::Done(best, folder, archive_prepared));
     }
 }
 
@@ -482,6 +508,7 @@ impl Reader {
             folder_marker,
             folder_proof: None,
             folder_prepared: None,
+            archive_prepared: None,
             staged: None,
             total,
             bookmarks_total,
@@ -864,8 +891,9 @@ impl Reader {
                         .try_recv();
                     match event {
                         Ok(Message::Progress(value)) => search.progress = value,
-                        Ok(Message::Done(best, folder)) => {
+                        Ok(Message::Done(best, folder, prepared)) => {
                             search.best = best;
+                            search.archive_prepared = prepared;
                             if let Some(folder) = folder {
                                 search.folder_proof = Some(folder.proof);
                                 search.folder_prepared = folder.prepared;
@@ -1035,6 +1063,7 @@ impl Reader {
                     &search.original,
                     search.recipe.as_deref(),
                     search.fixed_stamp.as_ref(),
+                    search.archive_prepared.take(),
                     search.preview,
                 )
             };
@@ -1130,6 +1159,7 @@ impl Reader {
         original: &HistoryLocation,
         expected_recipe: Option<&SearchLayoutRecipe>,
         expected_fixed: Option<&FileStamp>,
+        prepared: Option<crate::PreparedParleyChapter>,
         preview: bool,
     ) -> crate::Result<Change> {
         if preview && (self.screen != Screen::Skim || self.skim.is_none()) {
@@ -1155,13 +1185,33 @@ impl Reader {
             return Ok(Change::Full);
         }
         let reading = &mut self.active.as_mut().ok_or("No open book")?.reading;
-        let restored = Reading::restore_with_scroll_top(
-            reading.config.clone(),
-            target.chapter,
-            target.page,
-            target.anchor.as_ref(),
-            None,
-        )?;
+        let config = reading.config.clone();
+        let restored = if let Some(prepared) = prepared {
+            Reading::restore_prepared(
+                config.clone(),
+                target.chapter,
+                target.page,
+                target.anchor.as_ref(),
+                prepared,
+            )
+            .or_else(|_| {
+                Reading::restore_with_scroll_top(
+                    config,
+                    target.chapter,
+                    target.page,
+                    target.anchor.as_ref(),
+                    None,
+                )
+            })?
+        } else {
+            Reading::restore_with_scroll_top(
+                config,
+                target.chapter,
+                target.page,
+                target.anchor.as_ref(),
+                None,
+            )?
+        };
         let restored_recipe = restored.config.search_layout_recipe(&restored.probe);
         if restored.chapter != target.chapter
             || restored.page > target.page

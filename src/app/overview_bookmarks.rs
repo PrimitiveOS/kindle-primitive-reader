@@ -206,6 +206,18 @@ impl Reader {
     }
 
     fn overview_bookmark_index(&self, chapter: Option<usize>, page: usize) -> Option<usize> {
+        if chapter.is_some_and(|chapter| {
+            self.active.as_ref().is_some_and(|active| {
+                active
+                    .reading
+                    .probe
+                    .chapter_entries()
+                    .get(chapter)
+                    .is_some_and(|entry| entry.unsupported)
+            })
+        }) {
+            return None;
+        }
         let book = self.library.state(self.open_book_id()?)?;
         bookmark_index_for_page(
             book,
@@ -251,6 +263,18 @@ impl Reader {
     }
 
     fn toggle_overview_bookmark(&mut self, chapter: Option<usize>, page: usize) -> Result<()> {
+        if chapter.is_some_and(|chapter| {
+            self.active.as_ref().is_some_and(|active| {
+                active
+                    .reading
+                    .probe
+                    .chapter_entries()
+                    .get(chapter)
+                    .is_some_and(|entry| entry.unsupported)
+            })
+        }) {
+            return Err("An unsupported chapter notice cannot be bookmarked".into());
+        }
         let bookmark = self.overview_bookmark_index(chapter, page);
         let (position, label) = if let Some(chapter) = chapter {
             let probe = self

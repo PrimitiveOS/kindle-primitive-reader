@@ -178,6 +178,13 @@ impl Reader {
             if !edit.draft.changed() {
                 return Err("Choose a word outside the saved highlight".into());
             }
+            if let Draft::Text { current, .. } = &edit.draft {
+                self.active
+                    .as_ref()
+                    .ok_or("No open book")?
+                    .reading
+                    .ensure_supported_quote_span(&current.start, &current.end)?;
+            }
             let chapter_title = match &edit.draft {
                 Draft::Text { original, current } if original.start != current.start => {
                     Some(self.highlight_chapter_title(&current.start))

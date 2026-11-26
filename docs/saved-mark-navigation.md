@@ -78,3 +78,6 @@ Navigation's **Previous**, **Next**, **First** and **Last saved mark** use the c
 
 
 The adjacent and outermost mark navigator orders candidate chapters toward the requested result and checks every candidate in the first chapter with a valid target. Remaining candidate chapters are skipped once the winning chapter is fully checked; stale anchors do not stop the search. Fixed-page entries still share one page-ordered candidate set. Snapshot, source and cancellation checks remain unchanged. This performance change is unverified in the simulator and on Kindle.
+
+
+For eligible archive-backed EPUBs, the saved-mark worker moves its already-shaped winning Parley chapter to the reader after the source, settings and saved-mark snapshots are rechecked. It transfers the existing layout rather than cloning a second one. If the worker marks generated quotes as provisional, the renderer is not Parley, or hidden/nonlinear flows require other chapters, Reader retains the existing foreground restoration. Folder EPUBs and fixed documents keep their separate verified paths. This optimization requires simulator, memory and Kindle validation.
