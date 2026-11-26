@@ -2227,7 +2227,9 @@ fn archive_html_recovery(archive: &mut Archive, path: &str) -> Result<String> {
     // The original bytes, before XML preparation, must contain either no
     // DTD/entity declaration or exactly one verified plain HTML doctype.
     Ok(if !had_declaration || plain_html_doctype {
-        crate::epub_xml::recover_html_voids(&xml, MAX_XML).unwrap_or(xml)
+        crate::epub_xml::recover_html_voids(&xml, MAX_XML)
+            .or_else(|| crate::epub_xml::recover_html_bare_ampersands(&xml, MAX_XML))
+            .unwrap_or(xml)
     } else {
         xml
     })

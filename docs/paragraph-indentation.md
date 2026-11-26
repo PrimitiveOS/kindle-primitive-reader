@@ -55,6 +55,14 @@ Reader also recognizes `:empty` and `:dir(ltr)` / `:dir(rtl)`, including inside 
 
 `:root` matches the chapter body under HTML or DocFragment, following the pinned CREngine selector rather than a browser's HTML-root match. It contributes ordinary pseudo-class specificity and works in the supported selector functions. This enables directly supported publisher properties on the chapter body; CSS custom properties and `var()` remain unsupported. Reader's existing root-relative font-size calculation also remains tied to its outer parsed element, so `rem` behavior after `:root` font-size changes may differ. Source identity and saved positions are unchanged. This implementation is unverified. [CRE root selector](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L6144-L6169)
 
+Publisher `@supports` accepts a bounded positive query containing a single
+parenthesized `font-style`, `font-weight`, or `text-align` declaration when
+Reader's publisher parser accepts its value. These properties have existing
+rendering paths; capability queries for other properties are left unmatched,
+as are logical combinations, negation, and selector functions. This follows
+the existing nested-rule and sheet budgets and does not change source text or
+saved positions. The candidate is unverified. [CRE capability queries](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvstsheet.cpp#L1984-L2004)
+
 The native selector candidate also supports `:last-child`, `:only-child`,
 `:last-of-type`, `:only-of-type` and numeric or `an+b` forms of `:nth-child()`,
 `:nth-last-child()`, `:nth-of-type()` and `:nth-last-of-type()`. Sibling

@@ -45,6 +45,33 @@ fn media_query(input: &mut Parser<'_>) -> CssResult<bool> {
     Ok(if modifier == "not" { !matches } else { matches })
 }
 
+// A deliberately small positive subset: these properties have an active
+// publisher rendering path rather than merely a syntactic CSS parser.
+// Complex conditions remain unmatched until their semantics are implemented.
+fn supports_query(input: &mut Parser<'_>) -> CssResult<bool> {
+    input.expect_parenthesis_block()?;
+    let supported = input.parse_nested_block(|input| {
+        let state = input.state();
+        let name = input.expect_ident_cloned()?;
+        if !matches!(
+            name.to_ascii_lowercase().as_str(),
+            "font-style" | "font-weight" | "text-align"
+        ) {
+            while input.next().is_ok() {}
+            return Ok(false);
+        }
+        input.expect_colon()?;
+        let supported = Properties.parse_value(name, input, &state).is_ok();
+        if input.expect_exhausted().is_err() {
+            while input.next().is_ok() {}
+            return Ok(false);
+        }
+        Ok(supported)
+    })?;
+    input.expect_exhausted()?;
+    Ok(supported)
+}
+
 impl<'i> QualifiedRuleParser<'i> for PublisherParser<'_> {
     type Prelude = Vec<Selector>;
     type QualifiedRule = Vec<SheetItem>;
@@ -78,6 +105,9 @@ impl<'i> AtRuleParser<'i> for PublisherParser<'_> {
         if name.eq_ignore_ascii_case("media") {
             let queries = input.parse_comma_separated(media_query)?;
             return Ok(Prelude::Media(queries.into_iter().any(|value| value)));
+        }
+        if name.eq_ignore_ascii_case("supports") {
+            return supports_query(input).map(Prelude::Media);
         }
         AtRuleParser::parse_prelude(&mut SheetParser, name, input).map(Prelude::Ordinary)
     }

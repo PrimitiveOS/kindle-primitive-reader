@@ -236,6 +236,107 @@ pub(crate) fn recover_html_voids(xml: &str, limit: usize) -> Option<String> {
     Some(repaired)
 }
 
+/// Recover unambiguous literal ampersands without rewriting valid entities,
+/// comments, processing instructions, CDATA or any already-valid XML.
+pub(crate) fn recover_html_bare_ampersands(xml: &str, limit: usize) -> Option<String> {
+    if xml.len() > limit {
+        return None;
+    }
+    let checked = without_plain_doctype(xml);
+    if parse_recovery_xml(&checked).is_ok()
+        || checked
+            .as_bytes()
+            .windows(9)
+            .any(|w| w.eq_ignore_ascii_case(b"<!doctype"))
+        || checked
+            .as_bytes()
+            .windows(8)
+            .any(|w| w.eq_ignore_ascii_case(b"<!entity"))
+    {
+        return None;
+    }
+    let bytes = xml.as_bytes();
+    let mut cursor = 0;
+    let mut insertions = Vec::new();
+    while cursor < bytes.len() {
+        if bytes[cursor..].starts_with(b"<!--") {
+            cursor += 4 + xml[cursor + 4..].find("-->")? + 3;
+        } else if bytes[cursor..].starts_with(b"<![CDATA[") {
+            cursor += 9 + xml[cursor + 9..].find("]]>")? + 3;
+        } else if bytes[cursor..].starts_with(b"<?") {
+            cursor += 2 + xml[cursor + 2..].find("?>")? + 2;
+        } else if bytes[cursor] == b'&' {
+            if bytes.get(cursor + 1) == Some(&b'#') {
+                cursor += 1;
+                continue;
+            }
+            let start = cursor + 1;
+            let mut end = start;
+            while end < bytes.len()
+                && (bytes[end].is_ascii_alphanumeric()
+                    || matches!(bytes[end], b'_' | b'-' | b'.' | b':'))
+            {
+                end += 1;
+                if end - start > 128 {
+                    return None;
+                }
+            }
+            if end > start && bytes.get(end) == Some(&b';') {
+                cursor = end + 1;
+                continue;
+            }
+            // HTML permits some named references without a semicolon. Do not
+            // guess whether those sequences are intended as text or entities.
+            for boundary in start + 1..=end {
+                if html5ever::data::NAMED_ENTITIES
+                    .get(&xml[start..boundary])
+                    .is_some_and(|&(first, _)| first != 0)
+                {
+                    return None;
+                }
+            }
+            if xml
+                .len()
+                .saturating_add((insertions.len() + 1).saturating_mul(4))
+                > limit
+            {
+                return None;
+            }
+            insertions.push(cursor + 1);
+            cursor += 1;
+        } else {
+            cursor += 1;
+        }
+    }
+    if insertions.is_empty() {
+        return None;
+    }
+    let mut repaired = String::with_capacity(xml.len() + insertions.len() * 4);
+    let mut last = 0;
+    for at in insertions {
+        repaired.push_str(&xml[last..at]);
+        repaired.push_str("amp;");
+        last = at;
+    }
+    repaired.push_str(&xml[last..]);
+    let repaired = recover_html_names(repaired, limit);
+    let checked = without_plain_doctype(&repaired);
+    let doc = parse_recovery_xml(&checked).ok()?;
+    let root = doc.root_element();
+    if root.tag_name().name() != "html"
+        || !matches!(
+            root.tag_name().namespace(),
+            None | Some("http://www.w3.org/1999/xhtml")
+        )
+        || !root.children().any(|node| node.has_tag_name("body"))
+    {
+        return None;
+    }
+    drop(doc);
+    drop(checked);
+    Some(repaired)
+}
+
 #[derive(Default)]
 pub(crate) struct SourceOffsets {
     changes: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,

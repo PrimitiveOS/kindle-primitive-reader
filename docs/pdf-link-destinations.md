@@ -36,9 +36,13 @@ with real PDFs, in the simulator or on Kindle.
 Local `/FitH top` and `/FitV left` links and Contents entries switch to width
 fit or height fit, respectively, and position the specified finite coordinate.
 The candidate uses the target page's unrotated crop edge for the unspecified
-axis and converts through its PDF page transform. Returning through jump
+axis and converts through its PDF page transform. A null `top` or `left`
+retains that coordinate from the current viewport after conversion through
+both PDF page transforms; if the current coordinate cannot be proved, the
+existing page-only fallback remains. [PDF 1.7 destination semantics](https://opensource.adobe.com/dc-acrobat-sdk-docs/standards/pdfstandards/pdf/PDF32000_2008.pdf)
+Returning through jump
 history restores the previous fit, zoom and pan on the same viewport; a changed
-viewport uses the saved source point. Page-only fallback remains for null or
+viewport uses the saved source point. Page-only fallback remains for missing or
 malformed coordinates, rotated target pages, a user rotation, crops,
 straightening, continuous or spread views, and cases where the render scale cap
 prevents the requested exact fit. `/FitBH` and `/FitBV` remain unsupported.

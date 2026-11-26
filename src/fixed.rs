@@ -428,22 +428,24 @@ impl Pdf {
         {
             return None;
         }
+        let current_pdf_point = || {
+            let current = self
+                .document
+                .pages()
+                .get(current_page)?
+                .initial_transform(true)
+                .to_kurbo();
+            let determinant = current.determinant();
+            if !determinant.is_finite() || determinant.abs() < 1e-12 {
+                return None;
+            }
+            let point = current.inverse() * current_upright;
+            point.is_finite().then_some(point)
+        };
         let old = match target.fit {
             // Whole-page fitting does not require a PDF coordinate.
             PdfDestinationFit::Page => return None,
-            PdfDestinationFit::Current => {
-                let current = self
-                    .document
-                    .pages()
-                    .get(current_page)?
-                    .initial_transform(true)
-                    .to_kurbo();
-                let determinant = current.determinant();
-                if !determinant.is_finite() || determinant.abs() < 1e-12 {
-                    return None;
-                }
-                current.inverse() * current_upright
-            }
+            PdfDestinationFit::Current => current_pdf_point()?,
             PdfDestinationFit::Width | PdfDestinationFit::Height => {
                 let [a, b, c, d, _, _] = target_transform.as_coeffs();
                 // Only unrotated target pages have the PDF top/left axes
@@ -451,7 +453,16 @@ impl Pdf {
                 if a <= 0.0 || d >= 0.0 || b != 0.0 || c != 0.0 {
                     return None;
                 }
-                target_transform.inverse() * Point::ORIGIN
+                let edge = target_transform.inverse() * Point::ORIGIN;
+                match target.fit {
+                    PdfDestinationFit::Width if target.top.is_none() => {
+                        Point::new(edge.x, current_pdf_point()?.y)
+                    }
+                    PdfDestinationFit::Height if target.left.is_none() => {
+                        Point::new(current_pdf_point()?.x, edge.y)
+                    }
+                    _ => edge,
+                }
             }
         };
         if !old.is_finite() {
@@ -1062,14 +1073,20 @@ fn explicit_destination(
                 fit: PdfDestinationFit::Page,
             })),
             b"FitH" | b"FitV" => {
-                let value = f64::from(read()?.into_f32()?);
-                if !value.is_finite() {
-                    return None;
-                }
+                let value = match read()? {
+                    Object::Null(_) => None,
+                    value => {
+                        let value = f64::from(value.into_f32()?);
+                        if !value.is_finite() {
+                            return None;
+                        }
+                        Some(value)
+                    }
+                };
                 let horizontal = kind.as_ref() == b"FitH";
                 Some(DestinationPosition::Partial(PartialPdfDestination {
-                    left: (!horizontal).then_some(value),
-                    top: horizontal.then_some(value),
+                    left: if horizontal { None } else { value },
+                    top: if horizontal { value } else { None },
                     fit: if horizontal {
                         PdfDestinationFit::Width
                     } else {

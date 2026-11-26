@@ -1968,8 +1968,17 @@ impl FixedReading {
             if partial.fit == crate::fixed::PdfDestinationFit::Page {
                 return Some(FixedJump::FitPage);
             }
+            let needs_current = (partial.fit == crate::fixed::PdfDestinationFit::Width
+                && partial.top.is_none())
+                || (partial.fit == crate::fixed::PdfDestinationFit::Height
+                    && partial.left.is_none());
+            let current = if needs_current {
+                self.history_point()?
+            } else {
+                Point::ORIGIN
+            };
             return pdf
-                .complete_partial_destination(self.page, Point::ORIGIN, page, partial)
+                .complete_partial_destination(self.page, current, page, partial)
                 .map(|point| {
                     if self.view.width_fit == target_view.width_fit
                         && self.view.height_fit == target_view.height_fit

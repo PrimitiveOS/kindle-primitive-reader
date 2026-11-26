@@ -21,3 +21,14 @@ a general HTML5 parser, does not repair arbitrary mismatched elements, and
 does not establish behavior for every malformed input. Real-book, simulator,
 Kindle and KOReader comparisons remain pending. KOReader's pinned CREngine
 has a permissive [HTML/XML parser](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp).
+
+For an otherwise XML-compatible chapter that still fails, Reader can also
+escape an unambiguous literal ampersand in text or an attribute, then require
+the same bounded complete-document validation. Existing XML references,
+comments, CDATA and processing instructions are kept unchanged. Numeric
+references, complete unknown names and semicolonless names that could be HTML
+entities are not guessed; malformed markup continues to fail. This candidate
+does not combine ampersand and unclosed-void repairs in the same chapter.
+Source text and anchors for previously readable chapters remain unchanged;
+newly readable chapters use the deterministic repaired source. This path is
+also untested on real books, simulator and Kindle.
