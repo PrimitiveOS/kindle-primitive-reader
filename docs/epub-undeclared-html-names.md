@@ -20,7 +20,11 @@ conversion of package metadata is implied. Chapter consumers including local
 links, note lookups, CFIs and synthetic page indexing read through the same
 chapter path. Navigation-group fragment checks also use it for uniquely
 identified reflow spine items. A separate malformed navigation document is not
-recovered by this path and may still require the existing NCX fallback. Link and
-fragment behavior for newly recovered chapters, memory limits, real EPUBs,
-comparison with KOReader, simulator behavior and Kindle acceptance remain
-unverified.
+recovered during ordinary navigation loading. If Contents or the page list is
+still empty after the existing nav and NCX paths, Reader separately retries an
+HTML navigation document with the same bounded entity recovery. Existing
+nonempty lists take precedence, and recovered group headings use the same unique
+spine and fragment checks as normal navigation. Other malformed navigation
+documents and OPF/NCX files remain outside this recovery. Link and fragment
+behavior for newly recovered documents, memory limits, real EPUBs, comparison
+with KOReader, simulator behavior and Kindle acceptance remain unverified.

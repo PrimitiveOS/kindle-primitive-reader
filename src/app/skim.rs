@@ -740,45 +740,6 @@ impl Reader {
         }
     }
 
-    /// Jump from the reading menu to an adjacent or outermost saved-mark page.
-    /// Reflow anchors must resolve before reopening so stale marks cannot silently
-    /// turn into a different reading position.
-    pub(super) fn jump_saved_mark(
-        &mut self,
-        direction: Direction,
-        boundary: bool,
-    ) -> crate::Result<()> {
-        let Some(target) = self.skim_mark_destination(direction, boundary) else {
-            let language = self.controls.interface_language;
-            return Err(language
-                .skim_text(match direction {
-                    Direction::Previous => "No earlier saved mark",
-                    Direction::Next => "No later saved mark",
-                })
-                .into());
-        };
-        if let Some(active) = &self.active {
-            if let Some(anchor) = &target.anchor {
-                let probe = active.reading.config.chapter(target.chapter)?;
-                if probe.restore_anchor(anchor).is_none() {
-                    return Err(self
-                        .controls
-                        .interface_language
-                        .skim_text("Saved mark location is unavailable")
-                        .into());
-                }
-            }
-            let previous = self.current_history_location().ok_or("No open document")?;
-            self.restore_position(&target)?;
-            if self.current_history_location().as_ref() != Some(&previous) {
-                self.push_history(previous);
-            }
-            Ok(())
-        } else {
-            self.follow_fixed(target.page, None)
-        }
-    }
-
     fn skim_mark_destination(
         &self,
         direction: Direction,

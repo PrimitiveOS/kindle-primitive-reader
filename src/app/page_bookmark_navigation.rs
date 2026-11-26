@@ -90,6 +90,7 @@ pub(super) struct Search {
     original: HistoryLocation,
     original_last_visible: usize,
     direction: Direction,
+    boundary: bool,
     publication: Option<u64>,
     fixed_pages: Option<usize>,
     fixed_stamp: Option<FileStamp>,
@@ -143,6 +144,7 @@ fn worker(
     publication: Option<u64>,
     fixed_pages: Option<usize>,
     direction: Direction,
+    boundary: bool,
     current: ReadingPosition,
     current_last_visible: usize,
     snapshot: Snapshot,
@@ -273,10 +275,12 @@ fn worker(
             Direction::Next => page > current_page,
         };
         if beyond
-            && best.as_ref().is_none_or(|(prior, _)| match direction {
-                Direction::Previous => key > *prior,
-                Direction::Next => key < *prior,
-            })
+            && best
+                .as_ref()
+                .is_none_or(|(prior, _)| match (direction, boundary) {
+                    (Direction::Previous, false) | (Direction::Next, true) => key > *prior,
+                    (Direction::Next, false) | (Direction::Previous, true) => key < *prior,
+                })
         {
             best = Some((key, (index, target)));
         }
@@ -334,13 +338,14 @@ fn report_status(reader: &mut Reader, text: &str) -> Change {
 
 impl Reader {
     pub(super) fn start_page_bookmark_search(&mut self, direction: Direction) -> crate::Result<()> {
-        self.start_adjacent_mark_search(direction, false)
+        self.start_adjacent_mark_search(direction, false, false)
     }
 
     pub(super) fn start_adjacent_mark_search(
         &mut self,
         direction: Direction,
         include_highlights: bool,
+        boundary: bool,
     ) -> crate::Result<()> {
         if self.page_bookmark_worker_busy.load(Ordering::Acquire) {
             return Err(self
@@ -426,6 +431,7 @@ impl Reader {
             original,
             original_last_visible,
             direction,
+            boundary,
             publication,
             fixed_pages,
             fixed_stamp,
@@ -761,6 +767,7 @@ impl Reader {
                     let publication = search.publication;
                     let fixed_pages = search.fixed_pages;
                     let direction = search.direction;
+                    let boundary = search.boundary;
                     let current = search.original.position.clone();
                     let current_last_visible = search.original_last_visible;
                     if self.page_bookmark_worker_busy.swap(true, Ordering::AcqRel) {
@@ -778,6 +785,7 @@ impl Reader {
                                     publication,
                                     fixed_pages,
                                     direction,
+                                    boundary,
                                     current,
                                     current_last_visible,
                                     snapshot_worker,

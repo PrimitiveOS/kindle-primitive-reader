@@ -4908,9 +4908,13 @@ impl Reader {
             Action::ToggleLinkPreference(setting) => self.toggle_link_preference(setting)?,
             Action::SetMenuActivation(option) => self.change_menu_activation(option)?,
             Action::Chapter(direction) => self.jump_chapter(direction)?,
-            Action::SavedMark(direction) => self.start_adjacent_mark_search(direction, true)?,
+            Action::SavedMark(direction) => {
+                self.start_adjacent_mark_search(direction, true, false)?
+            }
             Action::PageBookmark(direction) => self.start_page_bookmark_search(direction)?,
-            Action::SavedMarkEdge(direction) => self.jump_saved_mark(direction, true)?,
+            Action::SavedMarkEdge(direction) => {
+                self.start_adjacent_mark_search(direction, true, true)?
+            }
             Action::LatestSavedMark => {
                 let action = self.latest_bookmark_action().ok_or("No saved marks")?;
                 self.auto_turn.activity(Instant::now());

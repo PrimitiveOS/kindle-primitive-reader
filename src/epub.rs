@@ -451,6 +451,52 @@ impl Book {
                 }
             }
         }
+        // Keep every existing nav/NCX result. Only try recovering a separate
+        // malformed HTML nav document for a list that is still unavailable.
+        if (toc.is_empty() || printed_pages.is_empty())
+            && let Some(nav) = navigation
+            && matches!(nav.media.as_str(), "application/xhtml+xml" | "text/html")
+            && let Ok(xml) = archive_html_recovery(&mut archive, &nav.path)
+        {
+            let prepared = loose::without_plain_html_doctype(&xml);
+            if let Ok(doc) = parse_xml(&prepared) {
+                let (mut recovered_toc, recovered_pages, recovered_groups) =
+                    publication_navigation(&doc, &nav.path);
+                if toc.is_empty() && !recovered_groups.is_empty() {
+                    let mut paths = BTreeMap::new();
+                    let mut reflow_paths = BTreeSet::new();
+                    for reference in spine.children().filter(|node| node.has_tag_name("itemref")) {
+                        let Some(item) =
+                            reference.attribute("idref").and_then(|id| manifest.get(id))
+                        else {
+                            continue;
+                        };
+                        let path = paths.entry(item.path.as_str()).or_insert_with(|| {
+                            (0usize, !archive.missing_after_recovery(&item.path))
+                        });
+                        path.0 += 1;
+                        if spine_layout(reference, default_layout).ok() == Some(false)
+                            && matches!(item.media.as_str(), "application/xhtml+xml" | "text/html")
+                        {
+                            reflow_paths.insert(item.path.as_str());
+                        }
+                    }
+                    inherit_group_targets(
+                        &mut recovered_toc,
+                        &recovered_groups,
+                        &paths,
+                        &reflow_paths,
+                        &mut archive,
+                    );
+                }
+                if toc.is_empty() {
+                    toc = recovered_toc;
+                }
+                if printed_pages.is_empty() {
+                    printed_pages = recovered_pages;
+                }
+            }
+        }
         let mut labels = BTreeMap::new();
         for entry in &toc {
             if let Some(destination) = &entry.destination {
@@ -1328,7 +1374,7 @@ impl Book {
         match &mut self.content {
             Content::Archive { archive, .. } => {
                 if self.fixed_placements.is_none() {
-                    archive_reflow_chapter(archive, &chapter.href)
+                    archive_html_recovery(archive, &chapter.href)
                 } else {
                     xml_entry(archive, &chapter.href)
                 }
@@ -1978,7 +2024,7 @@ fn inherit_group_targets(
                 };
                 remaining -= size;
                 let result = if reflow_paths.contains(dest.path.as_str()) {
-                    archive_reflow_chapter(archive, &dest.path)
+                    archive_html_recovery(archive, &dest.path)
                 } else {
                     xml_entry(archive, &dest.path)
                 };
@@ -2103,7 +2149,7 @@ fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
     xml_entry_with_declaration(archive, path, false).map(|(xml, _)| xml)
 }
 
-fn archive_reflow_chapter(archive: &mut Archive, path: &str) -> Result<String> {
+fn archive_html_recovery(archive: &mut Archive, path: &str) -> Result<String> {
     let (xml, had_declaration) = xml_entry_with_declaration(archive, path, true)?;
     Ok(if had_declaration {
         xml

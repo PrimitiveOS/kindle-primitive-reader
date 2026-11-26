@@ -1916,6 +1916,7 @@ enum Relation {
     Descendant,
     Child,
     NextSibling,
+    PreviousSiblings,
 }
 
 #[derive(Default)]
@@ -1985,15 +1986,16 @@ impl Selector {
                 separated = !compound.is_empty();
                 continue;
             }
-            if let Token::Delim(combinator @ ('>' | '+')) = token {
+            if let Token::Delim(combinator @ ('>' | '+' | '~')) = token {
                 if compound.is_empty() {
                     return Err(ParseError::unexpected_token());
                 }
                 steps.push(std::mem::take(&mut compound));
-                compound.relation = if combinator == '>' {
-                    Relation::Child
-                } else {
-                    Relation::NextSibling
+                compound.relation = match combinator {
+                    '>' => Relation::Child,
+                    '+' => Relation::NextSibling,
+                    '~' => Relation::PreviousSiblings,
+                    _ => unreachable!(),
                 };
                 separated = false;
                 continue;
@@ -2104,6 +2106,16 @@ impl Selector {
     }
 
     fn matches_host(&self, elements: &[Element], index: usize) -> bool {
+        if self
+            .steps
+            .iter()
+            .any(|step| matches!(step.relation, Relation::PreviousSiblings))
+        {
+            // A general-sibling choice may need backtracking through prior
+            // siblings or ancestors. Bound the total visited candidates.
+            let mut remaining = 128;
+            return self.matches_bounded(self.steps.len() - 1, elements, index, &mut remaining);
+        }
         // Check each uninterrupted chain of child/sibling relationships as a unit.
         // A nearer ancestor that fails the chain must not hide a higher matching
         // ancestor. Searching outward only between chains bounds work by depth × steps.
@@ -2119,6 +2131,62 @@ impl Selector {
             (step, node) = matched;
         }
         true
+    }
+
+    fn matches_bounded(
+        &self,
+        step: usize,
+        elements: &[Element],
+        index: usize,
+        remaining: &mut usize,
+    ) -> bool {
+        if *remaining == 0 {
+            return false;
+        }
+        *remaining -= 1;
+        let Some(element) = elements.get(index) else {
+            return false;
+        };
+        let compound = &self.steps[step];
+        if !compound.matches(element) {
+            return false;
+        }
+        if step == 0 {
+            return true;
+        }
+        match compound.relation {
+            Relation::Child => element
+                .parent
+                .is_some_and(|parent| self.matches_bounded(step - 1, elements, parent, remaining)),
+            Relation::NextSibling => element.previous_sibling.is_some_and(|sibling| {
+                self.matches_bounded(step - 1, elements, sibling, remaining)
+            }),
+            Relation::Descendant | Relation::PreviousSiblings => {
+                let siblings = matches!(compound.relation, Relation::PreviousSiblings);
+                let mut candidate = if siblings {
+                    element.previous_sibling
+                } else {
+                    element.parent
+                };
+                while let Some(i) = candidate {
+                    if *remaining == 0 {
+                        return false;
+                    }
+                    if self.matches_bounded(step - 1, elements, i, remaining) {
+                        return true;
+                    }
+                    let Some(item) = elements.get(i) else {
+                        return false;
+                    };
+                    candidate = if siblings {
+                        item.previous_sibling
+                    } else {
+                        item.parent
+                    };
+                }
+                false
+            }
+        }
     }
 
     fn chain(
@@ -2140,6 +2208,7 @@ impl Selector {
                 Relation::Descendant => return Some((step, index)),
                 Relation::Child => element.parent?,
                 Relation::NextSibling => element.previous_sibling?,
+                Relation::PreviousSiblings => return None, // handled by matches_bounded
             };
             step -= 1;
         }
