@@ -1,5 +1,7 @@
 //! Local bookmarks, highlights and notes exchange with KOReader.
 
+mod discovery;
+mod discovery_job;
 mod marks;
 #[cfg(test)]
 mod tests;
@@ -25,6 +27,9 @@ pub(super) struct State {
     path: PathBuf,
     settings: Preferences,
     preview: Option<Preview>,
+    discovery: discovery_job::Manager,
+    candidate: Option<Candidate>,
+    announced: std::collections::VecDeque<(u64, String)>,
 }
 
 #[derive(Clone, Copy)]
@@ -59,6 +64,13 @@ struct Target {
     adjacent: bool,
 }
 
+struct Candidate {
+    book: u64,
+    path: PathBuf,
+    digest: String,
+    device: Option<String>,
+}
+
 struct Import {
     digest: String,
     summary: Summary,
@@ -75,6 +87,9 @@ impl State {
             path,
             settings,
             preview: None,
+            discovery: Default::default(),
+            candidate: None,
+            announced: Default::default(),
         }
     }
 
@@ -261,6 +276,7 @@ impl Reader {
         let mut proposed = self.annotation_exchange.settings.clone();
         proposed.folder = folder;
         self.annotation_exchange.save(proposed)?;
+        self.start_annotation_discovery();
         self.show(Screen::AnnotationExchange);
         Ok(())
     }
@@ -308,6 +324,148 @@ impl Reader {
                 DocumentFormat::Pdf | DocumentFormat::Djvu
             )
         })
+    }
+
+    /// Start an advisory scan only for the adjacent default transfer. Actual
+    /// import always goes through the existing independent preview and checks.
+    pub(super) fn start_annotation_discovery(&mut self) {
+        self.annotation_exchange.discovery.cancel();
+        self.annotation_exchange.candidate = None;
+        if !self.stats_awake
+            || self.annotation_exchange.settings.folder.is_some()
+            || !self.supports_annotation_exchange()
+        {
+            return;
+        }
+        let Some((entry, book)) = self.current_document() else {
+            return;
+        };
+        let request = discovery_job::Request {
+            book,
+            relative: entry.path.clone(),
+            root: self.library.verification_root().to_owned(),
+            fixed: self.fixed.is_some(),
+            device: self.annotation_exchange.settings.device.clone(),
+            applied: self
+                .library
+                .state(book)
+                .and_then(|state| state.annotation_exchange_digest.clone()),
+        };
+        self.annotation_exchange.discovery.start(request);
+    }
+
+    pub(super) fn cancel_annotation_discovery(&mut self) {
+        self.annotation_exchange.discovery.cancel();
+        self.annotation_exchange.candidate = None;
+    }
+
+    pub(super) fn pause_annotation_discovery(&mut self) {
+        self.cancel_annotation_discovery();
+    }
+
+    pub(super) fn annotation_discovery_deadline(&self) -> Option<Instant> {
+        self.annotation_exchange
+            .discovery
+            .deadline()
+            .into_iter()
+            .chain(
+                self.annotation_discovery_announcement_ready()
+                    .then(Instant::now),
+            )
+            .min()
+    }
+
+    pub(super) fn annotation_transfer_available(&self) -> bool {
+        let Some(candidate) = &self.annotation_exchange.candidate else {
+            return false;
+        };
+        self.annotation_exchange.settings.folder.is_none()
+            && self.annotation_exchange.settings.device == candidate.device
+            && self
+                .current_document()
+                .is_some_and(|(entry, id)| id == candidate.book && entry.path == candidate.path)
+            && self.library.state(candidate.book).is_some_and(|state| {
+                state.annotation_exchange_digest.as_deref() != Some(candidate.digest.as_str())
+            })
+    }
+
+    fn annotation_discovery_announcement_ready(&self) -> bool {
+        self.stats_awake
+            && self.annotation_transfer_available()
+            && self.notice.is_none()
+            && self.notifications.deadline().is_none()
+            && matches!(self.screen, Screen::Book | Screen::Fixed)
+            && self
+                .annotation_exchange
+                .candidate
+                .as_ref()
+                .is_some_and(|candidate| {
+                    !self
+                        .annotation_exchange
+                        .announced
+                        .iter()
+                        .any(|(book, digest)| {
+                            *book == candidate.book && digest == &candidate.digest
+                        })
+                })
+    }
+
+    fn announce_discovered_annotation(&mut self) -> bool {
+        if !self.annotation_discovery_announcement_ready() {
+            return false;
+        }
+        let Some(candidate) = &self.annotation_exchange.candidate else {
+            return false;
+        };
+        let key = (candidate.book, candidate.digest.clone());
+        if self.annotation_exchange.announced.len() == 16 {
+            self.annotation_exchange.announced.pop_front();
+        }
+        self.annotation_exchange.announced.push_back(key);
+        let message = self
+            .controls
+            .interface_language
+            .annotation_exchange_text("Annotation transfer found · open Navigation to review")
+            .to_owned();
+        self.announce_annotation_transfer(message);
+        true
+    }
+
+    pub(super) fn poll_annotation_discovery(&mut self, now: Instant) -> Option<Change> {
+        if self.announce_discovered_annotation() {
+            return Some(Change::Partial);
+        }
+        let (request, digest) = self.annotation_exchange.discovery.poll(now)?;
+        if self.annotation_exchange.settings.folder.is_some()
+            || self.annotation_exchange.settings.device != request.device
+            || !self.current_document().is_some_and(|(entry, id)| {
+                id == request.book
+                    && entry.path == request.relative
+                    && self.fixed.is_some() == request.fixed
+            })
+            || self
+                .library
+                .state(request.book)
+                .and_then(|state| state.annotation_exchange_digest.as_ref())
+                != request.applied.as_ref()
+        {
+            return None;
+        }
+        let Some(digest) = digest else { return None };
+        self.annotation_exchange.candidate = Some(Candidate {
+            book: request.book,
+            path: request.relative,
+            digest,
+            device: request.device,
+        });
+        if self.announce_discovered_annotation() {
+            return Some(Change::Partial);
+        }
+        matches!(
+            self.screen,
+            Screen::BookTools | Screen::FixedTools | Screen::AnnotationExchange
+        )
+        .then_some(Change::Partial)
     }
 
     fn annotation_target(&self) -> io::Result<Target> {

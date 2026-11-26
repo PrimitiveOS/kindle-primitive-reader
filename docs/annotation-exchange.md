@@ -57,9 +57,7 @@ or mismatched entry is counted as unavailable and prevents removal of older
 local marks. Reader keeps page geometry, style, color and notes; it inserts its
 own newline between imported page excerpts. Multi-page transfer is an
 unverified implementation candidate, not yet compared on desktop or Kindle.
-Unsupported structural XPointers remain open. Reader previews imports on
-demand and leaves the transfer file in place. KOReader checks foreign
-transfers on open and removes the consumed file. KOReader also supports
+Unsupported structural XPointers remain open. On opening a supported EPUB, PDF or DjVu, Reader now checks the default adjacent `.sdr` folder on a bounded, cancellable background worker. A valid, different-device transfer whose exact bytes have not already been applied produces an advisory toast and a **Navigation → Review annotation transfer** action. This is only a candidate: choosing it runs the existing preview, which rechecks the book and transfer before offering any explicit import. The existing preview can still perform synchronous source and mark verification. Discovery reads at most 2 MiB, does not interrupt the transfer decoder while it is parsing, skips symlinked paths and configured alternative folders, and drops stale or cancelled results. Sleep, book changes and USB storage return cancel the scan; it restarts when appropriate. Reader never deletes the transfer as part of discovery or review. Automatic merging and consuming the file remain open; KOReader checks foreign transfers on open and removes the consumed file. KOReader also supports
 other global metadata folder policies. [Stock source for export paths, dates and merge](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerannotation.lua#L250-L333) · [Stock settings](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerbookmark.lua#L263-L301)
 
 ## Mac comparison

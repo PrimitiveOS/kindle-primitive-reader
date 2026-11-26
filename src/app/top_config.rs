@@ -71,6 +71,15 @@ impl Reader {
         } else {
             return items;
         };
+        if self.annotation_transfer_available() {
+            items.insert(
+                0,
+                Item::new(
+                    "Review annotation transfer",
+                    Action::AnnotationExchange(super::annotation_exchange::Command::Preview),
+                ),
+            );
+        }
         items.extend([
             Item::new("Bookmarks", Action::Show(bookmarks)),
             Item::new("Contents settings", Action::Show(Screen::ContentsSettings)),

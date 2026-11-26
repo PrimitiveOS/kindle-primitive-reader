@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 // Names originate only from Reader's top Navigation group. The paired English
 // strings are also search aliases; no title supplied by a document belongs here.
 const NAVIGATION_LABELS: &[(&str, &str)] = &[
+    ("Review annotation transfer", "Xem bản chuyển chú thích"),
     ("Contents", "Mục lục"),
     ("Bookmarks", "Dấu trang"),
     ("Contents settings", "Cài đặt mục lục"),
@@ -2019,6 +2020,10 @@ const HISTORY_CALENDAR_LABELS: &[(&str, &str)] = &[
 
 // Annotation-transfer settings only; folder paths and import previews stay untouched.
 const ANNOTATION_EXCHANGE_LABELS: &[(&str, &str)] = &[
+    (
+        "Annotation transfer found · open Navigation to review",
+        "Đã tìm thấy bản chuyển chú thích · mở Điều hướng để xem",
+    ),
     (
         "Export annotations on book closing",
         "Xuất chú thích khi đóng sách",

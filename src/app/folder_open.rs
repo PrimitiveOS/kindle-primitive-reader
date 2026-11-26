@@ -222,6 +222,7 @@ impl Reader {
             || matches!(input, Input::Tap(x, y) if cancel.contains(x, y))
         {
             self.cancel_folder_open();
+            self.start_annotation_discovery();
             return Some(Change::Partial);
         }
         Some(Change::None)
@@ -244,6 +245,7 @@ impl Reader {
         };
         if self.screen != pending.screen {
             self.metadata_archive.abandon_archive_consumption();
+            self.start_annotation_discovery();
             return None;
         }
         let entry = pending.entry.clone();
@@ -254,12 +256,14 @@ impl Reader {
             .is_some_and(|mark| !mark.matches(&self.library))
         {
             self.metadata_archive.abandon_archive_consumption();
+            self.start_annotation_discovery();
             return Some(self.report("The saved mark changed while opening"));
         }
         if let Some(proof) = proof {
             let id = proof.legacy_identity();
             if chapter.as_ref().is_some_and(|chapter| chapter.book != id) {
                 self.metadata_archive.abandon_archive_consumption();
+                self.start_annotation_discovery();
                 return Some(
                     self.report("The folder edition changed; the selected chapter was not opened"),
                 );
@@ -270,6 +274,7 @@ impl Reader {
         }
         if (mark.is_some() || chapter.is_some()) && self.pending_folder_snapshot.is_none() {
             self.metadata_archive.abandon_archive_consumption();
+            self.start_annotation_discovery();
             return Some(self.report("The folder book could not be verified; saved data was kept"));
         }
         self.pending_folder_mark = mark;

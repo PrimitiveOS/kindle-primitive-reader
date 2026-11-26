@@ -1565,6 +1565,7 @@ impl Reader {
             if self.folder_open.is_some() {
                 if let Err(error) = self.attach_folder_open_chapter(chapter, path) {
                     self.cancel_folder_open();
+                    self.start_annotation_discovery();
                     return Err(error);
                 }
                 return Ok(());
@@ -1593,8 +1594,26 @@ impl Reader {
         password: Option<&str>,
         check_archive: bool,
     ) -> Result<()> {
-        if password.is_none() && self.maybe_start_folder_open(&entry, check_archive)? {
-            return Ok(());
+        let previous_document = self
+            .current_document()
+            .map(|(current, id)| (current.path.clone(), id));
+        let switching = previous_document
+            .as_ref()
+            .is_some_and(|(path, _)| *path != entry.path);
+        if switching {
+            self.pause_annotation_discovery();
+        }
+        if password.is_none() {
+            match self.maybe_start_folder_open(&entry, check_archive) {
+                Ok(true) => return Ok(()),
+                Ok(false) => {}
+                Err(error) => {
+                    if switching {
+                        self.start_annotation_discovery();
+                    }
+                    return Err(error);
+                }
+            }
         }
         if check_archive && password.is_none() {
             self.metadata_archive.abandon_archive_consumption();
@@ -1602,6 +1621,15 @@ impl Reader {
         let opened = self.open_with_archive_check(entry, password, check_archive);
         if self.folder_open.is_some() {
             return opened;
+        }
+        if switching
+            && self.current_document().is_some_and(|(current, id)| {
+                previous_document
+                    .as_ref()
+                    .is_some_and(|(path, previous)| current.path == *path && id == *previous)
+            })
+        {
+            self.start_annotation_discovery();
         }
         if opened.is_ok() {
             self.complete_archive_consumption();
@@ -1924,6 +1952,7 @@ impl Reader {
                 self.library.cache_author(id, fixed.entry.author.as_deref());
             }
             self.library.request_live_metadata(id);
+            self.start_annotation_discovery();
             return Ok(());
         }
         if unseen
@@ -2209,6 +2238,7 @@ impl Reader {
                 .cache_author(active.id, active.reading.probe.author.as_deref());
         }
         self.library.request_live_metadata(id);
+        self.start_annotation_discovery();
         if let Some(previous) = deferred_mark_origin {
             self.record_position();
             self.push_history(previous);
@@ -6264,6 +6294,7 @@ impl Reader {
     }
 
     fn close_book_to_library(&mut self) {
+        self.cancel_annotation_discovery();
         self.eager_typography.cancel();
         self.closing_profile = None;
         self.closing_before_switch = None;
@@ -10710,6 +10741,7 @@ impl App for Reader {
 
     fn input(&mut self, input: Input) -> Change {
         if input == Input::Sleep {
+            self.cancel_annotation_discovery();
             self.cancel_note_verification();
         }
         if !matches!(input, Input::Sleep | Input::Wake)
@@ -10880,6 +10912,7 @@ impl App for Reader {
             }
             if input == Input::Wake && storage_available {
                 self.resume_page_marks();
+                self.start_annotation_discovery();
             }
             let progress_changed = if input == Input::Wake {
                 self.reset_footer_initial_position();
@@ -11589,6 +11622,7 @@ impl App for Reader {
             .chain(self.screen_page_worker.deadline(screen_pages))
             .chain(self.quote_repair_deadline())
             .chain(self.notifications.deadline())
+            .chain(self.annotation_discovery_deadline())
             .chain(self.eager_font_deadline())
             .chain(self.embedded_font_report_deadline())
             .chain(self.export_deadline())
@@ -11685,6 +11719,9 @@ impl App for Reader {
         }
         self.retry_folder_activation(now);
         if let Some(change) = self.poll_folder_activation(now) {
+            return change;
+        }
+        if let Some(change) = self.poll_annotation_discovery(now) {
             return change;
         }
         if let Some(change) = self.poll_note_verification(now) {
@@ -11939,6 +11976,7 @@ impl App for Reader {
     }
 
     fn save(&mut self) -> io::Result<()> {
+        self.cancel_annotation_discovery();
         self.cancel_folder_open();
         self.folder_activation = None;
         self.folder_activation_retry = None;
@@ -11978,6 +12016,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.cancel_annotation_discovery();
         self.nearby.cancel_page_marks();
         self.cancel_note_verification();
         self.bookmark_focus = None;

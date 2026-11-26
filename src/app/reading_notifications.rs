@@ -113,6 +113,11 @@ impl Notifications {
 }
 
 impl Reader {
+    /// A one-shot advisory, separate from optional reading-control feedback.
+    pub(super) fn announce_annotation_transfer(&mut self, message: String) {
+        self.notifications.show(message, Instant::now());
+    }
+
     pub(super) fn notify_reading(&mut self, source: Source, message: impl Into<String>) -> bool {
         if source.enabled(self.controls.notification_sources) {
             self.notifications.show(message.into(), Instant::now());

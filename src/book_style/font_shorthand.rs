@@ -2,6 +2,7 @@
 use super::{
     CssResult, Family, FontStyle, FontWeight, GenericFamily, LigatureExtras, ParseError, Parser,
     Property, Size, Token, VariantCaps, VariantEastAsian, VariantNumeric, VariantPosition, Weight,
+    parse_line_height,
 };
 use std::sync::Arc;
 
@@ -130,20 +131,9 @@ pub(super) fn parse(input: &mut Parser<'_>) -> CssResult<Vec<Property>> {
         }
     };
     let line_height = if input.try_parse(|p| p.expect_delim('/')).is_ok() {
-        if input
-            .try_parse(|p| p.expect_ident_matching("normal"))
-            .is_ok()
-        {
-            None
-        } else {
-            let number = input.expect_number()?;
-            if !(1.0..=3.0).contains(&number) {
-                return Err(ParseError::unexpected_token());
-            }
-            Some(number)
-        }
+        parse_line_height(input)?
     } else {
-        None
+        Property::LineHeight(None)
     };
     let families: Vec<Family> = input.parse_comma_separated(family)?;
     if families.is_empty() || families.len() > 16 {
@@ -153,7 +143,7 @@ pub(super) fn parse(input: &mut Parser<'_>) -> CssResult<Vec<Property>> {
         Property::Slant(slant.unwrap_or(FontStyle::Normal)),
         Property::Weight(weight.unwrap_or(Weight::Fixed(FontWeight::NORMAL))),
         Property::Size(size),
-        Property::LineHeight(line_height),
+        line_height,
         Property::Family(families),
         Property::CommonLigatures(true),
         Property::LigatureExtras(LigatureExtras::default()),

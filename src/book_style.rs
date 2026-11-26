@@ -3508,75 +3508,7 @@ impl<'i> DeclarationParser<'i> for Properties {
                         _ => return Err(ParseError::unexpected_token()),
                     })
                 }
-                "line-height" => {
-                    if input
-                        .try_parse(|input| input.expect_ident_matching("normal"))
-                        .is_ok()
-                    {
-                        Property::LineHeight(None)
-                    } else {
-                        let before = input.state();
-                        let length = match input.next()?.clone() {
-                            Token::Percentage { unit_value, .. }
-                                if (0.0..=8.0).contains(&unit_value) =>
-                            {
-                                Some(LineHeightLength::Relative(unit_value))
-                            }
-                            Token::Dimension { value, unit, .. }
-                                if unit.eq_ignore_ascii_case("em")
-                                    && (0.0..=8.0).contains(&value) =>
-                            {
-                                Some(LineHeightLength::Relative(value))
-                            }
-                            Token::Dimension { value, unit, .. }
-                                if unit.eq_ignore_ascii_case("rem")
-                                    && (0.0..=8.0).contains(&value) =>
-                            {
-                                Some(LineHeightLength::DefaultFont(value))
-                            }
-                            Token::Dimension { value, unit, .. }
-                                if (unit.eq_ignore_ascii_case("ex")
-                                    || unit.eq_ignore_ascii_case("ch"))
-                                    && (0.0..=16.0).contains(&value) =>
-                            {
-                                Some(LineHeightLength::Relative(value * 0.5))
-                            }
-                            Token::Dimension { value, unit, .. }
-                                if unit.eq_ignore_ascii_case("px")
-                                    && (0.0..=4096.0).contains(&value) =>
-                            {
-                                Some(LineHeightLength::Pixels(value))
-                            }
-                            Token::Dimension { value, unit, .. }
-                                if value.is_finite() && value >= 0.0 =>
-                            {
-                                let px_per_unit = match unit.to_ascii_lowercase().as_str() {
-                                    "pt" => 96.0 / 72.0,
-                                    "pc" => 16.0,
-                                    "in" => 96.0,
-                                    "cm" => 96.0 / 2.54,
-                                    "mm" => 96.0 / 25.4,
-                                    "q" => 96.0 / 101.6,
-                                    _ => 0.0,
-                                };
-                                let px = value * px_per_unit;
-                                (px_per_unit > 0.0 && (0.0..=4096.0).contains(&px))
-                                    .then_some(LineHeightLength::Physical(px))
-                            }
-                            _ => None,
-                        };
-                        if let Some(length) = length {
-                            Property::LengthLineHeight(length)
-                        } else {
-                            input.reset(&before);
-                            let height = input.expect_number()?;
-                            if !(1.0..=3.0).contains(&height) {
-                                return Err(ParseError::unexpected_token());
-                            }
-                            Property::LineHeight(Some(height))
-                        }
-                    }
-                }
+                "line-height" => parse_line_height(input)?,
                 "list-style-type" | "list-style" => {
                     let mut marker = None;
                     while !input.is_exhausted() {
@@ -3970,6 +3902,70 @@ fn font_family<'i>(input: &mut Parser<'i>) -> CssResult<Family> {
         return Err(ParseError::unexpected_token());
     }
     Ok(GenericFamily::parse(&name).map_or_else(|| Family::Named(Arc::from(name)), Family::Generic))
+}
+
+fn parse_line_height(input: &mut Parser<'_>) -> CssResult<Property> {
+    Ok({
+        if input
+            .try_parse(|input| input.expect_ident_matching("normal"))
+            .is_ok()
+        {
+            Property::LineHeight(None)
+        } else {
+            let before = input.state();
+            let length = match input.next()?.clone() {
+                Token::Percentage { unit_value, .. } if (0.0..=8.0).contains(&unit_value) => {
+                    Some(LineHeightLength::Relative(unit_value))
+                }
+                Token::Dimension { value, unit, .. }
+                    if unit.eq_ignore_ascii_case("em") && (0.0..=8.0).contains(&value) =>
+                {
+                    Some(LineHeightLength::Relative(value))
+                }
+                Token::Dimension { value, unit, .. }
+                    if unit.eq_ignore_ascii_case("rem") && (0.0..=8.0).contains(&value) =>
+                {
+                    Some(LineHeightLength::DefaultFont(value))
+                }
+                Token::Dimension { value, unit, .. }
+                    if (unit.eq_ignore_ascii_case("ex") || unit.eq_ignore_ascii_case("ch"))
+                        && (0.0..=16.0).contains(&value) =>
+                {
+                    Some(LineHeightLength::Relative(value * 0.5))
+                }
+                Token::Dimension { value, unit, .. }
+                    if unit.eq_ignore_ascii_case("px") && (0.0..=4096.0).contains(&value) =>
+                {
+                    Some(LineHeightLength::Pixels(value))
+                }
+                Token::Dimension { value, unit, .. } if value.is_finite() && value >= 0.0 => {
+                    let px_per_unit = match unit.to_ascii_lowercase().as_str() {
+                        "pt" => 96.0 / 72.0,
+                        "pc" => 16.0,
+                        "in" => 96.0,
+                        "cm" => 96.0 / 2.54,
+                        "mm" => 96.0 / 25.4,
+                        "q" => 96.0 / 101.6,
+                        _ => 0.0,
+                    };
+                    let px = value * px_per_unit;
+                    (px_per_unit > 0.0 && (0.0..=4096.0).contains(&px))
+                        .then_some(LineHeightLength::Physical(px))
+                }
+                _ => None,
+            };
+            if let Some(length) = length {
+                Property::LengthLineHeight(length)
+            } else {
+                input.reset(&before);
+                let height = input.expect_number()?;
+                if !(1.0..=3.0).contains(&height) {
+                    return Err(ParseError::unexpected_token());
+                }
+                Property::LineHeight(Some(height))
+            }
+        }
+    })
 }
 
 fn font_url<'i>(input: &mut Parser<'i>) -> CssResult<String> {

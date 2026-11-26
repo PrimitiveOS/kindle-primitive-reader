@@ -302,6 +302,7 @@ impl Reader {
         self.save()?;
         with_storage(|| self.library.scan())?;
         self.refresh_browser()?;
+        self.start_annotation_discovery();
         if self.screen == Screen::PageOverview {
             self.start_overview_raw_verification();
         }

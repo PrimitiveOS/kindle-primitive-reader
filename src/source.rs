@@ -391,11 +391,13 @@ fn fragment_ids<'a>(
     node: Node<'a, '_>,
     navigation: &'a HashMap<NodeId, String>,
     legacy_names: &'a HashMap<NodeId, String>,
+    xml_ids: &'a HashMap<NodeId, String>,
 ) -> impl Iterator<Item = &'a str> {
     node.attribute("id")
         .into_iter()
         .chain(navigation.get(&node.id()).map(String::as_str))
         .chain(legacy_names.get(&node.id()).map(String::as_str))
+        .chain(xml_ids.get(&node.id()).map(String::as_str))
 }
 
 impl Source {
@@ -730,10 +732,14 @@ impl Source {
         let mut legacy_names = HashMap::new();
         let mut budget = 0usize;
         let mut complete = true;
-        if body
+        let has_legacy_names = body
             .descendants()
-            .any(|node| node.has_tag_name("a") && node.has_attribute("name"))
-        {
+            .any(|node| node.has_tag_name("a") && node.has_attribute("name"));
+        let has_xml_ids = root
+            .descendants()
+            .filter(Node::is_element)
+            .any(|node| node.attribute((XML_NAMESPACE, "id")).is_some());
+        if has_legacy_names || has_xml_ids {
             for id in root
                 .descendants()
                 .filter(Node::is_element)
@@ -784,6 +790,46 @@ impl Source {
             }
             legacy_bytes += name.len();
             legacy_names.insert(node.id(), name.to_owned());
+        }
+        // Existing unqualified IDs, legacy named anchors and Kindle targets
+        // remain authoritative. Only unique, bounded xml:id values become
+        // additional destinations; neither source text nor block keys change.
+        let mut xml_ids = HashMap::new();
+        if has_xml_ids && complete {
+            let accepted_names: HashSet<&str> = legacy_names.values().map(String::as_str).collect();
+            let mut counts: HashMap<&str, usize> = HashMap::new();
+            let mut xml_budget = 0usize;
+            let mut xml_complete = true;
+            for id in root
+                .descendants()
+                .filter(Node::is_element)
+                .filter_map(|node| node.attribute((XML_NAMESPACE, "id")))
+            {
+                xml_budget = xml_budget.saturating_add(id.len());
+                if xml_budget > 128 * 1024 || counts.len() >= 8_192 {
+                    xml_complete = false;
+                    break;
+                }
+                *counts.entry(id).or_default() += 1;
+            }
+            if xml_complete {
+                for node in root.descendants().filter(Node::is_element) {
+                    let Some(id) = node.attribute((XML_NAMESPACE, "id")) else {
+                        continue;
+                    };
+                    if id.is_empty()
+                        || id.len() > 512
+                        || id.chars().any(char::is_control)
+                        || id.starts_with("mobi-shadow-text-")
+                        || existing_ids.contains(id)
+                        || accepted_names.contains(id)
+                        || counts.get(id) != Some(&1)
+                    {
+                        continue;
+                    }
+                    xml_ids.insert(node.id(), id.to_owned());
+                }
+            }
         }
         let mut elements: Vec<Element> = Vec::new();
         let mut element_ids = HashMap::new();
@@ -1100,7 +1146,7 @@ impl Source {
                         pseudo_edges.open(raw.end, at, host);
                     }
                 }
-                for id in fragment_ids(descendant, &navigation_ids, &legacy_names) {
+                for id in fragment_ids(descendant, &navigation_ids, &legacy_names, &xml_ids) {
                     ids.push((
                         id,
                         text.len()
@@ -1354,7 +1400,7 @@ impl Source {
             }
             if !text.is_empty() || !images.is_empty() {
                 for parent in node.ancestors().skip(1) {
-                    for id in fragment_ids(parent, &navigation_ids, &legacy_names) {
+                    for id in fragment_ids(parent, &navigation_ids, &legacy_names, &xml_ids) {
                         if let std::collections::btree_map::Entry::Vacant(entry) =
                             fragments.entry(id.to_owned())
                         {
@@ -1447,7 +1493,7 @@ impl Source {
             if !element_ids.contains_key(&anchor.id()) {
                 continue;
             }
-            for id in fragment_ids(anchor, &navigation_ids, &legacy_names) {
+            for id in fragment_ids(anchor, &navigation_ids, &legacy_names, &xml_ids) {
                 if fragments.contains_key(id) {
                     continue;
                 }
