@@ -247,6 +247,18 @@ impl Reader {
         } else {
             Reading::open(config)?
         };
+        if let Some(anchor) = recovery
+            .position
+            .as_ref()
+            .and_then(|saved| saved.anchor.as_ref())
+            && (!candidate.probe.saved_anchor_is_valid(anchor)
+                || candidate.anchor().as_ref() != Some(anchor))
+        {
+            return Err(
+                "The saved reading position could not be kept. The saved position was not changed."
+                    .into(),
+            );
+        }
         if with_storage(|| self.library.identify(&recovery.entry))? != recovery.id {
             return Err("The document edition changed while resetting text".into());
         }
@@ -281,6 +293,7 @@ impl Reader {
             position(&candidate),
             top_status_header,
         )?;
+        self.clear_opened_book_transients();
         let closing_warning = self.finish_before_switch(recovery.id);
         self.fixed = None;
         self.footnote = None;

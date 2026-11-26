@@ -291,7 +291,13 @@ impl Reader {
                     .ok_or("The saved page could not be resolved to a source position")?;
                 &legacy_anchor
             };
-            Reading::restore(config, saved.chapter, saved.page, Some(anchor))?
+            let restored = Reading::restore(config, saved.chapter, saved.page, Some(anchor))?;
+            if !restored.probe.saved_anchor_is_valid(anchor)
+                || restored.anchor().as_ref() != Some(anchor)
+            {
+                return Err("This profile could not keep the saved reading position".into());
+            }
+            restored
         } else {
             Reading::open(config)?
         };

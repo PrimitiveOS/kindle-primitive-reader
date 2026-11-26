@@ -28,7 +28,7 @@ fn cancelled(flag: &AtomicBool) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-fn open_file(root: &Path, path: &Path) -> io::Result<File> {
+pub(in crate::app) fn open_file(root: &Path, path: &Path) -> io::Result<File> {
     use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::ffi::OsStrExt;
@@ -71,7 +71,7 @@ fn open_file(root: &Path, path: &Path) -> io::Result<File> {
 }
 
 #[cfg(not(unix))]
-fn open_file(_root: &Path, _path: &Path) -> io::Result<File> {
+pub(in crate::app) fn open_file(_root: &Path, _path: &Path) -> io::Result<File> {
     Err(io::Error::other(
         "EPUB verification is unavailable on this platform",
     ))

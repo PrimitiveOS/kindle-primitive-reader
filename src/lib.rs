@@ -2691,6 +2691,19 @@ impl Probe {
         })
     }
 
+    /// Validate the saved source location without requiring CSS-visible text.
+    pub(crate) fn saved_anchor_is_valid(&self, anchor: &Anchor) -> bool {
+        if anchor.raw_caret.is_some() {
+            return anchor.illustration.is_none() && self.page_for(anchor).is_some();
+        }
+        let Some((index, offset)) = self.project_anchor(anchor) else {
+            return false;
+        };
+        anchor
+            .illustration
+            .is_none_or(|ordinal| offset == 0 && ordinal < self.source.blocks[index].images.len())
+    }
+
     fn project_anchor(&self, anchor: &Anchor) -> Option<(usize, usize)> {
         if anchor.raw_caret.is_some() || self.book != anchor.book || self.chapter != anchor.chapter
         {

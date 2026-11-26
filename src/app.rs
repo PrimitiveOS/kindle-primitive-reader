@@ -1643,6 +1643,21 @@ impl Reader {
         opened
     }
 
+    /// Retire the outgoing document's transient controls only after the next
+    /// document has been prepared and its saved position verified.
+    fn clear_opened_book_transients(&mut self) {
+        self.locked = None;
+        self.numbering_scan = None;
+        self.touch_locked = false;
+        self.ocr = None;
+        self.hits.clear();
+        self.pdf_hits.clear();
+        self.search_results_navigation = Default::default();
+        self.cancel_search();
+        self.search_result = None;
+        self.result_selection = None;
+    }
+
     fn open_with_archive_check(
         &mut self,
         mut entry: LibraryBook,
@@ -1834,16 +1849,6 @@ impl Reader {
             let prepared = reading.prepare_viewport(self.reading_viewport())?;
             reading.commit_viewport(prepared)?;
         }
-        self.locked = None;
-        self.numbering_scan = None;
-        self.touch_locked = false;
-        self.ocr = None;
-        self.hits.clear();
-        self.pdf_hits.clear();
-        self.search_results_navigation = Default::default();
-        self.cancel_search();
-        self.search_result = None;
-        self.result_selection = None;
         let local_minute = self.profile_opening_minute();
         if let Some(mut reading) = fixed {
             if fixed_preferences.semi_auto_crop && !fixed_preferences.continuous {
@@ -1920,6 +1925,7 @@ impl Reader {
             }
             entry.author = reading.author();
             self.save_library()?;
+            self.clear_opened_book_transients();
             let closing_warning = self.finish_before_switch(id);
             self.pending_orientation = None;
             self.install_opening_profile_plan(opening);
@@ -2088,7 +2094,8 @@ impl Reader {
                 Reading::open(control)?
             };
             if let Some(anchor) = position.as_ref().and_then(|saved| saved.anchor.as_ref())
-                && checked.probe.restore_anchor(anchor).is_none()
+                && (!checked.probe.saved_anchor_is_valid(anchor)
+                    || checked.anchor().as_ref() != Some(anchor))
             {
                 return Err(io::Error::other(
                     "The saved source anchor is unavailable; this is not a font-fit error",
@@ -2111,29 +2118,39 @@ impl Reader {
         let (mut reading, preferences) = if let Some((reading, preferences)) = automatic {
             (reading, Some(preferences))
         } else {
-            let reading = if let Some(position) = position {
-                let restored = Reading::restore(
+            let reading = if let Some(position) = &position {
+                Reading::restore(
                     config.clone(),
                     position.chapter,
                     position.page,
                     position.anchor.as_ref(),
-                );
-                if split_odt || raw_resume {
-                    restored?
-                } else {
-                    restored.or_else(|_| Reading::open(config))?
-                }
+                )
+                .map_err(|error| {
+                    format!("The saved reading position could not be opened. The saved position was kept; check the book and reading settings, then try again. {error}")
+                })?
             } else {
                 Reading::open(config)?
             };
             (reading, unseen.then_some(initial_preferences))
         };
+        if let Some(anchor) = position.as_ref().and_then(|saved| saved.anchor.as_ref())
+            && (!reading.probe.saved_anchor_is_valid(anchor)
+                || reading.anchor().as_ref() != Some(anchor))
+        {
+            return Err("The saved reading position could not be resolved. The saved position was kept; check the book and reading settings, then try again.".into());
+        }
         reading.set_status_header_height(crate::reading_controls::TopHeader::height(
             top_status_header,
             reading.is_continuous(),
         ))?;
         if opening.is_some() && reading.config.viewport != self.opening_display_viewport() {
             reading = reading.prepare_viewport(self.opening_display_viewport())?;
+        }
+        if let Some(anchor) = position.as_ref().and_then(|saved| saved.anchor.as_ref())
+            && (!reading.probe.saved_anchor_is_valid(anchor)
+                || reading.anchor().as_ref() != Some(anchor))
+        {
+            return Err("The saved reading position could not be kept in this layout. The saved position was kept; check the book and reading settings, then try again.".into());
         }
         let deferred_mark_origin = if let Some(mark) = &self.pending_folder_mark {
             if self.pending_folder_chapter.is_some() {
@@ -2179,6 +2196,7 @@ impl Reader {
         } else {
             self.save_library()?;
         }
+        self.clear_opened_book_transients();
         let closing_warning = self.finish_before_switch(id);
         self.pages_since_refresh = 0;
         self.range_edit = None;

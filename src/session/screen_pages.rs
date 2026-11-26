@@ -25,6 +25,9 @@ pub(crate) struct ScreenPageSources {
 }
 
 impl ScreenPageSources {
+    pub(super) fn book_stamp(&self) -> FileStamp {
+        self.book.clone()
+    }
     pub(super) fn read(config: &BookConfig) -> Option<Self> {
         if (config.settings.status_header_height == 0 && !config.screen_pages.requested())
             || config.engine != Engine::Parley

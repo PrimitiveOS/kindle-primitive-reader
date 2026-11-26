@@ -247,6 +247,17 @@ pub(crate) struct PreparedFolderChapter {
 }
 
 impl SearchLayoutRecipe {
+    /// The book stamp captured with the foreground layout, when all current
+    /// publication and font stamps still match. Folder books need their own
+    /// immutable snapshot proof and never use this path.
+    pub(crate) fn verified_book_stamp(&self) -> Option<screen_pages::FileStamp> {
+        if self.folder_snapshot.is_some() || self.foreground_sources != self.current_sources {
+            return None;
+        }
+        self.foreground_sources
+            .as_ref()
+            .map(|sources| sources.book_stamp())
+    }
     pub(crate) fn open_search_book(&self, path: &Path) -> Result<Book> {
         if path != self.book.as_path() {
             return Err("The search source changed".into());

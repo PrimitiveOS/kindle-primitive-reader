@@ -505,8 +505,8 @@ The test reports aggregate counts and skips screenshot capture for private books
 # Explicit notes outside the EPUB spine
 
 An explicit EPUB noteref can open a popup for a uniquely identified local
-XHTML or HTML manifest item outside the spine. A cancellable worker reads an
-immutable ZIP snapshot, extracts the existing bounded note fragment and
+XHTML or HTML manifest item outside the spine. A cancellable worker reads a
+source-verified ZIP, extracts the existing bounded note fragment and
 prepares the popup before checking the book, fonts, reading position and
 settings again. The temporary chapter exists only inside that worker and
 popup; the book's actual spine, saved location and history are unchanged.
@@ -524,9 +524,16 @@ The backlink's mapped source offset must equal the selected reference start;
 leading whitespace inside a reference link can therefore cause a safe fallback.
 
 The candidate currently requires a verified note reference, a fragment and a local
-packaged EPUB of at most 16 MiB with a verified source and fonts. Folder EPUBs,
+packaged EPUB with a verified source and fonts. EPUBs up to 16 MiB use an
+immutable byte snapshot. Larger EPUBs up to 128 MiB use short, cancellable
+storage leases with a 32 MiB read budget, a 30-second cooperative deadline,
+and source checks against the stamp retained from the foreground layout. This
+leased path verifies file metadata and the package revision rather than hashing
+every byte; it relies on the supported single-writer storage model and cannot
+exclude an arbitrary external replacement after the final check. Folder EPUBs,
 ambiguous or non-XHTML manifest entries, damaged or missing note resources,
-oversized snapshots and unsupported source layouts retain the existing
+archives beyond the size, expansion, read or deadline bounds, and unsupported
+source layouts retain the existing
 fallback. ZIP parsing, font loading and an individual layout operation are
 not interruptible, although cancellation is checked between stages. Peak ZIP,
 font, shaping and decoded-layout memory use remains unmeasured. This

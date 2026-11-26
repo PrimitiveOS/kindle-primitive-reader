@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 
 const POLL: Duration = Duration::from_millis(100);
 const MAX_FONT_BYTES: u64 = 64 * 1024 * 1024;
+const SNAPSHOT_LIMIT: u64 = 16 * 1024 * 1024;
+const LEASE_DEADLINE: Duration = Duration::from_secs(30);
 
 struct Guard(Arc<AtomicBool>);
 impl Drop for Guard {
@@ -47,9 +49,40 @@ impl Job {
 }
 
 struct Output {
-    proof: super::super::bookmark_browser::other_epub::Proof,
+    proof: SourceProof,
     stamps: Vec<FileStamp>,
     note: Option<PreparedNote>,
+}
+
+#[derive(Clone)]
+enum SourceProof {
+    Snapshot(super::super::bookmark_browser::other_epub::Proof),
+    Leased {
+        root: PathBuf,
+        relative: PathBuf,
+        stamp: FileStamp,
+    },
+}
+
+impl SourceProof {
+    fn revalidate(&self) -> io::Result<()> {
+        match self {
+            Self::Snapshot(proof) => proof.revalidate(),
+            Self::Leased {
+                root,
+                relative,
+                stamp,
+            } => with_storage(|| {
+                let file = super::super::bookmark_browser::other_epub::open_file(root, relative)?;
+                if FileStamp::from_metadata(&file.metadata()?).as_ref() != Some(stamp) {
+                    return Err(io::Error::other(
+                        "The book changed while opening the footnote",
+                    ));
+                }
+                Ok(())
+            }),
+        }
+    }
 }
 
 struct PreparedNote {
@@ -101,6 +134,9 @@ impl Reader {
         if !recipe.has_verified_sources() {
             return false;
         }
+        let Some(book_stamp) = recipe.verified_book_stamp() else {
+            return false;
+        };
         let Some(origin) = self.current_history_location() else {
             return false;
         };
@@ -119,6 +155,7 @@ impl Reader {
         };
         let root = self.library.verification_root().to_owned();
         let relative = active.entry.path.clone();
+        let book_path = reading.config.book.clone();
         let id = active.id;
         let publication = reading.probe.book;
         let settings = reading.probe.settings;
@@ -156,36 +193,92 @@ impl Reader {
                 let result = (|| -> crate::Result<Output> {
                     check()?;
                     let stamps = with_storage(|| font_stamps(&worker_fonts, &worker_fallback))?;
-                    let (proof, bytes) =
-                        super::super::bookmark_browser::other_epub::Proof::capture(
+                    // Select the original bounded snapshot path using the
+                    // same no-follow source validation as its proof.
+                    let (size, initial_stamp) = with_storage(|| {
+                        let file = super::super::bookmark_browser::other_epub::open_file(
+                            &root, &relative,
+                        )?;
+                        let metadata = file.metadata()?;
+                        let stamp = FileStamp::from_metadata(&metadata)
+                            .ok_or_else(|| io::Error::other("The book cannot be verified"))?;
+                        Ok((metadata.len(), stamp))
+                    })?;
+                    check()?;
+                    let (proof, mut book, health) = if size <= SNAPSHOT_LIMIT {
+                        let (proof, bytes) =
+                            super::super::bookmark_browser::other_epub::Proof::capture(
+                                root,
+                                relative,
+                                id,
+                                &worker_cancelled,
+                            )?;
+                        (
+                            SourceProof::Snapshot(proof),
+                            Book::open_snapshot(bytes)?,
+                            None,
+                        )
+                    } else {
+                        if size > crate::epub::MAX_ARCHIVE
+                            || root.join(&relative) != book_path
+                            || initial_stamp != book_stamp
+                        {
+                            return Err("The book changed or exceeds the footnote limit".into());
+                        }
+                        let proof = SourceProof::Leased {
                             root,
                             relative,
-                            id,
-                            &worker_cancelled,
+                            stamp: book_stamp.clone(),
+                        };
+                        let (reader, health) = crate::epub_leased::LeasedReader::open(
+                            &book_path,
+                            book_stamp,
+                            Arc::clone(&worker_cancelled),
+                            Instant::now() + LEASE_DEADLINE,
                         )?;
+                        let archive = crate::epub_zip::open_leased(reader)?;
+                        health.check()?;
+                        let mut book =
+                            Book::from_archive(crate::epub_members::Members::Zip(archive))?;
+                        health.check()?;
+                        book.quote_prefixes = Some(Box::new(
+                            crate::book_style::pseudo::quotes::Checkpoints::snapshot(),
+                        ));
+                        (proof, book, Some(health))
+                    };
+                    let check_work = || -> crate::Result<()> {
+                        check()?;
+                        if let Some(health) = &health {
+                            health.check()?;
+                        }
+                        Ok(())
+                    };
                     // A negative note classification follows the old link
                     // path only after the same source and font checks.
                     let decline = || -> crate::Result<Output> {
-                        check()?;
+                        check_work()?;
                         if with_storage(|| font_stamps(&worker_fonts, &worker_fallback))? != stamps
                         {
                             return Err("The footnote fonts changed".into());
                         }
                         proof.revalidate()?;
-                        check()?;
+                        if let Some(health) = &health {
+                            health.verify()?;
+                        }
+                        check_work()?;
                         Ok(Output {
                             proof: proof.clone(),
                             stamps: stamps.clone(),
                             note: None,
                         })
                     };
-                    let mut book = Book::open_snapshot(bytes)?;
                     if book.revision() != publication {
                         return Err("The book changed; reopen it first".into());
                     }
                     let index = book.append_detached_note(&worker_target.path)?;
-                    check()?;
+                    check_work()?;
                     let xhtml = book.chapter(index)?;
+                    check_work()?;
                     let source = book.chapter_source(&worker_target.path, &xhtml)?;
                     let styles = crate::book_style::BookStyle::load_for_flow_with_media(
                         &mut book,
@@ -197,6 +290,7 @@ impl Reader {
                         Some(crate::book_style::MediaContext::from_settings(settings)),
                     )?
                     .compute(&source.elements);
+                    check_work()?;
                     let roots = footnotes::LayoutRoots::new(&source, &styles)
                         .ok_or("The footnote layout is unavailable")?;
                     let fragment = worker_target
@@ -245,7 +339,7 @@ impl Reader {
                             language,
                             settings.typography.respect_embedded,
                         )?;
-                        check()?;
+                        check_work()?;
                         if reference.start.revision != host.revision
                             || reference.end.revision != host.revision
                         {
@@ -278,7 +372,7 @@ impl Reader {
                         }
                         return Err("The footnote could not be extracted".into());
                     };
-                    check()?;
+                    check_work()?;
                     let mut opened = Some(book);
                     let mut preview = Probe::layout_opened_book_cancellable(
                         &mut opened,
@@ -297,18 +391,21 @@ impl Reader {
                             .map_err(Into::into)
                         },
                         false,
-                        &check,
+                        &check_work,
                     )?;
                     let frame = Footnote::frame(&mut preview, 0)?;
                     let preview = preview
                         .into_prepared_parley()
                         .ok_or("The footnote renderer is unavailable")?;
-                    check()?;
+                    check_work()?;
                     if with_storage(|| font_stamps(&worker_fonts, &worker_fallback))? != stamps {
                         return Err("The footnote fonts changed".into());
                     }
                     proof.revalidate()?;
-                    check()?;
+                    if let Some(health) = &health {
+                        health.verify()?;
+                    }
+                    check_work()?;
                     Ok(Output {
                         proof,
                         stamps,
