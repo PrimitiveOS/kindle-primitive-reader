@@ -578,6 +578,8 @@ pub(crate) struct Style {
     pub size_scale: f32,
     /// Computed publisher letter spacing, inherited independently of font size.
     pub(crate) letter_spacing: CssLength,
+    /// Computed, nonnegative publisher or user word spacing.
+    pub(crate) word_spacing: CssLength,
     pub(crate) allow_small_note_text: bool,
     pub text_rise: TextRise,
     pub decoration: TextDecoration,
@@ -663,6 +665,7 @@ impl Default for Style {
             font_weights: Arc::default(),
             size_scale: 1.0,
             letter_spacing: CssLength::default(),
+            word_spacing: CssLength::default(),
             allow_small_note_text: false,
             text_rise: TextRise::default(),
             decoration: TextDecoration::default(),
@@ -1028,6 +1031,7 @@ impl BookStyle {
         for style in &mut styles {
             style.text_indent.length = style.text_indent.length.for_dpi(dpi);
             style.letter_spacing = style.letter_spacing.for_dpi(dpi);
+            style.word_spacing = style.word_spacing.for_dpi(dpi);
             if let Some(letter) = &mut style.first_letter {
                 Arc::make_mut(letter).set_dpi(dpi);
             }
@@ -1361,6 +1365,13 @@ impl BookStyle {
                             value => value,
                         };
                         style.letter_spacing = length.computed(font, root_font);
+                    }
+                    Property::WordSpacing(length) => {
+                        let font = relative_font(style.size_scale);
+                        let root_font = result
+                            .first()
+                            .map_or(font, |root| relative_font(root.size_scale));
+                        style.word_spacing = length.unwrap_or_default().computed(font, root_font);
                     }
                     Property::Padding(side, length) => {
                         let font = relative_font(style.size_scale);
@@ -2380,7 +2391,8 @@ const TEXT_TRANSFORM: usize = 65;
 const OPTICAL_SIZING: usize = 66;
 const RUBY_POSITION: usize = 67;
 const TAB_SIZE: usize = 68;
-const CASCADE_PROPERTY_COUNT: usize = 69;
+const WORD_SPACING: usize = 69;
+const CASCADE_PROPERTY_COUNT: usize = 70;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2455,6 +2467,7 @@ fn choose<'a>(
             Property::VariantHistorical(_) => VARIANT_HISTORICAL,
             Property::Direction(_) => DIRECTION,
             Property::LetterSpacing(_) => LETTER_SPACING,
+            Property::WordSpacing(_) => WORD_SPACING,
             Property::LineBreak(_, _) => 7,
             Property::WordBreak(_) => 8,
             Property::WhiteSpace(_) => 53,
@@ -2591,6 +2604,7 @@ enum Property {
     ),
     Direction(parley::BaseDirection),
     LetterSpacing(CssLength),
+    WordSpacing(Option<CssLength>),
     TabSize(f32),
     LineBreak(Option<LineBreak>, bool),
     WordBreak(WordBreak),
@@ -3129,6 +3143,64 @@ impl<'i> DeclarationParser<'i> for Properties {
                         parse_css_length(input)?
                     };
                     Property::LetterSpacing(length)
+                }
+                "word-spacing" => {
+                    let length = if input
+                        .try_parse(|p| p.expect_ident_matching("normal"))
+                        .is_ok()
+                    {
+                        Some(CssLength::default())
+                    } else {
+                        match input.try_parse(parse_css_length) {
+                            Ok(
+                                length @ (CssLength::Em(value)
+                                | CssLength::RootEm(value)
+                                | CssLength::Pixels(value)
+                                | CssLength::Physical(value)),
+                            ) if value >= 0.0 => Some(length),
+                            Ok(_) => None,
+                            Err(_) => {
+                                // Preserve recognized but unsupported CSS
+                                // dimensions as fallback; invalid
+                                // identifiers must not win the cascade.
+                                match input.next()?.clone() {
+                                    Token::Dimension { value, unit, .. }
+                                        if value.is_finite()
+                                            && matches!(
+                                                unit.to_ascii_lowercase().as_str(),
+                                                "ch" | "ex"
+                                                    | "cap"
+                                                    | "ic"
+                                                    | "lh"
+                                                    | "rlh"
+                                                    | "vw"
+                                                    | "vh"
+                                                    | "vi"
+                                                    | "vb"
+                                                    | "vmin"
+                                                    | "vmax"
+                                                    | "svw"
+                                                    | "svh"
+                                                    | "lvw"
+                                                    | "lvh"
+                                                    | "dvw"
+                                                    | "dvh"
+                                                    | "cqw"
+                                                    | "cqh"
+                                                    | "cqi"
+                                                    | "cqb"
+                                                    | "cqmin"
+                                                    | "cqmax"
+                                            ) =>
+                                    {
+                                        None
+                                    }
+                                    _ => return Err(ParseError::unexpected_token()),
+                                }
+                            }
+                        }
+                    };
+                    Property::WordSpacing(length)
                 }
                 "caption-side" => Property::CaptionBottom(
                     match input.expect_ident()?.to_ascii_lowercase().as_str() {

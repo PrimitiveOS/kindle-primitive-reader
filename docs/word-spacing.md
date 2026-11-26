@@ -38,7 +38,7 @@ and CREngine `b32a88ffbbf505cf2ea5208c1a49002d70d3609f`.
 | `crengine/src/lvtextfm.cpp:6022–6031` | Engine bounds agree with the UI. |
 
 Reader scales each shaped ordinary space or NBSP using its selected font's
-measured advance, including its existing letter spacing. This follows the
+measured advance, including its existing letter and supported CSS word spacing. This follows the
 reference's measurement order and keeps Reader's negative-tracking extension
 within nonnegative gap bounds. It keeps the glyph outlines, source text, publication revisions and
 anchor offsets. Permitted shrink enters the greedy line fitter, including its
@@ -56,10 +56,19 @@ Parley retains floating-point geometry; CREngine uses integer pixel widths.
 This implements the percentage and bounded-fit behavior rather than asserting
 pixel identity between different shaping engines. CREngine's extra correction
 of italic run collisions and its flexible CJK punctuation are separate work.
-Reader's existing canonical extractor collapses whitespace even inside `pre`;
-this change protects the retained gaps without claiming to restore discarded
-preformatted whitespace. CSS `word-spacing` and `white-space` remain unsupported
-by the current cascade and strict user-CSS validator.
+Publisher and user CSS can additionally supply inherited, nonnegative
+`word-spacing` in supported physical or font-relative lengths, or `normal`.
+The native horizontal reflow path combines that addition with the legacy
+additive control, or applies the percentage control to the resulting space.
+Unsupported negative and percentage declarations fall back to no CSS addition
+rather than revealing an earlier declaration. CSS math and variable functions
+are ignored, so an earlier supported literal may remain effective; strict user
+CSS rejects all of those unsupported values. Pseudo-element, fixed, Blitz and vertical renderers are
+outside this bounded path. Pinned CRE's stylesheet parser does not implement
+CSS `word-spacing`, so this is a CSS compatibility extension and not a claim
+of pixel parity. Reader's separate raw-whitespace work covers a bounded set of
+preformatted EPUB content; see [preformatted whitespace](preformatted-whitespace.md).
+This CSS addition has not yet been behaviorally tested.
 
 ## Persistence and apply
 

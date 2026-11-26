@@ -4908,7 +4908,7 @@ impl Reader {
             Action::ToggleLinkPreference(setting) => self.toggle_link_preference(setting)?,
             Action::SetMenuActivation(option) => self.change_menu_activation(option)?,
             Action::Chapter(direction) => self.jump_chapter(direction)?,
-            Action::SavedMark(direction) => self.jump_saved_mark(direction, false)?,
+            Action::SavedMark(direction) => self.start_adjacent_mark_search(direction, true)?,
             Action::PageBookmark(direction) => self.start_page_bookmark_search(direction)?,
             Action::SavedMarkEdge(direction) => self.jump_saved_mark(direction, true)?,
             Action::LatestSavedMark => {

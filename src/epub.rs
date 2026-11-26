@@ -396,17 +396,29 @@ impl Book {
             .unwrap_or_default();
         if ncx.is_some() || !group_headings.is_empty() {
             let mut paths = BTreeMap::new();
-            for item in spine
-                .children()
-                .filter(|node| node.has_tag_name("itemref"))
-                .filter_map(|node| manifest.get(node.attribute("idref")?))
-            {
+            let mut reflow_paths = BTreeSet::new();
+            for reference in spine.children().filter(|node| node.has_tag_name("itemref")) {
+                let Some(item) = reference.attribute("idref").and_then(|id| manifest.get(id))
+                else {
+                    continue;
+                };
                 let path = paths
                     .entry(item.path.as_str())
                     .or_insert_with(|| (0usize, !archive.missing_after_recovery(&item.path)));
                 path.0 += 1;
+                if spine_layout(reference, default_layout).ok() == Some(false)
+                    && matches!(item.media.as_str(), "application/xhtml+xml" | "text/html")
+                {
+                    reflow_paths.insert(item.path.as_str());
+                }
             }
-            inherit_group_targets(&mut toc, &group_headings, &paths, &mut archive);
+            inherit_group_targets(
+                &mut toc,
+                &group_headings,
+                &paths,
+                &reflow_paths,
+                &mut archive,
+            );
             let has_target = |entries: &[TocEntry], print: bool| {
                 entries.iter().any(|entry| {
                     entry.destination.as_ref().is_some_and(|destination| {
@@ -1314,7 +1326,13 @@ impl Book {
             return Ok("<html><head><title>Chapter unavailable</title></head><body><h1>Chapter unavailable</h1><p>This chapter is missing from the damaged EPUB. Turn the page to continue.</p></body></html>".to_owned());
         }
         match &mut self.content {
-            Content::Archive { archive, .. } => xml_entry(archive, &chapter.href),
+            Content::Archive { archive, .. } => {
+                if self.fixed_placements.is_none() {
+                    archive_reflow_chapter(archive, &chapter.href)
+                } else {
+                    xml_entry(archive, &chapter.href)
+                }
+            }
             Content::Loose { xhtml, .. } => xhtml
                 .get(&chapter.href)
                 .cloned()
@@ -1921,6 +1939,7 @@ fn inherit_group_targets(
     entries: &mut [TocEntry],
     groups: &[usize],
     spine: &BTreeMap<&str, (usize, bool)>,
+    reflow_paths: &BTreeSet<&str>,
     archive: &mut Archive,
 ) {
     if groups.is_empty() {
@@ -1958,7 +1977,12 @@ fn inherit_group_targets(
                     return Default::default();
                 };
                 remaining -= size;
-                let Ok(xml) = xml_entry(archive, &dest.path) else {
+                let result = if reflow_paths.contains(dest.path.as_str()) {
+                    archive_reflow_chapter(archive, &dest.path)
+                } else {
+                    xml_entry(archive, &dest.path)
+                };
+                let Ok(xml) = result else {
                     return Default::default();
                 };
                 crate::source::Source::parse(&xml)
@@ -2076,6 +2100,23 @@ fn toc_entry(base: &str, href: Option<&str>, node: Node<'_, '_>, depth: usize) -
 }
 
 fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
+    xml_entry_with_declaration(archive, path, false).map(|(xml, _)| xml)
+}
+
+fn archive_reflow_chapter(archive: &mut Archive, path: &str) -> Result<String> {
+    let (xml, had_declaration) = xml_entry_with_declaration(archive, path, true)?;
+    Ok(if had_declaration {
+        xml
+    } else {
+        crate::epub_xml::recover_html_names(xml, MAX_XML)
+    })
+}
+
+fn xml_entry_with_declaration(
+    archive: &mut Archive,
+    path: &str,
+    check_declaration: bool,
+) -> Result<(String, bool)> {
     let mut bytes = read_entry(archive, path, MAX_XML)?;
     let utf32 = if bytes.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
         Some((true, 4, false))
@@ -2158,7 +2199,18 @@ fn xml_entry(archive: &mut Archive, path: &str) -> Result<String> {
             Err(error) => return Err(error.into()),
         }
     };
-    crate::epub_xml::prepare(text, MAX_XML)
+    // Check the decoded original before `prepare` masks allowed declarations.
+    // Otherwise a custom DTD name could be mistaken for a built-in HTML name.
+    let had_declaration = check_declaration
+        && (text
+            .as_bytes()
+            .windows(9)
+            .any(|bytes| bytes.eq_ignore_ascii_case(b"<!doctype"))
+            || text
+                .as_bytes()
+                .windows(8)
+                .any(|bytes| bytes.eq_ignore_ascii_case(b"<!entity")));
+    Ok((crate::epub_xml::prepare(text, MAX_XML)?, had_declaration))
 }
 
 fn decode_utf32_epub_xml(input: &[u8], little_endian: bool) -> Result<String> {

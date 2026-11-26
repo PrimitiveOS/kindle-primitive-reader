@@ -47,6 +47,14 @@ the backlog. Unit, functional, system, simulator and Kindle acceptance are
 deferred until the implementation pass is complete. Entries added during this
 pass remain unverified and are not counted as completed acceptance.
 
+Within that implementation pass, prioritize everyday EPUB and PDF opening,
+document fidelity, navigation, search, annotations and saved-position
+recovery before less common format variants and peripheral display options.
+The remaining in-scope reading features are still required; this is an
+ordering change, not a reduction in the goal. Keep implementation and release
+status visible separately so a build-only candidate is not mistaken for a
+tested or published release.
+
 ### Current implementation pass
 
 The local Reader candidate has passed Mac build-only checks. That establishes

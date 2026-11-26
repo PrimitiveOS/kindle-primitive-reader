@@ -3400,6 +3400,21 @@ fn effective_letter_spacing(style: &Style, settings: Settings) -> f32 {
     (settings.letter_spacing + publisher).max(-1.0)
 }
 
+fn effective_word_spacing(style: &Style, settings: Settings) -> f32 {
+    let publisher = style.word_spacing.pixels(0, settings.font_size);
+    let publisher = if publisher.is_finite() {
+        publisher.clamp(0.0, 128.0)
+    } else {
+        0.0
+    };
+    let legacy = if settings.percent_word_spacing.is_none() {
+        settings.word_spacing
+    } else {
+        0.0
+    };
+    legacy + publisher
+}
+
 fn optical_axes(style: &Style, settings: Settings, pixels: f32) -> Option<[FontVariation; 1]> {
     if !style.optical_sizing || settings.render_dpi < 100 || !pixels.is_finite() || pixels <= 0.0 {
         return None;
@@ -4262,6 +4277,7 @@ fn shape_paragraph(
     };
     let font_size = |style: &Style| style.font_pixels(settings);
     let letter_spacing = |style: &Style| effective_letter_spacing(style, settings);
+    let word_spacing = |style: &Style| effective_word_spacing(style, settings);
     let weight = |style: &Style| {
         FontWeight::new(crate::font_render::font_weight(
             if settings.bold_text && style.font_weight < FontWeight::BOLD {
@@ -4283,8 +4299,8 @@ fn shape_paragraph(
     if let Some(axes) = base_optical {
         builder.push_default(StyleProperty::FontVariations(axes.as_slice().into()));
     }
-    if settings.percent_word_spacing.is_none() && settings.word_spacing != 0.0 {
-        builder.push_default(StyleProperty::WordSpacing(settings.word_spacing));
+    if word_spacing(style) != 0.0 {
+        builder.push_default(StyleProperty::WordSpacing(word_spacing(style)));
     }
     if letter_spacing(style) != 0.0 {
         builder.push_default(StyleProperty::LetterSpacing(letter_spacing(style)));
@@ -4446,6 +4462,9 @@ fn shape_paragraph(
                 StyleProperty::LetterSpacing(letter_spacing(run)),
                 bytes.clone(),
             );
+        }
+        if word_spacing(run) != word_spacing(base) {
+            builder.push(StyleProperty::WordSpacing(word_spacing(run)), bytes.clone());
         }
         if run.font_weight != base.font_weight {
             builder.push(StyleProperty::FontWeight(weight(run)), bytes.clone());

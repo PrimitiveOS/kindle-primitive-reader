@@ -18,6 +18,55 @@ pub(crate) fn prepare(mut xml: String, limit: usize) -> Result<String> {
     Ok(xml)
 }
 
+/// Recover an otherwise XML-compatible HTML chapter whose publisher used
+/// built-in HTML character names without declaring an HTML doctype. This is
+/// deliberately separate from general XML and package-metadata parsing.
+pub(crate) fn recover_html_names(xml: String, limit: usize) -> String {
+    if !xml.contains('&') || xml.len() > limit {
+        return xml;
+    }
+    let options = || roxmltree::ParsingOptions {
+        nodes_limit: 100_000,
+        ..Default::default()
+    };
+    if !matches!(
+        roxmltree::Document::parse_with_options(&xml, options()),
+        Err(roxmltree::Error::UnknownEntityReference(_, _))
+    ) {
+        return xml;
+    }
+    // Never turn document-defined entities into built-in HTML names. The
+    // conservative whole-source check can also refuse declarations in comments.
+    if xml
+        .as_bytes()
+        .windows(9)
+        .any(|b| b.eq_ignore_ascii_case(b"<!doctype"))
+        || xml
+            .as_bytes()
+            .windows(8)
+            .any(|b| b.eq_ignore_ascii_case(b"<!entity"))
+    {
+        return xml;
+    }
+    let mut candidate = xml.clone();
+    if expand_html_names(&mut candidate, 0, limit, |_, _| Ok(())).is_err() || candidate == xml {
+        return xml;
+    }
+    let valid = match roxmltree::Document::parse_with_options(&candidate, options()) {
+        Ok(document)
+            if document.root_element().tag_name().name() == "html"
+                && matches!(
+                    document.root_element().tag_name().namespace(),
+                    None | Some("http://www.w3.org/1999/xhtml")
+                ) =>
+        {
+            true
+        }
+        _ => false,
+    };
+    if valid { candidate } else { xml }
+}
+
 /// Preserve all source offsets while parsing the EPUB's conventional HTML declaration.
 pub(crate) fn without_plain_doctype(xml: &str) -> std::borrow::Cow<'_, str> {
     if let Some((start, end, _)) = declaration(xml, false)

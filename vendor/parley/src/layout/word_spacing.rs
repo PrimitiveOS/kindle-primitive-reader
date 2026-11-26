@@ -59,10 +59,11 @@ impl<B: Brush> Layout<B> {
                     .get(cluster)
                     .copied()
                     .unwrap_or(Gaps::ZERO);
-                // CRE scales the measured space, whose width already includes
-                // letter spacing. Keep Reader's signed tracking extension safe.
+                // Scale the effective space including letter and CSS word
+                // spacing. Keep Reader's signed tracking extension safe.
                 let measured =
-                    atom.advance() + existing.total() + self.data.runs[index].spacing.letter;
+                    atom.advance() + existing.total() + self.data.runs[index].spacing.letter
+                        + self.data.runs[index].spacing.word;
                 let natural = measured.max(0.0);
                 let scaled = if scaling == 100 {
                     natural

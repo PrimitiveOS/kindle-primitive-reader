@@ -49,6 +49,7 @@ impl Reset {
                         | RUBY_POSITION
                         | DIRECTION
                         | LETTER_SPACING
+                        | WORD_SPACING
                         | TAB_SIZE
                         | VARIANT_CAPS
                         | VARIANT_NUMERIC
@@ -86,6 +87,7 @@ pub(super) fn reset(input: &mut Parser<'_>, name: &str) -> Option<Property> {
         "font-optical-sizing" => vec![OPTICAL_SIZING],
         "direction" => vec![DIRECTION],
         "letter-spacing" => vec![LETTER_SPACING],
+        "word-spacing" => vec![WORD_SPACING],
         "tab-size" => vec![TAB_SIZE],
         "font-variant" => vec![
             COMMON_LIGATURES,
@@ -172,6 +174,7 @@ pub(super) fn apply_reset(
         VARIANT_POSITION => style.variant_position = value.variant_position,
         VARIANT_HISTORICAL => style.variant_historical = value.variant_historical,
         LETTER_SPACING => style.letter_spacing = value.letter_spacing,
+        WORD_SPACING => style.word_spacing = value.word_spacing,
         TAB_SIZE => style.tab_size_spaces = value.tab_size_spaces,
         DIRECTION => {
             style.direction = if reset.parent(DIRECTION) {
@@ -260,6 +263,9 @@ impl<'i> DeclarationParser<'i> for StrictProperties {
         let declaration = Properties
             .parse_value(name.clone(), input, state)
             .map_err(|_| error(input, format!("Unsupported property or value: {name}")))?;
+        if matches!(declaration.property, Property::WordSpacing(None)) {
+            return Err(error(input, "Unsupported word-spacing value"));
+        }
         if matches!(
             declaration.property,
             Property::MaxHeight(ImageLength::Fraction(_))

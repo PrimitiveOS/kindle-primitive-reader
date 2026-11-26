@@ -22,6 +22,7 @@ text between the annotation's first and last page positions. Reader selects
 overlapping extracted word boxes, so the implementations need comparison on
 real documents. [KOReader annotation mapping](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerhighlight.lua#L2631-L2637) · [KOReader import](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readerhighlight.lua#L2660-L2725)
 
-This change has not yet been built, tested or compared with KOReader. Rotated
-and cropped pages, overlapping marks, scan-only pages, punctuation, and source
-PDF preservation remain verification requirements.
+This change is included in the current Mac build-only candidate. It has not
+been behaviorally tested or compared with KOReader. Rotated and cropped pages,
+overlapping marks, scan-only pages, punctuation, and source PDF preservation
+remain verification requirements.

@@ -60,6 +60,10 @@ text at its normal spacing, and gives layout, selection and painting the same
 adjusted advances. The standard alignment API keeps its upstream behavior.
 [Reader word expansion](../../docs/word-expansion.md)
 
+Reader's percentage word-space policy measures the existing CSS word-spacing
+addition alongside the glyph advance and letter spacing before scaling. The
+zero-addition path remains unchanged; behavioral validation is pending.
+
 The ranged builder also accepts an optional per-cluster spacing policy. It
 passes each shaped atom's original text, natural advance and font size to
 the caller. Extra advances are measured before wrapping and shared by line

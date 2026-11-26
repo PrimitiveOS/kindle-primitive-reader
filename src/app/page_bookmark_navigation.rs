@@ -2,7 +2,7 @@
 use super::{
     HistoryLocation, Reader, ReadingPosition, Screen, chapter_navigation::Direction, with_storage,
 };
-use crate::library::Bookmark;
+use crate::library::{BookState, Bookmark, Highlight, PdfHighlight};
 use crate::session::screen_pages::FileStamp;
 use crate::session::screen_pages::folder_sources::FolderProof;
 use crate::session::{Reading, SearchLayoutRecipe};
@@ -23,9 +23,37 @@ const TICK: Duration = Duration::from_millis(60);
 const PAINT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
+enum SavedMark {
+    Bookmark(Bookmark),
+    Reflow(Highlight),
+    Fixed(PdfHighlight),
+}
+
+#[derive(Clone)]
 struct Entry {
-    bookmark: Bookmark,
+    saved: SavedMark,
+    position: ReadingPosition,
     chapter: Option<usize>,
+}
+
+impl Entry {
+    fn matches(&self, book: &BookState, index: usize, bookmarks: usize) -> bool {
+        match &self.saved {
+            SavedMark::Bookmark(mark) => book.bookmarks.get(index) == Some(mark),
+            SavedMark::Reflow(mark) => {
+                index
+                    .checked_sub(bookmarks)
+                    .and_then(|i| book.highlights.get(i))
+                    == Some(mark)
+            }
+            SavedMark::Fixed(mark) => {
+                index
+                    .checked_sub(bookmarks)
+                    .and_then(|i| book.pdf_highlights.get(i))
+                    == Some(mark)
+            }
+        }
+    }
 }
 type Snapshot = Arc<Vec<Entry>>;
 type Candidate = (usize, ReadingPosition);
@@ -71,6 +99,9 @@ pub(super) struct Search {
     folder_prepared: Option<crate::session::PreparedFolderChapter>,
     staged: Option<Reading>,
     total: usize,
+    bookmarks_total: usize,
+    marks_total: usize,
+    include_highlights: bool,
     chapter_total: usize,
     chapter_cursor: usize,
     chapter_paths: HashMap<String, usize>,
@@ -185,7 +216,7 @@ fn worker(
         }
         let entry = &snapshot[index];
         let chapter = entry.chapter.unwrap_or(0);
-        let mut target = entry.bookmark.position.clone();
+        let mut target = entry.position.clone();
         let key = if let Some(recipe) = &recipe {
             if cached_chapter != Some(chapter) {
                 let result = if let Some(proof) = &folder {
@@ -303,6 +334,14 @@ fn report_status(reader: &mut Reader, text: &str) -> Change {
 
 impl Reader {
     pub(super) fn start_page_bookmark_search(&mut self, direction: Direction) -> crate::Result<()> {
+        self.start_adjacent_mark_search(direction, false)
+    }
+
+    pub(super) fn start_adjacent_mark_search(
+        &mut self,
+        direction: Direction,
+        include_highlights: bool,
+    ) -> crate::Result<()> {
         if self.page_bookmark_worker_busy.load(Ordering::Acquire) {
             return Err(self
                 .controls
@@ -318,12 +357,18 @@ impl Reader {
             .map_or(original.position.page, |active| {
                 active.reading.last_visible_page()
             });
-        let total = self
-            .library
-            .state(book)
-            .ok_or("This book is unavailable")?
-            .bookmarks
-            .len();
+        let state = self.library.state(book).ok_or("This book is unavailable")?;
+        let bookmarks_total = state.bookmarks.len();
+        let marks_total = if !include_highlights {
+            0
+        } else if self.fixed.is_some() {
+            state.pdf_highlights.len()
+        } else {
+            state.highlights.len()
+        };
+        let total = bookmarks_total
+            .checked_add(marks_total)
+            .ok_or("Too many saved marks")?;
         let (publication, chapter_total, recipe, fixed_pages, fixed_stamp, folder_marker) =
             if let Some(fixed) = &self.fixed {
                 let stamp = with_storage(|| {
@@ -390,6 +435,9 @@ impl Reader {
             folder_prepared: None,
             staged: None,
             total,
+            bookmarks_total,
+            marks_total,
+            include_highlights,
             chapter_total,
             chapter_cursor: 0,
             chapter_paths: HashMap::new(),
@@ -418,7 +466,11 @@ impl Reader {
         canvas.popup(panel);
         canvas.text(
             Rect::new(panel.x + 36, panel.y + 24, panel.w - 72, 64),
-            language.skim_text("Finding page bookmark"),
+            language.skim_text(if search.include_highlights {
+                "Finding saved mark"
+            } else {
+                "Finding page bookmark"
+            }),
             BODY.bold(),
         );
         let status = if language.is_english() {
@@ -473,10 +525,15 @@ impl Reader {
         if self.screen != search.screen
             || self.open_book_id() != Some(search.book)
             || self.current_history_location().as_ref() != Some(&search.original)
-            || self
-                .library
-                .state(search.book)
-                .is_none_or(|book| book.bookmarks.len() != search.total)
+            || self.library.state(search.book).is_none_or(|book| {
+                book.bookmarks.len() != search.bookmarks_total
+                    || (search.include_highlights
+                        && if search.fixed_pages.is_some() {
+                            book.pdf_highlights.len() != search.marks_total
+                        } else {
+                            book.highlights.len() != search.marks_total
+                        })
+            })
         {
             return Some(report_status(
                 self,
@@ -578,26 +635,106 @@ impl Reader {
                     return Some(report_status(self, "The book changed; try again"));
                 };
                 let end = search.cursor.saturating_add(SLICE).min(search.total);
-                for bookmark in &book.bookmarks[search.cursor..end] {
-                    let position = &bookmark.position;
-                    let extra = std::mem::size_of::<Entry>()
-                        .saturating_add(std::mem::size_of::<usize>() + 32)
-                        .saturating_add(
-                            position
-                                .anchor
-                                .as_ref()
-                                .map_or(0, |anchor| anchor.chapter.len()),
+                let overhead =
+                    std::mem::size_of::<Entry>().saturating_add(std::mem::size_of::<usize>() + 32);
+                for index in search.cursor..end {
+                    let (saved, position, extra, valid_fixed) = if index < search.bookmarks_total {
+                        let Some(mark) = book.bookmarks.get(index) else {
+                            failure = Some("Bookmarks changed; try again");
+                            break;
+                        };
+                        let anchor_bytes =
+                            mark.position.anchor.as_ref().map_or(0, |a| a.chapter.len());
+                        let bytes = anchor_bytes
+                            .saturating_mul(2)
+                            .saturating_add(mark.label.len())
+                            .saturating_add(mark.note.as_ref().map_or(0, String::len))
+                            .saturating_add(mark.chapter_title.as_ref().map_or(0, String::len));
+                        if search.bytes.saturating_add(overhead).saturating_add(bytes)
+                            > SNAPSHOT_BYTES
+                        {
+                            failure = Some("Bookmarks exceed the search memory limit");
+                            break;
+                        }
+                        (
+                            SavedMark::Bookmark(mark.clone()),
+                            mark.position.clone(),
+                            bytes,
+                            true,
                         )
-                        .saturating_add(bookmark.label.len())
-                        .saturating_add(bookmark.note.as_ref().map_or(0, String::len))
-                        .saturating_add(bookmark.chapter_title.as_ref().map_or(0, String::len));
-                    search.bytes = search.bytes.saturating_add(extra);
+                    } else if search.fixed_pages.is_some() {
+                        let Some(mark) = book.pdf_highlights.get(index - search.bookmarks_total)
+                        else {
+                            failure = Some("Saved marks changed; try again");
+                            break;
+                        };
+                        let mut bytes = mark
+                            .text
+                            .len()
+                            .saturating_add(mark.note.as_ref().map_or(0, String::len))
+                            .saturating_add(mark.chapter_title.as_ref().map_or(0, String::len))
+                            .saturating_add(std::mem::size_of_val(mark.bounds.as_slice()))
+                            .saturating_add(std::mem::size_of_val(mark.continuation.as_slice()));
+                        for part in &mark.continuation {
+                            bytes =
+                                bytes.saturating_add(std::mem::size_of_val(part.bounds.as_slice()));
+                        }
+                        if search.bytes.saturating_add(overhead).saturating_add(bytes)
+                            > SNAPSHOT_BYTES
+                        {
+                            failure = Some("Bookmarks exceed the search memory limit");
+                            break;
+                        }
+                        let valid = mark.is_valid()
+                            && mark
+                                .continuation
+                                .iter()
+                                .all(|part| part.page < search.fixed_pages.unwrap_or(0));
+                        let position = ReadingPosition {
+                            chapter: 0,
+                            page: mark.page,
+                            anchor: None,
+                        };
+                        (SavedMark::Fixed(mark.clone()), position, bytes, valid)
+                    } else {
+                        let Some(mark) = book.highlights.get(index - search.bookmarks_total) else {
+                            failure = Some("Saved marks changed; try again");
+                            break;
+                        };
+                        let anchor = &mark.selection.start;
+                        let bytes = anchor
+                            .chapter
+                            .len()
+                            .saturating_mul(2)
+                            .saturating_add(mark.selection.end.chapter.len())
+                            .saturating_add(mark.selection.text.len())
+                            .saturating_add(mark.note.as_ref().map_or(0, String::len))
+                            .saturating_add(mark.chapter_title.as_ref().map_or(0, String::len));
+                        if search.bytes.saturating_add(overhead).saturating_add(bytes)
+                            > SNAPSHOT_BYTES
+                        {
+                            failure = Some("Bookmarks exceed the search memory limit");
+                            break;
+                        }
+                        let position = ReadingPosition {
+                            chapter: 0,
+                            page: 0,
+                            anchor: Some(anchor.clone()),
+                        };
+                        (SavedMark::Reflow(mark.clone()), position, bytes, true)
+                    };
+                    search.bytes = search
+                        .bytes
+                        .saturating_add(std::mem::size_of::<Entry>())
+                        .saturating_add(std::mem::size_of::<usize>() + 32)
+                        .saturating_add(extra);
                     if search.bytes > SNAPSHOT_BYTES {
                         failure = Some("Bookmarks exceed the search memory limit");
                         break;
                     }
                     let chapter = if search.recipe.is_none() {
-                        (position.chapter == 0 && position.anchor.is_none()).then_some(0)
+                        (valid_fixed && position.chapter == 0 && position.anchor.is_none())
+                            .then_some(0)
                     } else if let Some(anchor) = &position.anchor {
                         (Some(anchor.book) == search.publication)
                             .then(|| search.chapter_paths.get(&anchor.chapter).copied())
@@ -606,7 +743,8 @@ impl Reader {
                         (position.chapter < search.chapter_total).then_some(position.chapter)
                     };
                     search.entries.push(Entry {
-                        bookmark: bookmark.clone(),
+                        saved,
+                        position,
                         chapter,
                     });
                 }
@@ -713,12 +851,10 @@ impl Reader {
                     return Some(report_status(self, "The book changed; try again"));
                 };
                 let end = search.cursor.saturating_add(SLICE).min(search.total);
-                if book.bookmarks[search.cursor..end]
-                    .iter()
-                    .zip(&snapshot[search.cursor..end])
-                    .any(|(mark, saved)| mark != &saved.bookmark)
+                if (search.cursor..end)
+                    .any(|index| !snapshot[index].matches(book, index, search.bookmarks_total))
                 {
-                    failure = Some("Bookmarks changed; try again");
+                    failure = Some("Saved marks changed; try again");
                 }
                 search.cursor = end;
                 if end == search.total && failure.is_none() {
@@ -822,9 +958,11 @@ impl Reader {
         }
         if finished {
             let Some((_, target)) = search.best.take() else {
-                let message = match search.direction {
-                    Direction::Previous => "No earlier page bookmark",
-                    Direction::Next => "No later page bookmark",
+                let message = match (search.direction, search.include_highlights) {
+                    (Direction::Previous, true) => "No earlier saved mark",
+                    (Direction::Next, true) => "No later saved mark",
+                    (Direction::Previous, false) => "No earlier page bookmark",
+                    (Direction::Next, false) => "No later page bookmark",
                 };
                 return Some(self.report(self.controls.interface_language.skim_text(message)));
             };
