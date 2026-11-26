@@ -657,15 +657,24 @@ fn run_relative(
     // source/layout before clamping to its first or last page.
     if (!forward && chapter == 0) || (forward && chapter + 1 == paths.len()) {
         let (probe, exact) = recipe.chapter_with_quote_status(chapter, cancel)?;
-        if !exact || probe.is_vertical() || probe.has_raw_layout()
-            || probe.in_page_notes.is_some() || !probe.foreign_note_bands.is_empty()
+        if !exact
+            || probe.is_vertical()
+            || probe.has_raw_layout()
+            || probe.in_page_notes.is_some()
+            || !probe.foreign_note_bands.is_empty()
             || probe.page_count() != current_count
         {
             return Err("The current chapter cannot be counted exactly".into());
         }
         let page = if forward { current_count - 1 } else { 0 };
-        let prepared = probe.into_prepared_parley().ok_or("This page cannot be prepared")?;
-        return Ok(Some(Outcome { chapter, page, prepared }));
+        let prepared = probe
+            .into_prepared_parley()
+            .ok_or("This page cannot be prepared")?;
+        return Ok(Some(Outcome {
+            chapter,
+            page,
+            prepared,
+        }));
     }
     for _ in 0..MAX_CHAPTERS {
         if cancel.load(Ordering::Relaxed) {
