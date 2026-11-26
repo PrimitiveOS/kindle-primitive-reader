@@ -63,6 +63,17 @@ pub struct PdfOutlineItem {
     pub depth: usize,
     /// Optional destination in the target page's upright, cropped point space.
     pub destination_point: Option<Point>,
+    /// Optional untransformed `/XYZ` coordinates when one or both are null.
+    pub destination_partial: Option<PartialPdfDestination>,
+}
+
+/// A PDF /XYZ location whose missing coordinates retain the current view.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PartialPdfDestination {
+    /// PDF default-user-space coordinate, or the current value if absent.
+    pub left: Option<f64>,
+    /// PDF default-user-space coordinate, or the current value if absent.
+    pub top: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,6 +94,8 @@ pub struct PdfLink {
     pub uri: Option<String>,
     /// A supported explicit destination, in the target page's upright, cropped point space.
     pub destination_point: Option<Point>,
+    /// Optional untransformed `/XYZ` coordinates when one or both are null.
+    pub destination_partial: Option<PartialPdfDestination>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -384,6 +397,46 @@ impl Pdf {
         Ok((width, height))
     }
 
+    /// Complete nullable PDF coordinates from the current visible position in
+    /// PDF user space, then convert into the target page's upright crop space.
+    pub(crate) fn complete_partial_destination(
+        &self,
+        current_page: usize,
+        current_upright: Point,
+        target_page: usize,
+        target: PartialPdfDestination,
+    ) -> Option<Point> {
+        let current = self
+            .document
+            .pages()
+            .get(current_page)?
+            .initial_transform(true)
+            .to_kurbo();
+        let target_transform = self
+            .document
+            .pages()
+            .get(target_page)?
+            .initial_transform(true)
+            .to_kurbo();
+        let determinant = current.determinant();
+        let target_determinant = target_transform.determinant();
+        if !current_upright.is_finite()
+            || !determinant.is_finite()
+            || determinant.abs() < 1e-12
+            || !target_determinant.is_finite()
+            || target_determinant.abs() < 1e-12
+        {
+            return None;
+        }
+        let old = current.inverse() * current_upright;
+        if !old.is_finite() {
+            return None;
+        }
+        let point = target_transform
+            * Point::new(target.left.unwrap_or(old.x), target.top.unwrap_or(old.y));
+        point.is_finite().then_some(point)
+    }
+
     #[cfg(feature = "kindle")]
     pub(crate) fn page_geometry(
         &self,
@@ -678,7 +731,7 @@ fn read_page_links(document: &Document, page: usize, viewport: Rect) -> Vec<PdfL
             if rect.width() <= 0.0 || rect.height() <= 0.0 {
                 return None;
             }
-            let (target, destination_point) = destinations.target(&annotation);
+            let (target, destination_point, destination_partial) = destinations.target(&annotation);
             Some(PdfLink {
                 bounds: PdfTextRect {
                     x0: (rect.x0 / viewport.width()) as f32,
@@ -693,6 +746,7 @@ fn read_page_links(document: &Document, page: usize, viewport: Rect) -> Vec<PdfL
                 },
                 target,
                 destination_point,
+                destination_partial,
             })
         })
         .collect()
@@ -759,7 +813,7 @@ fn read_outline(document: &Document) -> Vec<PdfOutlineItem> {
         else {
             continue;
         };
-        let (target, destination_point) = destinations.target(&item);
+        let (target, destination_point, destination_partial) = destinations.target(&item);
         let page = match target {
             PdfLinkTarget::Page(page) => Some(page),
             PdfLinkTarget::External | PdfLinkTarget::Unavailable => None,
@@ -769,6 +823,7 @@ fn read_outline(document: &Document) -> Vec<PdfOutlineItem> {
             page,
             depth,
             destination_point,
+            destination_partial,
         });
     }
     rows
@@ -778,6 +833,7 @@ fn read_outline(document: &Document) -> Vec<PdfOutlineItem> {
 enum DestinationPosition {
     Point(Point),
     Rectangle(Rect),
+    Partial(PartialPdfDestination),
 }
 
 #[derive(Clone, Copy)]
@@ -805,14 +861,17 @@ impl<'a> DestinationResolver<'a> {
         }
     }
 
-    fn target(&mut self, item: &Dict<'a>) -> (PdfLinkTarget, Option<Point>) {
+    fn target(
+        &mut self,
+        item: &Dict<'a>,
+    ) -> (PdfLinkTarget, Option<Point>, Option<PartialPdfDestination>) {
         let destination = if let Some(destination) = item.get(b"Dest") {
             Some(destination)
         } else if let Some(action) = item.get::<Dict<'_>>(b"A") {
             match action.get::<Name<'_>>(b"S").as_deref() {
                 Some(b"GoTo") => action.get(b"D"),
                 Some(b"URI" | b"GoToR" | b"GoToE" | b"Launch") => {
-                    return (PdfLinkTarget::External, None);
+                    return (PdfLinkTarget::External, None, None);
                 }
                 _ => None,
             }
@@ -820,7 +879,11 @@ impl<'a> DestinationResolver<'a> {
             None
         };
         let Some(target) = destination.and_then(|destination| self.resolve(&destination)) else {
-            return (PdfLinkTarget::Unavailable, None);
+            return (PdfLinkTarget::Unavailable, None, None);
+        };
+        let partial = match target.pdf_position {
+            Some(DestinationPosition::Partial(value)) => Some(value),
+            _ => None,
         };
         let upright = target.pdf_position.and_then(|position| {
             let page = self.document.pages().get(target.page)?;
@@ -831,10 +894,11 @@ impl<'a> DestinationResolver<'a> {
                     let rect = transform.transform_rect_bbox(rect);
                     Point::new(rect.x0, rect.y0)
                 }
+                DestinationPosition::Partial(_) => return None,
             };
             point.is_finite().then_some(point)
         });
-        (PdfLinkTarget::Page(target.page), upright)
+        (PdfLinkTarget::Page(target.page), upright, partial)
     }
 
     fn resolve(&mut self, destination: &Object<'a>) -> Option<PageDestination> {
@@ -933,13 +997,38 @@ fn explicit_destination(
         let kind = read()?.into_name()?;
         match kind.as_ref() {
             b"XYZ" => {
-                let point = Point::new(
-                    f64::from(read()?.into_f32()?),
-                    f64::from(read()?.into_f32()?),
-                );
-                point
-                    .is_finite()
-                    .then_some(DestinationPosition::Point(point))
+                let left = read()?;
+                let top = read()?;
+                // Keep the previously supported complete-point path unchanged.
+                if let (Some(left), Some(top)) = (left.clone().into_f32(), top.clone().into_f32()) {
+                    let point = Point::new(f64::from(left), f64::from(top));
+                    point
+                        .is_finite()
+                        .then_some(DestinationPosition::Point(point))
+                } else {
+                    let coordinate = |value: Object<'_>| -> Option<Option<f64>> {
+                        match value {
+                            Object::Null(_) => Some(None),
+                            value => {
+                                let number = f64::from(value.into_f32()?);
+                                number.is_finite().then_some(Some(number))
+                            }
+                        }
+                    };
+                    let left = coordinate(left)?;
+                    let top = coordinate(top)?;
+                    // Only null/zero zoom preserves the current zoom. Other
+                    // zooms need a separate viewport policy and stay page-only.
+                    let zoom = read()?;
+                    let same_zoom = match zoom {
+                        Object::Null(_) => true,
+                        value => value.into_f32().is_some_and(|value| value == 0.0),
+                    };
+                    same_zoom.then_some(DestinationPosition::Partial(PartialPdfDestination {
+                        left,
+                        top,
+                    }))
+                }
             }
             b"FitR" => {
                 let left = f64::from(read()?.into_f32()?);

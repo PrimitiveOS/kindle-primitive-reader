@@ -1933,6 +1933,8 @@ struct Compound {
     last_of_type: bool,
     odd_child: Option<bool>,
     odd_child_from_end: Option<bool>,
+    nth_child: Vec<(i32, i32)>,
+    nth_child_from_end: Vec<(i32, i32)>,
     relation: Relation,
 }
 
@@ -1951,6 +1953,8 @@ impl Compound {
             && !self.last_of_type
             && self.odd_child.is_none()
             && self.odd_child_from_end.is_none()
+            && self.nth_child.is_empty()
+            && self.nth_child_from_end.is_empty()
     }
 
     fn matches(&self, element: &Element) -> bool {
@@ -1970,6 +1974,14 @@ impl Compound {
                 .odd_child_from_end
                 .is_none_or(|odd| odd == element.odd_sibling_from_end)
             && self
+                .nth_child
+                .iter()
+                .all(|&formula| nth_matches(formula, element.sibling_index))
+            && self
+                .nth_child_from_end
+                .iter()
+                .all(|&formula| nth_matches(formula, element.sibling_index_from_end))
+            && self
                 .tag
                 .as_ref()
                 .is_none_or(|tag| tag.eq_ignore_ascii_case(&element.tag))
@@ -1980,6 +1992,21 @@ impl Compound {
                     .split_ascii_whitespace()
                     .any(|name| name == class)
             })
+    }
+}
+
+fn nth_matches((a, b): (i32, i32), index: usize) -> bool {
+    let Ok(index) = i64::try_from(index) else {
+        return false;
+    };
+    let Some(delta) = index.checked_sub(i64::from(b)) else {
+        return false;
+    };
+    let a = i64::from(a);
+    if a == 0 {
+        delta == 0
+    } else {
+        delta % a == 0 && delta / a >= 0
     }
 }
 
@@ -2074,40 +2101,42 @@ impl Selector {
                             compound.first_child = true;
                         }
                         Token::Function(name) if name.eq_ignore_ascii_case("nth-child") => {
-                            let odd = input.parse_nested_block(|input| {
-                                let name = input
-                                    .expect_ident()
-                                    .map_err(|_| ParseError::unexpected_token())?;
-                                if name.eq_ignore_ascii_case("odd") {
-                                    Ok(true)
-                                } else if name.eq_ignore_ascii_case("even") {
-                                    Ok(false)
-                                } else {
-                                    Err(ParseError::unexpected_token())
-                                }
+                            let formula = input.parse_nested_block(|input| {
+                                let formula = cssparser::parse_nth(input)?;
+                                input.expect_exhausted()?;
+                                Ok(formula)
                             })?;
-                            if compound.odd_child.is_some_and(|old| old != odd) {
-                                return Err(ParseError::unexpected_token());
+                            if let Some(odd) = match formula {
+                                (2, 1) => Some(true),
+                                (2, 0) => Some(false),
+                                _ => None,
+                            } {
+                                if compound.odd_child.is_some_and(|old| old != odd) {
+                                    return Err(ParseError::unexpected_token());
+                                }
+                                compound.odd_child = Some(odd);
+                            } else {
+                                compound.nth_child.push(formula);
                             }
-                            compound.odd_child = Some(odd);
                         }
                         Token::Function(name) if name.eq_ignore_ascii_case("nth-last-child") => {
-                            let odd = input.parse_nested_block(|input| {
-                                let name = input
-                                    .expect_ident()
-                                    .map_err(|_| ParseError::unexpected_token())?;
-                                if name.eq_ignore_ascii_case("odd") {
-                                    Ok(true)
-                                } else if name.eq_ignore_ascii_case("even") {
-                                    Ok(false)
-                                } else {
-                                    Err(ParseError::unexpected_token())
-                                }
+                            let formula = input.parse_nested_block(|input| {
+                                let formula = cssparser::parse_nth(input)?;
+                                input.expect_exhausted()?;
+                                Ok(formula)
                             })?;
-                            if compound.odd_child_from_end.is_some_and(|old| old != odd) {
-                                return Err(ParseError::unexpected_token());
+                            if let Some(odd) = match formula {
+                                (2, 1) => Some(true),
+                                (2, 0) => Some(false),
+                                _ => None,
+                            } {
+                                if compound.odd_child_from_end.is_some_and(|old| old != odd) {
+                                    return Err(ParseError::unexpected_token());
+                                }
+                                compound.odd_child_from_end = Some(odd);
+                            } else {
+                                compound.nth_child_from_end.push(formula);
                             }
-                            compound.odd_child_from_end = Some(odd);
                         }
                         _ => return Err(ParseError::unexpected_token()),
                     }

@@ -1039,6 +1039,8 @@ pub struct Reader {
     page_bookmark_search: Option<page_bookmark_navigation::Search>,
     bookmark_focus: Option<bookmark_browser::focus::Focus>,
     bookmark_focus_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    note_verification: Option<bookmark_browser::note_verify::Verification>,
+    note_verify_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     folder_resume_gate: Option<folder_lifecycle::Gate>,
     folder_activation: Option<folder_activation::Activation>,
     folder_activation_retry: Option<Instant>,
@@ -1327,6 +1329,8 @@ impl Reader {
             page_bookmark_search: None,
             bookmark_focus: None,
             bookmark_focus_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            note_verification: None,
+            note_verify_busy: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             folder_resume_gate: None,
             folder_activation: None,
             folder_activation_retry: None,
@@ -2206,6 +2210,7 @@ impl Reader {
         self.defer_folder_activation();
         self.page_bookmark_search = None;
         self.bookmark_focus = None;
+        self.cancel_note_verification();
         self.bookmark_browser.clear_confirmation();
         self.menu_search.clear_overlays();
         self.embedded_font_report = None;
@@ -5159,7 +5164,13 @@ impl Reader {
                     .get(index)
                     .ok_or("That outline entry is unavailable")?;
                 let page = entry.page.ok_or("That outline entry is unavailable")?;
-                let target = entry.destination_point.map(FixedJump::LinkPoint);
+                let target = self.fixed.as_ref().and_then(|fixed| {
+                    fixed.reading.pdf_destination_jump(
+                        page,
+                        entry.destination_point,
+                        entry.destination_partial,
+                    )
+                });
                 self.follow_fixed(page, target)?;
             }
             Action::Heading | Action::MultiswipePreview(_) => {}
@@ -10226,6 +10237,7 @@ impl App for Reader {
         self.draw_bookmark_confirmation(canvas);
         self.draw_page_bookmark_search(canvas);
         self.draw_bookmark_focus(canvas);
+        self.draw_note_verification(canvas);
         self.draw_folder_resume_gate(canvas);
         self.draw_folder_open(canvas);
     }
@@ -10272,6 +10284,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.note_verification_input(input) {
+            return change;
+        }
         if let Some(change) = self.bookmark_focus_input(input) {
             return change;
         }
@@ -10418,6 +10433,9 @@ impl App for Reader {
     }
 
     fn touch_pan(&mut self, pan: primitive_app::TouchPan) -> Change {
+        if self.note_verification.is_some() {
+            return Change::None;
+        }
         if self.bookmark_focus.is_some() {
             return Change::None;
         }
@@ -10564,6 +10582,14 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if input == Input::Sleep {
+            self.cancel_note_verification();
+        }
+        if !matches!(input, Input::Sleep | Input::Wake)
+            && let Some(change) = self.note_verification_input(input)
+        {
+            return change;
+        }
         if input == Input::Sleep {
             self.bookmark_focus = None;
         }
@@ -11471,6 +11497,11 @@ impl App for Reader {
                     .map(bookmark_browser::focus::Focus::deadline),
             )
             .chain(
+                self.note_verification
+                    .as_ref()
+                    .map(bookmark_browser::note_verify::Verification::deadline),
+            )
+            .chain(
                 self.page_bookmark_search
                     .as_ref()
                     .map(page_bookmark_navigation::Search::deadline),
@@ -11522,6 +11553,9 @@ impl App for Reader {
         }
         self.retry_folder_activation(now);
         if let Some(change) = self.poll_folder_activation(now) {
+            return change;
+        }
+        if let Some(change) = self.poll_note_verification(now) {
             return change;
         }
         if let Some(change) = self.poll_bookmark_focus(now) {
@@ -11788,6 +11822,7 @@ impl App for Reader {
         self.book_map_raw_counts = None;
         self.page_bookmark_search = None;
         self.bookmark_focus = None;
+        self.cancel_note_verification();
         self.embedded_font_report = None;
         self.eager_typography.cancel();
         self.screen_page_worker.cancel();
@@ -11805,6 +11840,7 @@ impl App for Reader {
     }
 
     fn storage_returned(&mut self) -> io::Result<()> {
+        self.cancel_note_verification();
         self.bookmark_focus = None;
         self.cancel_folder_open();
         self.folder_activation = None;

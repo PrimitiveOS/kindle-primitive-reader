@@ -198,6 +198,7 @@ impl FixedEpub {
             .map(|item| PdfOutlineItem {
                 title: item.label.clone(),
                 destination_point: None,
+                destination_partial: None,
                 page: item
                     .destination
                     .as_ref()

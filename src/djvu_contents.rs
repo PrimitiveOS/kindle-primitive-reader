@@ -116,6 +116,7 @@ impl Contents {
                 page,
                 depth,
                 destination_point: None,
+                destination_partial: None,
             });
         }
         outline

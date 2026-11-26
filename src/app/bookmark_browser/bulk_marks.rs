@@ -5,6 +5,7 @@ use super::{
 };
 use std::collections::BTreeSet;
 
+#[derive(Clone, PartialEq)]
 pub(super) enum Snapshot {
     Bookmark(usize, Bookmark),
     Reflow(usize, Highlight),

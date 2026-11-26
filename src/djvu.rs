@@ -229,6 +229,7 @@ impl Djvu {
                 target,
                 uri,
                 destination_point: None,
+                destination_partial: None,
             });
         }
         Ok(links)

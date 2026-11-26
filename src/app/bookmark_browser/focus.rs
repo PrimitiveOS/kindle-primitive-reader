@@ -30,7 +30,7 @@ struct Entry {
     mark: Mark,
 }
 #[derive(Clone, Copy)]
-enum Failure {
+pub(super) enum Failure {
     Changed,
     Limit,
 }
@@ -72,7 +72,7 @@ impl Focus {
 
 // Verify the complete saved quotation against the same snapshot used for the
 // focus probe. Match Reading::collect_anchored_quote's source and ODT joins.
-fn verify_cross_chapter(
+pub(super) fn verify_cross_chapter(
     recipe: &SearchLayoutRecipe,
     cancel: &AtomicBool,
     first_probe: &crate::Probe,

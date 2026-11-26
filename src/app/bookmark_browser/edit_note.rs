@@ -8,12 +8,12 @@ const COLUMNS: usize = 40;
 const LINE_HEIGHT: i32 = 48;
 
 pub(super) struct Pending {
-    book: u64,
-    key: MarkKey,
+    pub(super) book: u64,
+    pub(super) key: MarkKey,
     pub(super) title: String,
-    target: Snapshot,
+    pub(super) target: Snapshot,
     editor: Multiline,
-    desired: Option<Option<String>>,
+    pub(super) desired: Option<Option<String>>,
 }
 
 fn action_width(layout: BrowserLayout, has_quote: bool, has_paste: bool) -> i32 {
@@ -82,7 +82,10 @@ pub(super) fn open(reader: &mut Reader) -> Result<()> {
         .state(key.book)
         .ok_or("That book is unavailable")?;
     let target = Snapshot::capture(book, key.locator)?;
-    target.verify_source(reader)?;
+    let cross = super::note_verify::is_cross_chapter(&target);
+    if !cross {
+        target.verify_source(reader)?;
+    }
     let mut editor = Multiline::new(target.note().unwrap_or(""), crate::library::MAX_NOTE_BYTES);
     editor.editor.caret = editor.editor.text.len();
     let (_, rows) = text_area(BrowserLayout(reader.navigation_layout()));
@@ -96,7 +99,14 @@ pub(super) fn open(reader: &mut Reader) -> Result<()> {
         desired: None,
     });
     reader.notice = None;
-    reader.show(Screen::BookmarkBrowser(Page::EditNote));
+    if cross {
+        if let Err(error) = reader.start_note_verification(super::note_verify::Intent::Open) {
+            reader.bookmark_browser.pending_note_edit = None;
+            return Err(error);
+        }
+    } else {
+        reader.show(Screen::BookmarkBrowser(Page::EditNote));
+    }
     Ok(())
 }
 
@@ -209,6 +219,14 @@ pub(super) fn cancel(reader: &mut Reader) {
 }
 
 pub(super) fn commit(reader: &mut Reader) -> Result<()> {
+    commit_inner(reader, false)
+}
+
+pub(super) fn commit_verified(reader: &mut Reader) -> Result<()> {
+    commit_inner(reader, true)
+}
+
+fn commit_inner(reader: &mut Reader, verified_cross: bool) -> Result<()> {
     let pending = reader
         .bookmark_browser
         .pending_note_edit
@@ -233,7 +251,13 @@ pub(super) fn commit(reader: &mut Reader) -> Result<()> {
     {
         return Err("The open book changed; review the note again".into());
     }
-    pending.target.verify_source(reader)?;
+    let cross = super::note_verify::is_cross_chapter(&pending.target);
+    if cross && !verified_cross {
+        return reader.start_note_verification(super::note_verify::Intent::Save);
+    }
+    if !cross {
+        pending.target.verify_source(reader)?;
+    }
     let id = pending.book;
     let state = reader.library.state(id).ok_or("That book is unavailable")?;
     if state.title != pending.title || !pending.target.matches(state) {

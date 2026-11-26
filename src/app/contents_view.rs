@@ -282,7 +282,9 @@ impl Reader {
                                 .as_ref()
                                 .and_then(|fixed| fixed.reading.outline().get(heading.source_index))
                                 .is_some_and(|entry| {
-                                    entry.page == Some(*page) && entry.destination_point.is_some()
+                                    entry.page == Some(*page)
+                                        && (entry.destination_point.is_some()
+                                            || entry.destination_partial.is_some())
                                 });
                             if positioned {
                                 Action::FixedOutline(heading.source_index)

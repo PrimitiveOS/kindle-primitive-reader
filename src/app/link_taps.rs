@@ -375,7 +375,14 @@ impl Reader {
     pub(super) fn open_fixed_link(&mut self, link: PdfLink) -> Result<()> {
         match link.target {
             PdfLinkTarget::Page(page) => {
-                self.follow_fixed(page, link.destination_point.map(FixedJump::LinkPoint))
+                let target = self.fixed.as_ref().and_then(|fixed| {
+                    fixed.reading.pdf_destination_jump(
+                        page,
+                        link.destination_point,
+                        link.destination_partial,
+                    )
+                });
+                self.follow_fixed(page, target)
             }
             PdfLinkTarget::External => {
                 let address = link

@@ -1912,6 +1912,40 @@ impl FixedReading {
         point.is_finite().then_some(point)
     }
 
+    /// Resolve a PDF's nullable /XYZ coordinates against the current view.
+    /// Missing geometry leaves the existing page-only jump in effect.
+    pub(crate) fn pdf_destination_jump(
+        &self,
+        page: usize,
+        point: Option<Point>,
+        partial: Option<crate::fixed::PartialPdfDestination>,
+    ) -> Option<FixedJump> {
+        if let Some(point) = point {
+            return Some(FixedJump::LinkPoint(point));
+        }
+        let FixedDocument::Pdf(pdf) = &self.source else {
+            return None;
+        };
+        // Reader's zoom is fit-relative: different page dimensions or a
+        // per-page crop can change actual magnification even when the stored
+        // zoom setting is unchanged. Only position a partial /XYZ target when
+        // its effective scale is provably the current visible scale.
+        if self.view.semi_auto_crop || self.view.continuous_crop.is_some() {
+            return None;
+        }
+        let visible = self.visible.iter().find(|entry| entry.index == self.page)?;
+        let target_size = pdf.page_size(page).ok()?;
+        let target_scale = view_metrics(target_size, &self.view, self.frame_size()).scale;
+        if !target_scale.is_finite()
+            || target_scale <= 0.0
+            || target_scale.to_bits() != visible.request.scale.to_bits()
+        {
+            return None;
+        }
+        pdf.complete_partial_destination(self.page, self.history_point()?, page, partial?)
+            .map(FixedJump::LinkPoint)
+    }
+
     pub(crate) fn jump(&mut self, page: usize) -> Result<()> {
         self.jump_to(page, None)
     }

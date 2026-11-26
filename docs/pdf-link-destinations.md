@@ -13,11 +13,25 @@ The local candidate also retains a resolved `/XYZ` point or `/FitR` rectangle
 position from a PDF Contents entry. Selecting that entry uses the existing
 positioned PDF jump, including the destination page's crop and intrinsic
 rotation; a missing or unsupported position still opens the page as before.
-This does not implement automatic `/FitR` zoom, nullable `/XYZ` coordinates,
-or positional DjVu and fixed-layout EPUB outlines. Page labels, saved
+This does not implement automatic `/FitR` zoom or positional DjVu and
+fixed-layout EPUB outlines. Page labels, saved
 bookmarks and source PDF bytes are unchanged. The Contents routing and its
 interaction with zoom, rotation, reading history and scrolling remain
 behaviorally unverified on the simulator and Kindle.
+
+For PDF `/XYZ` links and Contents entries with a null left or top coordinate
+and a null or zero zoom, the candidate retains the corresponding coordinate
+from the current viewport. It converts that position from the current page's
+upright crop space to PDF user space, substitutes the specified coordinates,
+then converts them through the destination page's crop and intrinsic rotation.
+It applies the position only when the current and destination render scales
+match exactly. Per-page automatic crops, different effective page scales,
+missing viewport geometry, invalid or non-invertible transforms, unsupported
+nonzero zoom and malformed coordinates retain the existing page-only fallback.
+The fallback can still change effective magnification because Reader uses
+fit-relative zoom. Complete coordinate destinations keep their earlier
+behavior. This path has not been compared to KOReader or behaviorally verified
+with real PDFs, in the simulator or on Kindle.
 
 Pinned KOReader uses MuPDF's link resolver. The reference accepts indexed local
 pages and parses and transforms `/FitR` rectangles. Reader's source test covers

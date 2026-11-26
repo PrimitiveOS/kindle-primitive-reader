@@ -180,6 +180,8 @@ pub(crate) struct Element {
     pub previous_sibling: Option<usize>,
     pub odd_sibling: bool,
     pub odd_sibling_from_end: bool,
+    pub sibling_index: usize,
+    pub sibling_index_from_end: usize,
     pub last_child: bool,
     pub first_of_type: bool,
     pub last_of_type: bool,
@@ -760,6 +762,9 @@ impl Source {
             let odd_sibling = previous_sibling
                 .filter(|&i| !direct_row || elements[i].tag == "tr")
                 .is_none_or(|i| !elements[i].odd_sibling);
+            let sibling_index = previous_sibling
+                .filter(|&i| !direct_row || elements[i].tag == "tr")
+                .map_or(1, |i| elements[i].sibling_index.saturating_add(1));
             element_ids.insert(node.id(), elements.len());
             if extraction.origins {
                 element_origins.push(node_origins.get(&node.id()).copied());
@@ -813,6 +818,8 @@ impl Source {
                 previous_sibling,
                 odd_sibling,
                 odd_sibling_from_end: true,
+                sibling_index,
+                sibling_index_from_end: 1,
                 last_child: structural_element,
                 first_of_type,
                 last_of_type: structural_element,
@@ -833,7 +840,11 @@ impl Source {
                 let odd_from_end = next
                     .filter(|&i| !direct_row || elements[i].tag == "tr")
                     .is_none_or(|i| !elements[i].odd_sibling_from_end);
+                let index_from_end = next
+                    .filter(|&i| !direct_row || elements[i].tag == "tr")
+                    .map_or(1, |i| elements[i].sibling_index_from_end.saturating_add(1));
                 elements[index].odd_sibling_from_end = odd_from_end;
+                elements[index].sibling_index_from_end = index_from_end;
                 next = Some(index);
                 current = elements[index].previous_sibling;
             }
