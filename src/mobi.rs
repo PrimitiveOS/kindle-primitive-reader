@@ -283,7 +283,7 @@ fn decode_plain_ereader(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
         return Err(MobiError::UnsupportedCompression(compression));
     }
     // Do not silently lose linked or auxiliary reading content.
-    if [20, 22, 28, 30]
+    if [22, 28, 30]
         .into_iter()
         .any(|at| u16_at(header, at).ok() != Some(0))
     {
@@ -320,7 +320,12 @@ fn decode_plain_ereader(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
     }
     // Preserve the original output byte-for-byte for already readable plain
     // documents. Only previously rejected backslash-bearing text uses PML.
-    let (xhtml, contents) = if text.contains('\\') {
+    let image_count = usize::from(u16_at(header, 20)?);
+    let (image_names, resources) = read_ereader_images(bytes, &records, header, end, image_count)?;
+    let (xhtml, contents) = if image_count != 0 {
+        let (xhtml, rows) = ereader_pml::with_images(&text, &image_names)?;
+        (xhtml, crate::kf8::legacy_contents::Contents::from_pml(rows))
+    } else if text.contains('\\') {
         match ereader_pml::xhtml(&text) {
             Ok(xhtml) => (xhtml, Default::default()),
             Err(MobiError::InvalidText) => {
@@ -342,8 +347,77 @@ fn decode_plain_ereader(bytes: &[u8]) -> Result<MobiDocument, MobiError> {
         presentation: Presentation::default(),
         contents,
         shadow: None,
-        resources: BTreeMap::new(),
+        resources,
     })
+}
+
+/// Validate the eReader PNG resource directory before exposing any image to
+/// the PML parser. Every name and record must be unique, local and bounded.
+fn read_ereader_images(
+    bytes: &[u8],
+    records: &[usize],
+    header: &[u8],
+    first_nontext: usize,
+    count: usize,
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, Vec<u8>>), MobiError> {
+    const MAX_IMAGES: usize = 128;
+    const MAX_IMAGE_BYTES: usize = 4 * 1024 * 1024;
+    const MAX_IMAGE_TOTAL: usize = 8 * 1024 * 1024;
+    let mut names = BTreeMap::new();
+    let mut resources = BTreeMap::new();
+    if count == 0 {
+        return Ok((names, resources));
+    }
+    if count > MAX_IMAGES {
+        return Err(MobiError::TextTooLarge);
+    }
+    let first = usize::from(u16_at(header, 40)?);
+    let end = first.checked_add(count).ok_or(MobiError::InvalidHeader)?;
+    if first < first_nontext || end >= records.len() {
+        return Err(MobiError::InvalidHeader);
+    }
+    let mut total = 0usize;
+    for index in first..end {
+        let record = bytes
+            .get(records[index]..records[index + 1])
+            .ok_or(MobiError::InvalidHeader)?;
+        if record.len() <= 62 || record.get(..4) != Some(b"PNG ") {
+            return Err(MobiError::InvalidHeader);
+        }
+        let field = record.get(4..36).ok_or(MobiError::InvalidHeader)?;
+        let length = field
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(field.len());
+        if length == 0 || field[length..].iter().any(|&byte| byte != 0) {
+            return Err(MobiError::InvalidHeader);
+        }
+        let raw_name = &field[..length];
+        if !raw_name
+            .iter()
+            .all(|&byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        {
+            return Err(MobiError::InvalidHeader);
+        }
+        let source = std::str::from_utf8(raw_name).map_err(|_| MobiError::InvalidHeader)?;
+        let image = &record[62..];
+        total = total
+            .checked_add(image.len())
+            .ok_or(MobiError::TextTooLarge)?;
+        if image.len() > MAX_IMAGE_BYTES
+            || total > MAX_IMAGE_TOTAL
+            || !image.starts_with(b"\x89PNG\r\n\x1a\n")
+            || crate::epub_raster_dimensions(image).is_err()
+        {
+            return Err(MobiError::InvalidText);
+        }
+        let path = format!("pml-images/{}.png", index - first + 1);
+        if names.insert(source.to_owned(), path.clone()).is_some() {
+            return Err(MobiError::InvalidHeader);
+        }
+        resources.insert(path, image.to_vec());
+    }
+    Ok((names, resources))
 }
 
 pub(crate) fn decode_records(

@@ -328,6 +328,7 @@ fn progress_preserves_seven_civil_dates_and_deduplicates_each_totals_scope() {
             page,
             start: start.map(stamp),
             seconds,
+            reflow_chapter: None,
             id: index as u64 + 1,
         });
     }

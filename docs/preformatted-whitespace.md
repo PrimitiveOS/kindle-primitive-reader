@@ -13,7 +13,9 @@ simulator or on Kindle and must not be treated as validated or released.
 
 A snapshot is captured for direct text and a bounded set of inline elements
 when the concatenated text normalizes to the canonical block exactly. Inline
-style runs retain each source text node’s owner, including whitespace at
+links retain their existing canonical target ranges; raw glyph hits map back to
+those ranges, and whitespace without an exact mapping is not treated as a link.
+Style runs retain each source text node’s owner, including whitespace at
 inline boundaries; each run keeps its computed style and language. Hidden,
 unpainted, direction-changing or reclassified descendants, including empty
 elements and unsupported breaks, use the canonical fallback. Explicit

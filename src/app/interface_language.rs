@@ -3745,6 +3745,8 @@ impl InterfaceLanguage {
         }
         match english {
             "Book map" => "Sơ đồ sách",
+            "Includes this session" => "Có phiên này",
+            "Reading time (partial)" => "Thời gian đọc (một phần)",
             "Book map help" => "Trợ giúp sơ đồ sách",
             "Return to book" => "Về trang đọc",
             "Help" => "Trợ giúp",

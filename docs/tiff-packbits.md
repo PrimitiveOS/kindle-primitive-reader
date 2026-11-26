@@ -118,8 +118,8 @@ in TIFF byte order and resets at each row. Contiguous 16-bit grayscale can
 also include an explicitly unassociated alpha channel: samples are composited
 over white in 16-bit precision before conversion to 8-bit grayscale. The
 decoded strip and output are capped at 32 MiB; predictor history is kept
-separately per sample. Associated-alpha grayscale and non-RGB
-color modes remain unsupported. Pinned MuPDF has a 16-bit predictor path, but its
+separately per sample. Associated-alpha white-is-zero grayscale and some
+non-RGB color modes remain unsupported. Pinned MuPDF has a 16-bit predictor path, but its
 sample handling differs and exact pixel parity is unverified. This conversion has not
 been compared with KOReader or behaviorally validated on the simulator or
 Kindle. [Pinned MuPDF byte-order handling](https://github.com/ArtifexSoftware/mupdf/blob/73d3100d46d8a9ad634f6ef035bbe78f0f947886/source/fitz/load-tiff.c#L1639-L1641)
@@ -181,15 +181,23 @@ reconstructed independently for each 16-bit channel and row. Decoded strip
 plus grayscale output is limited to 32 MiB, with compressed input and the
 Deflate overflow sentinel separately bounded. This conversion is not
 color-managed and has not been compared with KOReader or behaviorally checked
-on the simulator or Kindle. Sixteen-bit associated alpha and planar RGB remain unsupported.
+on the simulator or Kindle. Planar RGB remains unsupported.
 
 Contiguous 16-bit RGB may additionally have an explicitly unassociated alpha
 sample. Reader weights the endian-aware 16-bit color samples and composites
 over white before reducing to 8-bit; horizontal predictor history stays
 independent for all four samples. Decoded strip plus output is capped at
-32 MiB. This is not color-managed, and associated alpha, planar data and
+32 MiB. This is not color-managed, and planar data and
 16-bit palette/CMYK alpha remain unsupported. This candidate has not been
 compared with KOReader or behaviorally tested in the simulator or on Kindle.
+
+The candidate also accepts explicitly associated 16-bit alpha for RGB and
+white-is-black grayscale. It composites the premultiplied grayscale value over
+white before reducing it to 8 bits, with the same strip, predictor and 32 MiB
+allocation limits. Associated white-is-zero and palette samples remain
+unsupported. This path and its treatment of malformed premultiplied values
+have not been compared with KOReader or behaviorally checked on the computer
+or Kindle.
 
 ## Process CMYK strips
 

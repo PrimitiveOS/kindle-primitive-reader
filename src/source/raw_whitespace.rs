@@ -450,6 +450,7 @@ pub(super) fn capture(
             if !matches!(
                 child.tag_name().name(),
                 "span"
+                    | "a"
                     | "b"
                     | "i"
                     | "em"

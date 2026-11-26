@@ -2792,7 +2792,15 @@ impl Reader {
             }
         }
         let history_page = page.map(|(book, page, _)| (book, page));
-        self.reading_history.set_page(history_page, now);
+        let reflow_chapter = history_page.and_then(|(id, _)| {
+            let active = self.active.as_ref().filter(|active| active.id == id)?;
+            Some(crate::reading_stats::history::ReflowChapter {
+                publication: active.reading.probe.book,
+                chapter: u32::try_from(active.reading.chapter).ok()?,
+            })
+        });
+        self.reading_history
+            .set_page_with_chapter(history_page, reflow_chapter, now);
     }
 
     fn save_library(&mut self) -> io::Result<()> {
@@ -4292,6 +4300,12 @@ impl Reader {
             &self.forward,
             self.book_map_raw_history.as_ref(),
         );
+        let (reading_time, time_incomplete) = self.reading_history.reflow_chapter_totals(
+            id,
+            reading.probe.book,
+            reading.probe.chapter_count(),
+            crate::mark_time::now(),
+        );
         reading
             .probe
             .chapter_entries()
@@ -4307,6 +4321,24 @@ impl Reader {
                         count.notes,
                         self.controls.interface_language,
                     );
+                    if let Some((seconds, this_session)) = reading_time.get(&index) {
+                        let language = self.controls.interface_language;
+                        detail.push_str(&format!(
+                            " · {} {}:{:02}:{:02}",
+                            language.book_map_text(if time_incomplete {
+                                "Reading time (partial)"
+                            } else {
+                                "Reading time"
+                            }),
+                            seconds / 3600,
+                            seconds / 60 % 60,
+                            seconds % 60
+                        ));
+                        if *this_session {
+                            detail.push_str(" · ");
+                            detail.push_str(language.book_map_text("Includes this session"));
+                        }
+                    }
                     if let Some(cue) = history.get(&index) {
                         let language = self.controls.interface_language;
                         if let Some(number) = cue.next {

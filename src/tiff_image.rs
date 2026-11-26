@@ -156,9 +156,6 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
     {
         return Err(TiffError::Unsupported);
     }
-    if bits == 16 && matches!(samples, 2 | 4) && alpha != Some(2) {
-        return Err(TiffError::Unsupported);
-    }
     if bits == 16 && samples == 2 && u64::from(pixel_count) * 5 > 32 * 1024 * 1024 {
         return Err(TiffError::Limit);
     }
@@ -426,7 +423,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
             // Composite associated or unassociated alpha over the same white
             // page used by Reader's other transparent-image paths.
             if bits == 16 {
-                // This is restricted above to unassociated grayscale or RGB.
+                // WhiteIsZero remains restricted above to unassociated alpha.
                 pixels.extend(strip.chunks_exact(samples as usize * 2).map(|pixel| {
                     let component = |at| u64::from(image.order.short([pixel[at], pixel[at + 1]]));
                     let gray = if samples == 2 {
@@ -440,7 +437,12 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<GrayImage, TiffError> {
                         (component(0) * 2126 + component(2) * 7152 + component(4) * 722) / 10000
                     };
                     let a = component((samples as usize - 1) * 2);
-                    (((gray * a + 65535 * (65535 - a) + 32767) / 65535) >> 8) as u8
+                    let composited = if alpha_kind == 1 {
+                        (gray + 65535 - a).min(65535)
+                    } else {
+                        (gray * a + 65535 * (65535 - a) + 32767) / 65535
+                    };
+                    (composited >> 8) as u8
                 }));
             } else {
                 pixels.extend(strip.chunks_exact(samples as usize).map(|pixel| {

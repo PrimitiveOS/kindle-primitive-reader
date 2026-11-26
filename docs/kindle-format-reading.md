@@ -239,8 +239,8 @@ The format implementation was checked against [calibre's Kindle 8 reader](https:
 
 The picker also recognizes a deliberately narrow `PNRd/PPrs` Palm eReader PDB
 candidate: unprotected compression-2 text records in the expected 132-byte
-header and Windows-1252 encoding, without image, link, footnote or sidebar
-records. It uses the existing bounded PalmDOC decompressor, with a 32 KiB limit
+header and Windows-1252 encoding, without link, footnote or sidebar records.
+The bounded PNG image-record subset described below is also accepted. It uses the existing bounded PalmDOC decompressor, with a 32 KiB limit
 per record and 12 MiB total. Plain text keeps its previous conversion. A
 bounded PML candidate also accepts escaped backslashes, soft hyphens, three-digit
 Windows-1252 and four-digit Unicode character escapes, and well-nested bold and
@@ -285,3 +285,18 @@ real books, in simulation or on Kindle; publisher-break behavior, source
 positions, cross-section links and KOReader alignment need validation before
 parity is claimed. Future expansions must preserve these generated identities
 or supply a verified migration.
+
+An eReader PDB with image records may use a separate image-aware PML candidate.
+It accepts at most 128 non-overlapping `PNG ` image records after the text,
+with unique 1–32 byte ASCII names containing only letters, digits, periods,
+underscores or hyphens. PNG payloads start after the 62-byte image record
+header, must match their signature and Reader's dimension limits, and are
+bounded to 4 MiB each and 8 MiB total. Each record must be referenced by a
+`\m="name"` placement; unresolved, duplicate, unused, non-PNG or malformed
+records reject the candidate. Placements within links or active formatting
+remain unsupported. Resources receive deterministic local paths, with no file
+extraction; prior plain, basic-PML and navigation-PML parsers remain unchanged.
+Link, footnote and sidebar records and other image formats remain unsupported.
+KOReader's eReader source identifies the same PNG record header and PML image
+command, but exact image fidelity, memory behavior and real-book, simulator
+and Kindle comparison remain unverified. [KOReader image records](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/pdbfmt.cpp#L768-L786) · [KOReader image command](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvxml.cpp#L2069-L2074)

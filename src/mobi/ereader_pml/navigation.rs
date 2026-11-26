@@ -1,5 +1,5 @@
 //! Narrow, fail-closed navigation-bearing PML fallback.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{character, style_tag, tag};
 use crate::mobi::{MobiError, XHTML_START, cp1252, escape_xml, finish_xhtml};
@@ -80,12 +80,16 @@ fn chapter(line: &str) -> Result<Option<(String, usize, bool)>, MobiError> {
     Ok(Some((title.to_owned(), depth, new_page)))
 }
 
-pub(super) fn parse(text: &str) -> Result<(String, Vec<Chapter>), MobiError> {
+pub(super) fn parse(
+    text: &str,
+    images: Option<&BTreeMap<String, String>>,
+) -> Result<(String, Vec<Chapter>), MobiError> {
     let normalized = text.replace("\r\n", "\n");
     let mut output = String::from(XHTML_START);
     let mut styles = Vec::new();
     let mut anchors = BTreeSet::new();
     let mut references = BTreeSet::new();
+    let mut used_images = BTreeSet::new();
     let mut chapters = Vec::new();
     let mut paragraph = false;
     let mut pending_page = false;
@@ -217,6 +221,19 @@ pub(super) fn parse(text: &str) -> Result<(String, Vec<Chapter>), MobiError> {
                         tag(&mut output, style_tag(style, true), &mut markup)?;
                     }
                 }
+                'm' => {
+                    if active_link || !styles.is_empty() {
+                        return Err(MobiError::InvalidText);
+                    }
+                    let source = name(&mut chars)?;
+                    let path = images
+                        .and_then(|items| items.get(&source))
+                        .ok_or(MobiError::InvalidText)?;
+                    used_images.insert(source);
+                    tag(&mut output, &format!("<img src=\"{path}\" />"), &mut markup)?;
+                    line_visible = true;
+                    saw_navigation = true;
+                }
                 'Q' => {
                     if active_link || !styles.is_empty() || anchors.len() >= MAX_TARGETS {
                         return Err(MobiError::InvalidText);
@@ -260,6 +277,7 @@ pub(super) fn parse(text: &str) -> Result<(String, Vec<Chapter>), MobiError> {
         || !visible
         || !saw_navigation
         || !references.is_subset(&anchors)
+        || images.is_some_and(|items| used_images.len() != items.len())
     {
         return Err(MobiError::InvalidText);
     }

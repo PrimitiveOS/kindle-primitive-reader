@@ -6,7 +6,7 @@ pub(crate) mod sqlite_import;
 use date::{Date, Zone};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     io::{self, Read, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt},
@@ -98,8 +98,18 @@ pub(crate) struct Visit {
     pub page: u64,
     pub start: Option<i64>,
     pub seconds: u32,
+    /// Optional spine index recorded for newer reflow visits; old journals
+    /// and fixed-document visits remain unassigned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reflow_chapter: Option<ReflowChapter>,
     // Checkpoints can append to the same visit without making a second reread.
     id: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub(crate) struct ReflowChapter {
+    pub publication: u64,
+    pub chapter: u32,
 }
 
 impl Visit {
@@ -146,6 +156,7 @@ struct Part {
 struct Active {
     book: u64,
     page: u64,
+    reflow_chapter: Option<ReflowChapter>,
     id: u64,
     observed: Instant,
     last_wall: Option<i64>,
@@ -202,6 +213,7 @@ pub(crate) struct History {
     path: PathBuf,
     data: Data,
     saved_digest: Option<ring::digest::Digest>,
+    saved_max_visit_id: u64,
     active: Option<Active>,
     next_id: u64,
     dirty: bool,
@@ -256,10 +268,12 @@ impl History {
             .max()
             .unwrap_or(0)
             .saturating_add(1);
+        let saved_max_visit_id = data.visits.iter().map(|visit| visit.id).max().unwrap_or(0);
         Self {
             path,
             data,
             saved_digest,
+            saved_max_visit_id,
             active: None,
             next_id,
             dirty: missing,
@@ -342,9 +356,31 @@ impl History {
         now: Instant,
         wall: Option<i64>,
     ) {
+        self.set_page_at_with_chapter(page, None, now, wall);
+    }
+
+    /// Attribute newly observed reflow visits without changing their page key
+    /// or the interpretation of existing unassigned journal entries.
+    pub(crate) fn set_page_with_chapter(
+        &mut self,
+        page: Option<(u64, u64)>,
+        chapter: Option<ReflowChapter>,
+        now: Instant,
+    ) {
+        self.set_page_at_with_chapter(page, chapter, now, crate::mark_time::now());
+    }
+
+    fn set_page_at_with_chapter(
+        &mut self,
+        page: Option<(u64, u64)>,
+        chapter: Option<ReflowChapter>,
+        now: Instant,
+        wall: Option<i64>,
+    ) {
         let wall = wall.filter(|&w| valid_wall(w));
         if let Some(active) = &mut self.active
             && page == Some((active.book, active.page))
+            && chapter == active.reflow_chapter
             && !active.running
         {
             active.running = true;
@@ -361,7 +397,12 @@ impl History {
             }
             return;
         }
-        if self.active.as_ref().map(|a| (a.book, a.page)) == page {
+        if self
+            .active
+            .as_ref()
+            .map(|a| (a.book, a.page, a.reflow_chapter))
+            == page.map(|(book, page)| (book, page, chapter))
+        {
             return;
         }
         self.active = None;
@@ -372,6 +413,7 @@ impl History {
             self.active = Some(Active {
                 book,
                 page,
+                reflow_chapter: chapter,
                 id: self.next_id,
                 observed: now,
                 last_wall: wall,
@@ -423,6 +465,7 @@ impl History {
                     page: active.page,
                     start: part.start,
                     seconds: part.seconds,
+                    reflow_chapter: active.reflow_chapter,
                     id: active.id,
                 });
             } else {
@@ -472,9 +515,27 @@ impl History {
         result
     }
     fn persist(&mut self) -> io::Result<()> {
-        let bytes = serde_json::to_vec(&self.data).map_err(io::Error::other)?;
+        let mut bytes = serde_json::to_vec(&self.data).map_err(io::Error::other)?;
+        let mut reduced = None;
         if bytes.len() as u64 > MAX_BYTES {
-            return Err(invalid());
+            // Never remove committed timing or attribution. If newly added
+            // optional chapter metadata alone exceeds the journal budget,
+            // retain the visits and persist those new records unassigned.
+            let mut candidate = self.data.clone();
+            let mut omitted = 0usize;
+            for visit in &mut candidate.visits {
+                if visit.id > self.saved_max_visit_id && visit.reflow_chapter.take().is_some() {
+                    omitted += 1;
+                }
+            }
+            if omitted == 0 {
+                return Err(invalid());
+            }
+            bytes = serde_json::to_vec(&candidate).map_err(io::Error::other)?;
+            if bytes.len() as u64 > MAX_BYTES {
+                return Err(invalid());
+            }
+            reduced = Some((candidate, omitted));
         }
         primitive_app::with_storage(|| {
             let lock = journal_lock(&self.path)?;
@@ -494,11 +555,58 @@ impl History {
             drop(lock);
             result
         })?;
+        if let Some((candidate, omitted)) = reduced {
+            self.data = candidate;
+            eprintln!(
+                "reader statistics_chapter_attribution_omitted={omitted} reason=journal_limit"
+            );
+        }
         self.saved_digest = Some(ring::digest::digest(&ring::digest::SHA256, &bytes));
+        self.saved_max_visit_id = self
+            .data
+            .visits
+            .iter()
+            .map(|visit| visit.id)
+            .max()
+            .unwrap_or(0);
         Ok(())
     }
     pub(crate) fn visits(&self) -> &[Visit] {
         &self.data.visits
+    }
+
+    /// Sum only explicitly attributed visits for this edition. Older or
+    /// imported page keys cannot be reversed to recover a spine chapter.
+    pub(crate) fn reflow_chapter_totals(
+        &self,
+        book: u64,
+        publication: u64,
+        chapter_count: usize,
+        now: Option<i64>,
+    ) -> (HashMap<usize, (u64, bool)>, bool) {
+        let mut totals = HashMap::new();
+        let mut incomplete = false;
+        if !self.data.options.enabled {
+            return (totals, false);
+        }
+        for visit in self.data.visits.iter().filter(|visit| visit.book == book) {
+            let Some(chapter) = visit
+                .reflow_chapter
+                .filter(|location| location.publication == publication)
+                .map(|location| location.chapter as usize)
+            else {
+                incomplete = true;
+                continue;
+            };
+            if chapter >= chapter_count {
+                incomplete = true;
+                continue;
+            }
+            let entry = totals.entry(chapter).or_insert((0u64, false));
+            entry.0 = entry.0.saturating_add(u64::from(visit.seconds));
+            entry.1 |= now.is_some_and(|wall| self.visit_in_current_session(visit, wall));
+        }
+        (totals, incomplete)
     }
     pub(crate) fn books(&self) -> BTreeSet<u64> {
         self.data

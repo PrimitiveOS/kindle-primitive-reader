@@ -193,6 +193,7 @@ impl History {
                 page: record.page,
                 start: Some(record.start),
                 seconds: record.seconds,
+                reflow_chapter: None,
                 id: self.next_id + index as u64,
             })
             .collect::<Vec<_>>();
@@ -318,6 +319,7 @@ mod tests {
                 page: 1,
                 start: None,
                 seconds: 20,
+                reflow_chapter: None,
                 id: 1,
             },
         );

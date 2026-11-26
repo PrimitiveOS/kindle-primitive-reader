@@ -134,5 +134,13 @@ pub(super) fn xhtml(text: &str) -> Result<String, MobiError> {
 pub(super) fn with_navigation(
     text: &str,
 ) -> Result<(String, Vec<(String, usize, String)>), MobiError> {
-    navigation::parse(text)
+    navigation::parse(text, None)
+}
+
+/// Used only for previously rejected eReader files with validated image records.
+pub(super) fn with_images(
+    text: &str,
+    images: &std::collections::BTreeMap<String, String>,
+) -> Result<(String, Vec<(String, usize, String)>), MobiError> {
+    navigation::parse(text, Some(images))
 }
