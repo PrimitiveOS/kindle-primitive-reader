@@ -455,6 +455,45 @@ impl Targets {
     /// Build typography metadata for a previously validated foreign FB3 note.
     /// The note's reference is in a different Source, so normal target
     /// discovery cannot establish its ownership here.
+    /// A detached EPUB note, for a note in another spine item. It uses the
+    /// user's EPUB footnote size like an in-chapter note does.
+    pub(crate) fn detached_epub(source: &Source, root: usize, styles: &Snapshot) -> Option<Self> {
+        let font = styles.footnote_size()?;
+        if styles.note_extension() != NoteExtension::Off || styles.note_formatting().inline_all {
+            return None;
+        }
+        if source.elements.get(root)?.tag != "aside" {
+            return None;
+        }
+        let mut ancestry = Vec::with_capacity(source.elements.len());
+        let mut starts_note_part = Vec::with_capacity(source.elements.len());
+        for (index, element) in source.elements.iter().enumerate() {
+            if element.parent.is_some_and(|parent| parent >= index) {
+                return None;
+            }
+            let owner = if index == root {
+                Some(0)
+            } else {
+                element.parent.and_then(|parent| ancestry[parent])
+            };
+            ancestry.push(owner);
+            starts_note_part.push(index == root);
+        }
+        Some(Self {
+            roots: BTreeMap::from([(root, 0)]),
+            ids: BTreeMap::new(),
+            ancestry,
+            starts_note_part,
+            sizes: vec![NoteSize::Epub {
+                font,
+                clear_margins: true,
+            }],
+            formatting: styles.note_formatting(),
+            wikipedia_backlinks: BTreeSet::new(),
+            separate_nonlinear: false,
+        })
+    }
+
     pub(crate) fn detached_fb3(source: &Source, root: usize, styles: &Snapshot) -> Option<Self> {
         let scale = styles.fb2_note_scale(Fb2NoteKind::Footnote)?;
         if styles.note_extension() != NoteExtension::Off || styles.note_formatting().inline_all {

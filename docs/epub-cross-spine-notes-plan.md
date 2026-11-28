@@ -1,6 +1,6 @@
 # EPUB cross-spine in-page notes: integration plan
 
-Status: planned, not implemented. The pinned KOReader draws the note band on
+Status: first version implemented for the fixture. The referencing page draws the foreign band (`an_epub_cross_spine_note_gets_a_band_only_with_the_in_page_epub_preset`). Known defects below. The pinned KOReader draws the note band on
 the referencing page for a note in another spine item (see
 `docs/screenshots/in-page-cross-spine-koreader-page00.png`). Reader draws no
 band (`docs/screenshots/in-page-cross-spine-reader-page00.png`). The fixture is
@@ -54,3 +54,25 @@ band (`docs/screenshots/in-page-cross-spine-reader-page00.png`). The fixture is
 Re-run `scripts/koreader-scroll-inpage-footnotes-check.lua` on the fixture
 and compare the band position and separator with the pinned KOReader frame.
 Record the result in `docs/koreader-gap-register.md` under S-15.
+
+## First implementation (what changed)
+
+- `src/user_styles.rs`: `has_foreign_note_bands` allows the in-page EPUB
+  preset as well as FictionBook notes.
+- `src/footnotes/cross_part.rs`: EPUB targets are other spine documents
+  (`complete_fb3_notes` is None for EPUB); `Layout` picks the detached note
+  layout by book type.
+- `src/footnotes/in_page.rs`: `Targets::detached_epub` uses the user's EPUB
+  footnote size.
+
+## Known defects (visible in `docs/screenshots/in-page-cross-spine-reader-band.png`)
+
+- The separator sits on the last body line of the referencing page
+  (under "Narrative paragraph 7"). The band placement needs the host's last
+  painted line bottom, not the line box.
+- The foreign note text is smaller than KOReader's band text (the frame
+  shows 42-px body text with a smaller note scale). The EPUB note scale
+  should be checked against the pinned `css_tweaks` note size.
+- Not yet checked: selection and link hit testing in the band, nested notes,
+  facing pages, and continuous scroll (the band is only attempted for
+  paged, non-RTL, non-vertical books).

@@ -1922,7 +1922,7 @@ impl Probe {
             && engine == Engine::Parley
             && !spine_rtl
             && !matches!(&probe.renderer, Renderer::Parley(layout) if layout.is_windowed())
-            && user_styles.has_in_page_fb2_notes()
+            && user_styles.has_foreign_note_bands()
             && let Some(book) = opened.as_mut()
         {
             // A failed or unsupported cross-part copy always leaves the

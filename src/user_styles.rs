@@ -383,6 +383,11 @@ impl Snapshot {
     pub(crate) fn has_in_page_fb2_notes(&self) -> bool {
         self.notes.fb2_footnotes || self.notes.fb2_endnotes
     }
+    /// Whether foreign note bands may be prepared: FictionBook notes, or EPUB notes
+    /// with the in-page EPUB footnotes preset.
+    pub(crate) fn has_foreign_note_bands(&self) -> bool {
+        self.has_in_page_fb2_notes() || self.notes.explicit_epub
+    }
     pub(crate) fn fb2_note_scale(&self, kind: crate::loose::Fb2NoteKind) -> Option<f32> {
         use crate::loose::Fb2NoteKind;
         let scale = match kind {

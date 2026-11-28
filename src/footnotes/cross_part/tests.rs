@@ -740,3 +740,44 @@ fn cross_part_probe_displays_a_quiet_page_without_changing_progress_or_anchors()
     );
     assert_eq!(std::fs::read(path).unwrap(), before);
 }
+
+#[test]
+fn an_epub_cross_spine_note_gets_a_band_only_with_the_in_page_epub_preset() {
+    use crate::session::{BookConfig, PAGE_HEIGHT, Reading, ReadingViewport};
+    use primitive_app::WIDTH;
+    let config = |enabled: bool| {
+        let mut data = crate::user_styles::Data::default();
+        if enabled {
+            data.choose(1, "footnote-inpage_epub", Some(true)).unwrap();
+        }
+        BookConfig {
+            viewport: ReadingViewport::PORTRAIT,
+            user_hyphenation: Default::default(),
+            user_styles: data.snapshot(1).unwrap(),
+            chapter_offsets: Default::default(),
+            quote_prefixes: Default::default(),
+            screen_pages: Default::default(),
+            eager_layouts: Default::default(),
+            folder_snapshot: None,
+            engine: Engine::Parley,
+            book: test_fixture("in-page-cross-spine.epub"),
+            fonts: vec![test_fixture("fonts/NotoSans-Regular.ttf")],
+            font_roles: Default::default(),
+            settings: Settings {
+                width: WIDTH,
+                height: PAGE_HEIGHT,
+                font_size: 42.0,
+                in_page_footnotes: true,
+                ..Default::default()
+            },
+            scroll: false,
+            facing_pages: false,
+            hide_nonlinear: false,
+            hidden_flows: Default::default(),
+        }
+    };
+    let with_preset = Reading::restore(config(true), 0, 0, None).unwrap();
+    assert!(with_preset.probe.foreign_band(0).is_some());
+    let without_preset = Reading::restore(config(false), 0, 0, None).unwrap();
+    assert!(without_preset.probe.foreign_band(0).is_none());
+}

@@ -352,7 +352,12 @@ impl Note {
         if !self.source.matches_input(&current) {
             return None;
         }
-        let targets = super::in_page::Targets::detached_fb3(&self.source, self.root, styles)?;
+        // FictionBook 3 keeps its own note layout. Other books are EPUB spine documents.
+        let targets = if book.complete_fb3_notes().is_some() {
+            super::in_page::Targets::detached_fb3(&self.source, self.root, styles)?
+        } else {
+            super::in_page::Targets::detached_epub(&self.source, self.root, styles)?
+        };
         let author =
             BookStyle::load_with_base(book, &self.chapter, &self.source, &mut fonts, settings)
                 .with_user_css(styles)
@@ -479,7 +484,7 @@ pub(crate) fn prepare_for_settings(
     let respect_embedded = settings.typography.respect_embedded;
     let mut targets = Vec::new();
     let mut inspected = 0;
-    let manifest = book.complete_fb3_notes()?;
+    let manifest = book.complete_fb3_notes();
     for block in &host.blocks {
         if inside_note(host, block.element) {
             continue;
@@ -503,7 +508,14 @@ pub(crate) fn prepare_for_settings(
                 continue;
             };
             let Some(id) = target.fragment else { continue };
-            if target.path == chapter || manifest.get(&id) != Some(&target.path) {
+            if target.path == chapter {
+                continue;
+            }
+            let listed = match manifest {
+                Some(manifest) => manifest.get(&id) == Some(&target.path),
+                None => book.chapter_index(&target.path).is_some(),
+            };
+            if !listed {
                 continue;
             }
             targets.push((block.key, link.bytes.clone(), target.path, id));
