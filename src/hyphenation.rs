@@ -1416,12 +1416,18 @@ mod tests {
 
     #[test]
     fn russian_exception_supplies_source_safe_breaks() {
-        let word = "сегодня";
+        // The explicit `\hyphenation{}` entry `шесть-де-сят` supplies these breaks.
+        let word = "шестьдесят";
         let mut offsets = Vec::new();
         word_breaks(Dictionary::Russian, word, |offset| offsets.push(offset));
-        assert!(offsets.contains(&"се".len()));
-        assert!(offsets.contains(&"сего".len()));
+        assert!(offsets.contains(&"шесть".len()));
+        assert!(offsets.contains(&"шестьде".len()));
         assert!(offsets.iter().all(|&offset| word.is_char_boundary(offset)));
+        // `сегодня` has no explicit entry; the TeX patterns give се-год-ня.
+        let mut pattern = Vec::new();
+        word_breaks(Dictionary::Russian, "сегодня", |offset| pattern.push(offset));
+        assert_eq!(pattern, ["се".len(), "сегод".len()]);
+        let word = "шестьдесят";
         let mut limited = Vec::new();
         word_breaks_with_limits(
             Dictionary::Russian,

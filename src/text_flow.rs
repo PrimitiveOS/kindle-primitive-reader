@@ -348,6 +348,32 @@ impl FlowStyle {
     }
 }
 
+/// Move a text anchor to the block at the same position in a re-laid-out source
+/// with identical canonical text. Other anchors and mismatched text are unchanged.
+fn remap_text_location(old: &FlowLayout, new: &FlowLayout, location: Location) -> Location {
+    let (FlowLayout::Text(old), FlowLayout::Text(new), FlowAnchor::Text(anchor)) =
+        (old, new, &location.anchor)
+    else {
+        return location;
+    };
+    let Some(ordinal) = old.source.blocks.iter().position(|block| block.key == anchor.block) else {
+        return location;
+    };
+    let Some(target) = new.source.blocks.get(ordinal) else {
+        return location;
+    };
+    if target.text != old.source.blocks[ordinal].text {
+        return location;
+    }
+    let mut moved = anchor.clone();
+    moved.block = target.key;
+    moved.revision = new.source.revision;
+    Location {
+        anchor: FlowAnchor::Text(moved),
+        inset: location.inset,
+    }
+}
+
 impl FlowLayout {
     fn clip(&self) -> Rect {
         match self {
@@ -872,6 +898,9 @@ impl TextFlow {
         let mut layout = style
             .layout_page(document, self.document_page, viewport)?
             .ok_or_else(|| format!("Page {} {}", self.document_page + 1, style.missing_text()))?;
+        // Block keys are byte offsets in the generated markup, which changes with the
+        // writing direction. The same text keeps its block order, so carry the passage over.
+        let location = remap_text_location(&self.layout, &layout, location);
         let top = layout
             .resolve(&location)
             .ok_or("The current reading passage is unavailable after changing the layout")?;
@@ -1326,7 +1355,15 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(flow.layout.location(flow.top), Some(reading_location));
+        // Block keys differ between writing modes; the reading passage (offset and inset) must not.
+        let now = flow.layout.location(flow.top).unwrap();
+        let (FlowAnchor::Text(now_anchor), FlowAnchor::Text(before_anchor)) =
+            (&now.anchor, &reading_location.anchor)
+        else {
+            panic!("text anchors expected");
+        };
+        assert_eq!(now_anchor.offset, before_anchor.offset);
+        assert_eq!(now.inset, reading_location.inset);
     }
 
     #[test]

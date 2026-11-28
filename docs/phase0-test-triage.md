@@ -4,13 +4,16 @@ Written for: the Reader owner. It separates failures that predate the uncommitte
 
 ## Status update (current run)
 
-Latest full library run, working tree, `RUST_MIN_STACK=67108864`: **1836 passed, 42 failed, 77 ignored**. Earlier sections below record the state when they were written and are kept for their decisions; the counts in the tables are historical.
+Latest full library run, working tree, `RUST_MIN_STACK=67108864`: **1838 passed, 40 failed, 77 ignored**. Earlier sections below record the state when they were written and are kept for their decisions; the counts in the tables are historical.
 
-- Of the 42 current failures, about 25 also appear in the `HEAD` list and the rest do not; the split is approximate (see below). The `HEAD` list in `/tmp` is a 58-name subset and is not an authoritative baseline, so the split is approximate.
+- Of the 40 current failures, about 25 also appear in the `HEAD` list and the rest do not; the split is approximate (see below). The `HEAD` list in `/tmp` is a 58-name subset and is not an authoritative baseline, so the split is approximate.
 - Decisions taken since the table above, each in the test or code named:
   - Search continuation starts from the current match rather than the visible-page edge (`src/app/nearby_search.rs`). Behavior change; confirm against KOReader before relying on it.
   - On a fit-width fixed page, a horizontal swipe pans only when the page overflows horizontally; otherwise it turns the page. Vertical swipes still pan as before (`src/fixed_session.rs`, `swipe_pans`). Previously every swipe panned under fit-width, so the page could not be turned by swiping. Confirm against KOReader's swipe behavior on fit-width pages.
   - Annotation transfer previews run in the background, and fixed-page transfers need the explicit "Use standard preview" choice; the tests wait for the job and take that path.
+  - Russian hyphenation: `шестьдесят` is the exception-table check (`шесть-де-сят`); `сегодня` is checked against the TeX pattern result `се-год-ня`. The earlier expectation of a break after `сего` had no source. This is a decision, and a Russian reviewer should confirm the pattern result.
+  - Vertical right-to-left anchors: block keys are byte offsets in the generated markup, so the writing mode changes them. The relayout now carries a passage to the block at the same position with identical text (`remap_text_location`, `src/text_flow.rs`); the test checks offset and inset, not the raw key.
+  - Open risk: the direction attribute also shifts block keys relative to HEAD's plain-text markup, so a position saved before this change may not resolve on restore. Not yet verified.
   - Plain `.zip` files are listed as unavailable unless they open as ZIP archives (`src/library.rs`, `is_zip_archive`). The browser reads only the central directory.
   - Fixed-page overlay and tap-turn tests now match the current defaults: fit-width permits overlap; a queued turn is applied at its deadline.
   - A fit-width comic page taller than the screen scrolls before it turns, as `automatic_turn_scrolls_down_a_tall_fixed_page_before_turning` specifies; the comic test allows that first press.
