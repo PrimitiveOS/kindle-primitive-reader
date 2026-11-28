@@ -739,6 +739,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::Css("h1,h2 {break-before:page !important;}"),
     },
     Preset {
+        id: "titles_page-break-before_avoid",
+        title: "Avoid blank page on chapter start",
+        group: "titles-page-break-before",
+        priority: 2,
+        effect: Effect::Css("h1, h2, h3 {page-break-before:auto !important;}"),
+    },
+    Preset {
         id: "h1_page-break-before_always",
         title: "New page on H1",
         group: "heading-break-h1",

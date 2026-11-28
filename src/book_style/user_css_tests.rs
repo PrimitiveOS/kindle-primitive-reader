@@ -598,6 +598,16 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
                     Family::Generic(GenericFamily::Monospace)
                 );
             }
+            "titles_page-break-before_avoid" => {
+                // The author's forced break on this heading is cleared by the user-origin preset.
+                let heading = r#"<html><body><h1 id="h" style="page-break-before:always!important">Heading</h1></body></html>"#;
+                let (source, before) = styles(heading, "");
+                let (_, after) = styles(heading, css);
+                assert_ne!(
+                    at(&source, &before, "h").page_breaks.before,
+                    at(&source, &after, "h").page_breaks.before
+                );
+            }
             _ => panic!("Add a functional assertion for {}", preset.id),
         }
     }
