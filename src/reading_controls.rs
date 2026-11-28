@@ -161,6 +161,10 @@ pub(crate) struct ReadingControls {
     #[serde(skip_serializing_if = "is_false")]
     pub invert_page_turn_buttons: bool,
     pub page_refresh: PageRefresh,
+    /// Full refresh when a page turn crosses a chapter boundary (KOReader's
+    /// refresh_on_chapter_boundaries).
+    #[serde(skip_serializing_if = "is_false")]
+    pub refresh_on_chapter_boundaries: bool,
     /// Persistent KOReader-style page-turn timeout, retained when turns are disabled.
     pub auto_turn_seconds: u32,
     /// Enabled separately so turning automatic movement off keeps the last timeout.

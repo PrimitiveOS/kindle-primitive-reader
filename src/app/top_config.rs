@@ -555,6 +555,18 @@ impl Reader {
             )
             .detail(format!("{} · paged reading", current.page_refresh.label())),
             Item::new(
+                "Refresh on chapter boundaries",
+                Action::SetReadingControls(ReadingControls {
+                    refresh_on_chapter_boundaries: !current.refresh_on_chapter_boundaries,
+                    ..current
+                }),
+            )
+            .detail(if current.refresh_on_chapter_boundaries {
+                "On · full refresh"
+            } else {
+                "Off"
+            }),
+            Item::new(
                 "Menu activation",
                 Action::Show(Screen::MenuActivationSettings),
             )

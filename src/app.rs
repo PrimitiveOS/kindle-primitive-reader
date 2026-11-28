@@ -64,6 +64,8 @@ mod folder_open;
 mod font_render_tests;
 mod footer_custom_text;
 mod fallback_font;
+#[cfg(test)]
+mod refresh_tests;
 mod footer_font_face;
 mod footer_presets;
 mod footnote_font;
@@ -1174,6 +1176,8 @@ pub struct Reader {
     status_battery_last: Option<(u32, bool)>,
     end_dialog: Option<end_of_book::Dialog>,
     pages_since_refresh: u8,
+    /// The chapter of the last page the full-refresh rule saw.
+    refresh_chapter: Option<usize>,
     reading_guide_progress: reading_guides::Progress,
     touch_locked: bool,
     stats: ReadingStats,
@@ -1484,6 +1488,7 @@ impl Reader {
             status_battery_last: None,
             end_dialog: None,
             pages_since_refresh: 0,
+            refresh_chapter: None,
             reading_guide_progress: reading_guides::Progress::default(),
             touch_locked: false,
             stats,
@@ -1760,6 +1765,7 @@ impl Reader {
     /// Retire the outgoing document's transient controls only after the next
     /// document has been prepared and its saved position verified.
     fn clear_opened_book_transients(&mut self) {
+        self.refresh_chapter = None;
         self.locked = None;
         self.numbering_scan = None;
         self.touch_locked = false;
@@ -7661,9 +7667,16 @@ impl Reader {
                 self.reading_guide_progress
                     .update(self.controls.reading_guides);
             }
-            self.controls
+            let chapter = self.current_position().map(|position| position.chapter);
+            let crossed = self.controls.refresh_on_chapter_boundaries
+                && self.refresh_chapter.is_some()
+                && chapter != self.refresh_chapter;
+            self.refresh_chapter = chapter;
+            let change = self
+                .controls
                 .page_refresh
-                .after_page(&mut self.pages_since_refresh)
+                .after_page(&mut self.pages_since_refresh);
+            if crossed { Change::Full } else { change }
         } else {
             Change::Partial
         }
