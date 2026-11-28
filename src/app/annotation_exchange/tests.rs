@@ -13,6 +13,19 @@ fn setup(fixture: &Fixture) -> Reader {
     app
 }
 
+/// The transfer preview is checked by a background job; apply its result before asserting.
+fn settle_preview(app: &mut Reader) {
+    let stop = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while app.annotation_exchange.preview_job.is_some() {
+        assert!(std::time::Instant::now() < stop, "preview did not finish");
+        let now = app
+            .annotation_preview_deadline()
+            .map_or_else(std::time::Instant::now, |due| due.max(std::time::Instant::now()));
+        app.poll_annotation_preview(now + std::time::Duration::from_millis(1));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 fn settings(app: &mut Reader) {
     // Force the navigation section before selecting Settings so repeated
     // sessions exercise the same controls even when Settings was remembered.
@@ -157,6 +170,7 @@ fn annotation_exchange_keep_all_and_default_replace_older_unmatched_marks_only()
 
     tap_contents_item(&mut app, "Keep all annotations on import");
     tap_contents_item(&mut app, "Import annotation transfer");
+    settle_preview(&mut app);
     assert_eq!(
         app.annotation_exchange.preview.as_ref().unwrap().summary,
         Summary {
@@ -170,6 +184,7 @@ fn annotation_exchange_keep_all_and_default_replace_older_unmatched_marks_only()
 
     tap_contents_item(&mut app, "Keep all annotations on import");
     tap_contents_item(&mut app, "Import annotation transfer");
+    settle_preview(&mut app);
     assert_eq!(
         app.annotation_exchange.preview.as_ref().unwrap().summary,
         Summary {
@@ -207,6 +222,7 @@ fn annotation_exchange_keep_all_and_default_replace_older_unmatched_marks_only()
     assert_eq!(fs::read(&path).unwrap(), transfer_bytes);
     assert_eq!(fs::read(&fixture.book).unwrap(), original);
     tap_contents_item(&mut app, "Import annotation transfer");
+    settle_preview(&mut app);
     assert!(app.annotation_exchange.preview.as_ref().unwrap().imported);
     let reopened = setup(&fixture);
     assert_eq!(reopened.library.state(id).unwrap().highlights.len(), 1);
@@ -229,6 +245,7 @@ fn annotation_exchange_unmatched_files_preserve_other_transfer_and_native_marks(
     save_peer(&path, &transfer);
     let previous = fs::read(&path).unwrap();
     tap_contents_item(&mut app, "Import annotation transfer");
+    settle_preview(&mut app);
     assert_eq!(
         app.annotation_exchange.preview.as_ref().unwrap().summary,
         Summary {
@@ -306,6 +323,12 @@ fn annotation_exchange_round_trips_fixed_page_quotes_and_original_rectangles() {
     let position = app.current_position();
     settings(&mut app);
     tap_contents_item(&mut app, "Import annotation transfer");
+    settle_preview(&mut app);
+    // Fixed-page transfers need the standard preview; the fast check defers them.
+    if app.annotation_exchange.preview_issue.is_some() {
+        tap_contents_item(&mut app, "Use standard preview");
+        settle_preview(&mut app);
+    }
     assert_eq!(
         app.annotation_exchange.preview.as_ref().unwrap().summary,
         Summary {

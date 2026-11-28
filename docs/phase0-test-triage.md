@@ -4,12 +4,13 @@ Written for: the Reader owner. It separates failures that predate the uncommitte
 
 ## Status update (current run)
 
-Latest full library run, working tree, `RUST_MIN_STACK=67108864`: **1833 passed, 45 failed, 77 ignored**. Earlier sections below record the state when they were written and are kept for their decisions; the counts in the tables are historical.
+Latest full library run, working tree, `RUST_MIN_STACK=67108864`: **1836 passed, 42 failed, 77 ignored**. Earlier sections below record the state when they were written and are kept for their decisions; the counts in the tables are historical.
 
-- Of the 45 current failures, about 25 also appear in the `HEAD` list and the rest do not; the split is approximate (see below). The `HEAD` list in `/tmp` is a 58-name subset and is not an authoritative baseline, so the split is approximate.
+- Of the 42 current failures, about 25 also appear in the `HEAD` list and the rest do not; the split is approximate (see below). The `HEAD` list in `/tmp` is a 58-name subset and is not an authoritative baseline, so the split is approximate.
 - Decisions taken since the table above, each in the test or code named:
   - Search continuation starts from the current match rather than the visible-page edge (`src/app/nearby_search.rs`). Behavior change; confirm against KOReader before relying on it.
   - On a fit-width fixed page, a horizontal swipe pans only when the page overflows horizontally; otherwise it turns the page. Vertical swipes still pan as before (`src/fixed_session.rs`, `swipe_pans`). Previously every swipe panned under fit-width, so the page could not be turned by swiping. Confirm against KOReader's swipe behavior on fit-width pages.
+  - Annotation transfer previews run in the background, and fixed-page transfers need the explicit "Use standard preview" choice; the tests wait for the job and take that path.
   - Plain `.zip` files are listed as unavailable unless they open as ZIP archives (`src/library.rs`, `is_zip_archive`). The browser reads only the central directory.
   - Fixed-page overlay and tap-turn tests now match the current defaults: fit-width permits overlap; a queued turn is applied at its deadline.
   - A fit-width comic page taller than the screen scrolls before it turns, as `automatic_turn_scrolls_down_a_tall_fixed_page_before_turning` specifies; the comic test allows that first press.
@@ -30,6 +31,8 @@ What was reviewed (book screen):
 - PDF: a rotated scan page renders at fit-width with zoom controls and progress.
 - Comic: a fit-width page renders with footer controls.
 - Defect (pre-existing at HEAD): the footer caption text is clipped at its bottom edge. `footer_caption_rect` uses the configured container height (default 14, so 28 px) for ordinary text, which is smaller than the caption line. The configured height is deliberate so the progress track does not move, so this needs an owner decision before changing it.
+
+Kindle cross-compile (compile only, no device): `cargo zigbuild --locked --release --features kindle --target armv7-unknown-linux-musleabihf --bins` succeeded. `reader-kindle` is a statically linked 32-bit ARM ELF (EABI5), and `reader-probe` also built. It produced 60 warnings, which were not triaged.
 
 Not yet done: the parity review of the other screens, dark-mode review beyond the navigation capture, the `verify_*` drivers against the cached corpus, and the Kindle cross-compile.
 
