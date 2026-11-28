@@ -388,10 +388,14 @@ fn browser_covers_sources_date_text_filters_preview_and_exact_return() {
     let (x, y) = center(BrowserLayout(NavigationLayout::PORTRAIT).control(1, 115, 84));
     assert_eq!(app.input(Input::Tap(x, y)), Change::None);
     tap(&mut app, back);
-    tap(
-        &mut app,
-        BrowserLayout(NavigationLayout::PORTRAIT).control(0, 198, 72),
-    );
+    let sources = BrowserLayout(NavigationLayout::PORTRAIT).control(0, 198, 72);
+    tap(&mut app, sources);
+    assert_eq!(app.screen, Screen::BookmarkBrowser(Page::Sources));
+    // Sources opened from Results returns to Results on Back, not to the reader.
+    tap(&mut app, back);
+    assert_eq!(app.screen, Screen::BookmarkBrowser(Page::Results));
+    tap(&mut app, sources);
+    assert_eq!(app.screen, Screen::BookmarkBrowser(Page::Sources));
     // Hold the History source to make it the default. The first row is
     // "Current book" while a book is open, so the row is found by title.
     hold(&mut app, "History");
