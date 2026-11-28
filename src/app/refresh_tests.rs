@@ -57,3 +57,4 @@ fn a_page_with_a_picture_refreshes_fully_unless_the_option_is_off() {
     app.controls.no_refresh_on_pictures = true;
     assert_eq!(app.reading_update(true), Change::Partial, "off when chosen");
 }
+

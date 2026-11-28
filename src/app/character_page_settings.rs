@@ -5,7 +5,7 @@ use super::{
 use crate::library::{FixedTileAxis, MAX_CROP_MARGIN};
 use crate::reading_controls::{FooterTextItem, ReadingControls};
 use crate::{
-    Result, Settings, epub::Book, library::DocumentFormat, synthetic_pages::CharacterPages,
+    Result, Settings, synthetic_pages::CharacterPages,
 };
 use primitive_app::with_storage;
 use std::{borrow::Cow, io, path::PathBuf, time::Instant};
@@ -692,8 +692,7 @@ impl Reader {
         let Some(active) = self.active.as_ref() else {
             return false;
         };
-        if active.entry.format != DocumentFormat::Epub
-            || self
+        if self
                 .library
                 .state(active.id)
                 .is_some_and(|s| s.position.is_some())
@@ -778,9 +777,6 @@ impl Reader {
         else {
             return;
         };
-        if active.entry.format != DocumentFormat::Epub {
-            return;
-        }
         if let Some(map) = CharacterPages::cached(
             &self.numbering_path(active.id),
             active.reading.probe.book,
@@ -794,10 +790,8 @@ impl Reader {
     }
 
     pub(super) fn set_character_pages(&mut self, stride: Option<u16>) -> Result<()> {
-        let active = self.active.as_ref().ok_or("Open a reflowable EPUB")?;
-        if active.entry.format != DocumentFormat::Epub {
-            return Err("Open a reflowable EPUB".into());
-        }
+        // Any reflow document has chapters to count; fixed pages never reach this path.
+        let active = self.active.as_ref().ok_or("Open a reflowable book")?;
         if let Some(stride) = stride {
             if active
                 .numbering

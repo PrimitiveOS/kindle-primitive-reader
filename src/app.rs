@@ -71,6 +71,8 @@ mod refresh_tests;
 mod contents_title_tests;
 #[cfg(test)]
 mod font_defaults_tests;
+#[cfg(test)]
+mod character_pages_tests;
 mod footer_font_face;
 mod footer_presets;
 mod footnote_font;
