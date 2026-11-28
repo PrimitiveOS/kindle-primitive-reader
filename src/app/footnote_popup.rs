@@ -276,6 +276,45 @@ impl Footnote {
 }
 
 impl Reader {
+    /// Rectangles around the source link of the open note, in frame coordinates (KOReader keeps
+    /// the link that opened a note highlighted while the note is open).
+    pub(super) fn note_source_rects(&self) -> Vec<Rect> {
+        let Some(note) = &self.footnote else {
+            return Vec::new();
+        };
+        let (Some(reference), Some(active), false) = (&note.reference, &self.active, note.detached)
+        else {
+            return Vec::new();
+        };
+        let reading = &active.reading;
+        let mut rects = Vec::new();
+        for (range, column_x) in reading.visible_columns() {
+            for rect in reading
+                .probe
+                .anchor_rects_in(range, &reference.start, &reference.end)
+            {
+                rects.push(Rect::new(
+                    rect.x + column_x as i32,
+                    rect.y,
+                    rect.width,
+                    rect.height,
+                ));
+            }
+        }
+        rects
+    }
+
+    /// Draw a three-pixel outline around each rectangle of the source link.
+    pub(super) fn draw_note_source_outline(&self, canvas: &mut Canvas) {
+        const WIDTH: i32 = 3;
+        for rect in self.note_source_rects() {
+            canvas.fill(Rect::new(rect.x, rect.y, rect.w, WIDTH), 0);
+            canvas.fill(Rect::new(rect.x, rect.y + rect.h - WIDTH, rect.w, WIDTH), 0);
+            canvas.fill(Rect::new(rect.x, rect.y, WIDTH, rect.h), 0);
+            canvas.fill(Rect::new(rect.x + rect.w - WIDTH, rect.y, WIDTH, rect.h), 0);
+        }
+    }
+
     pub(super) fn open_note_at(&mut self, target: Destination, x: f32, y: f32) -> bool {
         if !self.controls.footnote_popups {
             return false;

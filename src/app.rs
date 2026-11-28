@@ -9719,6 +9719,7 @@ impl Reader {
             } else if self.screen == Screen::Book && selection.is_empty() {
                 self.draw_search_steps(canvas);
             }
+            self.draw_note_source_outline(canvas);
             if let Some(note) = &self.footnote {
                 note.draw(
                     canvas,
@@ -16580,6 +16581,24 @@ mod tests {
             Change::Partial
         );
         app.show(Screen::Book);
+    }
+
+    #[test]
+    fn an_open_note_outlines_the_source_link_it_came_from() {
+        let fixture = Fixture::new();
+        fs::copy(crate::test_fixture("field-notes-epub3.epub"), &fixture.book).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        let (x, y) = source_link_point(&app, "[1]");
+        app.input(Input::Tap(x, y));
+        assert_eq!(app.screen, Screen::Footnote);
+        let rects = app.note_source_rects();
+        assert!(!rects.is_empty(), "the note's source link is outlined");
+        // The outline sits on the link's text: its centre is where the link was tapped.
+        assert!(
+            rects.iter().any(|rect| rect.contains(x, y)),
+            "{rects:?} does not contain the tap at {x},{y}"
+        );
     }
 
     #[test]
