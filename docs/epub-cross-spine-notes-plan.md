@@ -67,12 +67,16 @@ Record the result in `docs/koreader-gap-register.md` under S-15.
 
 ## Known defects (visible in `docs/screenshots/in-page-cross-spine-reader-band.png`)
 
-- The separator sits on the last body line of the referencing page
-  (under "Narrative paragraph 7"). The band placement needs the host's last
-  painted line bottom, not the line box.
-- The foreign note text is smaller than KOReader's band text (the frame
-  shows 42-px body text with a smaller note scale). The EPUB note scale
-  should be checked against the pinned `css_tweaks` note size.
+- The separator is close to the last body line. It does not overlap host
+  text: `Band::page_blank` checks the host capture below the separator, and
+  the check passes. The gap is `font_size / 3` (about 14 px), which lib.rs
+  shares with the FictionBook 3 band. Changing it changes that layout too,
+  so it needs a deliberate spacing decision with measurements for both
+  formats.
+- The note text looks smaller than KOReader's band text. The default EPUB
+  note size is Legacy (root scale 0.8, `user_styles.rs` `FootnoteSize::scale`),
+  which is also KOReader's default. The visual difference needs a pixel
+  measurement of both engines before any change.
 - Not yet checked: selection and link hit testing in the band, nested notes,
   facing pages, and continuous scroll (the band is only attempted for
   paged, non-RTL, non-vertical books).
