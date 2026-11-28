@@ -72,6 +72,8 @@ mod contents_title_tests;
 #[cfg(test)]
 mod font_defaults_tests;
 #[cfg(test)]
+mod link_marker_tests;
+#[cfg(test)]
 mod character_pages_tests;
 mod footer_font_face;
 mod footer_presets;
@@ -1321,6 +1323,8 @@ pub struct Reader {
     contents_title: Option<String>,
     /// Tweak help: the title, description and CSS of a long-pressed style tweak.
     style_help: Option<String>,
+    /// The bar that marks where a followed link landed.
+    link_marker: Option<link_taps::LinkMarker>,
     clipboard_text: Option<String>,
     saved_popup: Option<saved_highlight_popup::SavedPopup>,
     exports: PathBuf,
@@ -1645,6 +1649,7 @@ impl Reader {
             link_popup: None,
             contents_title: None,
             style_help: None,
+            link_marker: None,
             clipboard_text: None,
             saved_popup: None,
             exports: state.parent().unwrap_or(documents).join("exports"),
@@ -7741,6 +7746,7 @@ impl Reader {
 
     fn reading_update(&mut self, page_changed: bool) -> Change {
         if page_changed {
+            self.link_marker = None;
             if self.screen != Screen::Skim {
                 self.reading_guide_progress
                     .update(self.controls.reading_guides);
@@ -9608,6 +9614,11 @@ impl Reader {
                     .copied()
                     .map(|r| (r, crate::highlight_style::Paint::Temporary(220))),
             );
+            // The followed-link bar is black, in the margin where the link landed.
+            highlights.extend(
+                self.link_marker_highlight()
+                    .map(|r| (r, crate::highlight_style::Paint::Temporary(0))),
+            );
             let selection = self
                 .selection
                 .as_ref()
@@ -9719,7 +9730,6 @@ impl Reader {
             } else if self.screen == Screen::Book && selection.is_empty() {
                 self.draw_search_steps(canvas);
             }
-            self.draw_note_source_outline(canvas);
             if let Some(note) = &self.footnote {
                 note.draw(
                     canvas,
@@ -12372,6 +12382,9 @@ impl App for Reader {
         if let Some(open) = &self.folder_open {
             return Some(open.deadline());
         }
+        let link_marker = self
+            .link_marker
+            .map(|marker| if marker.shown { marker.hide_at } else { marker.show_at });
         if let Some(gate) = &self.folder_resume_gate {
             return gate.deadline();
         }
@@ -12415,6 +12428,7 @@ impl App for Reader {
                     .and_then(|import| import.deadline),
             )
             .chain(self.save_at)
+            .chain(link_marker)
             .chain(self.metadata_checkpoint.deadline())
             .chain(self.opening_execution_deadline())
             .chain(
@@ -12514,6 +12528,9 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if let Some(change) = self.poll_link_marker(now) {
+            return change;
+        }
         if let Some(change) = self.finish_double_tap(now) {
             return change;
         }
@@ -16581,24 +16598,6 @@ mod tests {
             Change::Partial
         );
         app.show(Screen::Book);
-    }
-
-    #[test]
-    fn an_open_note_outlines_the_source_link_it_came_from() {
-        let fixture = Fixture::new();
-        fs::copy(crate::test_fixture("field-notes-epub3.epub"), &fixture.book).unwrap();
-        let mut app = fixture.app();
-        app.open_path(&fixture.book).unwrap();
-        let (x, y) = source_link_point(&app, "[1]");
-        app.input(Input::Tap(x, y));
-        assert_eq!(app.screen, Screen::Footnote);
-        let rects = app.note_source_rects();
-        assert!(!rects.is_empty(), "the note's source link is outlined");
-        // The outline sits on the link's text: its centre is where the link was tapped.
-        assert!(
-            rects.iter().any(|rect| rect.contains(x, y)),
-            "{rects:?} does not contain the tap at {x},{y}"
-        );
     }
 
     #[test]

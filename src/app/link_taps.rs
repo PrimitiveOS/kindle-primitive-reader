@@ -97,6 +97,21 @@ impl ReflowLink {
     }
 }
 
+/// The black bar KOReader draws in the left margin where a followed link landed. It appears half
+/// a second after the jump and is removed a second later.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct LinkMarker {
+    pub(super) y: i32,
+    pub(super) height: i32,
+    pub(super) width: i32,
+    pub(super) shown: bool,
+    pub(super) show_at: std::time::Instant,
+    pub(super) hide_at: std::time::Instant,
+}
+
+const LINK_MARKER_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+const LINK_MARKER_TIME: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// The folder of the open book, where relative links to other files resolve.
 fn book_folder(reading: &Reading) -> &Path {
     reading.config.book.parent().unwrap_or(Path::new("/"))
@@ -190,6 +205,63 @@ fn percent_decode(text: &str) -> Option<String> {
 }
 
 impl Reader {
+    /// The marker for a followed internal link, at the vertical position of its target on the
+    /// page now open. Notes and links to other documents do not get one.
+    pub(super) fn followed_link_marker(&self, target: &Destination, now: std::time::Instant) -> Option<LinkMarker> {
+        let reading = &self.active.as_ref()?.reading;
+        let fragment = target.fragment.as_deref()?;
+        let anchor = reading.probe.fragment(fragment)?;
+        let top = reading.probe.anchor_top(&anchor)?;
+        let page_top = reading.probe.page_range(reading.page).start;
+        let y = (top - page_top).round() as i32;
+        let frame = reading.frame_height() as i32;
+        if !(0..frame).contains(&y) {
+            return None;
+        }
+        let settings = reading.config.settings;
+        let margin = settings
+            .margin_left
+            .or(settings.margin_sides)
+            .unwrap_or(settings.margin) as i32;
+        let width = (margin - 5).max(margin * 4 / 5);
+        let height = (settings.font_size * 1.1).round() as i32;
+        Some(LinkMarker {
+            y,
+            height,
+            width,
+            shown: false,
+            show_at: now + LINK_MARKER_DELAY,
+            hide_at: now + LINK_MARKER_DELAY + LINK_MARKER_TIME,
+        })
+    }
+
+    /// Show or remove the followed-link marker when its time comes.
+    pub(super) fn poll_link_marker(&mut self, now: std::time::Instant) -> Option<Change> {
+        let marker = self.link_marker.as_mut()?;
+        if now >= marker.hide_at {
+            self.link_marker = None;
+            return Some(Change::Partial);
+        }
+        if !marker.shown && now >= marker.show_at {
+            marker.shown = true;
+            return Some(Change::Partial);
+        }
+        None
+    }
+
+    /// The black bar, while it is shown, as a page-raster highlight. Overlays drawn straight onto
+    /// the canvas are covered by the page picture, so the bar goes into the page itself.
+    pub(super) fn link_marker_highlight(&self) -> Option<HighlightRect> {
+        self.link_marker
+            .filter(|marker| marker.shown)
+            .map(|marker| HighlightRect {
+                x: 0,
+                y: marker.y,
+                width: marker.width,
+                height: marker.height,
+            })
+    }
+
     pub(super) fn link_settings_items(&self) -> Vec<Item> {
         let language = self.controls.interface_language;
         let mut items: Vec<_> = [
@@ -398,8 +470,12 @@ impl Reader {
                 if self.open_note_at(target.clone(), x, y) {
                     return Change::Partial;
                 }
+                let landed = target.clone();
                 match self.follow(target) {
-                    Ok(()) => Change::Partial,
+                    Ok(()) => {
+                        self.link_marker = self.followed_link_marker(&landed, Instant::now());
+                        Change::Partial
+                    }
                     Err(error) => self.report(error),
                 }
             }
