@@ -874,7 +874,9 @@ impl BookConfig {
             in_page_footnotes: self.settings.in_page_footnotes && note_layout,
             ..self.settings
         };
-        let full = if full.publisher_render_mode.is_some() && !note_layout {
+        // KOReader applies its render-mode flags in scroll view too (the scroll full height changes
+        // with the mode), so only hidden flows fall back to Reader's layout.
+        let full = if full.publisher_render_mode.is_some() && self.hidden_flows.enabled {
             crate::PublisherRenderMode::Reader.apply(full)
         } else {
             full
@@ -4164,7 +4166,7 @@ mod tests {
     }
 
     #[test]
-    fn publisher_render_mode_stays_on_for_facing_leaves_and_pauses_in_scroll() {
+    fn publisher_render_mode_stays_on_for_facing_leaves_and_scroll() {
         let settings = crate::PublisherRenderMode::Web.apply(Settings {
             width: WIDTH,
             height: PAGE_HEIGHT,
@@ -4199,11 +4201,62 @@ mod tests {
         );
 
         let continuous = Reading::restore(config(true, false), 0, 0, None).unwrap();
-        assert_eq!(continuous.probe.settings.publisher_render_mode, None);
+        assert_eq!(
+            continuous.probe.settings.publisher_render_mode,
+            Some(crate::PublisherRenderMode::Web)
+        );
     }
 
     #[test]
-    fn publisher_render_mode_stays_on_with_publisher_css_off_and_pauses_in_scroll() {
+    fn publisher_render_modes_change_the_scroll_layout() {
+        let bottom = |mode: crate::PublisherRenderMode| {
+            let settings = mode.apply(Settings {
+                width: WIDTH,
+                height: PAGE_HEIGHT,
+                font_size: 25.0,
+                ..Settings::default()
+            });
+            let reading = Reading::restore(
+                BookConfig {
+                    viewport: ReadingViewport::PORTRAIT,
+                    user_hyphenation: Default::default(),
+                    user_styles: Default::default(),
+                    chapter_offsets: Default::default(),
+                    quote_prefixes: Default::default(),
+                    screen_pages: Default::default(),
+                    eager_layouts: Default::default(),
+                    folder_snapshot: None,
+                    engine: Engine::Parley,
+                    book: crate::test_fixture("render-mode-composition.epub"),
+                    fonts: vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+                    font_roles: Default::default(),
+                    settings,
+                    scroll: true,
+                    facing_pages: false,
+                    hide_nonlinear: false,
+                    hidden_flows: Default::default(),
+                },
+                0,
+                0,
+                None,
+            )
+            .unwrap();
+            reading
+                .probe
+                .lines
+                .iter()
+                .map(|line| line.bottom)
+                .fold(0.0f32, f32::max)
+        };
+        // KOReader's scroll full height is 1655 px for Legacy and 1580 px for Flat on this fixture.
+        assert_ne!(
+            bottom(crate::PublisherRenderMode::Legacy),
+            bottom(crate::PublisherRenderMode::Flat)
+        );
+    }
+
+    #[test]
+    fn publisher_render_mode_stays_on_with_publisher_css_off_and_scroll() {
         let settings = crate::PublisherRenderMode::Web.apply(Settings {
             width: WIDTH,
             height: PAGE_HEIGHT,
@@ -4237,7 +4290,10 @@ mod tests {
         );
         assert!(paged.probe.page_count() >= 1);
         let continuous = Reading::restore(config(true), 0, 0, None).unwrap();
-        assert_eq!(continuous.probe.settings.publisher_render_mode, None);
+        assert_eq!(
+            continuous.probe.settings.publisher_render_mode,
+            Some(crate::PublisherRenderMode::Web)
+        );
     }
 
     #[test]

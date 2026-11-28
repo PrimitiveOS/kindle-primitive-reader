@@ -143,9 +143,10 @@ fn publisher_render_settings_default_applies_to_new_books_and_respects_eligibili
         .unwrap();
     assert_eq!(settings_mode(&reopened), Some(PublisherRenderMode::Web));
     reopened.activate(Action::ReadingMode(true)).unwrap();
-    assert_eq!(settings_mode(&reopened), None);
+    // Continuous scrolling keeps the mode, as KOReader's scroll layout does.
+    assert_eq!(settings_mode(&reopened), Some(PublisherRenderMode::Web));
     layout(&mut reopened);
-    assert_eq!(
+    assert_ne!(
         reopened.reading_information_in_row("Render mode"),
         Some("Requires one-page reading")
     );

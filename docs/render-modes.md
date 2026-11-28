@@ -100,9 +100,11 @@ uses the same four composed policies as the Parley probe.
 Existing editions continue with their saved mode or the established Reader
 layout. Publisher CSS off keeps the selected mode, as KOReader does: its
 render flags are set independently of the embedded stylesheet switch
-(`readertypeset.lua` `setBlockRenderingMode`). A mode pauses in continuous
-scrolling or with custom hidden flows. Two-page spreads keep the mode on each
-leaf, at the leaf width. It takes effect again when a supported page view returns. EPUBs with right-to-left spines and
+(`readertypeset.lua` `setBlockRenderingMode`). Continuous scrolling keeps the
+mode too: on the pinned KOReader, the scroll full height of
+`render-mode-composition.epub` is 1655 px for Legacy and 1580 px for Flat. A
+mode pauses only with custom hidden flows. Two-page spreads keep the mode on
+each leaf, at the leaf width. EPUBs with right-to-left spines and
 vertical text keep their existing layout.
 
 [Reader Layout on Mac](screenshots/render-mode-reader-layout.png) ·
