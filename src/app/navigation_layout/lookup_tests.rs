@@ -32,8 +32,20 @@ fn close_definition(app: &mut Reader) {
 }
 
 fn tap_visible(app: &mut Reader, title: &str) {
-    let (_, rows) = app.list_window();
-    let index = rows.iter().position(|row| row.title == title).unwrap();
+    // Long lists page; advance until the labelled row is on screen.
+    let index = (0..8)
+        .find_map(|_| {
+            let found = app
+                .list_window()
+                .1
+                .iter()
+                .position(|row| row.title == title);
+            if found.is_none() {
+                app.list_page += 1;
+            }
+            found
+        })
+        .unwrap_or_else(|| panic!("row {title:?} is not in the list"));
     let row = app.list_geometry().row(index);
     assert!(row.bottom() <= app.navigation_layout().previous().y);
     assert_eq!(
@@ -72,16 +84,15 @@ fn lookup_settings_viewport_keeps_dictionary_preferences_and_the_history_window(
     tap(&mut app, layout.next());
     assert_eq!(app.list_page, 1);
     let source = "Harbor glossary 04";
-    assert_eq!(app.list_window().1[0].title, source);
+    assert!(app.list_window().1.iter().any(|row| row.title == source));
     tap_visible(&mut app, source);
     assert_eq!(app.screen, Screen::DictionaryOptions(3));
     tap_visible(&mut app, "Prefer for this book");
     tap(&mut app, layout.back());
-    assert_eq!(app.list_window().1[0].title, source);
-    assert_eq!(
-        app.list_window().1[0].detail.as_deref(),
-        Some("Book preference 1")
-    );
+    // The dictionary rows follow the settings rows, so the source is on this page but not first.
+    assert!(app.list_window().1.iter().any(|row| {
+        row.title == source && row.detail.as_deref() == Some("Book preference 1")
+    }));
     tap(&mut app, layout.back());
     assert_eq!(app.screen, Screen::Book);
     assert_eq!(app.current_position(), position);

@@ -470,7 +470,13 @@ mod tests {
                 .collect::<Vec<_>>();
             let mut canvas = Canvas::new(WIDTH, HEIGHT, &paths).unwrap();
             let document = primitive_app::frame(&app, &mut canvas, false);
-            page_input(&mut app, Input::PageForward);
+            // A tall fit-width page scrolls before it reaches its end, so press until the prompt opens.
+            for _ in 0..8 {
+                if app.end_dialog.is_some() {
+                    break;
+                }
+                page_input(&mut app, Input::PageForward);
+            }
             assert_eq!(app.end_dialog, Some(Dialog::Actions));
             assert_ne!(primitive_app::frame(&app, &mut canvas, false), document);
             assert!(app.dismiss_end_prompt());
