@@ -9524,16 +9524,18 @@ impl Reader {
                 },
                 |line| line.width(),
             );
+            let caption_slot = custom_footer
+                .as_ref()
+                .and_then(|line| line.gap_width())
+                .unwrap_or_else(|| self.footer_caption_width(footer_slot_width, status_text_width));
             let status_rect = self.footer_caption_rect(
-                custom_footer
-                    .as_ref()
-                    .and_then(|line| line.gap_width())
-                    .unwrap_or_else(|| {
-                        self.footer_caption_width(footer_slot_width, status_text_width)
-                    }),
+                caption_slot,
                 status_text_width,
                 footer_font_px,
             );
+            // The layout box keeps its configured height; the text is drawn at the
+            // caption's full line height so descenders are not clipped.
+            let caption_text_rect = self.footer_caption_text_rect(status_rect, caption_slot, footer_font_px);
             reading.draw_page_with_footer_cover(
                 canvas,
                 (self.selection.is_none() && !note_covers_footer).then_some("Exit"),
@@ -9543,7 +9545,7 @@ impl Reader {
                 } else {
                     display_notice
                 },
-                status_rect,
+                caption_text_rect,
                 footer_style,
                 &highlights,
                 &selection,

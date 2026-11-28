@@ -33,7 +33,7 @@ What was reviewed (book screen):
 - EPUB: body text, justified paragraphs, footnote marker, internal links and an inline image render. Scripts outside NotoSans show as boxes; this run supplies only one font, so it is expected, not a regression.
 - PDF: a rotated scan page renders at fit-width with zoom controls and progress.
 - Comic: a fit-width page renders with footer controls.
-- Defect (pre-existing at HEAD): the footer caption text is clipped at its bottom edge. `footer_caption_rect` uses the configured container height (default 14, so 28 px) for ordinary text, which is smaller than the caption line. The configured height is deliberate so the progress track does not move, so this needs an owner decision before changing it.
+- Footer clipping (fixed): the caption layout box keeps its configured stock height (14 units, 28 px), which two tests pin. The caption font line is 48 px, so the glyphs were clipped. The caption is now drawn in a rectangle grown to its line height about the same centre (`footer_caption_text_rect`, `src/app/reading_footer.rs`). Layout, cover and progress track geometry are unchanged, and the desktop screenshot shows the full caption.
 
 Kindle cross-compile (compile only, no device): `cargo zigbuild --locked --release --features kindle --target armv7-unknown-linux-musleabihf --bins` succeeded. `reader-kindle` is a statically linked 32-bit ARM ELF (EABI5), and `reader-probe` also built. It produced 60 warnings, which were not triaged.
 

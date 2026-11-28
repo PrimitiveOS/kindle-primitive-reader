@@ -1669,6 +1669,27 @@ impl Reader {
         default
     }
 
+    /// The caption's drawing rectangle: the layout box grown to the caption's line
+    /// height about its centre. Layout and cover geometry keep using `status_rect`.
+    pub(super) fn footer_caption_text_rect(
+        &self,
+        status_rect: Rect,
+        slot_width: u32,
+        font_size: i32,
+    ) -> Rect {
+        let line = self
+            .reading_viewport()
+            .caption(slot_width as i32, font_size)
+            .h;
+        let grow = (line - status_rect.h).max(0);
+        Rect::new(
+            status_rect.x,
+            status_rect.y - grow / 2,
+            status_rect.w,
+            status_rect.h + grow,
+        )
+    }
+
     pub(super) fn footer_caption_rect(
         &self,
         slot_width: u32,
