@@ -4,9 +4,9 @@ Written for: the Reader owner. It separates failures that predate the uncommitte
 
 ## Status update (current run)
 
-Latest full library run, working tree, `RUST_MIN_STACK=67108864`: **1832 passed, 46 failed, 77 ignored**. Earlier sections below record the state when they were written and are kept for their decisions; the counts in the tables are historical.
+Latest full library run, working tree, `RUST_MIN_STACK=67108864`: **1833 passed, 45 failed, 77 ignored**. Earlier sections below record the state when they were written and are kept for their decisions; the counts in the tables are historical.
 
-- Of the 46 current failures, about 25 also appear in the `HEAD` list and the rest do not; the split is approximate (see below). The `HEAD` list in `/tmp` is a 58-name subset and is not an authoritative baseline, so the split is approximate.
+- Of the 45 current failures, about 25 also appear in the `HEAD` list and the rest do not; the split is approximate (see below). The `HEAD` list in `/tmp` is a 58-name subset and is not an authoritative baseline, so the split is approximate.
 - Decisions taken since the table above, each in the test or code named:
   - Search continuation starts from the current match rather than the visible-page edge (`src/app/nearby_search.rs`). Behavior change; confirm against KOReader before relying on it.
   - On a fit-width fixed page, a horizontal swipe pans only when the page overflows horizontally; otherwise it turns the page. Vertical swipes still pan as before (`src/fixed_session.rs`, `swipe_pans`). Previously every swipe panned under fit-width, so the page could not be turned by swiping. Confirm against KOReader's swipe behavior on fit-width pages.

@@ -20961,7 +20961,8 @@ mod tests {
         tap_reading_control(&mut app, "Scan");
         assert_eq!(tap_reading_control(&mut app, "Force OCR"), Change::Partial);
         capture("forced-ocr-control.png", &app);
-        app.input(Input::Tap(630.0, 720.0));
+        // Toggle the Scan tab closed, then leave the tools screen by tapping the page.
+        tap_reading_control(&mut app, "Scan");
         if app.screen == Screen::FixedTools {
             app.input(Input::Tap(630.0, 720.0));
         }
