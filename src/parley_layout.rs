@@ -6414,6 +6414,75 @@ mod tests {
         assert!(inside.page_for(&inside_hit).is_some());
     }
 
+    // Measured in installed KOReader v2026.07.1 with the same markup
+    // (scripts/koreader-list-marker-inside-check.lua): the inside marker's first line starts at
+    // x=63 and the wrapped lines start at x=59, left of the marker. The outside marker's wrapped
+    // lines start at x=99, right of it. Reader's raster must show the same order.
+    #[test]
+    fn inside_marker_wrapped_lines_start_left_of_the_marker_as_in_koreader() {
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let settings = Settings {
+            width: 380,
+            height: 720,
+            font_size: 30.0,
+            margin: 24,
+            base_stylesheet: crate::BaseStylesheet::None,
+            ..Settings::default()
+        };
+        let fixture = crate::test_fixture("field-notes-epub3.epub");
+        let markup = |position: &str| {
+            format!(
+                r#"<html><body><ol style="list-style-position:{position}"><li>First item stays selectable and wraps onto a second line in this narrow reading column.</li><li>Second item remains a separate source block.</li></ol></body></html>"#
+            )
+        };
+        // Left edge of each text row band, top to bottom, from the page raster.
+        let bands = |position: &str| {
+            let mut probe = crate::Probe::from_book_content(
+                Book::open(&fixture).unwrap(),
+                crate::Engine::Parley,
+                &fonts,
+                settings,
+                0,
+                Some(markup(position)),
+            )
+            .unwrap();
+            let pixels = probe.capture(0).unwrap();
+            let width = settings.width as usize;
+            let mut bands: Vec<(usize, usize)> = Vec::new();
+            let mut open: Option<usize> = None;
+            for y in 0..settings.height as usize {
+                let row = &pixels[y * width..(y + 1) * width];
+                let inked = row.iter().any(|&gray| gray < 192);
+                match (inked, open) {
+                    (true, None) => open = Some(y),
+                    (false, Some(top)) => {
+                        bands.push((top, y));
+                        open = None;
+                    }
+                    _ => {}
+                }
+            }
+            bands
+                .into_iter()
+                .map(|(top, bottom)| {
+                    (top..bottom)
+                        .flat_map(|y| {
+                            pixels[y * width..(y + 1) * width]
+                                .iter()
+                                .position(|&gray| gray < 192)
+                        })
+                        .min()
+                        .unwrap()
+                })
+                .collect::<Vec<usize>>()
+        };
+        let inside = bands("inside");
+        let outside = bands("outside");
+        assert!(inside.len() >= 2 && outside.len() >= 2, "{inside:?} {outside:?}");
+        assert!(inside[1] < inside[0], "inside lines: {inside:?}");
+        assert!(outside[1] > outside[0], "outside lines: {outside:?}");
+    }
+
     #[test]
     fn rtl_list_markers_remain_outside_source_text_and_bullets_survive_missing_font_symbols() {
         let markup = r#"<html><body><ol dir="rtl"><li>East wind</li></ol><ul><li>North</li></ul></body></html>"#;

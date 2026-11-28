@@ -16,8 +16,13 @@ Publisher CSS can select `list-style-position: inside` or use the equivalent
 `list-style` shorthand. The current implementation candidate gives the marker
 an inline layout box on the first line while keeping it out of the book's
 canonical text, so selection and search continue to address the original
-passage. The default remains the outside position. This new layout path has
-not yet been built or compared with KOReader. The pinned CREngine interface
+passage. The default remains the outside position. KOReader v2026.07.1 on a
+Kindle Oasis 3 (`scripts/koreader-list-marker-inside-check.lua`) and Reader agree on the
+order that matters: with the inside marker, wrapped lines start left of the first line's
+marker; with the outside marker, they start right of it. KOReader's numbers were a
+marker ink starting at x=63 and wrapped lines at x=59 (inside), and wrapped lines at
+x=99 (outside), at its own 617 px geometry. The offsets differ slightly from Reader's
+380 px geometry, and a screenshot comparison has not been made. The pinned CREngine interface
 exposes the built-in list marker types and inside/outside position; custom
 `@counter-style` rules and image markers are outside that reference scope.
 [Pinned CREngine list styles](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/include/cssdef.h#L1576-L1615)
