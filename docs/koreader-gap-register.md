@@ -195,8 +195,11 @@ still say 18; treat the code as authoritative and correct the docs (plan 0.6).
 - S-15 (nested and cross-spine in-page notes): closed for the cases in the
   fixtures, with the 80% note size and the deferred page-break comparison
   recorded above. Not a claim of parity for every nested or cross-spine layout.
-- Item 1.6 (line fitting and pagination parity, including F-9 word-spacing
-  rounding): deferred to a later phase. It needs a numeric oracle from the
+- Item 1.6 (line fitting and pagination parity): widows and orphans are
+  implemented in `src/publisher_breaks.rs` (`protect_paragraph_end`) and verified
+  against the installed KOReader (`docs/paragraph-ends.md`). Hanging punctuation is
+  implemented and has macOS replay evidence (`T2-5.5`, `docs/koreader-sdl-reference.md`).
+  Open: F-9 on the contour, exact-break and measure paths (`docs/word-spacing.md`). It needs a numeric oracle from the
   pinned engine (integer space widths in `crengine/src/lvtextfm.cpp`) and a
   margin-matched KOReader run. Nothing in it is verified here.
 - Item 1.10 (scan reflow options C-1 and C-3): deferred to a later phase. Speckle
