@@ -506,9 +506,8 @@ mod tests {
     use primitive_app::viewport::{LogicalTurn, Viewport, ViewportDecision};
     use primitive_ui::{Input, Rect};
 
-    /// Returning a page in landscape restores the staged frame for text. Scan
-    /// pages are checked by position: their pixels drift after a relayout (a
-    /// recorded finding in the triage doc), so the frame is not a reliable check.
+    /// Returning a page in landscape restores the staged frame. For scan pages the
+    /// position must match and the page pixels must match outside the footer band.
     fn restored(
         reader: &Reader,
         canvas: &mut Canvas,
@@ -518,6 +517,19 @@ mod tests {
     ) {
         if scan {
             assert_eq!(&reader.current_position(), position);
+            // The page must match exactly. The only allowed difference is the footer band,
+            // where the transient "End of document" notice from the staging turn is cleared
+            // by the input that returns the page. Landscape frames are 1680 pixels wide.
+            const FOOTER: std::ops::Range<usize> = 1190..1250;
+            let frame = primitive_app::frame(reader, canvas, false);
+            assert_eq!(frame.len(), staged.len());
+            let changed = frame
+                .iter()
+                .zip(staged)
+                .enumerate()
+                .filter(|(index, (a, b))| a != b && !FOOTER.contains(&(index / 1680)))
+                .count();
+            assert_eq!(changed, 0, "scan page pixels outside the footer band changed");
         } else {
             assert_eq!(primitive_app::frame(reader, canvas, false), staged);
         }
@@ -674,44 +686,31 @@ mod tests {
             turn(&mut reader, Input::PageBack);
             restored(&reader, &mut wide, scan, &position, &staged);
             if scan {
-                let start = reader
-                    .text_flow
-                    .as_ref()
-                    .unwrap()
-                    .preferences()
-                    .text_scale
-                    .unwrap_or(100);
-                tap(&mut reader, Rect::new(1390, 1195, 120, 60));
-                assert_ne!(primitive_app::frame(&reader, &mut wide, false), staged);
-                // The footer steps are not symmetric (up is +10, down is -5), so step
-                // down until the starting scale returns, with a bound. Compare the
-                // scale: relayout after a scale change does not reproduce the staged
-                // pixels exactly (see the recorded finding in the triage doc).
-                for _ in 0..4 {
-                    if reader
-                        .text_flow
-                        .as_ref()
-                        .unwrap()
-                        .preferences()
-                        .text_scale
-                        .unwrap_or(100)
-                        == start
-                    {
-                        break;
-                    }
-                    tap(&mut reader, Rect::new(1256, 1195, 120, 60));
-                }
-                assert_eq!(
+                // An unset scale means the stock default, not 100 percent.
+                let stock = crate::library::DEFAULT_SCAN_REFLOW_TEXT_SCALE;
+                let scale = |reader: &Reader| {
                     reader
                         .text_flow
                         .as_ref()
                         .unwrap()
                         .preferences()
                         .text_scale
-                        .unwrap_or(100),
-                    start
-                );
+                        .unwrap_or(stock)
+                };
+                let start = scale(&reader);
+                tap(&mut reader, Rect::new(1390, 1195, 120, 60));
+                assert_ne!(primitive_app::frame(&reader, &mut wide, false), staged);
+                // Each footer step moves the scale by five; step down to the starting scale.
+                for _ in 0..4 {
+                    if scale(&reader) == start {
+                        break;
+                    }
+                    tap(&mut reader, Rect::new(1256, 1195, 120, 60));
+                }
+                assert_eq!(scale(&reader), start);
             }
+                // Returning to the starting scale must reproduce the staged page.
+                restored(&reader, &mut wide, scan, &position, &staged);
 
             press(&reader, &mut wide, landscape.done(), false);
             tap(&mut reader, landscape.done());

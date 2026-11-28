@@ -79,7 +79,7 @@ still say 18; treat the code as authoritative and correct the docs (plan 0.6).
 
 | ID | Behaviour | KOReader evidence | Reader evidence | Impact | Status |
 | --- | --- | --- | --- | --- | --- |
-| R-1 | Landscape scan reflow: after a landscape page turn back, or a text scale change (+10 then −5), the frame does not return to the staged pixels. Position and scale do return. Text reflow matches exactly. | none (Reader-internal relayout) | `src/app/reading_viewport_stage.rs`, `scan_text_viewport_stages_rolls_back_and_uses_landscape_controls` checks position for scan pages (helper `restored`) | medium | open, tracked here (plan 1.4 render and projection) |
+| R-1 | Landscape scan reflow return and scale round trip | none (Reader-internal) | Closed. Two test causes, no production drift: the round trip stopped at 100 instead of the stock 105, and the return cleared the transient "End of document" footer notice set by the staging turn. `scan_text_viewport_stages_rolls_back_and_uses_landscape_controls` now compares the page exactly outside the footer band. | medium | closed |
 
 ## Scan and OCR reflow (plan 1.10)
 
