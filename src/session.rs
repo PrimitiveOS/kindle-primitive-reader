@@ -4203,6 +4203,45 @@ mod tests {
     }
 
     #[test]
+    fn publisher_render_mode_stays_on_for_a_right_to_left_book() {
+        let settings = crate::PublisherRenderMode::Web.apply(Settings {
+            width: WIDTH,
+            height: PAGE_HEIGHT,
+            font_size: 25.0,
+            ..Settings::default()
+        });
+        let reading = Reading::restore(
+            BookConfig {
+                viewport: ReadingViewport::PORTRAIT,
+                user_hyphenation: Default::default(),
+                user_styles: Default::default(),
+                chapter_offsets: Default::default(),
+                quote_prefixes: Default::default(),
+                screen_pages: Default::default(),
+                eager_layouts: Default::default(),
+                folder_snapshot: None,
+                engine: Engine::Parley,
+                book: crate::test_fixture("rtl-notebook.epub"),
+                fonts: vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+                font_roles: Default::default(),
+                settings,
+                scroll: false,
+                facing_pages: false,
+                hide_nonlinear: false,
+                hidden_flows: Default::default(),
+            },
+            0,
+            0,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            reading.probe.settings.publisher_render_mode,
+            Some(crate::PublisherRenderMode::Web)
+        );
+    }
+
+    #[test]
     fn publisher_render_modes_change_the_scroll_layout() {
         let bottom = |mode: crate::PublisherRenderMode| {
             let settings = mode.apply(Settings {

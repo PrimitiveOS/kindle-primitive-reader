@@ -105,8 +105,10 @@ mode too: on the pinned KOReader, the scroll full height of
 `render-mode-composition.epub` is 1655 px for Legacy and 1580 px for Flat. Custom
 hidden flows keep the mode as well; the flow tests keep their markers resolved
 under Web. Two-page spreads keep the mode on each leaf, at the leaf width.
-No publisher-render pause is left in the Reader layout; RTL and vertical text
-still use Reader's layout.
+Right-to-left books keep the mode too: on the pinned KOReader, the scroll full
+height of `rtl-notebook.epub` is 4571 px for Legacy and 4540 px for the other modes.
+Vertical text is the one pause left. On `vertical-chapters.epub` the pinned
+KOReader height is 3809 px in every mode, so Reader's layout there matches it.
 
 Scroll view was compared on the first screen of the same fixture, Legacy and
 Web, with the pinned KOReader and Reader (`docs/screenshots/render-mode-scroll-*.png`).

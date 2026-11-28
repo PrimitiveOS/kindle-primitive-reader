@@ -8,9 +8,7 @@ impl Reader {
             return Some("Open a reflowable EPUB");
         };
         let reading = &book.reading;
-        if book.entry.format != crate::library::DocumentFormat::Epub
-            || reading.probe.pages_right_to_left()
-        {
+        if book.entry.format != crate::library::DocumentFormat::Epub {
             Some("Requires a horizontal left-to-right EPUB")
         } else {
             None
