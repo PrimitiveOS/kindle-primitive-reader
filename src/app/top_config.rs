@@ -567,6 +567,18 @@ impl Reader {
                 "Off"
             }),
             Item::new(
+                "Refresh on pictures",
+                Action::SetReadingControls(ReadingControls {
+                    no_refresh_on_pictures: !current.no_refresh_on_pictures,
+                    ..current
+                }),
+            )
+            .detail(if current.no_refresh_on_pictures {
+                "Off"
+            } else {
+                "On · full refresh"
+            }),
+            Item::new(
                 "Menu activation",
                 Action::Show(Screen::MenuActivationSettings),
             )

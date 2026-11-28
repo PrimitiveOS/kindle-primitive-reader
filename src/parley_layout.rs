@@ -3374,6 +3374,11 @@ impl ParleyChapter {
             .filter_map(|(image, cols, rows)| Some((image.link.as_deref()?, cols, rows)))
     }
 
+    /// Whether any drawn picture falls in the range (KOReader's pages-with-images check).
+    pub(crate) fn has_visible_pictures(&self, range: Range<f32>, settings: Settings) -> bool {
+        self.visible_artwork(range, settings).next().is_some()
+    }
+
     fn visible_artwork(
         &self,
         range: Range<f32>,

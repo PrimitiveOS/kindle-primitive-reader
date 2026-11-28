@@ -165,6 +165,10 @@ pub(crate) struct ReadingControls {
     /// refresh_on_chapter_boundaries).
     #[serde(skip_serializing_if = "is_false")]
     pub refresh_on_chapter_boundaries: bool,
+    /// Pages with pictures get a full refresh unless this is set (KOReader's
+    /// refresh_on_pages_with_images, on by default).
+    #[serde(skip_serializing_if = "is_false")]
+    pub no_refresh_on_pictures: bool,
     /// Persistent KOReader-style page-turn timeout, retained when turns are disabled.
     pub auto_turn_seconds: u32,
     /// Enabled separately so turning automatic movement off keeps the last timeout.

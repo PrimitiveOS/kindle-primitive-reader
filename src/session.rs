@@ -2026,6 +2026,17 @@ impl Reading {
             .fold(0.0, f32::max)
     }
 
+    /// Whether the page on screen draws a picture.
+    pub(crate) fn page_has_images(&self) -> bool {
+        match &self.probe.renderer {
+            crate::Renderer::Parley(layout) => layout.has_visible_pictures(
+                self.probe.page_range(self.page),
+                self.probe.settings,
+            ),
+            _ => false,
+        }
+    }
+
     pub(crate) fn visible_columns(&self) -> impl Iterator<Item = (Range<f32>, u32)> + '_ {
         self.visible_parts()
             .into_iter()

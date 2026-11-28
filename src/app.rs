@@ -7734,11 +7734,16 @@ impl Reader {
                 && self.refresh_chapter.is_some()
                 && chapter != self.refresh_chapter;
             self.refresh_chapter = chapter;
+            let pictures = !self.controls.no_refresh_on_pictures
+                && self
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.reading.page_has_images());
             let change = self
                 .controls
                 .page_refresh
                 .after_page(&mut self.pages_since_refresh);
-            if crossed { Change::Full } else { change }
+            if crossed || pictures { Change::Full } else { change }
         } else {
             Change::Partial
         }
