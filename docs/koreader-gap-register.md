@@ -26,7 +26,7 @@ decide; check before implementing), **intentional** (kept different on purpose, 
 
 | ID | Behaviour | KOReader evidence | Reader evidence | Impact | Status |
 | --- | --- | --- | --- | --- | --- |
-| F-1 | User-chosen default, fallback and monospace fonts | `frontend/apps/reader/modules/readerfont.lua:242-275` | not found in `src/app/typeface.rs`, `src/reading_fonts.rs` | medium | open |
+| F-1 | User-chosen default, fallback and monospace fonts | `frontend/apps/reader/modules/readerfont.lua:242-275` | fallback font done: one Reader-wide fallback, after each book's font, chosen in the reading font chooser and saved to `fallback-font.json` (`src/app/fallback_font.rs`, tests `fallback_font`). Not done: a Reader-wide default font (★) (needs a rule for a book's "Device fonts" choice, which stores `None`) and a monospace font (needs the family mapping in F-2) | medium | partial |
 | F-2 | Font-family mapping (serif, sans, mono, cursive, fantasy, emoji, fangsong, math) and "ignore publisher font names" | `readerfont.lua:324-565` | not found | medium | open |
 | F-3 | Additional fallback fonts, fallback size adjust, monospace scaling % | `readerfont.lua:608-670` | not found | low-medium | open |
 | F-4 | Font menu preferences (sort by recent, show names in own face), font test document | `readerfont.lua:565-700` | not found | low | open |

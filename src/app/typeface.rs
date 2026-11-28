@@ -86,6 +86,31 @@ impl Reader {
                 .iter()
                 .map(|filename| Item::new(filename, Action::SetFont(Some(filename.clone())))),
         );
+        items.push(Item::new(
+            language.reading_font_text("Fallback font"),
+            Action::Heading,
+        )
+        .detail(language.reading_font_text(
+            "Used for characters the book's font lacks",
+        )));
+        items.push(
+            Item::new(language.reading_font_text("Off"), Action::SetFallbackFont(None)).detail(
+                if self.fallback_font_file.is_none() {
+                    "Selected"
+                } else {
+                    ""
+                },
+            ),
+        );
+        items.extend(self.available_fonts.iter().map(|filename| {
+            Item::new(filename, Action::SetFallbackFont(Some(filename.clone()))).detail(
+                if self.fallback_font_file.as_deref() == Some(filename) {
+                    "Selected"
+                } else {
+                    ""
+                },
+            )
+        }));
         items.push(
             Item::new(
                 language.reading_font_text("Add more fonts"),

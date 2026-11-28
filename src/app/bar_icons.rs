@@ -567,6 +567,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         | Action::SetPublisherRenderDefault(_)
         | Action::ShowFooterFonts
         | Action::SetFooterFontFace(_)
+        | Action::SetFallbackFont(_)
         | Action::ResetText
         | Action::EditHeaderFontSize => TEXT,
         Action::ApplyProfile(_)

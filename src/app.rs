@@ -63,6 +63,7 @@ mod folder_open;
 #[cfg(test)]
 mod font_render_tests;
 mod footer_custom_text;
+mod fallback_font;
 mod footer_font_face;
 mod footer_presets;
 mod footnote_font;
@@ -820,6 +821,7 @@ enum Action {
     EmbeddedFontReport,
     ShowFooterFonts,
     SetFooterFontFace(Option<String>),
+    SetFallbackFont(Option<String>),
     ShowDictionaries,
     InstallDictionary(usize, usize),
     DownloadDictionaryWithoutSizeEstimate(usize, usize),
@@ -1162,6 +1164,8 @@ pub struct Reader {
     controls: ReadingControls,
     footer_font_path: PathBuf,
     footer_font_file: Option<String>,
+    fallback_font_path: PathBuf,
+    fallback_font_file: Option<String>,
     footer_font_render_path: Option<PathBuf>,
     footer_custom_text_path: PathBuf,
     footer_custom_text: footer_custom_text::Preference,
@@ -1360,6 +1364,8 @@ impl Reader {
         })?);
         let fonts_directory = data.join("fonts");
         let footer_font_path = data.join("status-bar-font.json");
+        let fallback_font_path = data.join("fallback-font.json");
+        let fallback_font_file = fallback_font::load(&fallback_font_path, &fonts_directory);
         let footer_font_file = footer_font_face::load(&footer_font_path, &fonts_directory);
         let footer_font_render_path = footer_font_file
             .as_deref()
@@ -1467,6 +1473,8 @@ impl Reader {
             controls_path,
             controls,
             footer_font_path,
+            fallback_font_path,
+            fallback_font_file,
             footer_font_file,
             footer_font_render_path,
             footer_custom_text_path,
@@ -5746,6 +5754,7 @@ impl Reader {
                 self.set_footer_font_file(font)?;
                 self.show(Screen::FooterSettings);
             }
+            Action::SetFallbackFont(font) => self.set_fallback_font_file(font)?,
             Action::ShowDictionaries => self.open_sources()?,
             Action::InstallDictionary(group, index) => self.install_dictionary(group, index)?,
             Action::DownloadDictionaryWithoutSizeEstimate(group, index) => {
@@ -6026,7 +6035,31 @@ impl Reader {
             })?;
             fonts.insert(0, font);
         }
+        // The fallback comes after the book's font, so it is used only for characters that
+        // font lacks. A fallback already in the list is not added twice.
+        if let Some(name) = self.fallback_font_file.as_deref()
+            && let Ok(fallback) = reading_fonts::resolve(&self.fonts_directory, name)
+            && !fonts.contains(&fallback)
+        {
+            fonts.insert(1.min(fonts.len()), fallback);
+        }
         Ok(fonts)
+    }
+
+    /// Save the Reader-wide fallback font and re-lay out the open book with it.
+    fn set_fallback_font_file(&mut self, font: Option<String>) -> Result<()> {
+        fallback_font::save(&self.fallback_font_path, &self.fonts_directory, font.as_deref())?;
+        self.fallback_font_file = font;
+        if let Some(active) = self.active.as_mut() {
+            let file = self
+                .library
+                .state(active.id)
+                .and_then(|state| state.preferences.font_file.clone());
+            let fonts = self.fonts_for(file.as_deref())?;
+            let active = self.active.as_mut().ok_or("Open a book first")?;
+            active.reading.set_fonts(fonts)?;
+        }
+        Ok(())
     }
 
     fn apply_text_profile(&mut self, mut preferences: BookPreferences) -> Result<()> {
