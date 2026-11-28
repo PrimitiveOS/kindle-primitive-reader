@@ -861,6 +861,11 @@ pub(crate) struct BookStyle {
     registered_faces: HashMap<u64, Arc<str>>,
 }
 
+/// Checks a book's base stylesheet with the same lenient rules as user CSS.
+pub(crate) fn validate_base_sheet(css: &str) -> crate::Result<()> {
+    user_css::parse_lenient(css).map(|_| ())
+}
+
 impl BookStyle {
     pub fn with_user_css(mut self, snapshot: &crate::user_styles::Snapshot) -> crate::Result<Self> {
         self.layout_tweaks = snapshot.layout_tweaks();
@@ -871,6 +876,15 @@ impl BookStyle {
             for item in StyleSheetParser::new(&mut parser, &mut SheetParser).flatten() {
                 if let SheetItem::Rule(rule) = item {
                     self.user_rules.push(rule);
+                }
+            }
+        }
+        if let Some(base) = snapshot.base_css() {
+            // The book's own base sheet replaces the built-in one, including its table defaults.
+            self.base_rules.clear();
+            for rule in user_css::parse_lenient(base)? {
+                if self.base_rules.len() < MAX_RULES {
+                    self.base_rules.push(rule);
                 }
             }
         }

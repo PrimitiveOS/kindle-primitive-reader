@@ -97,7 +97,11 @@ pub(crate) struct Snapshot {
     pub digest: [u8; 16],
     notes: InPageNotes,
     layout: LayoutTweaks,
+    base_css: Option<Arc<str>>,
 }
+
+/// The largest base stylesheet a book may choose.
+pub(crate) const MAX_BASE_SHEET_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LayoutTweaks {
@@ -227,6 +231,7 @@ impl Default for Snapshot {
             digest: md5::compute(b"").0,
             notes: InPageNotes::default(),
             layout: LayoutTweaks::default(),
+            base_css: None,
         }
     }
 }
@@ -285,7 +290,29 @@ impl Snapshot {
             digest: digest.finalize().0,
             notes,
             layout,
+            base_css: None,
         })
+    }
+    /// A book's own base sheet replaces the built-in base sheet, as KOReader's picker
+    /// does. Its text joins the content digest, so layouts cache per sheet.
+    pub(crate) fn with_base_sheet(mut self, css: Option<&str>) -> crate::Result<Self> {
+        let Some(css) = css else {
+            return Ok(self);
+        };
+        if css.len() > MAX_BASE_SHEET_BYTES {
+            return Err("The base stylesheet is too large".into());
+        }
+        crate::book_style::validate_base_sheet(css)?;
+        let mut digest = md5::Context::new();
+        digest.consume(self.digest);
+        digest.consume(b"\0base-sheet");
+        digest.consume(css.as_bytes());
+        self.digest = digest.finalize().0;
+        self.base_css = Some(css.into());
+        Ok(self)
+    }
+    pub(crate) fn base_css(&self) -> Option<&str> {
+        self.base_css.as_deref()
     }
     pub(crate) fn css(&self) -> &str {
         &self.css
@@ -1124,6 +1151,9 @@ pub(crate) struct BookTweaks {
     pub choices: BTreeMap<String, bool>,
     pub custom: Option<String>,
     pub custom_enabled: bool,
+    /// The book's own base stylesheet text, used instead of the built-in base sheet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_sheet: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footnote_size: Option<FootnoteSize>,
 }
@@ -1134,6 +1164,7 @@ impl Default for BookTweaks {
             choices: BTreeMap::new(),
             custom: None,
             custom_enabled: false,
+            base_sheet: None,
             footnote_size: None,
         }
     }
@@ -1244,10 +1275,22 @@ impl Data {
         }
         Ok(())
     }
+    /// Chooses the book's own base stylesheet text, or clears it for the built-in sheet.
+    pub(crate) fn choose_base_sheet(&mut self, book: u64, css: Option<String>) -> crate::Result<()> {
+        if let Some(css) = &css {
+            if css.len() > MAX_BASE_SHEET_BYTES {
+                return Err("The base stylesheet is too large".into());
+            }
+            crate::book_style::validate_base_sheet(css)?;
+        }
+        self.books.entry(book).or_default().base_sheet = css;
+        Ok(())
+    }
+
     pub(crate) fn snapshot(&self, book: u64) -> crate::Result<Snapshot> {
         let b = self.book(book);
         if !b.enabled {
-            return Ok(Snapshot::default());
+            return Snapshot::default().with_base_sheet(b.base_sheet.as_deref());
         }
         let mut selected: Vec<_> = PRESETS
             .iter()
@@ -1328,7 +1371,7 @@ impl Data {
         {
             css.push_str(custom);
         }
-        Snapshot::with_layout(css, notes, layout)
+        Snapshot::with_layout(css, notes, layout)?.with_base_sheet(b.base_sheet.as_deref())
     }
     pub(crate) fn validate(&self) -> crate::Result<()> {
         let valid_id = |id: &str| {

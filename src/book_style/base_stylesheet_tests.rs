@@ -125,3 +125,57 @@ fn publisher_important_rule_overrides_base_heading_break() {
         crate::publisher_breaks::Edge::Auto
     ));
 }
+
+#[test]
+fn a_book_base_sheet_replaces_the_builtin_base_sheet_and_clears_back() {
+    let markup = r#"<html><body><p id="p">Text</p></body></html>"#;
+    let (builtin_source, builtin) = styled(markup, crate::BaseStylesheet::Traditional);
+    let builtin_indent = element(&builtin_source, &builtin, "p")
+        .text_indent
+        .pixels(1000, 42.0);
+
+    let mut data = crate::user_styles::Data::default();
+    data.choose_base_sheet(7, Some("p { text-indent: 3em; }".into()))
+        .unwrap();
+    let snapshot = data.snapshot(7).unwrap();
+    assert_eq!(snapshot.base_css(), Some("p { text-indent: 3em; }"));
+    assert!(data.snapshot(8).unwrap().base_css().is_none());
+
+    let source = Source::parse(markup).unwrap();
+    let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+    let chapter = book.chapters[0].href.clone();
+    let mut fonts =
+        crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+    let custom = BookStyle::load_with_base(
+        &mut book,
+        &chapter,
+        &source,
+        &mut fonts,
+        crate::Settings {
+            base_stylesheet: crate::BaseStylesheet::None,
+            ..Default::default()
+        },
+    )
+    .with_user_css(&snapshot)
+    .unwrap()
+    .compute(&source.elements);
+    let custom_indent = element(&source, &custom, "p").text_indent.pixels(1000, 42.0);
+    assert!(custom_indent > 0.0);
+    assert_ne!(custom_indent, builtin_indent);
+
+    data.choose_base_sheet(7, None).unwrap();
+    assert!(data.snapshot(7).unwrap().base_css().is_none());
+}
+
+#[test]
+fn a_book_base_sheet_refuses_oversized_text_and_keeps_the_previous_choice() {
+    let mut data = crate::user_styles::Data::default();
+    data.choose_base_sheet(1, Some("p { text-indent: 1em; }".into()))
+        .unwrap();
+    let huge = "p { text-indent: 1em; }\n".repeat(10_000);
+    assert!(data.choose_base_sheet(1, Some(huge)).is_err());
+    assert_eq!(
+        data.snapshot(1).unwrap().base_css(),
+        Some("p { text-indent: 1em; }")
+    );
+}

@@ -56,8 +56,11 @@ simulator capture shows the controls in context:
 The captured frame is 1264 × 1680 pixels. Desktop tests and the screenshot pass;
 the Kindle visual comparison remains open. The styles only cover the properties
 Reader can currently express. Exact CREngine `epub.css`, `html5.css` and
-`fb2.css` fidelity, obsolete legacy stylesheets and stylesheet import/browsing
-are not yet implemented. The new default workflow still needs desktop and Kindle
+`fb2.css` fidelity and obsolete legacy stylesheets are not yet implemented.
+A book can now carry its own base stylesheet text (`BookTweaks.base_sheet`,
+at most 64 KiB, checked with the lenient user-CSS rules). When set, it replaces
+the built-in base sheet, including its table defaults, and its text joins the
+layout digest. The picker that lists and selects `.css` files is not built yet. The new default workflow still needs desktop and Kindle
 verification.
 
 KOReader source reference: pinned release `v2026.07.1` at commit
