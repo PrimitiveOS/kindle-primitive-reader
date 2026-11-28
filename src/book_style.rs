@@ -94,6 +94,13 @@ pub(crate) enum CrFootnoteHint {
     NoterefIgnore,
 }
 
+/// KOReader's alternative-contents hints: `toc-ignore` drops a heading, `toc-level<N>` sets its depth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CrTocHint {
+    Ignore,
+    Level(u8),
+}
+
 #[derive(Clone, Copy)]
 enum CrFootnoteHintValue {
     Set(CrFootnoteHint),
@@ -654,6 +661,8 @@ pub(crate) struct Style {
     pub(crate) allow_small_note_text: bool,
     /// Non-inherited private hint used by KOReader's note-link classifier.
     pub(crate) cr_footnote_hint: Option<CrFootnoteHint>,
+    /// Non-inherited hint that the alternative contents read (`-cr-hint: toc-ignore|toc-levelN`).
+    pub(crate) cr_toc_hint: Option<CrTocHint>,
     pub text_rise: TextRise,
     pub decoration: TextDecoration,
     pub(crate) link_ink: Option<u8>,
@@ -747,6 +756,7 @@ impl Default for Style {
             word_spacing: CssLength::default(),
             allow_small_note_text: false,
             cr_footnote_hint: None,
+            cr_toc_hint: None,
             text_rise: TextRise::default(),
             decoration: TextDecoration::default(),
             link_ink: None,
@@ -1466,6 +1476,7 @@ impl BookStyle {
                             CrFootnoteHintValue::Clear => None,
                         };
                     }
+                    Property::CrTocHint(value) => style.cr_toc_hint = *value,
                     Property::Reset(16, reset) => {
                         decoration = user_css::decoration(*reset, parent.decoration)
                     }
@@ -2908,7 +2919,8 @@ const WORD_SPACING: usize = 69;
 const TEXT_COLOR: usize = 70;
 const CR_FOOTNOTE_HINT: usize = 71;
 const LIST_STYLE_POSITION: usize = 72;
-const CASCADE_PROPERTY_COUNT: usize = 73;
+const CR_TOC_HINT: usize = 73;
+const CASCADE_PROPERTY_COUNT: usize = 74;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2954,6 +2966,7 @@ fn choose<'a>(
             Property::Display(_) => 40,
             Property::Visibility(_) => 41,
             Property::CrFootnoteHint(_) => CR_FOOTNOTE_HINT,
+            Property::CrTocHint(_) => CR_TOC_HINT,
             Property::MaxWidth(_) => 42,
             Property::MaxHeight(value) if !accept_fit && value.pixels(1, 1.0) == Some(0.0) => {
                 continue;
@@ -3070,6 +3083,8 @@ impl Weight {
 
 enum Property {
     CrFootnoteHint(CrFootnoteHintValue),
+    /// `None` clears the hint. The hint is not inherited.
+    CrTocHint(Option<CrTocHint>),
     GeneratedContent(Vec<pseudo::ContentPart>),
     InitialLetter(Option<pseudo::InitialLetter>),
     Display(Display),
@@ -3175,6 +3190,19 @@ impl<'i> DeclarationParser<'i> for Properties {
             let property = match name.to_ascii_lowercase().as_ref() {
                 "-cr-hint" => {
                     let value = input.expect_ident()?.to_ascii_lowercase();
+                    if let Some(toc) = value.strip_prefix("toc-") {
+                        let hint = match toc {
+                            "ignore" => CrTocHint::Ignore,
+                            level => match level
+                                .strip_prefix("level")
+                                .and_then(|n| n.parse::<u8>().ok())
+                            {
+                                Some(n @ 1..=9) => CrTocHint::Level(n),
+                                _ => return Err(ParseError::unexpected_token()),
+                            },
+                        };
+                        return Ok(Property::CrTocHint(Some(hint)));
+                    }
                     Property::CrFootnoteHint(match value.as_str() {
                         "footnote" => CrFootnoteHintValue::Set(CrFootnoteHint::Footnote),
                         "footnote-ignore" => {

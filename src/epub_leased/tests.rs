@@ -6,13 +6,18 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new() -> Self {
+        // Parallel tests share the process id and can read the same clock tick; a counter
+        // keeps each file name distinct.
+        static SEQUENCE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        Self(
-            std::env::temp_dir().join(format!("reader-leased-{}-{nonce}.epub", std::process::id())),
-        )
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(std::env::temp_dir().join(format!(
+            "reader-leased-{}-{nonce}-{sequence}.epub",
+            std::process::id()
+        )))
     }
 
     fn stamped(&self) -> FileStamp {

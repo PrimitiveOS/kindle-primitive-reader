@@ -1,3 +1,4 @@
+use crate::book_style::{BookStyle, CrTocHint};
 use crate::epub::Book;
 use crate::source::Source;
 use crate::{Anchor, Result};
@@ -65,7 +66,19 @@ impl GeneratedContents {
                     Source::parse(&xhtml)
                 }
             }) {
-                Ok(source) => self.add_chapter(chapter, publication.0, &href, &source),
+                Ok(source) => {
+                    let hints = self
+                        .alternative
+                        .then(|| toc_hints(book, &href, &source))
+                        .flatten();
+                    self.add_chapter(
+                        chapter,
+                        publication.0,
+                        &href,
+                        &source,
+                        hints.as_deref(),
+                    )
+                }
                 Err(_) => self.skipped += 1,
             }
         }
@@ -87,14 +100,26 @@ impl GeneratedContents {
         Ok(done)
     }
 
-    fn add_chapter(&mut self, chapter: usize, book: u64, href: &str, source: &Source) {
+    fn add_chapter(
+        &mut self,
+        chapter: usize,
+        book: u64,
+        href: &str,
+        source: &Source,
+        hints: Option<&[Option<CrTocHint>]>,
+    ) {
         let available = (MAX_ENTRIES - self.entries.len()).min(MAX_CHAPTER_HEADINGS);
         let mut headings = source
             .blocks
             .iter()
             .filter(|_| href.len() <= MAX_ANCHOR_PATH_BYTES)
             .filter_map(|block| {
-                let depth = heading_depth(&source.elements[block.element].tag)?;
+                let hint = hints.and_then(|hints| hints.get(block.element).copied().flatten());
+                let depth = match hint {
+                    Some(CrTocHint::Ignore) => return None,
+                    Some(CrTocHint::Level(level)) => usize::from(level) - 1,
+                    None => heading_depth(&source.elements[block.element].tag)?,
+                };
                 let title = outline_label(&block.text);
                 (!title.is_empty() || self.alternative).then_some((depth, title, block.key))
             });
@@ -176,6 +201,14 @@ impl GeneratedContents {
     }
 }
 
+/// The alternative-contents hint of every element in a chapter, from its computed style.
+fn toc_hints(book: &mut Book, href: &str, source: &Source) -> Option<Vec<Option<CrTocHint>>> {
+    let styles = BookStyle::load_for_flow(book, href, source, true, &Default::default())
+        .ok()?
+        .compute(&source.elements);
+    Some(styles.iter().map(|style| style.cr_toc_hint).collect())
+}
+
 pub(crate) fn heading_depth(tag: &str) -> Option<usize> {
     match tag {
         "h1" => Some(0),
@@ -212,6 +245,25 @@ fn outline_label(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn alternative_headings_follow_the_toc_hints() {
+        let xml = r#"<html><head><style>.book { -cr-hint: toc-level1; } .skip { -cr-hint: toc-ignore; }</style></head><body><div class="book">Book Title</div><h2 class="skip">Hidden heading</h2><h3>Section</h3></body></html>"#;
+        let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let href = book.chapters[0].href.clone();
+        let source = Source::parse(xml).unwrap();
+        let hints = super::toc_hints(&mut book, &href, &source).unwrap();
+        let mut contents = super::GeneratedContents::alternative();
+        contents.add_chapter(0, book.revision(), &href, &source, Some(&hints));
+        let titles: Vec<(&str, usize)> = contents
+            .entries
+            .iter()
+            .map(|entry| (entry.title.as_str(), entry.depth))
+            .collect();
+        // The hidden heading is gone. The depth gap before "Section" keeps an empty row, as the
+        // alternative contents always do.
+        assert_eq!(titles, vec![("Book Title", 0), ("", 1), ("Section", 2)]);
+    }
+
     use super::*;
 
     #[test]
@@ -219,7 +271,7 @@ mod tests {
         let headings = "<h2>Section <em>heading</em></h2>".repeat(MAX_CHAPTER_HEADINGS + 1);
         let source = Source::parse(&format!("<html><body>{headings}</body></html>")).unwrap();
         let mut outline = GeneratedContents::default();
-        outline.add_chapter(3, 5, "chapter.xhtml", &source);
+        outline.add_chapter(3, 5, "chapter.xhtml", &source, None);
         assert_eq!(outline.entries.len(), MAX_CHAPTER_HEADINGS);
         assert!(outline.truncated);
         let first = &outline.entries[0];
