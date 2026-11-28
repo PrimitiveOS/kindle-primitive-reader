@@ -280,13 +280,19 @@ fn exports_history_collections_and_selected_books_through_normal_controls() {
             .iter()
             .map(|book| book["entries"].as_array().unwrap().len())
             .sum::<usize>(),
-        3
+        // Two editions with a bookmark and a highlight each, plus the PDF highlight.
+        5
     );
     let mut ids: BTreeSet<_> = BTreeSet::new();
     for book in books {
         assert!(ids.insert(book["primitiveos_book_id"].as_str().unwrap()));
-        let entry = &book["entries"][0];
-        assert_eq!(entry["sort"], "highlight");
+        // Entries are in reading order, so a bookmark can precede the highlight.
+        let entry = book["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["sort"] == "highlight")
+            .unwrap();
         if book["primitiveos_book_id"] == format!("{pdf_id:016x}") {
             assert_eq!(entry["page"], 2);
             assert!(entry.get("time").is_none());
@@ -400,8 +406,10 @@ fn export_uses_reading_order_and_rejects_a_source_replaced_during_export() {
     let file = app.exports.join("library-highlights.json");
     let prior = fs::read(&file).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&prior).unwrap();
-    assert_eq!(value["entries"][0]["text"], "The copper lantern");
-    assert_eq!(value["entries"][1]["text"], "At dusk the door");
+    // The page bookmark leads in reading order; the highlights follow it.
+    assert_eq!(value["entries"][0]["sort"], "bookmark");
+    assert_eq!(value["entries"][1]["text"], "The copper lantern");
+    assert_eq!(value["entries"][2]["text"], "At dusk the door");
     app.activate_library_export(Command::Start(Format::Json))
         .unwrap();
     app.tick(app.export_deadline().unwrap());
@@ -658,12 +666,14 @@ fn export_history_combines_kindle_and_reader_clippings_without_editing_sources()
     let books = json["documents"].as_array().unwrap();
     assert_eq!(books.len(), 2);
     let entries = books[0]["entries"].as_array().unwrap();
-    assert_eq!(entries.len(), 3);
-    assert_eq!(entries[0]["text"], "The copper lantern");
-    assert_eq!(entries[1]["page"], 42);
-    assert!(entries[1].get("primitiveos").is_none());
-    assert_eq!(entries[2]["page"], "Location 94");
-    assert_eq!(entries[2]["sort"], "note");
+    // Reading order: the page bookmark, then the highlights and the note.
+    assert_eq!(entries.len(), 4);
+    assert_eq!(entries[0]["sort"], "bookmark");
+    assert_eq!(entries[1]["text"], "The copper lantern");
+    assert_eq!(entries[2]["page"], 42);
+    assert!(entries[2].get("primitiveos").is_none());
+    assert_eq!(entries[3]["page"], "Location 94");
+    assert_eq!(entries[3]["sort"], "note");
     assert_eq!(books[1]["author"], "Other Author");
     assert_eq!(books[1]["entries"][0]["sort"], "bookmark");
     assert!(books[1].get("file").is_none());
@@ -672,11 +682,14 @@ fn export_history_combines_kindle_and_reader_clippings_without_editing_sources()
     settle(&mut app);
     let exported = fs::read(app.exports.join("library-highlights.clippings.txt")).unwrap();
     let records = kindle_clippings::parse(&exported).unwrap();
-    assert_eq!(records.len(), 5);
-    assert_eq!(records[1].kind, Kind::Note);
-    assert_eq!(records[1].text, "Keep <this> & compare [notes]");
-    assert_eq!(records[3].text, "A stock note.");
-    assert_eq!(records[4].location, Some(Location::Position("132")));
+    // Reading order: the chapter bookmark, the copper highlight and its note, the stock
+    // highlight and note, then the position-132 bookmark.
+    assert_eq!(records.len(), 6);
+    assert_eq!(records[0].kind, Kind::Bookmark);
+    assert_eq!(records[2].kind, Kind::Note);
+    assert_eq!(records[2].text, "Keep <this> & compare [notes]");
+    assert_eq!(records[4].text, "A stock note.");
+    assert_eq!(records[5].location, Some(Location::Position("132")));
     assert_eq!(fs::read_to_string(stock_path).unwrap(), stock);
     assert_eq!(app.library.bytes().unwrap(), state_before);
     assert_eq!(app.current_history_location(), position_before);
@@ -728,7 +741,9 @@ fn exports_the_current_book_as_clippings_with_a_local_location_and_note() {
     tap_row(&mut app, "Kindle clippings text");
     let exported = fs::read(app.exports.join(format!("{id:016x}.clippings.txt"))).unwrap();
     let records = kindle_clippings::parse(&exported).unwrap();
-    assert_eq!(records.len(), 2);
+    // The highlight, its note, and the saved page bookmark.
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[2].kind, Kind::Bookmark);
     assert_eq!(records[0].kind, Kind::Highlight);
     assert_eq!(
         records[0].location,
