@@ -238,3 +238,15 @@ fn dpi_original_inventory_measures_newly_supported_image_constraints_and_96_box_
     )
     .unwrap();
 }
+
+#[test]
+fn a_user_sheet_keeps_its_usable_rules_when_one_rule_is_unsupported() {
+    let css = "p { text-indent: 2em } img { max-height: 40% } h1 { font-style: italic }";
+    // The strict form still fails the whole sheet, so the editor shows the problem.
+    assert!(user_css::parse(css).is_err());
+    // The layout form applies the two usable rules and skips the unsupported one.
+    assert_eq!(user_css::parse_lenient(css).unwrap().len(), 2);
+    let (rules, rejected) = user_css::parse_with_diagnostics(css).unwrap();
+    assert_eq!(rules.len(), 2);
+    assert_eq!(rejected.len(), 1, "{rejected:?}");
+}

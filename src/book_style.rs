@@ -864,7 +864,7 @@ impl BookStyle {
                 }
             }
         }
-        self.user_rules.extend(user_css::parse(snapshot.css())?);
+        self.user_rules.extend(user_css::parse_lenient(snapshot.css())?);
         Ok(self)
     }
 

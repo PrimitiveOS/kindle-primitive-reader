@@ -478,7 +478,9 @@ fn expand(decl: Declaration, out: &mut Vec<Declaration>) {
         _ => out.push(decl),
     }
 }
-pub(super) fn parse(css: &str) -> crate::Result<Vec<Rule>> {
+/// The rules of a user sheet, and one message for each rule that could not be used. Sheet size,
+/// control characters and the rule count are whole-sheet limits and still fail the sheet.
+pub(super) fn parse_with_diagnostics(css: &str) -> crate::Result<(Vec<Rule>, Vec<String>)> {
     if css.len() > crate::user_styles::MAX_CSS {
         return Err("User CSS exceeds 64 KiB".into());
     }
@@ -490,19 +492,41 @@ pub(super) fn parse(css: &str) -> crate::Result<Vec<Rule>> {
     }
     let mut parser = Parser::new(css);
     let mut out = Vec::new();
+    let mut rejected = Vec::new();
     for result in StyleSheetParser::new(&mut parser, &mut StrictSheet) {
-        let rule = result.map_err(|(e, _, location)| match e.kind {
-            ParseErrorKind::Custom(text) if text.starts_with("Line ") => text,
-            ParseErrorKind::Custom(text) => message(location, text),
-            _ => message(location, "Unsupported CSS syntax or at-rule"),
-        })?;
+        let rule = match result {
+            Ok(rule) => rule,
+            Err((e, _, location)) => {
+                rejected.push(match e.kind {
+                    ParseErrorKind::Custom(text) if text.starts_with("Line ") => text,
+                    ParseErrorKind::Custom(text) => message(location, text),
+                    _ => message(location, "Unsupported CSS syntax or at-rule"),
+                });
+                continue;
+            }
+        };
         if out.len() >= crate::user_styles::MAX_RULES {
             return Err("User CSS exceeds 128 rules".into());
         }
         out.push(rule);
     }
-    Ok(out)
+    Ok((out, rejected))
 }
+
+/// The strict form: any unusable rule fails the sheet. The editor uses it to show the problem.
+pub(super) fn parse(css: &str) -> crate::Result<Vec<Rule>> {
+    let (rules, rejected) = parse_with_diagnostics(css)?;
+    match rejected.into_iter().next() {
+        Some(first) => Err(first.into()),
+        None => Ok(rules),
+    }
+}
+
+/// The layout form: applies every usable rule and skips the rest, as KOReader does.
+pub(crate) fn parse_lenient(css: &str) -> crate::Result<Vec<Rule>> {
+    parse_with_diagnostics(css).map(|(rules, _)| rules)
+}
+
 pub(crate) fn validate(css: &str) -> crate::Result<()> {
     parse(css).map(|_| ())
 }
