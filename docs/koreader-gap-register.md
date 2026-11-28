@@ -75,6 +75,12 @@ still say 18; treat the code as authoritative and correct the docs (plan 0.6).
 | N-10 | Page-position memory per page (`page_positions`) | `readerpaging.lua` | no clear counterpart | low | verify |
 | N-11 | Margin editors: paired L/R spinner, hold steps of 5 logical units, dual top/bottom editor | `creoptions.lua` editors | `docs/reflow-page-margins.md`; `src/app/numeric_editor.rs` | low | partial |
 
+## Phase 1.4 open items (from the Phase 0 pass)
+
+| ID | Behaviour | KOReader evidence | Reader evidence | Impact | Status |
+| --- | --- | --- | --- | --- | --- |
+| R-1 | Landscape scan reflow: after a landscape page turn back, or a text scale change (+10 then −5), the frame does not return to the staged pixels. Position and scale do return. Text reflow matches exactly. | none (Reader-internal relayout) | `src/app/reading_viewport_stage.rs`, `scan_text_viewport_stages_rolls_back_and_uses_landscape_controls` checks position for scan pages (helper `restored`) | medium | open, tracked here (plan 1.4 render and projection) |
+
 ## Scan and OCR reflow (plan 1.10)
 
 | ID | Behaviour | KOReader evidence | Reader evidence | Impact | Status |

@@ -89,13 +89,13 @@ fn legacy_pixels_and_missing_serialized_fields_keep_the_exact_original_mode() {
 }
 
 fn sample() -> std::path::PathBuf {
+    // Tests run in parallel and each removes its own file. A clock reading can repeat
+    // within one tick on macOS, so a counter keeps every name distinct.
+    static SEQUENCE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let path = std::env::temp_dir().join(format!(
         "reader-logical-{}-{}.xhtml",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::write(&path,"<html><head><title>Large text</title></head><body><p id='start'>Harbor WWW <a href='#end'>lantern</a> returns at dusk.</p><p id='end'>End.</p></body></html>").unwrap();
     path

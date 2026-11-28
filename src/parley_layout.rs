@@ -6327,10 +6327,9 @@ mod tests {
         );
     }
 
-    // Excluded from compilation: stale against the current `Probe::matches` (`Vec<Anchor>`) and `Anchor`
-    // API. The body reads `.end`, `.snippet` and `Probe::markers`, which no longer exist, and the
-    // list-marker expectations need the owner's intent before a rewrite. Remove `cfg(any())` after rewriting.
-    #[cfg(any())]
+    // The pinned CREngine stock inside-marker renderer (`lvrend.cpp`) places the
+    // marker on the first line of the item. The canonical text, anchors, search
+    // and selection stay those of the outside-marker layout.
     #[test]
     fn inside_list_markers_share_the_first_line_without_changing_source_anchors() {
         let inside_markup = r#"<html><body>
@@ -6363,52 +6362,56 @@ mod tests {
         };
         let mut inside = open(&inside_markup);
         let mut outside = open(&outside_markup);
-        let inside_hit = inside.matches("First item")[0].clone();
-        let outside_hit = outside.matches("First item")[0].clone();
+        let inside_hits = inside.matches("First item");
+        let outside_hits = outside.matches("First item");
+        assert_eq!(inside_hits.len(), 1);
+        assert_eq!(inside_hits.len(), outside_hits.len());
+        let inside_hit = inside_hits[0].clone();
+        let outside_hit = outside_hits[0].clone();
 
         assert_eq!(inside.coverage().0, inside.coverage().1);
         assert_eq!(outside.coverage().0, outside.coverage().1);
-        assert_eq!(inside_hit.anchor.chapter, outside_hit.anchor.chapter);
-        assert_eq!(inside_hit.anchor.offset, outside_hit.anchor.offset);
-        assert_eq!(inside_hit.end.offset, outside_hit.end.offset);
-        assert_eq!(inside_hit.snippet, outside_hit.snippet);
-        assert_eq!(inside.markers.len(), 2);
-        assert_eq!(outside.markers.len(), 2);
+        assert_eq!(inside_hit.chapter, outside_hit.chapter);
+        assert_eq!(inside_hit.offset, outside_hit.offset);
 
-        let crate::Renderer::Parley(inside_engine) = &inside.renderer else {
+        let crate::Renderer::Parley(inside_chapter) = &inside.renderer else {
             panic!()
         };
-        let first = inside_engine
-            .paragraphs
-            .iter()
-            .find(|paragraph| paragraph.key == inside_hit.anchor.block)
-            .unwrap();
-        assert!(first
-            .layout
-            .inline_boxes()
-            .iter()
-            .any(|item| item.id == INLINE_LIST_MARKER_ID));
-
-        let crate::Renderer::Parley(outside_engine) = &outside.renderer else {
+        let crate::Renderer::Parley(outside_chapter) = &outside.renderer else {
             panic!()
         };
-        let first_outside = outside_engine
+        assert_eq!(inside_chapter.markers.len(), 2);
+        assert_eq!(outside_chapter.markers.len(), 2);
+
+        let first = inside_chapter
             .paragraphs
             .iter()
-            .find(|paragraph| paragraph.key == outside_hit.anchor.block)
+            .find(|paragraph| paragraph.key == inside_hit.block)
             .unwrap();
-        assert!(!first_outside
-            .layout
-            .inline_boxes()
+        assert!(
+            first
+                .layout
+                .inline_boxes()
+                .any(|item| item.id == INLINE_LIST_MARKER_ID)
+        );
+        let first_outside = outside_chapter
+            .paragraphs
             .iter()
-            .any(|item| item.id == INLINE_LIST_MARKER_ID));
+            .find(|paragraph| paragraph.key == outside_hit.block)
+            .unwrap();
+        assert!(
+            !first_outside
+                .layout
+                .inline_boxes()
+                .any(|item| item.id == INLINE_LIST_MARKER_ID)
+        );
 
         assert_ne!(inside.capture(0).unwrap(), outside.capture(0).unwrap());
-        let selection = inside
-            .select_range(&inside_hit.anchor, &inside_hit.end)
-            .unwrap();
+        let mut end = inside_hit.clone();
+        end.offset += "First item".len();
+        let selection = inside.select_range(&inside_hit, &end).unwrap();
         assert_eq!(selection.text, "First item");
-        assert!(inside.page_for(&inside_hit.anchor).is_some());
+        assert!(inside.page_for(&inside_hit).is_some());
     }
 
     #[test]
