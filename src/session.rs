@@ -4203,6 +4203,44 @@ mod tests {
     }
 
     #[test]
+    fn publisher_render_mode_stays_on_with_publisher_css_off_and_pauses_in_scroll() {
+        let settings = crate::PublisherRenderMode::Web.apply(Settings {
+            width: WIDTH,
+            height: PAGE_HEIGHT,
+            font_size: 25.0,
+            publisher_styles: false,
+            ..Settings::default()
+        });
+        let config = |scroll| BookConfig {
+            viewport: ReadingViewport::PORTRAIT,
+            user_hyphenation: Default::default(),
+            user_styles: Default::default(),
+            chapter_offsets: Default::default(),
+            quote_prefixes: Default::default(),
+            screen_pages: Default::default(),
+            eager_layouts: Default::default(),
+            folder_snapshot: None,
+            engine: Engine::Parley,
+            book: crate::test_fixture("render-mode-composition.epub"),
+            fonts: vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+            font_roles: Default::default(),
+            settings,
+            scroll,
+            facing_pages: false,
+            hide_nonlinear: false,
+            hidden_flows: Default::default(),
+        };
+        let paged = Reading::restore(config(false), 0, 0, None).unwrap();
+        assert_eq!(
+            paged.probe.settings.publisher_render_mode,
+            Some(crate::PublisherRenderMode::Web)
+        );
+        assert!(paged.probe.page_count() >= 1);
+        let continuous = Reading::restore(config(true), 0, 0, None).unwrap();
+        assert_eq!(continuous.probe.settings.publisher_render_mode, None);
+    }
+
+    #[test]
     fn contrast_repaints_both_facing_leaves_and_scroll_without_replacing_their_geometry() {
         let mut reading = example("long-chapter.epub", 42.0, true);
         let (x, y, word) = first_hit(|x, y| reading.probe.word_at(1, x, y)).unwrap();

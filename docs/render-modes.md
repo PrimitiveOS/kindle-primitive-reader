@@ -98,9 +98,11 @@ uses the same four composed policies as the Parley probe.
 
 **New-book mode** picks a default for EPUBs that Reader has never opened.
 Existing editions continue with their saved mode or the established Reader
-layout. A mode pauses while Publisher CSS is off, in continuous scrolling,
-or with custom hidden flows. Two-page spreads keep the mode on each leaf, at
-the leaf width. It takes effect again when a supported page view returns. EPUBs with right-to-left spines and
+layout. Publisher CSS off keeps the selected mode, as KOReader does: its
+render flags are set independently of the embedded stylesheet switch
+(`readertypeset.lua` `setBlockRenderingMode`). A mode pauses in continuous
+scrolling or with custom hidden flows. Two-page spreads keep the mode on each
+leaf, at the leaf width. It takes effect again when a supported page view returns. EPUBs with right-to-left spines and
 vertical text keep their existing layout.
 
 [Reader Layout on Mac](screenshots/render-mode-reader-layout.png) ·

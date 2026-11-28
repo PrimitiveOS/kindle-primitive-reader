@@ -226,7 +226,6 @@ impl PageIndex {
         cancelled(cancel)?;
         if !book.is_reflowable_epub()
             || book.spine_rtl
-            || (settings.publisher_render_mode.is_some() && !settings.publisher_styles)
         {
             return Err("The EPUB layout is unavailable for indexing".into());
         }

@@ -127,9 +127,10 @@ fn publisher_render_settings_default_applies_to_new_books_and_respects_eligibili
             ..active_settings
         }))
         .unwrap();
-    assert_eq!(settings_mode(&reopened), None);
+    // KOReader keeps render-mode flags with the embedded stylesheet off, so the mode stays.
+    assert_eq!(settings_mode(&reopened), Some(PublisherRenderMode::Web));
     layout(&mut reopened);
-    assert_eq!(
+    assert_ne!(
         reopened.reading_information_in_row("Render mode"),
         Some("Turn on Publisher CSS")
     );

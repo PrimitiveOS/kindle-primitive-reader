@@ -1404,8 +1404,10 @@ impl Probe {
         if engine == Engine::Blitz && settings.block_margins != BlockMarginMode::Ignore {
             return Err("Publisher block rendering policies require Parley".into());
         }
+        // Render-mode flags are set independently of the embedded stylesheet switch in
+        // KOReader (readertypeset.lua setBlockRenderingMode), so they stay with Publisher CSS off.
         let settings = if settings.publisher_render_mode.is_some()
-            && (!settings.publisher_styles || !book.is_reflowable_epub() || book.spine_rtl)
+            && (!book.is_reflowable_epub() || book.spine_rtl)
         {
             PublisherRenderMode::Reader.apply(settings)
         } else {

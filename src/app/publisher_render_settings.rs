@@ -14,8 +14,6 @@ impl Reader {
             Some("Requires a horizontal left-to-right EPUB")
         } else if reading.config.scroll || reading.config.hidden_flows.enabled {
             Some("Requires one-page reading")
-        } else if !reading.config.settings.publisher_styles {
-            Some("Turn on Publisher CSS")
         } else {
             None
         }
