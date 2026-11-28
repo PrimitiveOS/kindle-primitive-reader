@@ -25,10 +25,26 @@ fn open(fixture: &Fixture, path: &std::path::Path) -> Reader {
 fn tap_chapter(app: &mut Reader, label: &str) -> Change {
     app.open_reading_edge(true, 100.0);
     let rect = app.reading_button(label);
-    app.input(Input::Tap(
+    let change = app.input(Input::Tap(
         (rect.x + rect.w / 2) as f32,
         (rect.y + rect.h / 2) as f32,
-    ))
+    ));
+    settle_chapter_jump(app);
+    change
+}
+
+/// Reflow chapter jumps are applied by a worker; wait until it has finished.
+fn settle_chapter_jump(app: &mut Reader) {
+    let stop = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while app.chapter_navigation_job.is_some() {
+        assert!(std::time::Instant::now() < stop, "chapter jump did not finish");
+        let due = app
+            .chapter_navigation_job
+            .as_ref()
+            .map_or_else(std::time::Instant::now, |job| job.deadline());
+        app.poll_chapter_navigation(due + std::time::Duration::from_secs(1));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
 fn tap_level(app: &mut Reader, label: &str) -> Change {

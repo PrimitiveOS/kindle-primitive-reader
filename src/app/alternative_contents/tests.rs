@@ -151,6 +151,20 @@ fn alternative_contents_switches_normal_contents_and_preserves_anchor_across_reo
     assert!(!open(&fixture, &path).uses_alternative_contents());
 }
 
+/// Reflow chapter jumps are applied by a worker; wait until it has finished.
+fn settle_chapter_jump(reader: &mut Reader) {
+    let stop = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while reader.chapter_navigation_job.is_some() {
+        assert!(std::time::Instant::now() < stop, "chapter jump did not finish");
+        let due = reader
+            .chapter_navigation_job
+            .as_ref()
+            .map_or_else(std::time::Instant::now, |job| job.deadline());
+        reader.poll_chapter_navigation(due + std::time::Duration::from_secs(1));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn alternative_contents_uses_fragment_starts_only_without_document_headings() {
     let asset = "alternative-contents-fragments.epub";
@@ -172,6 +186,7 @@ fn alternative_contents_uses_fragment_starts_only_without_document_headings() {
     reader
         .jump_chapter(super::super::chapter_navigation::Direction::Next)
         .unwrap();
+    settle_chapter_jump(&mut reader);
     assert_eq!(reader.current_position().unwrap().chapter, 1);
 }
 
@@ -301,11 +316,13 @@ fn alternative_markers_resolve_cross_spine_heading_pages_for_header_footer_and_s
     assert_eq!(reader.back, history);
     reader.show(Screen::Book);
     reader.activate(Action::Chapter(Direction::Next)).unwrap();
+    settle_chapter_jump(&mut reader);
     assert_eq!(
         reader.active_alternative_chapter_title(),
         Some("Harbor Survey")
     );
     reader.activate(Action::Chapter(Direction::Next)).unwrap();
+    settle_chapter_jump(&mut reader);
     assert_eq!(reader.active_alternative_chapter_title(), Some(""));
     let after_jumps = reader.current_history_location();
     let checked_history = reader.back.clone();
