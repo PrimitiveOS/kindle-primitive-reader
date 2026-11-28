@@ -975,7 +975,8 @@ fn styles_import_diagnostics_disabled_edit_and_stale_book_guard_preserve_source_
         !app.style_store.data.books[&id].custom_enabled,
         "editing disabled CSS does not silently enable it"
     );
-    fs::write(&path, b"p {display:none}").unwrap();
+    // display:block is unsupported; display:none is the one supported value.
+    fs::write(&path, b"p {display:block}").unwrap();
     app.activate_style(Command::Files).unwrap();
     tap_contents_item(&mut app, "chapter.css");
     assert!(app.style_view.error.as_deref().unwrap().contains("display"));
@@ -989,7 +990,7 @@ fn styles_import_diagnostics_disabled_edit_and_stale_book_guard_preserve_source_
     let next_id = app.active.as_ref().unwrap().id;
     assert!(app.activate_style(Command::Apply).is_err());
     assert!(!app.style_store.data.books.contains_key(&next_id));
-    assert_eq!(fs::read(path).unwrap(), b"p {display:none}");
+    assert_eq!(fs::read(path).unwrap(), b"p {display:block}");
 }
 #[test]
 #[ignore = "requires unchanged authorized READER_STYLE_ORIGINAL EPUB/AZW3/MOBI"]

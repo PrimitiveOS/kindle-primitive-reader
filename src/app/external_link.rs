@@ -450,11 +450,19 @@ mod tests {
             })
         );
         let origin = app.current_history_location();
-        let index = app
-            .list_window()
-            .1
-            .iter()
-            .position(|item| item.detail.as_deref() == Some(address))
+        // The address row can sit on a later page of a long list; advance until it is visible.
+        let index = (0..8)
+            .find_map(|_| {
+                let found = app
+                    .list_window()
+                    .1
+                    .iter()
+                    .position(|item| item.detail.as_deref() == Some(address));
+                if found.is_none() {
+                    app.list_page += 1;
+                }
+                found
+            })
             .unwrap();
         let row = app.list_geometry().row(index);
         let hit = Input::Tap((row.right() - 24) as f32, (row.y + row.h / 2) as f32);

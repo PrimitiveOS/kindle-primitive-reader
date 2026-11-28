@@ -438,7 +438,7 @@ mod tests {
                 .and_then(|fixed| fixed.reading.deadline())
         };
         if let Some(due) = due {
-            app.tick(due);
+            app.tick(due + std::time::Duration::from_secs(1));
         }
     }
 
