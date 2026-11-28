@@ -378,7 +378,7 @@ impl Binding {
         (Self::Contents, "Contents"),
         (Self::Bookmarks, "Bookmarks"),
         (Self::Bookmark, "Toggle bookmark"),
-        (Self::Skim, "Page browser"),
+        (Self::Skim, "Skim"),
         (Self::Find, "Find in book"),
         (Self::Dictionary, "Dictionary"),
         (

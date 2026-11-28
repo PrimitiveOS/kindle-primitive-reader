@@ -35,6 +35,15 @@ fn long_plain_text(fixture: &Fixture) -> PathBuf {
 }
 
 #[test]
+fn the_skim_binding_is_labelled_for_the_skim_screen_it_opens() {
+    let label = Binding::ALL
+        .iter()
+        .find(|entry| entry.0 == Binding::Skim)
+        .map(|entry| entry.1);
+    assert_eq!(label, Some("Skim"));
+}
+
+#[test]
 fn double_tap_page_jump_delays_single_taps_and_replays_them_at_timeout() {
     let fixture = Fixture::new();
     let mut app = canvas_reader(&fixture);

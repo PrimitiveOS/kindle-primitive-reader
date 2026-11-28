@@ -117,7 +117,7 @@ still say 18; treat the code as authoritative and correct the docs (plan 0.6).
 | P-5 | Book Map options: alternative theme, current or initial view, grid and flat views, 10-page markers, overview on long press, tap-to-page-browser | `bookmapwidget.lua:1340-1480`; `readerthumbnail.lua:71-100` | fixed Book Map has its own slot, help and history cues (`src/app/fixed_book_map.rs`) | low | partial |
 | P-6 | Page browser: preload next and previous thumbnails | `pagebrowserwidget.lua:992` | not found | low | open |
 | P-7 | Skim: ±10 pages and hold chapter to first or last | `skimtowidget.lua:100-290` | "ten" referenced in `src/app/skim.rs`; not traced | low | verify |
-| P-8 | Binding label "Page browser" for `Binding::Skim` routes to Skim, not the page browser | `frontend/dispatcher.lua` | not traced | low | verify |
+| P-8 | Binding label "Page browser" for `Binding::Skim` routes to Skim, not the page browser | `frontend/dispatcher.lua` | Label fixed to "Skim" (`src/app/gestures.rs`, test `the_skim_binding_is_labelled_for_the_skim_screen_it_opens`); the existing `assigned_swipes_respect_overlays_footer_and_page_selection` test confirms the binding opens `Screen::Skim`. Still open: no bindable action opens the page browser (`Action::Overview`). Not verified against KOReader dispatcher source (not in checkout). | low | partial |
 
 ## Highlights and annotations (plan 3.4)
 
