@@ -313,6 +313,8 @@ mod tests {
         assert_eq!(rules.mask("en-US", "laboratory"), None);
         assert_eq!(rules.mask("en-GB", "laboratory"), Some(vec![]));
         assert!(!eligible("cat"));
+        // Four written characters are the minimum.
+        assert!(eligible("word"));
         assert!(!eligible(&"a".repeat(MAX_SOURCE_WORD_BYTES + 1)));
         assert!(!eligible("two words"));
     }
