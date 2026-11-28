@@ -884,6 +884,12 @@ impl Line {
         view: &flow_projection::Projection<'_>,
         bytes: Range<usize>,
     ) -> Result<()> {
+        // An empty projection is an empty list-marker strut whose content was
+        // removed: the marker has no source bytes of its own, so it keeps none.
+        if view.text().is_empty() {
+            self.set_source_spans(std::iter::empty(), || 0);
+            return Ok(());
+        }
         let spans = view
             .source_spans(bytes.clone())
             .ok_or("A layout line has invalid projected boundaries")?;

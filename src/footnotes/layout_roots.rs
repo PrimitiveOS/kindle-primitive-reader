@@ -108,7 +108,11 @@ impl<'a> LayoutRoots<'a> {
         fragment: &str,
     ) -> Option<Vec<Node<'d, 'i>>> {
         let (element, raw) = self.root_with_index(target, fragment)?;
-        if !self.final_elements[element] {
+        // Extension is the empty-anchor case (`<a id="n"/>` followed by the note
+        // paragraph). A target that carries its own text is only its containing
+        // block: the pinned native oracle keeps inline noteE, noteG and noteH to
+        // their own paragraph and does not pull in the next source paragraph.
+        if text_char_count(target) > 0 || !self.final_elements[element] {
             return Some(Vec::new());
         }
 

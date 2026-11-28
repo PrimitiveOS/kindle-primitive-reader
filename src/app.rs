@@ -16950,8 +16950,9 @@ mod tests {
             tap_reading_config_choice(&mut app, "Zoom to", "Columns"),
             Change::Partial
         );
+        // Columns already defaults to 2, so re-tapping 2 is a no-op; apply 3.
         assert_eq!(
-            tap_reading_config_choice(&mut app, "Columns", "2"),
+            tap_reading_config_choice(&mut app, "Columns", "3"),
             Change::Partial
         );
         let reading = &app.fixed.as_ref().unwrap().reading;
@@ -16959,7 +16960,7 @@ mod tests {
             reading.preferences().tile_zoom.unwrap().axis,
             FixedTileAxis::Columns
         );
-        assert!(reading.page_status().contains("2.0 columns"));
+        assert!(reading.page_status().contains("3.0 columns"));
 
         view_controls(&mut app);
         capture_test_screen(&app, &fonts, "READER_FIXED_TILE_ZOOM_FRAME", false);
@@ -16993,7 +16994,7 @@ mod tests {
         assert_eq!(app.screen, Screen::Fixed);
         let reading = &app.fixed.as_ref().unwrap().reading;
         assert_eq!(reading.preferences().tile_zoom.unwrap().count_tenths, 25);
-        assert_eq!(reading.preferences().zoom_columns_tenths, Some(20));
+        assert_eq!(reading.preferences().zoom_columns_tenths, Some(30));
         assert_eq!(reading.preferences().zoom_rows_tenths, Some(25));
         assert!(reading.page_status().contains("2.5 rows"));
 
@@ -17007,7 +17008,7 @@ mod tests {
             reading.preferences().tile_zoom.unwrap().axis,
             FixedTileAxis::Columns
         );
-        assert_eq!(reading.preferences().tile_zoom.unwrap().count_tenths, 20);
+        assert_eq!(reading.preferences().tile_zoom.unwrap().count_tenths, 30);
         assert_eq!(reading.preferences().zoom_rows_tenths, Some(25));
 
         view_controls(&mut app);
@@ -17052,7 +17053,7 @@ mod tests {
         let manual_view = app.fixed.as_ref().unwrap().reading.preferences();
         assert!(manual_view.manual_zoom);
         assert_eq!(manual_view.zoom_fit_axis, saved_fit);
-        assert_eq!(manual_view.zoom_columns_tenths, Some(20));
+        assert_eq!(manual_view.zoom_columns_tenths, Some(30));
         assert_eq!(manual_view.zoom_rows_tenths, Some(25));
 
         view_controls(&mut app);
@@ -18275,7 +18276,11 @@ mod tests {
             tap_contents_item(&mut app, "Extend highlight");
             assert_eq!(app.screen, Screen::Fixed);
             assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
-            for _ in 0..2 {
+            // A tall fit-width page pans before it turns, so press until page 2.
+            for _ in 0..8 {
+                if app.fixed.as_ref().unwrap().reading.page() == 2 {
+                    break;
+                }
                 app.input(Input::PageForward);
                 app.tick(Instant::now() + Duration::from_secs(1));
             }
@@ -23389,8 +23394,14 @@ mod tests {
         assert!(!app.pdf_result_regions.is_empty());
         app.activate(Action::ReturnToLocation).unwrap();
         assert!(app.current_position().as_ref() == Some(&opening));
-        app.input(Input::PageForward);
-        app.tick(Instant::now() + Duration::from_secs(1));
+        // A tall protected page pans before it turns, so press until page 1.
+        for _ in 0..8 {
+            if app.current_position().unwrap().page == 1 {
+                break;
+            }
+            app.input(Input::PageForward);
+            app.tick(Instant::now() + Duration::from_secs(1));
+        }
         let saved = app.current_position().unwrap();
         assert_eq!(saved.page, 1);
         app.save().unwrap();

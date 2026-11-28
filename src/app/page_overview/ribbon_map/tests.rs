@@ -115,6 +115,11 @@ fn ribbon_book_map_focuses_reflow_chapters_and_restores_exact_browser_anchor() {
     assert!(focus.is_some());
 
     let target = chapters - 1;
+    // A long press on the ribbon holds the overview's current chapter. Point the
+    // overview at the target chapter, then hold it to open the book map.
+    let _ = reader.update_overview(Some(target), Some(0));
+    // The restore expects the overview focus as it was when the map was held.
+    let focus = reader.overview.as_ref().unwrap().focus.anchor.clone();
     assert_eq!(ribbon(&mut reader, target, chapters, true), Change::Partial);
     assert_eq!(reader.screen, Screen::BookMap);
     assert_eq!(reader.book_map_focus, Some(target));

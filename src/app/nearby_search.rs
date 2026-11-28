@@ -2171,13 +2171,20 @@ mod fixed_tests {
         }
         let mut visited = vec![origin + 1];
         let mut word_boxes = vec![marks];
+        // A step first pans the current tall page, so press until it reaches the
+        // next matching page. The bound turns a missed page into a failure.
         for (button, expected) in [
             (FixedNavigation::Next.button(), after),
             (FixedNavigation::Previous.button(), origin),
             (FixedNavigation::Previous.button(), before),
         ] {
-            assert_eq!(tap(&mut app, button), Change::Partial);
-            settle(&mut app);
+            let mut presses = 0;
+            while page(&app) != expected {
+                assert!(presses < 40, "page {expected} never reached");
+                presses += 1;
+                assert_eq!(tap(&mut app, button), Change::Partial);
+                settle(&mut app);
+            }
             assert_eq!(page(&app), expected);
             assert!(app.pdf_result_regions.iter().all(|(p, _)| *p == expected));
             visited.push(expected + 1);
@@ -2524,9 +2531,16 @@ mod fixed_tests {
         tap(&mut app, FixedNavigation::Previous.entry().0);
         settle(&mut app);
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
-        tap(&mut app, FixedNavigation::Previous.button());
-        settle(&mut app);
-        assert_eq!(app.notice.as_deref(), Some("No earlier matching page"));
+        // Previous first pans the tall first page to its top edge, then searches.
+        // Press until the edge notice appears, with a bound so a regression fails.
+        let mut presses = 0;
+        while app.notice.as_deref() != Some("No earlier matching page") {
+            assert!(presses < 40, "the edge notice never appeared");
+            presses += 1;
+            assert_eq!(tap(&mut app, FixedNavigation::Previous.button()), Change::Partial);
+            settle(&mut app);
+        }
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);
         assert!(app.search_step(-1).is_none());
         assert!(app.search_step(1).is_some());
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 0);

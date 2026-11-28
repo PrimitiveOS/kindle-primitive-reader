@@ -30,6 +30,16 @@ fn choose(app: &mut Reader, label: &str) {
     panic!("Missing row {label:?} on {:?}", app.screen);
 }
 
+fn hold(app: &mut Reader, label: &str) {
+    let (_, rows) = app.list_window();
+    let row = rows
+        .iter()
+        .position(|item| item.title == label)
+        .unwrap_or_else(|| panic!("Missing row {label:?} on {:?}", app.screen));
+    let (x, y) = center(app.list_geometry().row(row));
+    assert_eq!(app.input(Input::LongTap(x, y)), Change::Partial);
+}
+
 fn mount_marks(app: &mut Reader, fixture: &Fixture, pdf: &std::path::Path) -> (u64, u64) {
     app.open_path(&fixture.book).unwrap();
     app.activate(Action::AddBookmark).unwrap();
@@ -382,8 +392,9 @@ fn browser_covers_sources_date_text_filters_preview_and_exact_return() {
         &mut app,
         BrowserLayout(NavigationLayout::PORTRAIT).control(0, 198, 72),
     );
-    let (x, y) = (130.0, super::super::LIST_Y as f32 + 35.0);
-    assert_eq!(app.input(Input::LongTap(x, y)), Change::Partial);
+    // Hold the History source to make it the default. The first row is
+    // "Current book" while a book is open, so the row is found by title.
+    hold(&mut app, "History");
     let mut reopened = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
     activate(&mut reopened, Command::Open);
     assert_eq!(reopened.screen, Screen::BookmarkBrowser(Page::Results));

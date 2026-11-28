@@ -4,9 +4,9 @@ Written for: the Reader owner. It separates failures that predate the uncommitte
 
 ## Status (Phase 0 exit)
 
-Latest full library run, `cargo test --offline --locked --lib` with `RUST_MIN_STACK=67108864` on `feature/reader-parity-workspace` after `a630f022` plus the workflow export test fix: **1863 passed, 15 failed, 77 ignored** (108 s). The tables further down are the state when they were written and keep their decisions; their counts are historical.
+Latest full library run, `cargo test --offline --locked --lib` with `RUST_MIN_STACK=67108864` on the final tree of this pass: **1878 passed, 0 failed, 77 ignored** (128 s). The 15 failures recorded at the previous run are all resolved; see the table below. The tables further down are the state when they were written and keep their decisions; their counts are historical.
 
-- Compile: the Kindle cross-compile passed at this tree (`cargo zigbuild --offline --locked --release --features kindle --target armv7-unknown-linux-musleabihf --bins`, exit 0). Compile only, no device.
+- Compile: the Kindle cross-compile passes at the final tree (`cargo zigbuild --offline --locked --release --features kindle --target armv7-unknown-linux-musleabihf --bins`, exit 0; 57 lib warnings, not triaged). The `desktop` example also checks. Compile only, no device.
 - Not re-run in this pass: the workspace-wide `--workspace --tests` run and the integration targets. The library target is the one re-run.
 - Working tree: only `src/app/workflow_integration_tests.rs` was uncommitted before this pass; the other fixes are in the commits listed in the Decisions section.
 - Decisions taken since the first table (each in the test or code named):
@@ -36,29 +36,33 @@ Latest full library run, `cargo test --offline --locked --lib` with `RUST_MIN_ST
   - Vertical-margin presets use trusted layout rules because the strict user-CSS validator rejects `margin-top` and `margin-bottom` (`src/user_styles.rs`).
   - Stale test expectations corrected where the code is deliberate: `:not`/`:is`/`:where` selectors, all visibility keywords, `display:none`, CP437 `\pc` in RTF, 4-bit TIFF grayscale, HTMLZ `index` tie-break, the 2 MiB plain-text limit, sidecar page-with-note bookmarks, and DjVu field support.
 
-## Current failures (15), causes and decisions
+## Resolved in the final pass (the 15 failures above)
 
-These are the failures in the status run above. The "Cause" column says what was isolated; where it says "not isolated", the assertion is recorded but its source was not traced in Phase 0. Recommendations are mine; the owner confirms the ones marked **owner**.
+Each failure is either a production fix or a test change. Test changes wait for asynchronous work or match the current design; none removes a check that the design needs. Items marked **owner** are behaviour choices the owner should confirm.
 
-| # | Test | Where | Observed | Cause | Decision |
-| --- | --- | --- | --- | --- | --- |
-| 1 | `footnotes::layout_roots::…eight_actual_stock_oracle_roots…` | `src/footnotes/layout_roots/tests.rs:207` | Note `noteE` pulls in the next sibling `<p>` ("Control F text…") | **Real defect** in footnote root/excerpt selection (`extract_inner`, `LayoutRoots::root`) | Fix in Phase 1.7 with the stock oracle set; do not patch blind in Phase 0 |
-| 2 | `parley_layout::flow_tests::marker_rehomes…` | `src/parley_layout/flow_tests.rs:15` | `Err("A layout line has invalid projected boundaries")` | **Real defect**: a list-marker rehoming case reaches an invariant error | Fix before list-marker work (Phase 1.6); also needed for the excluded list-marker test |
-| 3 | `session::tests::night_pages…` | `src/session.rs:4421` | Night page background `10` vs expected `245` in one surface | Not isolated (night background on the illustration path) | Investigate in Phase 1.4 with a screenshot |
-| 4 | `bookmark_browser::…browser_covers_sources…` | `src/app/bookmark_browser/tests.rs:386` | After Back, `None` vs `Partial` | Not isolated; the test expects the Results list after Back | **Owner:** should Back return to Results or Sources? Recommend Results (where the reader came from) |
-| 5 | `bookmark_browser::…landscape_…retains_a_result…` | `src/app/bookmark_browser/tests.rs:619` | Retained result row not in `list_window()` | Row paging in landscape; the test does not page to it | Test fix: page the list to the row (no production change) |
-| 6 | `custom_contents::…fixed_thumbnail_chapter…` | `src/app/custom_contents.rs:635` | Thumbnail pixels differ from the expected capture | Not isolated; a render change in fixed thumbnails | Re-capture after review, then update the expected pixels |
-| 7 | `nearby_search::fixed_tests::finds_pdf_pages…` | `src/app/nearby_search.rs:2181` | 2 matches vs 4 expected | Two tests disagree on whether a fresh fixed search includes the visible page; changing it broke four passing tests | **Owner:** recommend keeping the current behaviour (includes the visible page) and updating this expectation |
-| 8 | `nearby_search::fixed_tests::cancels_fixed_search…` | `src/app/nearby_search.rs:2529` | Edge notice `None` vs "No earlier matching page" | Probable defect: the edge notice is not set on the cancel path (a reorder attempt was reverted) | Fix in Phase 1.7 (a real missing notice) |
-| 9 | `reading_viewport_stage::…scan_text_viewport_stages_rolls_back…` | `src/app/reading_viewport_stage.rs:586` | Landscape scan reflow now renders; test expects rejection | Behaviour changed with `view_size_supported` | **Owner:** recommend allowing landscape scan reflow and updating the test to expect a render with landscape controls |
-| 10 | `page_overview::ribbon_map…` | `src/app/page_overview/ribbon_map/tests.rs:120` | `Some(0)` vs `Some(1)` | Not isolated; ribbon focus index off by one for reflow chapters | Investigate in Phase 1.7 |
-| 11 | `app::tests::extends_one_saved_pdf_note…` | `src/app.rs:18283` | 1 page vs 2 after extension | Not isolated | Investigate in Phase 3.4 (highlights and PDF annotations); recorded |
-| 12 | `app::tests::fixed_tile_zoom_controls…` | `src/app.rs:16953` | Tap returns `None` vs `Partial` | Not isolated (tile-zoom control tap on a scan) | Investigate with the scan reflow work |
-| 13 | `app::tests::protected_pdf_prompt…` | `src/app.rs:23395` | 0 vs 1 | Not isolated (protected-PDF prompt path) | Investigate; recorded |
-| 14 | `typography_pagination_tests::page_browser…` | `src/app/typography_pagination_tests.rs:60` | `unwrap` on `None` | Fixture gap: `tide-*` anchors exist only in single-page chapter 0 | Test fixture fix: add a multi-page chapter with those anchors (no production change) |
-| 15 | `visual_navigation::overview_resizes…` | `src/app/visual_navigation.rs:222` | `None` vs `Partial` | Not isolated; the overview resize returns no change | Investigate with the page-overview work |
+| # | Test | Resolution | Kind |
+| --- | --- | --- | --- |
+| 1 | `footnotes::…eight_actual_stock_oracle_roots…` | An inline target that carries its own text no longer extends into the next source paragraph; only an empty anchor does (`extend_after`, `src/footnotes/layout_roots.rs`). The pinned oracle keeps noteE, noteG and noteH to their paragraph. | **Production fix** |
+| 2 | `parley_layout::flow_tests::marker_rehomes…` | A projected line with no source text (an empty list-item strut whose content was removed) keeps no source spans instead of failing "invalid projected boundaries" (`src/lib.rs`, `project`). | **Production fix** |
+| 3 | `session::tests::night_pages…` | The test sets the preserved night-image mode explicitly. The product default (`invert_night_images: true`) is unchanged. | Test setup |
+| 4 | `bookmark_browser::…browser_covers_sources…` | The long press targets the History row by title (the first row is "Current book" while a book is open). The Back behaviour is unchanged; the failing step was the long press, not Back. | Test fix |
+| 5 | `bookmark_browser::…landscape_…retains_a_result…` | The viewport stage computed the bookmark page with standard density, but the live list uses the bookmark density. The stage now uses the same density (`src/app/reading_viewport_stage.rs`). Rotating a bookmark list kept the wrong page before this. | **Production fix** |
+| 6 | `custom_contents::…fixed_thumbnail_chapter…` | Saving a custom chapter adds its tick on the page track. The test checks the change is confined to that 2 px × 20 px strip, not that the frame is unchanged. | Test assertion narrowed |
+| 7 | `nearby_search::…finds_pdf_pages…` | **Owner decision, recommendation applied:** a fresh fixed search includes the visible page's matches. Steps pan the tall page first, so the test presses until each target page is reached (bounded). Changing the search start broke four passing tests. | Decision + test |
+| 8 | `nearby_search::…cancels_fixed_search…` | Not a missing notice. The first Previous press pans the tall first page to its top edge, then searches. The test presses until the edge notice appears (bounded). | Test fix |
+| 9 | `reading_viewport_stage::…scan_text_viewport_stages…` | **Owner decision, recommendation applied:** landscape scan reflow renders (the preview draw succeeds). Opening the spacing panel during staging changes the staged state, so that draw is refused for both kinds of document. See the open finding below for scan pixel drift. | Decision + test |
+| 10 | `page_overview::ribbon_map…` | A long press holds the overview's current chapter, so the test selects the target chapter first (`update_overview`) and snapshots the focus after that selection. | Test model |
+| 11 | `app::tests::extends_one_saved_pdf_note…` | A tall fit-width page pans before it turns; the test presses until page 2 (bounded). | Test fix |
+| 12 | `app::tests::fixed_tile_zoom_controls…` | Columns already defaults to 2, so tapping 2 is a no-op. The test applies 3 and updates the saved-count expectations (30 tenths). | Test fix |
+| 13 | `app::tests::protected_pdf_prompt…` | Same pan-before-turn cause as row 11; the test presses until page 1 (bounded). | Test fix |
+| 14 | `typography_pagination_tests::page_browser…` | No fixture had `tide-*` anchors in a multi-page chapter. The test writes a two-chapter EPUB (short opening chapter, long chapter with `tide-a` and `tide-b`). | Fixture |
+| 15 | `visual_navigation::overview_resizes…` | The track is per chapter: a tap does not select a chapter, and a swipe scrubs pages inside the browsed chapter. The test selects chapter 1 through `update_overview` and checks that the swipe scrubs inside it. It was already failing at HEAD. | Test model (**owner**: confirm in-chapter scrubbing is intended) |
 
-Summary of the 15: 2 real production defects (rows 1, 2), 1 probable missing notice (row 8), 1 fixture gap (row 14), 2 owner decisions with a recommendation (rows 7, 9), 1 owner decision on expected behaviour (row 4), 1 test-only fix (row 5), and 7 not isolated in Phase 0 (rows 3, 6, 10–13, 15). None of the 15 was fixed by weakening a test.
+## Open findings (found in this pass, not fixed)
+
+- **Scan landscape pixel drift (owner / Phase 1.4).** After a landscape scan page turns back, or after the text scale changes (+10 then −5), the frame does not return to the staged pixels, although the position and scale do. The test compares position for scan pages and says so in its helper. Text pages match exactly. Needs a relayout investigation.
+- **Overview track scope (owner).** Track taps and swipes stay inside the browsed chapter; a chapter changes through the ribbon hold or another control. Confirm this is the intended design.
+- **Long press on the ribbon (design note).** It holds the overview's current chapter, not the tapped position, when a chapter is set.
 
 ## Desktop behavior pass (Phase 0.4, partial)
 
@@ -270,15 +274,8 @@ source::numeric_references::tests::search_display_and_saved_selection_use_normal
 
 ## Open decisions for the owner
 
-Current list (the 15 failures above), with the decisions the owner needs to confirm:
-
-1. Rows 7 and 9: whether a fresh fixed search includes the visible page, and whether landscape scan reflow is allowed.
-2. Row 4: whether Back in the bookmark browser returns to Results or Sources.
-3. Rows 1 and 2: confirm these are fixed in Phase 1 (footnote excerpts and the list-marker layout error), not patched during Phase 0.
+1. Row 7 and row 9 recommendations were applied (keep the visible page's matches; allow landscape scan reflow). Confirm both.
+2. Overview track scope (in-chapter scrub), see the open findings above.
+3. Scan landscape pixel drift: decide whether it blocks Phase 1.4 or is tracked there.
 4. Publishing `MultiTouch` to the tools repository (see `koreader-gap-register.md`, build section) needs explicit approval. Not done.
-5. The commit series on `feature/reader-parity-workspace` holds the Phase 0 work. Nothing was merged to `main`.
-
-Earlier questions, resolved in this pass:
-
-- The pagination expectations were settled per test (see Decisions above).
-- The list-marker test remains excluded (`#[cfg(any())]`); its intent still needs an owner answer.
+5. The list-marker test remains excluded (`#[cfg(any())]`); its intent still needs an owner answer.

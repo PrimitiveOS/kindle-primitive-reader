@@ -4408,6 +4408,13 @@ mod tests {
             paint.apply(frame).1.pixels
         };
         let mut reading = example("field-notes-epub3.epub", 60.0, false);
+        // The default inverts night images; this part checks the preserved mode.
+        reading
+            .reflow(Settings {
+                invert_night_images: false,
+                ..reading.config.settings
+            })
+            .unwrap();
         for facing in [true, false] {
             reading.set_facing_pages(facing).unwrap();
             let (page, cols, rows) = find_image(&reading);

@@ -632,7 +632,18 @@ mod tests {
         tap_page_action(&mut reader, PageAction::Chapter);
         enter_title(&mut reader, "Survey site");
         assert_eq!(reader.screen, Screen::PageOverview);
-        assert_eq!(primitive_app::frame(&reader, &mut canvas, false), preview);
+        // Saving the title adds the custom chapter's tick on the page track. The only
+        // pixels that change are that tick, so check the frame changed inside its strip.
+        let saved = primitive_app::frame(&reader, &mut canvas, false);
+        let changed: Vec<(usize, usize)> = saved
+            .iter()
+            .zip(preview.iter())
+            .enumerate()
+            .filter(|(_, (a, b))| a != b)
+            .map(|(i, _)| (i % WIDTH as usize, i / WIDTH as usize))
+            .collect();
+        assert!(!changed.is_empty());
+        assert!(changed.iter().all(|&(x, y)| (860..=870).contains(&x) && (1330..=1360).contains(&y)), "{changed:?}");
         hold_thumbnail(&mut reader, 1);
         assert!(reader.has_fixed_thumbnail_chapter(5));
         tap_page_action(&mut reader, PageAction::Chapter);

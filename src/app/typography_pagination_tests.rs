@@ -48,11 +48,48 @@ fn drain(app: &mut Reader) {
     }
 }
 
+/// Two chapters: a short opening chapter, then a chapter that runs to several
+/// pages and carries the `tide-*` anchors the test navigates to.
+fn write_tide_fixture(path: &std::path::Path) {
+    use std::io::Write as _;
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+    let stored =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let deflated = zip::write::SimpleFileOptions::default();
+    zip.start_file("mimetype", stored).unwrap();
+    zip.write_all(b"application/epub+zip").unwrap();
+    zip.start_file("META-INF/container.xml", deflated).unwrap();
+    zip.write_all(br#"<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0"><rootfiles><rootfile full-path="EPUB/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#).unwrap();
+    zip.start_file("EPUB/book.opf", deflated).unwrap();
+    zip.write_all(br#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Tide survey</dc:title><dc:language>en</dc:language><dc:identifier id="id">tide-survey</dc:identifier></metadata><manifest><item id="c0" href="c0.xhtml" media-type="application/xhtml+xml"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c0"/><itemref idref="c1"/></spine></package>"#).unwrap();
+    zip.start_file("EPUB/c0.xhtml", deflated).unwrap();
+    zip.write_all(br#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Opening</title></head><body><h1>Opening</h1><p>A short opening chapter.</p></body></html>"#).unwrap();
+    let filler = "The water rises and falls with the moon over the slow channel. ".repeat(12);
+    let mut body = String::from(
+        r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Tides</title></head><body><h1>Tides</h1>"#,
+    );
+    for index in 0..40 {
+        if index == 5 {
+            body.push_str(r#"<p id="tide-a">Tide observation A.</p>"#);
+        }
+        if index == 30 {
+            body.push_str(r#"<p id="tide-b">Tide observation B.</p>"#);
+        }
+        body.push_str(&format!("<p>{filler}</p>"));
+    }
+    body.push_str("</body></html>");
+    zip.start_file("EPUB/c1.xhtml", deflated).unwrap();
+    zip.write_all(body.as_bytes()).unwrap();
+    zip.finish().unwrap();
+}
+
 #[test]
 fn page_browser_indexes_saved_anchors_and_highlight_endpoints_outside_the_loaded_chapter() {
     let fixture = Fixture::new();
     let mut app = fixture.app();
-    app.open_path(&fixture.book).unwrap();
+    let book_path = fixture.root.join("Tide survey.epub");
+    write_tide_fixture(&book_path);
+    app.open_path(&book_path).unwrap();
     let target_chapter = 1;
     assert_ne!(book(&app).chapter, target_chapter);
 

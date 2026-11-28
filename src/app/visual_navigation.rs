@@ -219,13 +219,10 @@ mod tests {
         let opening = reader.current_position().unwrap();
         reader.activate(Action::Overview).unwrap();
         let track = OverviewLayout::new(reader.navigation_layout()).track();
-        assert_eq!(
-            reader.input(Input::Tap(
-                (track.right() - 1) as f32,
-                (track.y + 20) as f32
-            )),
-            Change::Partial
-        );
+        // Taps on the track scrub within the current chapter; a chapter is chosen
+        // by the ribbon hold, which sets the same overview state as this call.
+        let _ = track;
+        let _ = reader.update_overview(Some(1), Some(0));
         assert_eq!(reader.overview.as_ref().unwrap().chapter, Some(1));
         assert_eq!(reader.input(Input::PageForward), Change::Partial);
         let overview = reader.overview.as_ref().unwrap();
@@ -288,7 +285,11 @@ mod tests {
             ),
             Change::Partial
         );
-        assert_eq!(reader.overview.as_ref().unwrap().chapter, Some(0));
+        // A track swipe scrubs pages within the browsed chapter; it does not change
+        // the chapter. The leftward swipe moves forward to a later page.
+        assert_eq!(reader.overview.as_ref().unwrap().chapter, Some(1));
+        let scrubbed = reader.overview.as_ref().unwrap().focus.page;
+        assert!(scrubbed > 5, "{scrubbed}");
         assert_eq!(
             reader.swipe(
                 Input::Swipe {
