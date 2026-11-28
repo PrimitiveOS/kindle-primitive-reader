@@ -221,8 +221,9 @@ fn records_reassigns_and_removes_custom_shapes_through_visible_controls() {
     reader.open_path(&fixture.book).unwrap();
     let mut portrait = adopt(&mut reader, ReadingViewport::PORTRAIT, 1);
     reader.show(Screen::Gestures);
-    assert!(matches!(reader.items()[1].action, Action::Heading));
-    assert!(matches!(reader.items()[2].action, Action::Heading));
+    // The preset and custom multiswipe group headings follow the new settings rows.
+    assert!(matches!(reader.items()[4].action, Action::Heading));
+    assert!(matches!(reader.items()[5].action, Action::Heading));
     tap_contents_item(&mut reader, "Multiswipes");
     capture(
         &reader,

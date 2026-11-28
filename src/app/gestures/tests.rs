@@ -47,10 +47,11 @@ fn double_tap_page_jump_delays_single_taps_and_replays_them_at_timeout() {
     assert_eq!(app.input(Input::Tap(point.0, point.1)), Change::None);
     let pending = app.gestures.pending_double_tap.unwrap();
     assert_eq!(app.active.as_ref().unwrap().reading.page, before);
-    assert!(matches!(
-        app.finish_double_tap(pending.deadline),
-        Some(Change::Partial | Change::Full)
-    ));
+    // The replayed tap queues a page turn behind the refresh gap; apply it at its deadline.
+    assert!(app.finish_double_tap(pending.deadline).is_some());
+    if let Some(due) = app.deadline() {
+        app.tick(due + std::time::Duration::from_secs(1));
+    }
     assert!(app.active.as_ref().unwrap().reading.page > before);
 }
 
@@ -217,8 +218,8 @@ fn multitouch_tap_uses_saved_stock_duration_boundaries() {
         x: WIDTH as f32 - 20.0,
         y: 20.0,
         held_ms: 300,
-        fallback_x: WIDTH as f32 - 20.0,
-        fallback_y: 20.0,
+        fallback_x: WIDTH as f32 / 2.0,
+        fallback_y: crate::app::HEIGHT as f32 / 2.0,
     });
     assert!(!app.page_is_bookmarked());
 
@@ -226,8 +227,8 @@ fn multitouch_tap_uses_saved_stock_duration_boundaries() {
         x: WIDTH as f32 - 20.0,
         y: 20.0,
         held_ms: 301,
-        fallback_x: WIDTH as f32 - 20.0,
-        fallback_y: 20.0,
+        fallback_x: WIDTH as f32 / 2.0,
+        fallback_y: crate::app::HEIGHT as f32 / 2.0,
     });
     assert!(!app.page_is_bookmarked());
 
@@ -236,8 +237,8 @@ fn multitouch_tap_uses_saved_stock_duration_boundaries() {
         x: WIDTH as f32 - 20.0,
         y: 20.0,
         held_ms: 399,
-        fallback_x: WIDTH as f32 - 20.0,
-        fallback_y: 20.0,
+        fallback_x: WIDTH as f32 / 2.0,
+        fallback_y: crate::app::HEIGHT as f32 / 2.0,
     });
     assert!(app.page_is_bookmarked());
 }
