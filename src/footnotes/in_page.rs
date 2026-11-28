@@ -12,6 +12,8 @@ use crate::{
 };
 
 #[cfg(test)]
+mod nested_tests;
+#[cfg(test)]
 mod rtl_tests;
 
 pub(crate) struct Part {
@@ -105,7 +107,7 @@ pub(crate) fn paginate(
             // Keep continuations of a reference on regular pages even when
             // the next original body is entering a canonical note flow.
             if flow.is_some() {
-                packer.flush_notes(&mut pending, &groups, &notes)?;
+                packer.flush_notes(&mut pending, &references, &groups, &notes)?;
             }
             packer.finish()?;
         } else if !first_group && edges.get(first_index) == Some(&Edge::Force) {
@@ -142,12 +144,38 @@ pub(crate) fn paginate(
                 break;
             }
             pending.pop_front();
+            queue_nested(&mut pending, &references, &groups, &notes, id, &packer.draft.seen);
         }
         first_index = end_index;
     }
-    packer.flush_notes(&mut pending, &groups, &notes)?;
+    packer.flush_notes(&mut pending, &references, &groups, &notes)?;
     packer.finish()?;
     Some(packer.pages)
+}
+
+/// Queues the notes referenced from inside a completed note, in source order.
+fn queue_nested(
+    pending: &mut VecDeque<usize>,
+    references: &References,
+    groups: &[LineGroup],
+    notes: &[Range<usize>],
+    id: usize,
+    seen: &BTreeSet<usize>,
+) {
+    let Some(note) = groups.get(notes[id].clone()) else {
+        return;
+    };
+    let (Some(first), Some(last)) = (note.first(), note.last()) else {
+        return;
+    };
+    for &nested in references
+        .range(first.lines.start..last.lines.end)
+        .flat_map(|(_, ids)| ids)
+    {
+        if !pending.contains(&nested) && !seen.contains(&nested) && nested != id {
+            pending.push_back(nested);
+        }
+    }
 }
 
 struct LineGroup {
@@ -746,9 +774,9 @@ fn discover(
                 return None;
             }
             region.end += 1;
-        } else {
-            block_lines.entry(line.block).or_default().push(index);
         }
+        // Note lines are indexed too, so a reference inside a note can point at its own line.
+        block_lines.entry(line.block).or_default().push(index);
     }
     let regions = regions.into_iter().collect::<Option<Vec<_>>>()?;
     let mut references = References::new();
@@ -769,7 +797,11 @@ fn discover(
             let Some(&id) = targets.ids.get(fragment.as_str()) else {
                 continue;
             };
-            if targets.ancestry[block.element].is_some() {
+            // A reference inside a note may name another note (nested notes). A note that
+            // names itself would never settle, so it keeps the normal layout.
+            if let (Some(owner), id) = (targets.ancestry[block.element], id)
+                && owner == id
+            {
                 return None;
             }
             let Some(index) = block_lines.get(&block.key).and_then(|indices| {
@@ -830,16 +862,18 @@ impl Packer {
     fn flush_notes(
         &mut self,
         pending: &mut VecDeque<usize>,
+        references: &References,
         groups: &[LineGroup],
         notes: &[Range<usize>],
     ) -> Option<()> {
-        for id in pending.drain(..) {
+        while let Some(id) = pending.pop_front() {
             if !self.add_note(id, &groups[notes[id].clone()])? {
                 self.finish()?;
                 if !self.add_note(id, &groups[notes[id].clone()])? {
                     return None;
                 }
             }
+            queue_nested(pending, references, groups, notes, id, &self.draft.seen);
         }
         Some(())
     }
