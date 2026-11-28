@@ -391,6 +391,7 @@ impl Binding {
             Self::NearestLink => icons::LINK,
             Self::FrontLight => icons::DISPLAY,
             Self::RecentBooks | Self::PreviousBook | Self::BookShortcut(_) => icons::FOLDER,
+            Self::StyleTweak(_) => icons::SLIDERS,
             Self::FavoriteBooks => icons::FAVORITE,
             Self::FitPageWidth => icons::FIT_WIDTH,
             Self::FitPageHeight => icons::FIT_HEIGHT,

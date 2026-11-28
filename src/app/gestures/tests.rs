@@ -509,3 +509,13 @@ fn assigned_reflow_actions_do_not_turn_or_mutate_fixed_page_documents() {
     assert!(app.fixed.is_some());
     assert_eq!(fs::read(&source).unwrap(), original);
 }
+
+#[test]
+fn a_style_tweak_binding_round_trips_and_refuses_an_unknown_preset() {
+    let preset = crate::user_styles::preset("paragraph_whitespace").unwrap();
+    let binding = Binding::StyleTweak(TweakId::new(&preset));
+    let saved = serde_json::to_string(&binding).unwrap();
+    assert_eq!(serde_json::from_str::<Binding>(&saved).unwrap(), binding);
+    assert!(matches!(binding, Binding::StyleTweak(id) if id.id() == "paragraph_whitespace"));
+    assert!(serde_json::from_str::<Binding>("{\"style_tweak\":\"no_such_tweak\"}").is_err());
+}

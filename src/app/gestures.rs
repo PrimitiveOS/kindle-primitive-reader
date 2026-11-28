@@ -332,6 +332,40 @@ pub(super) enum Binding {
     PreviousTenPages,
     NextTenPages,
     BookShortcut(u64),
+    /// Toggle one style tweak (KOReader's "toggle tweak" dispatcher action). The id is a preset id.
+    StyleTweak(TweakId),
+}
+
+/// A preset id. A saved id must name a current preset, and maps back to the static one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct TweakId(&'static str);
+
+impl TweakId {
+    pub(super) fn new(preset: &crate::user_styles::Preset) -> Self {
+        Self(preset.id)
+    }
+
+    pub(super) fn id(self) -> &'static str {
+        self.0
+    }
+}
+
+impl Serialize for TweakId {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for TweakId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let id = String::deserialize(deserializer)?;
+        crate::user_styles::preset(&id)
+            .map(|preset| Self(preset.id))
+            .ok_or_else(|| serde::de::Error::custom("unknown style tweak"))
+    }
 }
 
 impl Binding {
@@ -379,6 +413,10 @@ impl Binding {
     fn label(self, shortcuts: &book_shortcuts::State) -> String {
         if let Self::BookShortcut(id) = self {
             shortcuts.binding_label(id)
+        } else if let Self::StyleTweak(id) = self {
+            crate::user_styles::preset(id.id())
+                .map_or(id.id(), |preset| preset.title)
+                .into()
         } else {
             Self::ALL
                 .iter()
@@ -472,6 +510,16 @@ impl GestureBindings {
         items.extend(
             shortcuts.binding_items(current, |binding| Action::BindGesture(gesture, binding)),
         );
+        // Every style tweak can be bound, after the fixed actions and the book shortcuts.
+        items.extend(crate::user_styles::PRESETS.iter().map(|preset| {
+            let binding = Binding::StyleTweak(TweakId::new(preset));
+            let item = Item::new(preset.title, Action::BindGesture(gesture, binding));
+            if binding == current {
+                item.detail("Selected")
+            } else {
+                item
+            }
+        }));
         items
     }
 
@@ -879,7 +927,10 @@ impl Reader {
         };
         let binding = self.gestures.get(gesture);
         if self.screen == Screen::Library
-            && !matches!(binding, Binding::NavigationBack | Binding::BookShortcut(_))
+            && !matches!(
+                binding,
+                Binding::NavigationBack | Binding::BookShortcut(_) | Binding::StyleTweak(_)
+            )
         {
             return None;
         }
@@ -1031,6 +1082,9 @@ impl Reader {
                 Action::ReadingMode(!active.reading.config.scroll)
             }
             Binding::BookShortcut(id) => Action::BookShortcut(book_shortcuts::Command::Launch(id)),
+            Binding::StyleTweak(id) => {
+                Action::Style(super::style_tweaks::Command::Preset(id.id().into()))
+            }
         };
         Some(match self.activate(action) {
             Ok(()) => {
