@@ -65,10 +65,14 @@ impl<B: Brush> Layout<B> {
                     atom.advance() + existing.total() + self.data.runs[index].spacing.letter
                         + self.data.runs[index].spacing.word;
                 let natural = measured.max(0.0);
+                // CREngine measures glyph advances as whole pixels
+                // (`FONT_METRIC_TO_PX`, lvfntman.cpp) and scales a space with
+                // integer `char_width * percent / 100` (lvtextfm.cpp). Match
+                // that: round the natural width, then truncate the scaled one.
                 let scaled = if scaling == 100 {
                     natural
                 } else {
-                    natural * f32::from(scaling) / 100.0
+                    (natural.round() * f32::from(scaling) / 100.0).floor()
                 };
                 let lock_at = locked.partition_point(|range| range.end <= bytes.start);
                 let is_locked = locked

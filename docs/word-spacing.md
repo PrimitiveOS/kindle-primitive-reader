@@ -116,3 +116,15 @@ original-file results, logs and OCR crops are retained in
 `build/parity-review/word-spacing-evidence`. Combined-candidate integration,
 native Kindle and physical e-ink acceptance remain separate gates; no release
 or Store acceptance is implied by this checkpoint.
+
+## Whole-pixel space scaling
+
+Reader scales a font space the way CREngine does: the natural width rounds to
+whole pixels and the scaled width truncates (`floor(round(space) * percent / 100)`,
+`vendor/parley/src/layout/word_spacing.rs`). On the pinned KOReader runtime,
+`scripts/koreader-word-spacing-check.lua` measures a 10-word line at 42 px and
+finds each space changes by exactly -1 px at 95% and -3 px at 75%. The Rust test
+`space_deltas_match_the_koreader_oracle_at_42_px` pins the same widths.
+
+Open: on wrapped paragraphs CREngine does not scale every line at 95%. Reader
+still scales every space. See the F-9 row in `docs/koreader-gap-register.md`.

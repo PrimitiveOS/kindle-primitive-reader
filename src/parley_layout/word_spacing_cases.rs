@@ -40,15 +40,21 @@ fn percent_scales_selected_font_spaces_but_not_fixed_spaces_or_letters() {
         &[],
     );
     for (at, ch) in text.char_indices() {
-        let ratio = if matches!(ch, ' ' | '\u{a0}') {
-            0.95
+        if matches!(ch, ' ' | '\u{a0}') {
+            // CREngine rounds the natural space to whole pixels, then truncates the
+            // scaled width (lvtextfm.cpp: char_width * percent / 100).
+            let expected = (advance(&normal, at).round() * 0.95).floor();
+            assert!(
+                (advance(&changed, at) - expected).abs() < 0.01,
+                "{ch:?}: got {} expected {expected}",
+                advance(&changed, at)
+            );
         } else {
-            1.0
-        };
-        assert!(
-            (advance(&changed, at) - advance(&normal, at) * ratio).abs() < 0.01,
-            "{ch:?}"
-        );
+            assert!(
+                (advance(&changed, at) - advance(&normal, at)).abs() < 0.01,
+                "{ch:?}"
+            );
+        }
     }
 }
 
@@ -349,10 +355,53 @@ fn measured_space_scaling_includes_tracking_and_extreme_bounds_keep_gaps_nonnega
     };
     let natural = load(Some(pair), 1000.);
     let at = text.find(' ').unwrap();
-    assert!((advance(&natural, at) - advance(&old, at) * 0.1).abs() < 0.001);
+    // Whole-pixel natural width, then truncated scaled width (CREngine rule).
+    let expected = (advance(&old, at).round() * 0.1).floor();
+    assert!((advance(&natural, at) - expected).abs() < 0.001);
     let target = natural.get(0).unwrap().metrics().advance - advance(&natural, at) * 0.5;
     let condensed = load(Some(pair), target);
     assert_eq!(condensed.len(), 1);
     assert!(advance(&condensed, at) >= advance(&natural, at) * 0.25 - 0.001);
     assert!(advance(&condensed, at) >= 0.0);
+}
+
+// Same ten words as tests/fixtures/word-spacing-engine.epub, measured at 42 px with
+// the KOReader check scripts/koreader-word-spacing-check.lua. CREngine changes each
+// space by exactly -1 px at 95% and -3 px at 75%, which is the integer rule
+// floor(round(space) * percent / 100) - round(space) with round(space) = 11.
+#[test]
+fn space_deltas_match_the_koreader_oracle_at_42_px() {
+    let text = "aaa aab aac aad aae aaf aag aah aai aaj";
+    let load = |pair: Option<WordSpacePercent>| {
+        let mut fonts =
+            crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+        let mut context: LayoutContext<PaintBrush> = LayoutContext::new();
+        let mut builder = context.ranged_builder(&mut fonts, text, 1.0, true);
+        builder.push_default(StyleProperty::FontSize(42.0));
+        let mut layout = builder.build(text);
+        if let Some(pair) = pair {
+            layout.set_word_spacing_percent(text, pair.scaling, pair.minimum, &[]);
+        }
+        layout.break_all_lines(Some(10_000.));
+        layout.align(Alignment::Start, AlignmentOptions::default());
+        layout
+    };
+    let normal = load(None);
+    let spaces: Vec<usize> = text.match_indices(' ').map(|(at, _)| at).collect();
+    let base = advance(&normal, spaces[0]);
+    assert_eq!(base.round(), 11.0, "space width at 42 px");
+    // The scaled space is a whole pixel count: floor(11 * percent / 100).
+    for (scaling, expected_width) in [(95u16, 10.0_f32), (75, 8.0)] {
+        let changed = load(Some(WordSpacePercent {
+            scaling,
+            minimum: 100,
+        }));
+        for &at in &spaces {
+            let width = advance(&changed, at);
+            assert!(
+                (width - expected_width).abs() < 0.01,
+                "scale {scaling}: space at {at} is {width}, expected {expected_width}"
+            );
+        }
+    }
 }
