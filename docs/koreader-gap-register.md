@@ -64,7 +64,7 @@ still say 18; treat the code as authoritative and correct the docs (plan 0.6).
 | ID | Behaviour | KOReader evidence | Reader evidence | Impact | Status |
 | --- | --- | --- | --- | --- | --- |
 | N-1 | Followed-link marker (black bar about 0.5 s, removed after 1 s) | `readerrolling.lua:~770-850` | not found | low-medium | open |
-| N-2 | Link to another local document (asks to open it, supports `?pos=`) | `readerlink.lua:771-815` | only http/https handled (`src/app/external_link.rs`, `src/app/link_taps.rs:86`) | low-medium | open |
+| N-2 | Link to another local document: the file opens after a confirmation, with `?pos=` ignored | `readerlink.lua:771-815` (`openFileFromLink`) | `ReflowLink::LocalDocument` resolves `file:` URLs, absolute and book-relative paths that exist and are book formats (`src/app/link_taps.rs`); the link popup offers Read or Close (`src/app/external_link.rs`); tests `local_document_tests`, `local_document_popup_tests`. Not done: `?pos=` (KOReader xpointers and page numbers are not mapped to Reader positions); PDF link actions that point at other files | low-medium | partial |
 | N-3 | Character-count ("stable") pages for any reflow document | `readerpagemap.lua:33-80, 448-548` | EPUB only (`src/app/character_page_settings.rs:695,781,798`) | low-medium | partial |
 | N-4 | Full refresh on chapter boundaries and on pages with images | `readertoc.lua:100-122`; `readerview.lua:~218-221` | `PageRefresh` offers only Default, every 1, 5 or 10 pages (`src/reading_controls.rs:1479`) | low | open |
 | N-5 | Hold a Contents row to show the full title | `readertoc.lua:~833-850` | no hold handling (`src/app/contents_view.rs`, `contents_tree.rs`) | low | open |

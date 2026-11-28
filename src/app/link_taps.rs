@@ -75,10 +75,16 @@ impl LinkPreference {
 pub(super) enum ReflowLink {
     Internal(Destination),
     Address(String),
+    /// A readable file on the device, offered for reading (KOReader's `openFileFromLink`).
+    LocalDocument(PathBuf),
 }
 
 impl ReflowLink {
-    fn resolve(chapter: &str, href: &str) -> Option<Self> {
+    /// `folder` is the folder of the open book; relative links to other files resolve there.
+    fn resolve(chapter: &str, href: &str, folder: &Path) -> Option<Self> {
+        if let Some(path) = local_document(href, folder) {
+            return Some(Self::LocalDocument(path));
+        }
         if let Ok(target) = Book::resolve_link(chapter, href) {
             return Some(Self::Internal(target));
         }
@@ -89,6 +95,77 @@ impl ReflowLink {
             && href.len() <= 4096)
             .then(|| Self::Address(href.to_owned()))
     }
+}
+
+/// A link to an existing document file: a `file:` URL, an absolute path, or a path relative to
+/// the book's folder. The query and fragment are ignored. Only book formats qualify, so an
+/// ordinary chapter link such as `chapter.xhtml` stays internal even if a file of that name exists.
+/// The folder of the open book, where relative links to other files resolve.
+fn book_folder(reading: &Reading) -> &Path {
+    reading.config.book.parent().unwrap_or(Path::new("/"))
+}
+
+fn local_document(href: &str, folder: &Path) -> Option<PathBuf> {
+    if href.chars().any(char::is_control) || href.len() > 4096 {
+        return None;
+    }
+    let target = match url::Url::parse(href) {
+        Ok(url) if url.scheme() == "file" => url.to_file_path().ok()?,
+        Ok(_) => return None,
+        Err(_) => {
+            let path = percent_decode(href.split(['#', '?']).next()?)?;
+            if path.starts_with('/') {
+                PathBuf::from(path)
+            } else {
+                folder.join(path)
+            }
+        }
+    };
+    if !is_book_format(&target) {
+        return None;
+    }
+    let path = std::fs::canonicalize(target).ok()?;
+    path.is_file().then_some(path)
+}
+
+fn is_book_format(path: &Path) -> bool {
+    use crate::library::DocumentFormat as Format;
+    matches!(
+        Format::for_path(path),
+        Some(
+            Format::Epub
+                | Format::Text
+                | Format::Markdown
+                | Format::Fb2
+                | Format::Fb3
+                | Format::Mobi
+                | Format::Chm
+                | Format::Rtf
+                | Format::Tcr
+                | Format::Pdf
+                | Format::Djvu
+                | Format::Cbz
+                | Format::Cbt
+                | Format::Cbr
+        )
+    )
+}
+
+fn percent_decode(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let digits = std::str::from_utf8(bytes.get(index + 1..index + 3)?).ok()?;
+            out.push(u8::from_str_radix(digits, 16).ok()?);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 impl Reader {
@@ -295,6 +372,7 @@ impl Reader {
     pub(super) fn open_reflow_link(&mut self, link: ReflowLink, x: f32, y: f32) -> Change {
         match link {
             ReflowLink::Address(address) => self.show_link_address(address),
+            ReflowLink::LocalDocument(path) => self.show_local_document(path),
             ReflowLink::Internal(target) => {
                 if self.open_note_at(target.clone(), x, y) {
                     return Change::Partial;
@@ -341,6 +419,7 @@ impl Reader {
             return None;
         }
         let reading = &self.active.as_ref()?.reading;
+        let folder = book_folder(reading);
         let (width, _) = self.reading_viewport().dimensions();
         if !(0.0..width as f32).contains(&x) || !(0.0..reading.frame_height() as f32).contains(&y) {
             return None;
@@ -349,7 +428,7 @@ impl Reader {
         if !internal_only
             && let Some(link) = reading
                 .link_context_at(x, y)
-                .and_then(|(chapter, href)| ReflowLink::resolve(chapter, href))
+                .and_then(|(chapter, href)| ReflowLink::resolve(chapter, href, folder))
         {
             return Some((link, x, y));
         }
@@ -421,10 +500,11 @@ impl Reader {
             return Vec::new();
         };
         let reading = &active.reading;
+        let folder = book_folder(reading);
         let mut links = Vec::new();
         for (range, _) in reading.visible_columns() {
             for (label, href) in reading.probe.link_hrefs_in(range) {
-                if let Some(target) = ReflowLink::resolve(&reading.probe.chapter, href)
+                if let Some(target) = ReflowLink::resolve(&reading.probe.chapter, href, folder)
                     && !links
                         .iter()
                         .any(|(existing, link)| existing == &label && link == &target)
@@ -435,7 +515,7 @@ impl Reader {
         }
         for band in reading.probe.foreign_bands(reading.page) {
             for (label, href, _) in band.layout.note_links() {
-                if let Some(target) = ReflowLink::resolve(&band.layout.note.chapter, href)
+                if let Some(target) = ReflowLink::resolve(&band.layout.note.chapter, href, folder)
                     && !links
                         .iter()
                         .any(|(existing, link)| existing == &label && link == &target)
@@ -451,6 +531,10 @@ impl Reader {
                 ReflowLink::Address(address) => {
                     Item::new(label, Action::OpenLinkAddress(address.clone())).detail(address)
                 }
+                ReflowLink::LocalDocument(path) => {
+                    let detail = path.display().to_string();
+                    Item::new(label, Action::OpenLocalDocument(path)).detail(detail)
+                }
             })
             .collect()
     }
@@ -464,6 +548,7 @@ fn nearest_reflow_link(
     internal_only: bool,
 ) -> Option<(ReflowLink, f32, f32)> {
     let probe = &reading.probe;
+    let folder = book_folder(reading);
     let mut nearest = None;
     let mut distance = radius * radius;
     let inside_foreign = probe.foreign_band_at(reading.page, x, y).is_some();
@@ -490,7 +575,7 @@ fn nearest_reflow_link(
             let candidate = dx * dx + dy * dy;
             if candidate <= distance
                 && (candidate < distance || nearest.is_none())
-                && let Some(link) = ReflowLink::resolve(&probe.chapter, href)
+                && let Some(link) = ReflowLink::resolve(&probe.chapter, href, folder)
                 && (!internal_only || matches!(link, ReflowLink::Internal(_)))
             {
                 distance = candidate;
@@ -563,7 +648,7 @@ fn nearest_reflow_link(
                 let candidate = dx * dx + dy * dy;
                 if candidate <= distance
                     && (candidate < distance || nearest.is_none())
-                    && let Some(link) = ReflowLink::resolve(&band.layout.note.chapter, href)
+                    && let Some(link) = ReflowLink::resolve(&band.layout.note.chapter, href, folder)
                     && (!internal_only || matches!(link, ReflowLink::Internal(_)))
                 {
                     distance = candidate;
@@ -577,3 +662,56 @@ fn nearest_reflow_link(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod local_document_tests {
+    use super::*;
+    use crate::app::tests::Fixture;
+
+    fn is_local(link: Option<ReflowLink>, expected: &Path) -> bool {
+        matches!(link, Some(ReflowLink::LocalDocument(path)) if path == expected)
+    }
+
+    #[test]
+    fn local_documents_resolve_only_existing_book_files_and_keep_chapter_links_internal() {
+        let fixture = Fixture::new();
+        let folder = fixture.root.clone();
+        let other = folder.join("Harbor notes.epub");
+        std::fs::write(&other, b"not read by the resolver").unwrap();
+        std::fs::write(folder.join("chapter.xhtml"), b"<html/>").unwrap();
+        let expected = std::fs::canonicalize(&other).unwrap();
+        let chapter = "EPUB/text/one.xhtml";
+
+        assert!(is_local(
+            ReflowLink::resolve(chapter, "Harbor%20notes.epub", &folder),
+            &expected
+        ));
+        assert!(is_local(
+            ReflowLink::resolve(chapter, "Harbor%20notes.epub?pos=12#part", &folder),
+            &expected
+        ));
+        let url = url::Url::from_file_path(&other).unwrap();
+        assert!(is_local(
+            ReflowLink::resolve(chapter, url.as_str(), &folder),
+            &expected
+        ));
+        assert!(is_local(
+            ReflowLink::resolve(chapter, other.to_str().unwrap(), &folder),
+            &expected
+        ));
+        // A chapter link keeps resolving inside the book even when a file of that name exists.
+        assert!(matches!(
+            ReflowLink::resolve(chapter, "chapter.xhtml", &folder),
+            Some(ReflowLink::Internal(_))
+        ));
+        // A missing book file is not offered; it stays an ordinary internal link.
+        assert!(!matches!(
+            ReflowLink::resolve(chapter, "missing.epub", &folder),
+            Some(ReflowLink::LocalDocument(_))
+        ));
+        assert!(matches!(
+            ReflowLink::resolve(chapter, "https://example.org/harbor", &folder),
+            Some(ReflowLink::Address(_))
+        ));
+    }
+}

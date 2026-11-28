@@ -397,6 +397,7 @@ fn same_link(before: &Item, after: &Item) -> bool {
             (Action::ContentsJump(left), Action::ContentsJump(right)) => left == right,
             (Action::OpenFixedLink(left), Action::OpenFixedLink(right)) => left == right,
             (Action::OpenLinkAddress(left), Action::OpenLinkAddress(right)) => left == right,
+            (Action::OpenLocalDocument(left), Action::OpenLocalDocument(right)) => left == right,
             _ => false,
         }
 }

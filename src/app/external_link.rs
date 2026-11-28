@@ -6,6 +6,7 @@ use super::*;
 use primitive_ui::TextStyle;
 use qrcodegen::{QrCode, QrCodeEcc};
 use std::cell::Cell;
+use std::path::PathBuf;
 
 const PANEL: Rect = Rect::new(72, 505, 1120, 416);
 const QR_PANEL: Rect = Rect::new(72, 270, 1120, 1060);
@@ -24,6 +25,8 @@ pub(super) struct LinkPopup {
     pages: Cell<usize>,
     qr: Option<QrCode>,
     message: Option<&'static str>,
+    /// A file on the device that the Read button opens, instead of an address to copy.
+    document: Option<PathBuf>,
 }
 
 impl LinkPopup {
@@ -71,9 +74,14 @@ impl LinkPopup {
             return;
         }
         canvas.popup(place(PANEL));
+        let title = if self.document.is_some() {
+            "Local document"
+        } else {
+            "Link address"
+        };
         canvas.text(
             place(Rect::new(114, 527, 814, 75)),
-            language.navigation_popup_text("Link address"),
+            language.navigation_popup_text(title),
             TextStyle::new(41).bold(),
         );
         canvas.button(
@@ -88,18 +96,21 @@ impl LinkPopup {
         if let Some(range) = pages.get(self.page) {
             canvas.text(place(ADDRESS), &self.address[range.clone()], style);
         }
+        let action = if self.document.is_some() { "Read" } else { "Copy" };
         canvas.button(
             place(COPY),
-            language.navigation_popup_text("Copy"),
+            language.navigation_popup_text(action),
             false,
             false,
         );
-        canvas.button(
-            place(CODE),
-            language.navigation_popup_text("QR code"),
-            false,
-            false,
-        );
+        if self.document.is_none() {
+            canvas.button(
+                place(CODE),
+                language.navigation_popup_text("QR code"),
+                false,
+                false,
+            );
+        }
         if self.pages.get() > 1 {
             canvas.button(
                 place(PREV),
@@ -139,6 +150,21 @@ impl Reader {
             pages: Cell::new(1),
             qr: None,
             message: None,
+            document: None,
+        });
+        self.sync_auto_turn(Instant::now());
+        Change::Partial
+    }
+
+    /// Offer a file on the device for reading. Read opens it; Close keeps the book open.
+    pub(super) fn show_local_document(&mut self, path: PathBuf) -> Change {
+        self.link_popup = Some(LinkPopup {
+            address: path.display().to_string(),
+            page: 0,
+            pages: Cell::new(1),
+            qr: None,
+            message: None,
+            document: Some(path),
         });
         self.sync_auto_turn(Instant::now());
         Change::Partial
@@ -204,10 +230,17 @@ impl Reader {
             } else if place(CLOSE).contains(x, y) || !place(PANEL).contains(x, y) {
                 self.link_popup = None;
             } else if place(COPY).contains(x, y) {
+                if let Some(path) = popup.document.clone() {
+                    self.link_popup = None;
+                    return match self.open_path(&path) {
+                        Ok(()) => Change::Partial,
+                        Err(error) => self.report(error),
+                    };
+                }
                 self.clipboard_text = Some(popup.address.clone());
                 self.link_popup = None;
                 self.notice = Some("Link copied".into());
-            } else if place(CODE).contains(x, y) {
+            } else if popup.document.is_none() && place(CODE).contains(x, y) {
                 match QrCode::encode_text(&popup.address, QrCodeEcc::Low) {
                     Ok(code) => popup.qr = Some(code),
                     Err(_) => popup.message = Some("This address is too long for a QR code"),
@@ -496,5 +529,49 @@ mod tests {
         app.show(Screen::Links);
         tap(&mut app, layout.back());
         assert_eq!(app.screen, Screen::FixedTools);
+    }
+}
+
+#[cfg(test)]
+mod local_document_popup_tests {
+    use super::*;
+    use crate::app::tests::Fixture;
+
+    fn tap_centered(app: &mut Reader, rect: Rect) -> Change {
+        let rect = app.navigation_layout().centered(rect);
+        app.input(Input::Tap(
+            (rect.x + rect.w / 2) as f32,
+            (rect.y + rect.h / 2) as f32,
+        ))
+    }
+
+    #[test]
+    fn local_document_links_read_the_file_or_close_and_keep_the_book_open() {
+        let fixture = Fixture::new();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let other = fixture.root.join("Harbor notes.epub");
+        std::fs::copy(crate::test_fixture("field-notes-epub3.epub"), &other).unwrap();
+        let other = std::fs::canonicalize(other).unwrap();
+
+        // Close keeps the current book and drops the offer.
+        app.open_reflow_link(link_taps::ReflowLink::LocalDocument(other.clone()), 0.0, 0.0);
+        assert_eq!(
+            app.link_popup.as_ref().unwrap().document.as_deref(),
+            Some(other.as_path())
+        );
+        assert_eq!(tap_centered(&mut app, CLOSE), Change::Partial);
+        assert!(app.link_popup.is_none());
+        assert_eq!(
+            app.active.as_ref().unwrap().reading.config.book,
+            std::fs::canonicalize(&fixture.book).unwrap()
+        );
+
+        // Read opens the file.
+        app.open_reflow_link(link_taps::ReflowLink::LocalDocument(other.clone()), 0.0, 0.0);
+        assert_eq!(tap_centered(&mut app, COPY), Change::Partial);
+        assert!(app.link_popup.is_none());
+        assert_eq!(app.active.as_ref().unwrap().reading.config.book, other);
     }
 }

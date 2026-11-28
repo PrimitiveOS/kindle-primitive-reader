@@ -770,6 +770,7 @@ enum Action {
     BookMapChapter(usize),
     OpenFixedLink(crate::fixed::PdfLink),
     OpenLinkAddress(String),
+    OpenLocalDocument(std::path::PathBuf),
     ToggleLinkPreference(link_taps::LinkPreference),
     SetMenuActivation(reading_bars::ActivationOption),
     Chapter(chapter_navigation::Direction),
@@ -5270,6 +5271,10 @@ impl Reader {
             Action::OpenLinkAddress(address) => {
                 self.show(self.surface_screen());
                 self.show_link_address(address);
+            }
+            Action::OpenLocalDocument(path) => {
+                self.show(self.surface_screen());
+                self.show_local_document(path);
             }
             Action::ToggleLinkPreference(setting) => self.toggle_link_preference(setting)?,
             Action::SetMenuActivation(option) => self.change_menu_activation(option)?,

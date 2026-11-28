@@ -507,6 +507,7 @@ pub(super) fn action_icon(action: &Action) -> Icon {
         | Action::ToggleLinkPreference(_)
         | Action::OpenFixedLink(_)
         | Action::OpenLinkAddress(_)
+        | Action::OpenLocalDocument(_)
         | Action::Wikipedia => LINK,
         Action::ReadAlarm | Action::Show(Screen::OnlineHistory) | Action::ReadingHistory(_) => {
             CLOCK
