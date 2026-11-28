@@ -5702,6 +5702,14 @@ impl Reader {
                 self.notice = None;
             }
             Action::SetBaseStylesheet(style) => {
+                // A built-in choice must take effect, so it replaces the book's own base sheet.
+                if let Some(id) = self.open_book_id()
+                    && self.style_store.data.book(id).base_sheet.is_some()
+                {
+                    let mut next = self.style_store.data.clone();
+                    next.choose_base_sheet(id, None)?;
+                    self.apply_style_data(next)?;
+                }
                 let settings = self
                     .active
                     .as_ref()

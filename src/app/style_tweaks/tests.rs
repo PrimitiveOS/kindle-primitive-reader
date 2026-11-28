@@ -1630,3 +1630,32 @@ fn long_press_on_a_tweak_row_opens_its_help_until_a_tap() {
     assert_eq!(app.input(Input::Tap(10.0, 10.0)), Change::Partial);
     assert_eq!(app.style_help, None);
 }
+
+#[test]
+fn a_style_file_becomes_the_books_base_sheet_and_built_in_choices_take_it_back() {
+    let f = Fixture::new();
+    let path = footnote_book(&f, "Footnotes.epub");
+    let mut app = open(&f);
+    app.open_path(&path).unwrap();
+    let id = app.open_book_id().unwrap();
+    let dir = app.style_store.path.parent().unwrap().join("style-tweaks");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("base.css"), "p { text-indent: 3em; }").unwrap();
+
+    app.activate_style(Command::Files).unwrap();
+    app.activate_style(Command::UseBaseSheet(0)).unwrap();
+    assert_eq!(
+        app.style_store.data.book(id).base_sheet.as_deref(),
+        Some("p { text-indent: 3em; }")
+    );
+
+    // A built-in choice replaces the file, so the choice takes effect.
+    app.activate(Action::SetBaseStylesheet(crate::BaseStylesheet::HtmlStandard))
+        .unwrap();
+    assert!(app.style_store.data.book(id).base_sheet.is_none());
+
+    app.activate_style(Command::Files).unwrap();
+    app.activate_style(Command::UseBaseSheet(0)).unwrap();
+    app.activate_style(Command::UseBuiltInBaseSheet).unwrap();
+    assert!(app.style_store.data.book(id).base_sheet.is_none());
+}

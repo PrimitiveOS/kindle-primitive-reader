@@ -60,7 +60,11 @@ Reader can currently express. Exact CREngine `epub.css`, `html5.css` and
 A book can now carry its own base stylesheet text (`BookTweaks.base_sheet`,
 at most 64 KiB, checked with the lenient user-CSS rules). When set, it replaces
 the built-in base sheet, including its table defaults, and its text joins the
-layout digest. The picker that lists and selects `.css` files is not built yet. The new default workflow still needs desktop and Kindle
+layout digest. Choose it in **Style tweaks › Files**: each `.css` file in
+`reader/data/style-tweaks` has a **Base sheet** row that stores it for the open
+book, and **Use built-in base stylesheet** clears it. Choosing a built-in base
+stylesheet in the reading bar also clears the book's own sheet, so that choice
+takes effect. The Obsolete sheets are not yet implemented. The new default workflow still needs desktop and Kindle
 verification.
 
 KOReader source reference: pinned release `v2026.07.1` at commit

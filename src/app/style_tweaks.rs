@@ -17,6 +17,8 @@ pub(super) enum Command {
     Master(bool),
     Files,
     Import(usize),
+    UseBaseSheet(usize),
+    UseBuiltInBaseSheet,
     Edit,
     Review,
     Apply,
@@ -269,7 +271,7 @@ impl Reader {
         }
     }
 
-    fn apply_style_data(&mut self, next: Data) -> Result<()> {
+    pub(super) fn apply_style_data(&mut self, next: Data) -> Result<()> {
         let id = self.style_book()?;
         next.validate()?;
         let active = self.active.as_ref().unwrap();
@@ -316,7 +318,12 @@ impl Reader {
         }
         if matches!(
             &command,
-            Command::Apply | Command::Review | Command::Import(_) | Command::ConfirmClear
+            Command::Apply
+                | Command::Review
+                | Command::Import(_)
+                | Command::UseBaseSheet(_)
+                | Command::UseBuiltInBaseSheet
+                | Command::ConfirmClear
         ) && self.style_view.owner != Some(id)
         {
             return Err("Review this book's styles again before applying".into());
@@ -407,6 +414,26 @@ impl Reader {
                 let bytes = read_import_file(path, user_styles::MAX_BOOK_CSS as u64)?;
                 let css = String::from_utf8(bytes).map_err(|_| "CSS must be valid UTF-8")?;
                 self.review_styles(css);
+            }
+            Command::UseBaseSheet(index) => {
+                let path = self
+                    .style_view
+                    .files
+                    .get(index)
+                    .ok_or("Choose a CSS file again")?
+                    .clone();
+                let bytes = read_import_file(&path, user_styles::MAX_BASE_SHEET_BYTES as u64)?;
+                let css = String::from_utf8(bytes).map_err(|_| "CSS must be valid UTF-8")?;
+                let mut next = self.style_store.data.clone();
+                next.choose_base_sheet(id, Some(css))?;
+                self.apply_style_data(next)?;
+                self.notice = Some("Base stylesheet set for this book".into());
+            }
+            Command::UseBuiltInBaseSheet => {
+                let mut next = self.style_store.data.clone();
+                next.choose_base_sheet(id, None)?;
+                self.apply_style_data(next)?;
+                self.notice = Some("Built-in base stylesheet restored".into());
             }
             Command::Edit => {
                 self.style_view.owner = Some(id);
@@ -858,21 +885,32 @@ impl Reader {
                 ]
             }
             Screen::StyleFiles => {
-                let mut items: Vec<_> = self
-                    .style_view
-                    .files
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| {
+                let mut items = vec![action(
+                    language.bottom_typography_text("Use built-in base stylesheet"),
+                    Command::UseBuiltInBaseSheet,
+                )
+                .detail(language.bottom_typography_text(
+                    "Clears this book's own base stylesheet",
+                ))];
+                for (i, p) in self.style_view.files.iter().enumerate() {
+                    let name = p.file_name().unwrap().to_string_lossy();
+                    items.push(
+                        action(name.as_ref(), Command::Import(i)).detail(
+                            language.bottom_typography_text(
+                                "Review a book-specific copy; original file stays unchanged",
+                            ),
+                        ),
+                    );
+                    items.push(
                         action(
-                            p.file_name().unwrap().to_string_lossy().as_ref(),
-                            Command::Import(i),
+                            &format!("{}: {name}", language.bottom_typography_text("Base sheet")),
+                            Command::UseBaseSheet(i),
                         )
                         .detail(language.bottom_typography_text(
-                            "Review a book-specific copy; original file stays unchanged",
-                        ))
-                    })
-                    .collect();
+                            "Replaces the built-in base stylesheet for this book",
+                        )),
+                    );
+                }
                 if items.is_empty() {
                     items.push(
                         Item::new(
