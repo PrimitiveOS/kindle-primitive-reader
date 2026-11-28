@@ -1,4 +1,5 @@
 //! The current book's font chooser and its source-font samples.
+use super::font_defaults;
 use super::{
     Action, BODY, BarPanel, CAPTION, Canvas, Item, Reader, Rect, Result, Rows, Screen, SystemTheme,
     TopGroup, WIDTH,
@@ -111,6 +112,21 @@ impl Reader {
                 },
             )
         }));
+        items.push(
+            Item::new(language.reading_font_text("Font roles"), Action::Heading).detail(
+                language.reading_font_text("Tap to choose the next font"),
+            ),
+        );
+        for role in font_defaults::Role::ALL {
+            let current = self.font_defaults.get(role).unwrap_or("Off");
+            items.push(
+                Item::new(
+                    language.reading_font_text(role.title()),
+                    Action::CycleFontRole(role),
+                )
+                .detail(current),
+            );
+        }
         items.push(
             Item::new(
                 language.reading_font_text("Add more fonts"),

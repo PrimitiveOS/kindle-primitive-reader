@@ -7,6 +7,7 @@ fn authored_config(scroll: bool, overlap_footer: bool) -> BookConfig {
         user_hyphenation: Default::default(),
         engine: Engine::Parley,
         book: crate::test_fixture("field-notes-epub3.epub"),
+        font_roles: Default::default(),
         fonts: vec![
             crate::test_fixture("fonts/NotoSans-Regular.ttf"),
             crate::test_fixture("fonts/NotoSans-Bold.ttf"),

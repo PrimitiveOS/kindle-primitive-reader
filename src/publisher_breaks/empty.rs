@@ -558,6 +558,7 @@ mod tests {
             engine: Engine::Parley,
             book: crate::test_fixture("render-empty-breaks.epub"),
             fonts: vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+            font_roles: Default::default(),
             settings: settings(EmptyBreakMode::PreserveStructure),
             scroll: false,
             facing_pages: false,

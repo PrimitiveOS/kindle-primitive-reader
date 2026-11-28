@@ -392,6 +392,7 @@ mod tests {
             viewport: crate::session::ReadingViewport::PORTRAIT,
             book: path.to_owned(),
             fonts: fonts.to_vec(),
+            font_roles: Default::default(),
             engine: Engine::Parley,
             settings: Settings {
                 width: primitive_app::WIDTH,
@@ -600,6 +601,7 @@ mod logical_configuration_tests {
             engine: Engine::Parley,
             book: std::path::PathBuf::from("/private/publication.epub"),
             fonts: vec![std::path::PathBuf::from("/private/font.ttf")],
+            font_roles: Default::default(),
             settings: Settings::default().with_logical_font(255.).unwrap(),
             scroll: false,
             facing_pages: true,

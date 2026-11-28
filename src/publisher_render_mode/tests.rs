@@ -244,6 +244,7 @@ fn render_mode_switch_preserves_the_focused_quote_and_returns_to_the_original_fr
         viewport: ReadingViewport::PORTRAIT,
         book: test_fixture(book),
         fonts: vec![test_fixture("fonts/NotoSans-Regular.ttf")],
+        font_roles: Default::default(),
         engine: Engine::Parley,
         settings: initial,
         scroll: false,

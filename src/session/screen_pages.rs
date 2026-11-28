@@ -762,6 +762,7 @@ mod tests {
             engine: Engine::Parley,
             book: crate::test_fixture(fixture),
             fonts: vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],
+            font_roles: Default::default(),
             settings: Settings {
                 width: WIDTH,
                 height: PAGE_HEIGHT,
@@ -844,7 +845,7 @@ mod tests {
 
         let mut fonts = reading.config.fonts.clone();
         fonts.push(crate::test_fixture("fonts/NotoSans-Regular.ttf"));
-        reading.set_fonts(fonts).unwrap();
+        reading.set_fonts(fonts, Default::default()).unwrap();
         assert_eq!(reading.whole_book_screen_pages(), None);
         reading.jump(1, None).unwrap();
         assert!(reading.whole_book_screen_pages().is_some());

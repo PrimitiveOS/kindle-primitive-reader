@@ -206,6 +206,8 @@ pub(crate) struct BookConfig {
     pub(crate) engine: Engine,
     pub(crate) book: PathBuf,
     pub(crate) fonts: Vec<PathBuf>,
+    /// Font files for generic families (monospace and the others). Empty keeps the default.
+    pub(crate) font_roles: crate::FontRoles,
     pub(crate) settings: Settings,
     pub(crate) scroll: bool,
     pub(crate) facing_pages: bool,
@@ -231,6 +233,7 @@ pub(crate) struct SearchLayoutRecipe {
     engine: Engine,
     book: std::path::PathBuf,
     fonts: Vec<std::path::PathBuf>,
+    font_roles: crate::FontRoles,
     foreground_sources: Option<screen_pages::ScreenPageSources>,
     current_sources: Option<screen_pages::ScreenPageSources>,
     folder_snapshot: Option<std::sync::Arc<screen_pages::folder_sources::FolderProof>>,
@@ -315,6 +318,7 @@ impl SearchLayoutRecipe {
             engine: self.engine,
             book: self.book.clone(),
             fonts: self.fonts.clone(),
+            font_roles: self.font_roles.clone(),
             settings: self.settings,
             scroll: self.scroll,
             facing_pages: self.facing_pages,
@@ -428,6 +432,7 @@ impl SearchLayoutRecipe {
             engine: self.engine,
             book: self.book.clone(),
             fonts: self.fonts.clone(),
+            font_roles: self.font_roles.clone(),
             settings: self.settings,
             scroll: self.scroll,
             facing_pages: self.facing_pages,
@@ -601,6 +606,7 @@ impl SearchLayoutRecipe {
             engine: self.engine,
             book: self.book.clone(),
             fonts: self.fonts.clone(),
+            font_roles: self.font_roles.clone(),
             settings: self.settings,
             scroll: self.scroll,
             facing_pages: self.facing_pages,
@@ -698,6 +704,7 @@ impl BookConfig {
             engine: self.engine,
             book: self.book.clone(),
             fonts: self.fonts.clone(),
+            font_roles: self.font_roles.clone(),
             foreground_sources: probe.raw_layout_sources.clone(),
             current_sources: screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts),
             folder_snapshot: probe.raw_folder_sources.clone(),
@@ -950,7 +957,7 @@ impl BookConfig {
             None,
             &self.user_hyphenation,
             &user_styles,
-            || crate::font_context(&self.fonts),
+            || crate::font_context_with_roles(&self.fonts, &self.font_roles),
             raw_sources.is_some() || folder_raw,
             check_cancelled,
             long_chapter_cancelled,
@@ -979,7 +986,7 @@ impl BookConfig {
                     None,
                     &self.user_hyphenation,
                     &user_styles,
-                    || crate::font_context(&self.fonts),
+                    || crate::font_context_with_roles(&self.fonts, &self.font_roles),
                     raw_sources.is_some() || folder_raw,
                     check_cancelled,
                 )
@@ -1889,9 +1896,14 @@ impl Reading {
         Ok(candidate)
     }
 
-    pub(crate) fn set_fonts(&mut self, fonts: Vec<PathBuf>) -> Result<()> {
+    pub(crate) fn set_fonts(
+        &mut self,
+        fonts: Vec<PathBuf>,
+        font_roles: crate::FontRoles,
+    ) -> Result<()> {
         let mut config = self.config.clone();
         config.fonts = fonts;
+        config.font_roles = font_roles;
         config.prepare_page_layout(&self.config);
         let anchor = self.anchor();
         let candidate = Self::restore(config, self.chapter, self.page, anchor.as_ref())?;
@@ -3736,6 +3748,7 @@ mod tests {
             engine: Engine::Parley,
             book: crate::test_fixture(book),
             fonts: vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],
+            font_roles: Default::default(),
             settings: Settings {
                 width: WIDTH,
                 height: PAGE_HEIGHT,
@@ -4653,6 +4666,7 @@ mod tests {
             engine: Engine::Parley,
             book: crate::test_fixture("vertical-chapters.epub"),
             fonts: vec![crate::test_fixture("fonts/Silkscreen-Regular.ttf")],
+            font_roles: Default::default(),
             settings: Settings {
                 width: WIDTH,
                 height: PAGE_HEIGHT,

@@ -54,6 +54,7 @@ fn css_restore_retains_canonical_focus_across_scroll_spread_reflow_and_reopen_un
             engine: Engine::Parley,
             book: book.0.clone(),
             fonts: vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+            font_roles: Default::default(),
             settings: Settings {
                 width: WIDTH,
                 height: PAGE_HEIGHT,
@@ -143,6 +144,7 @@ fn saved_custom_flow_markers_remain_resolved_when_publisher_css_omits_their_text
         engine: Engine::Parley,
         book: book.0.clone(),
         fonts: vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        font_roles: Default::default(),
         settings: Settings {
             width: WIDTH,
             height: PAGE_HEIGHT,

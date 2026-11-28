@@ -416,11 +416,11 @@ impl Reader {
                 || {
                     if self.controls.footnote_book_font
                         && reading.config.fonts != self.fonts
-                        && let Ok(fonts) = crate::font_context(&reading.config.fonts)
+                        && let Ok(fonts) = crate::font_context_with_roles(&reading.config.fonts, &reading.config.font_roles)
                     {
                         return Ok(fonts);
                     }
-                    crate::font_context(&self.fonts)
+                    crate::font_context_with_roles(&self.fonts, &self.font_roles())
                 },
             )
         };

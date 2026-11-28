@@ -64,10 +64,13 @@ mod folder_open;
 mod font_render_tests;
 mod footer_custom_text;
 mod fallback_font;
+mod font_defaults;
 #[cfg(test)]
 mod refresh_tests;
 #[cfg(test)]
 mod contents_title_tests;
+#[cfg(test)]
+mod font_defaults_tests;
 mod footer_font_face;
 mod footer_presets;
 mod footnote_font;
@@ -826,6 +829,7 @@ enum Action {
     ShowFooterFonts,
     SetFooterFontFace(Option<String>),
     SetFallbackFont(Option<String>),
+    CycleFontRole(font_defaults::Role),
     ShowDictionaries,
     InstallDictionary(usize, usize),
     DownloadDictionaryWithoutSizeEstimate(usize, usize),
@@ -1170,6 +1174,8 @@ pub struct Reader {
     footer_font_file: Option<String>,
     fallback_font_path: PathBuf,
     fallback_font_file: Option<String>,
+    font_defaults_path: PathBuf,
+    font_defaults: font_defaults::FontDefaults,
     footer_font_render_path: Option<PathBuf>,
     footer_custom_text_path: PathBuf,
     footer_custom_text: footer_custom_text::Preference,
@@ -1376,6 +1382,8 @@ impl Reader {
         let footer_font_path = data.join("status-bar-font.json");
         let fallback_font_path = data.join("fallback-font.json");
         let fallback_font_file = fallback_font::load(&fallback_font_path, &fonts_directory);
+        let font_defaults_path = data.join("font-defaults.json");
+        let font_defaults = font_defaults::load(&font_defaults_path, &fonts_directory);
         let footer_font_file = footer_font_face::load(&footer_font_path, &fonts_directory);
         let footer_font_render_path = footer_font_file
             .as_deref()
@@ -1485,6 +1493,8 @@ impl Reader {
             footer_font_path,
             fallback_font_path,
             fallback_font_file,
+            font_defaults_path,
+            font_defaults,
             footer_font_file,
             footer_font_render_path,
             footer_custom_text_path,
@@ -2149,6 +2159,7 @@ impl Reader {
             engine: Engine::Parley,
             book: absolute.clone(),
             fonts,
+            font_roles: self.font_roles(),
             settings,
             scroll,
             facing_pages,
@@ -5769,6 +5780,7 @@ impl Reader {
                 self.show(Screen::FooterSettings);
             }
             Action::SetFallbackFont(font) => self.set_fallback_font_file(font)?,
+            Action::CycleFontRole(role) => self.cycle_font_role(role)?,
             Action::ShowDictionaries => self.open_sources()?,
             Action::InstallDictionary(group, index) => self.install_dictionary(group, index)?,
             Action::DownloadDictionaryWithoutSizeEstimate(group, index) => {
@@ -5791,8 +5803,9 @@ impl Reader {
             Action::DictionaryButtons(action) => self.change_dictionary_buttons(action)?,
             Action::SetFont(font) => {
                 let fonts = self.fonts_for(font.as_deref())?;
+                let roles = self.font_roles();
                 let active = self.active.as_mut().ok_or("Open a book first")?;
-                active.reading.set_fonts(fonts)?;
+                active.reading.set_fonts(fonts, roles)?;
                 self.library
                     .remember(&active.entry, active.id, &active.reading.probe.title)
                     .preferences
@@ -6035,7 +6048,14 @@ impl Reader {
         Ok(with_storage(|| self.library.locate(state))?)
     }
 
+    /// The engine's font roles, from the Reader-wide defaults.
+    pub(crate) fn font_roles(&self) -> crate::FontRoles {
+        self.font_defaults.roles(&self.fonts_directory)
+    }
+
     fn fonts_for(&self, file: Option<&str>) -> io::Result<Vec<PathBuf>> {
+        // A book without its own font uses the Reader-wide default font, when one is set.
+        let file = file.or_else(|| self.font_defaults.get(font_defaults::Role::Default));
         let mut fonts = self.fonts.clone();
         if let Some(file) = file {
             let font = reading_fonts::resolve(&self.fonts_directory, file)?;
@@ -6060,6 +6080,39 @@ impl Reader {
         Ok(fonts)
     }
 
+    /// Advance a Reader-wide font role through Off and each available font, and re-lay out the
+    /// open book with the new choice.
+    pub(crate) fn cycle_font_role(&mut self, role: font_defaults::Role) -> Result<()> {
+        let names = reading_fonts::available(&self.fonts_directory)?;
+        let current = self.font_defaults.get(role);
+        let position = current.and_then(|name| names.iter().position(|known| known == name));
+        // Off comes before the first font and after the last one. An unknown current font
+        // starts the cycle again from the first font.
+        let next = match position {
+            None => names.first().cloned(),
+            Some(index) => names.get(index + 1).cloned(),
+        };
+        self.font_defaults.set(role, next);
+        font_defaults::save(&self.font_defaults_path, &self.fonts_directory, &self.font_defaults)?;
+        self.relayout_active_book()
+    }
+
+    /// Re-lay out the open book with its own font (or the default) and the current roles.
+    fn relayout_active_book(&mut self) -> Result<()> {
+        let Some(id) = self.active.as_ref().map(|active| active.id) else {
+            return Ok(());
+        };
+        let file = self
+            .library
+            .state(id)
+            .and_then(|state| state.preferences.font_file.clone());
+        let fonts = self.fonts_for(file.as_deref())?;
+        let roles = self.font_roles();
+        let active = self.active.as_mut().ok_or("Open a book first")?;
+        active.reading.set_fonts(fonts, roles)?;
+        Ok(())
+    }
+
     /// Save the Reader-wide fallback font and re-lay out the open book with it.
     fn set_fallback_font_file(&mut self, font: Option<String>) -> Result<()> {
         fallback_font::save(&self.fallback_font_path, &self.fonts_directory, font.as_deref())?;
@@ -6070,8 +6123,9 @@ impl Reader {
                 .state(active.id)
                 .and_then(|state| state.preferences.font_file.clone());
             let fonts = self.fonts_for(file.as_deref())?;
+            let roles = self.font_roles();
             let active = self.active.as_mut().ok_or("Open a book first")?;
-            active.reading.set_fonts(fonts)?;
+            active.reading.set_fonts(fonts, roles)?;
         }
         Ok(())
     }
@@ -13387,6 +13441,7 @@ pub fn run_probe(engine: Engine, book: PathBuf, fonts: Vec<PathBuf>, home: &Path
         engine,
         book,
         fonts,
+        font_roles: Default::default(),
         settings: device_settings(),
         scroll: false,
         facing_pages: false,

@@ -747,6 +747,7 @@ impl Reader {
             engine: Engine::Parley,
             book: absolute.clone(),
             fonts,
+            font_roles: Default::default(),
             settings,
             scroll: state.preferences.scroll,
             facing_pages: state.preferences.facing_pages,

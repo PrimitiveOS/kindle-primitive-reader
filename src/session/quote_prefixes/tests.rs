@@ -93,6 +93,7 @@ pub(super) fn config(path: &Path) -> BookConfig {
         engine: Engine::Parley,
         book: path.to_owned(),
         fonts: vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        font_roles: Default::default(),
         settings: Settings {
             width: 860,
             height: 920,

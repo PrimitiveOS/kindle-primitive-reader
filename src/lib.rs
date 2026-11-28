@@ -3284,12 +3284,39 @@ fn revision_bytes(bytes: &[u8]) -> u64 {
         })
 }
 
-fn font_context(paths: &[PathBuf]) -> Result<FontContext> {
-    font_context_with_firmware(paths, Path::new("/usr/java/lib/fonts"))
+/// A font file chosen for one generic family (for example monospace). Serif and sans-serif
+/// roles come before the book's own fonts; the other roles replace the default family.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FontRoles(Vec<(GenericFamily, PathBuf)>);
+
+impl FontRoles {
+    pub fn new(entries: Vec<(GenericFamily, PathBuf)>) -> Self {
+        Self(entries)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn entries(&self) -> &[(GenericFamily, PathBuf)] {
+        &self.0
+    }
 }
 
-fn font_context_with_firmware(paths: &[PathBuf], firmware: &Path) -> Result<FontContext> {
-    font_context_with_font_data(paths, firmware, |path| {
+fn font_context(paths: &[PathBuf]) -> Result<FontContext> {
+    font_context_with_roles(paths, &FontRoles::default())
+}
+
+pub(crate) fn font_context_with_roles(paths: &[PathBuf], roles: &FontRoles) -> Result<FontContext> {
+    font_context_with_firmware(paths, Path::new("/usr/java/lib/fonts"), roles)
+}
+
+fn font_context_with_firmware(
+    paths: &[PathBuf],
+    firmware: &Path,
+    roles: &FontRoles,
+) -> Result<FontContext> {
+    font_context_with_roles_data(paths, firmware, roles, |path| {
         let metadata = fs::metadata(path)?;
         if metadata.len() > 64 * 1024 * 1024 {
             return Err("A reading font exceeds the size limit".into());
@@ -3303,6 +3330,15 @@ fn font_context_with_firmware(paths: &[PathBuf], firmware: &Path) -> Result<Font
 fn font_context_with_font_data(
     paths: &[PathBuf],
     firmware: &Path,
+    read: impl FnMut(&Path) -> Result<parley::fontique::Blob<u8>>,
+) -> Result<FontContext> {
+    font_context_with_roles_data(paths, firmware, &FontRoles::default(), read)
+}
+
+fn font_context_with_roles_data(
+    paths: &[PathBuf],
+    firmware: &Path,
+    roles: &FontRoles,
     mut read: impl FnMut(&Path) -> Result<parley::fontique::Blob<u8>>,
 ) -> Result<FontContext> {
     if paths.is_empty() {
@@ -3345,12 +3381,38 @@ fn font_context_with_font_data(
     if families.is_empty() {
         return Err("No valid font was loaded".into());
     }
-    fonts
-        .collection
-        .set_generic_families(GenericFamily::Serif, families.iter().copied());
-    fonts
-        .collection
-        .set_generic_families(GenericFamily::SansSerif, families.iter().copied());
+    // Role files are registered after the book's fonts, so a role can name a font that the
+    // book also uses without changing the book's own family order.
+    let mut role_families: Vec<(GenericFamily, Vec<parley::fontique::FamilyId>)> = Vec::new();
+    for (generic, path) in &roles.0 {
+        let data = read(path)?;
+        let ids: Vec<_> = fonts
+            .collection
+            .register_fonts(data, None)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        match role_families.iter_mut().find(|(known, _)| known == generic) {
+            Some((_, existing)) => existing.extend(ids),
+            None => role_families.push((*generic, ids)),
+        }
+    }
+    for generic in [GenericFamily::Serif, GenericFamily::SansSerif] {
+        let role = role_families
+            .iter()
+            .find(|(known, _)| *known == generic)
+            .map(|(_, ids)| ids.clone())
+            .unwrap_or_default();
+        fonts.collection.set_generic_families(
+            generic,
+            role.into_iter().chain(families.iter().copied()),
+        );
+    }
+    for (generic, ids) in role_families {
+        if generic != GenericFamily::Serif && generic != GenericFamily::SansSerif {
+            fonts.collection.set_generic_families(generic, ids.into_iter());
+        }
+    }
     Ok(fonts)
 }
 
@@ -3385,9 +3447,9 @@ mod firmware_font_tests {
         let fallback = test_fixture("fonts/NotoSans-Regular.ttf");
         let firmware = fallback.parent().unwrap();
         let paths = [first, fallback.clone()];
-        let mut primary = font_context_with_firmware(&paths[..1], firmware).unwrap();
+        let mut primary = font_context_with_firmware(&paths[..1], firmware, &FontRoles::default()).unwrap();
         assert_eq!(missing(&mut primary, "AΩ"), 1);
-        let mut fonts = font_context_with_firmware(&paths, firmware).unwrap();
+        let mut fonts = font_context_with_firmware(&paths, firmware, &FontRoles::default()).unwrap();
         let stack: Vec<_> = fonts
             .collection
             .generic_families(GenericFamily::Serif)
@@ -3408,7 +3470,7 @@ mod firmware_font_tests {
         let primary = test_fixture("fonts/NotoSans-Regular.ttf");
         let symbols = test_symbol_font();
         let paths = [primary, symbols];
-        let mut fonts = font_context_with_firmware(&paths, Path::new("/missing-firmware")).unwrap();
+        let mut fonts = font_context_with_firmware(&paths, Path::new("/missing-firmware"), &FontRoles::default()).unwrap();
         // Eight private-use scalars were observed in original AZW3 002. The
         // exact KOReader Nerd Fonts subset includes seven and omits U+F0B9.
         let kindle_symbols = "\u{F028}\u{F029}\u{F03D}\u{F02D}\u{F02B}\u{F0D0}\u{F040}";
@@ -3470,4 +3532,57 @@ fn epub_raster_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
         return Err("The EPUB image exceeds Reader's decoded image limit".into());
     }
     Ok((width, height))
+}
+
+#[cfg(test)]
+mod font_role_tests {
+    use super::*;
+    use parley::fontique::GenericFamily;
+
+    fn names(fonts: &mut FontContext, generic: GenericFamily) -> Vec<String> {
+        let ids: Vec<_> = fonts.collection.generic_families(generic).collect();
+        ids.into_iter()
+            .map(|id| fonts.collection.family_name(id).unwrap_or("").to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_monospace_role_replaces_the_monospace_family_and_leaves_the_book_font_alone() {
+        let book = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let roles = FontRoles::new(vec![(
+            GenericFamily::Monospace,
+            crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+        )]);
+        let mut fonts = font_context_with_roles(&book, &roles).unwrap();
+        let monospace = names(&mut fonts, GenericFamily::Monospace);
+        assert_eq!(monospace.len(), 1, "{monospace:?}");
+        assert!(monospace[0].to_lowercase().contains("silkscreen"), "{monospace:?}");
+        // Serif and sans-serif keep the book's own family first.
+        let sans = names(&mut fonts, GenericFamily::SansSerif);
+        assert!(sans[0].to_lowercase().contains("noto"), "{sans:?}");
+    }
+
+    #[test]
+    fn a_serif_role_comes_first_in_the_serif_family() {
+        let book = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let roles = FontRoles::new(vec![(
+            GenericFamily::Serif,
+            crate::test_fixture("fonts/Silkscreen-Regular.ttf"),
+        )]);
+        let mut fonts = font_context_with_roles(&book, &roles).unwrap();
+        let serif = names(&mut fonts, GenericFamily::Serif);
+        assert!(serif[0].to_lowercase().contains("silkscreen"), "{serif:?}");
+        assert!(serif.iter().any(|name| name.to_lowercase().contains("noto")), "{serif:?}");
+    }
+
+    #[test]
+    fn without_roles_the_monospace_family_is_unchanged() {
+        let book = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut plain = font_context(&book).unwrap();
+        let mut empty = font_context_with_roles(&book, &FontRoles::default()).unwrap();
+        assert_eq!(
+            names(&mut plain, GenericFamily::Monospace),
+            names(&mut empty, GenericFamily::Monospace)
+        );
+    }
 }

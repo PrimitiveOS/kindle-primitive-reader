@@ -2999,6 +2999,7 @@ mod tests {
             engine: Engine::Parley,
             book: test_fixture("in-page-footnotes.epub"),
             fonts: vec![test_fixture("fonts/NotoSans-Regular.ttf")],
+            font_roles: Default::default(),
             settings: settings(true),
             scroll: false,
             facing_pages: false,
