@@ -163,7 +163,8 @@ fn typeface_viewport_preserves_font_focus_and_the_exact_epub_source() {
         .unwrap()
         + 1;
     assert_eq!(app.list_page, ordinal / app.list_geometry().rows);
-    assert_eq!(app.list_page, 1);
+    // The chosen font is the most recent, so the chooser lists it first.
+    assert_eq!(ordinal, 1, "the most recent font leads the chooser");
     let portrait = Viewport {
         generation: 2,
         turn: LogicalTurn::Upright,

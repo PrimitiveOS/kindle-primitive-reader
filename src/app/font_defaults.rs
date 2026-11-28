@@ -90,11 +90,38 @@ impl Role {
 #[serde(default)]
 pub(crate) struct FontDefaults {
     files: BTreeMap<String, String>,
+    /// Font files most recently chosen in the chooser, newest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    recent: Vec<String>,
+}
+
+const MAX_RECENT: usize = 8;
+
+/// The chooser's order: recently chosen fonts first, newest first, then the rest by name.
+pub(crate) fn ordered(names: &[String], recent: &[String]) -> Vec<String> {
+    let mut ordered: Vec<String> = recent
+        .iter()
+        .filter(|name| names.contains(name))
+        .cloned()
+        .collect();
+    ordered.extend(names.iter().filter(|name| !recent.contains(name)).cloned());
+    ordered
 }
 
 impl FontDefaults {
     pub(crate) fn get(&self, role: Role) -> Option<&str> {
         self.files.get(role.key()).map(String::as_str)
+    }
+
+    pub(crate) fn recent(&self) -> &[String] {
+        &self.recent
+    }
+
+    /// Put a font at the front of the recent list.
+    pub(crate) fn remember(&mut self, file: &str) {
+        self.recent.retain(|name| name != file);
+        self.recent.insert(0, file.to_owned());
+        self.recent.truncate(MAX_RECENT);
     }
 
     pub(crate) fn set(&mut self, role: Role, file: Option<String>) {
@@ -164,6 +191,27 @@ fn known_key(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recent_fonts_lead_the_chooser_in_recency_order() {
+        let names: Vec<String> = ["A.ttf", "B.ttf", "C.ttf", "D.ttf"].map(String::from).to_vec();
+        let mut defaults = FontDefaults::default();
+        defaults.remember("C.ttf");
+        defaults.remember("A.ttf");
+        defaults.remember("C.ttf");
+        assert_eq!(defaults.recent(), ["C.ttf", "A.ttf"]);
+        assert_eq!(
+            ordered(&names, defaults.recent()),
+            ["C.ttf", "A.ttf", "B.ttf", "D.ttf"]
+        );
+        // A recent font that is gone is skipped, not shown.
+        defaults.remember("Gone.ttf");
+        assert_eq!(ordered(&names, defaults.recent())[0], "C.ttf");
+        for index in 0..20 {
+            defaults.remember(&format!("F{index}.ttf"));
+        }
+        assert_eq!(defaults.recent().len(), MAX_RECENT);
+    }
 
     #[test]
     fn every_role_has_a_distinct_key_and_only_families_have_a_generic() {

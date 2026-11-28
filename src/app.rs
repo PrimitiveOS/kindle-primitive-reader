@@ -5806,12 +5806,16 @@ impl Reader {
             Action::SetFont(font) => {
                 let fonts = self.fonts_for(font.as_deref())?;
                 let roles = self.font_roles();
+                let chosen = font.clone();
                 let active = self.active.as_mut().ok_or("Open a book first")?;
                 active.reading.set_fonts(fonts, roles)?;
                 self.library
                     .remember(&active.entry, active.id, &active.reading.probe.title)
                     .preferences
                     .font_file = font;
+                if let Some(name) = chosen {
+                    self.remember_font(&name)?;
+                }
                 self.show(Screen::Book);
                 self.record_position();
             }
@@ -6082,6 +6086,13 @@ impl Reader {
         Ok(fonts)
     }
 
+    /// Record a font as recently chosen, so the chooser lists it first.
+    pub(crate) fn remember_font(&mut self, file: &str) -> Result<()> {
+        self.font_defaults.remember(file);
+        font_defaults::save(&self.font_defaults_path, &self.fonts_directory, &self.font_defaults)?;
+        Ok(())
+    }
+
     /// Advance a Reader-wide font role through Off and each available font, and re-lay out the
     /// open book with the new choice.
     pub(crate) fn cycle_font_role(&mut self, role: font_defaults::Role) -> Result<()> {
@@ -6094,8 +6105,11 @@ impl Reader {
             None => names.first().cloned(),
             Some(index) => names.get(index + 1).cloned(),
         };
-        self.font_defaults.set(role, next);
+        self.font_defaults.set(role, next.clone());
         font_defaults::save(&self.font_defaults_path, &self.fonts_directory, &self.font_defaults)?;
+        if let Some(name) = next {
+            self.remember_font(&name)?;
+        }
         self.relayout_active_book()
     }
 

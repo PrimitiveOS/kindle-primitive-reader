@@ -34,7 +34,8 @@ pub(super) struct FontChooserReturn {
 impl Reader {
     pub(super) fn open_font_chooser(&mut self) -> Result<()> {
         with_storage(|| fs::create_dir_all(&self.fonts_directory))?;
-        self.available_fonts = crate::reading_fonts::available(&self.fonts_directory)?;
+        let names = crate::reading_fonts::available(&self.fonts_directory)?;
+        self.available_fonts = font_defaults::ordered(&names, self.font_defaults.recent());
         let origin = self.font_chooser_return.unwrap_or(FontChooserReturn {
             screen: self.screen,
             top: self.reading_top,
