@@ -348,6 +348,28 @@ impl Reader {
         (count, lines.into_iter().map(|line| line.item).collect())
     }
 
+    /// The full-title popup: the title in a centred panel, closed by any tap.
+    fn draw_full_title_popup(&self, canvas: &mut Canvas) {
+        let Some(title) = &self.contents_title else {
+            return;
+        };
+        let layout = self.navigation_layout();
+        let panel = layout.centered(Rect::new(72, 560, 1120, 480));
+        canvas.popup(panel);
+        let language = self.controls.interface_language;
+        canvas.text(
+            Rect::new(panel.x + 60, panel.y + 50, panel.w - 120, panel.h - 170),
+            title,
+            TextStyle::new(40).lines(6).break_long_words(),
+        );
+        canvas.button(
+            layout.centered(Rect::new(480, 560 + 480 - 130, 240, 84)),
+            language.navigation_popup_text("Close"),
+            false,
+            false,
+        );
+    }
+
     pub(super) fn draw_contents(&self, canvas: &mut Canvas) {
         let rows = self.contents_rows();
         let first = self.list_page * rows;
@@ -534,10 +556,16 @@ impl Reader {
                 CAPTION.center(),
             );
         }
+        self.draw_full_title_popup(canvas);
     }
 
     pub(super) fn contents_input(&mut self, input: Input) -> Change {
         match input {
+            Input::Tap(..) if self.contents_title.is_some() => {
+                self.contents_title = None;
+                Change::Partial
+            }
+            Input::LongTap(x, y) => self.contents_long_tap(x, y),
             Input::Tap(x, y) => self.contents_tap(x, y),
             Input::PageForward => self.turn_contents_page(1),
             Input::PageBack => self.turn_contents_page(-1),
@@ -546,6 +574,21 @@ impl Reader {
             }
             _ => Change::None,
         }
+    }
+
+    /// A long press on a row shows its whole title, which the row may cut short.
+    fn contents_long_tap(&mut self, x: f32, y: f32) -> Change {
+        let geometry = self.contents_geometry();
+        let Some(offset) = geometry.offset_at(geometry.rows, x, y) else {
+            return Change::None;
+        };
+        let index = self.list_page * geometry.rows + offset;
+        let (_, mut lines) = self.contents_window(index, 1);
+        let Some(line) = lines.pop() else {
+            return Change::None;
+        };
+        self.contents_title = Some(line.item.title.clone());
+        Change::Partial
     }
 
     fn contents_tap(&mut self, x: f32, y: f32) -> Change {

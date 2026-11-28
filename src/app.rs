@@ -66,6 +66,8 @@ mod footer_custom_text;
 mod fallback_font;
 #[cfg(test)]
 mod refresh_tests;
+#[cfg(test)]
+mod contents_title_tests;
 mod footer_font_face;
 mod footer_presets;
 mod footnote_font;
@@ -1307,6 +1309,8 @@ pub struct Reader {
     bookmark_note_index: Option<usize>,
     range_edit: Option<extend_highlight::RangeEdit>,
     link_popup: Option<external_link::LinkPopup>,
+    /// The full title of a Contents row, shown by a long press (KOReader's TOC hold).
+    contents_title: Option<String>,
     clipboard_text: Option<String>,
     saved_popup: Option<saved_highlight_popup::SavedPopup>,
     exports: PathBuf,
@@ -1625,6 +1629,7 @@ impl Reader {
             bookmark_note_index: None,
             range_edit: None,
             link_popup: None,
+            contents_title: None,
             clipboard_text: None,
             saved_popup: None,
             exports: state.parent().unwrap_or(documents).join("exports"),
