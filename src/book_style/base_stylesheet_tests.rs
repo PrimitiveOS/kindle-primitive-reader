@@ -179,3 +179,47 @@ fn a_book_base_sheet_refuses_oversized_text_and_keeps_the_previous_choice() {
         Some("p { text-indent: 1em; }")
     );
 }
+
+fn styled_with_user_css(markup: &str, css: &crate::user_styles::Snapshot) -> (Source, Vec<Style>) {
+    let source = Source::parse(markup).unwrap();
+    let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+    let chapter = book.chapters[0].href.clone();
+    let mut fonts =
+        crate::font_context(&[crate::test_fixture("fonts/NotoSans-Regular.ttf")]).unwrap();
+    let styles = BookStyle::load_with_base(
+        &mut book,
+        &chapter,
+        &source,
+        &mut fonts,
+        crate::Settings {
+            base_stylesheet: crate::BaseStylesheet::None,
+            ..Default::default()
+        },
+    )
+    .with_user_css(css)
+    .unwrap()
+    .compute(&source.elements);
+    (source, styles)
+}
+
+#[test]
+fn font_and_body_presentation_hints_apply_by_default_and_a_tweak_turns_them_off() {
+    let markup = r##"<html><body bgcolor="#ffffff" text="#202020"><p id="p"><font id="f" color="#ff0000" face="serif" size="+1">Text</font></p><p id="q">Plain</p></body></html>"##;
+    let (source, hinted) = styled(markup, crate::BaseStylesheet::None);
+    let f = element(&source, &hinted, "f");
+    let q = element(&source, &hinted, "q");
+    assert!(f.size_scale > q.size_scale);
+    assert!(f.text_ink.is_some());
+    assert!(q.text_ink.is_some(), "body text colour is inherited");
+
+    let mut data = crate::user_styles::Data::default();
+    data.choose(1, "font_no_presentational_hints", Some(true))
+        .unwrap();
+    let off = data.snapshot(1).unwrap();
+    let (source, plain) = styled_with_user_css(markup, &off);
+    let f = element(&source, &plain, "f");
+    let q = element(&source, &plain, "q");
+    assert_eq!(f.size_scale, q.size_scale);
+    assert!(f.text_ink.is_none());
+    assert!(q.text_ink.is_none());
+}

@@ -112,6 +112,7 @@ pub(crate) struct LayoutTweaks {
     pub(crate) full_width_images: bool,
     pub(crate) link_ink: Option<LinkInk>,
     pub(crate) ignore_table_hints: bool,
+    pub(crate) ignore_font_hints: bool,
     pub(crate) native_table_widths: bool,
     pub(crate) disable_generated_content: bool,
     pub(crate) disable_first_letter: bool,
@@ -258,6 +259,9 @@ impl Snapshot {
         }
         if layout.full_width_images {
             digest.consume(b"\0full-width-images");
+        }
+        if layout.ignore_font_hints {
+            digest.consume(b"\0ignore-font-hints");
         }
         if layout.ignore_table_hints {
             digest.consume(b"\0ignore-table-hints");
@@ -414,6 +418,7 @@ pub(crate) enum Effect {
     ParagraphSpacing(ParagraphSpacing),
     LinkInk(LinkInk),
     IgnoreTableHints,
+    IgnoreFontHints,
     DisableGeneratedContent,
     DisableFirstLetter,
     DisableFirstLine,
@@ -951,6 +956,13 @@ pub(crate) const PRESETS: &[Preset] = &[
         effect: Effect::DisableFirstLine,
     },
     Preset {
+        id: "font_no_presentational_hints",
+        title: "Ignore font related HTML presentational hints",
+        group: "font-presentation",
+        priority: 0,
+        effect: Effect::IgnoreFontHints,
+    },
+    Preset {
         id: "table_no_presentational_hints",
         title: "Ignore HTML table presentation",
         group: "table-presentation",
@@ -1243,6 +1255,7 @@ impl Data {
                 | Effect::NormalLineHeight(_)
                 | Effect::LinkInk(_)
                 | Effect::IgnoreTableHints
+                | Effect::IgnoreFontHints
         ) {
             if enabled {
                 if matches!(target.effect, Effect::ExtendNote(_)) {
@@ -1322,6 +1335,7 @@ impl Data {
                 }
                 Effect::LinkInk(ink) => layout.link_ink = Some(ink),
                 Effect::IgnoreTableHints => layout.ignore_table_hints = true,
+                Effect::IgnoreFontHints => layout.ignore_font_hints = true,
                 Effect::DisableGeneratedContent => layout.disable_generated_content = true,
                 Effect::DisableFirstLetter => layout.disable_first_letter = true,
                 Effect::DisableFirstLine => layout.disable_first_line = true,

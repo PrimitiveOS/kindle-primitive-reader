@@ -198,6 +198,7 @@ pub(crate) struct Element {
     /// CRE applies :root to the chapter body below html/DocFragment.
     pub(crate) selector_root: bool,
     pub(crate) table_hints: Option<crate::book_style::table_hints::TableHints>,
+    pub(crate) font_hints: Option<crate::book_style::font_hints::FontHints>,
     pub parent: Option<usize>,
     pub previous_sibling: Option<usize>,
     pub odd_sibling: bool,
@@ -1069,6 +1070,11 @@ impl Source {
                     None
                 } else {
                     crate::book_style::table_hints::TableHints::read(node)
+                },
+                font_hints: if selector_only {
+                    None
+                } else {
+                    crate::book_style::font_hints::FontHints::read(node)
                 },
                 parent,
                 previous_sibling,

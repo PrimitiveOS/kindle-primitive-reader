@@ -53,6 +53,7 @@ const MAX_SELECTOR_STEPS: usize = 8;
 #[cfg(feature = "kindle")]
 mod embedded_inventory;
 pub(crate) mod pseudo;
+pub(crate) mod font_hints;
 pub(crate) mod table_hints;
 #[cfg(feature = "kindle")]
 pub(crate) use embedded_inventory::MAX_INVENTORY_SHEETS;
@@ -669,6 +670,7 @@ pub(crate) struct Style {
     pub(crate) text_ink: Option<u8>,
     pub(crate) monochrome_text: bool,
     pub(crate) ignore_table_hints: bool,
+    pub(crate) ignore_font_hints: bool,
     pub(crate) native_table_widths: bool,
     pub(crate) generated: Option<Arc<pseudo::Pair>>,
     pub(crate) first_letter: Option<Arc<pseudo::FirstLetter>>,
@@ -763,6 +765,7 @@ impl Default for Style {
             text_ink: None,
             monochrome_text: false,
             ignore_table_hints: false,
+            ignore_font_hints: false,
             native_table_widths: false,
             generated: None,
             first_letter: None,
@@ -1303,6 +1306,7 @@ impl BookStyle {
             font_weights: self.font_weights.clone(),
             cjk_tailored: self.layout_tweaks.cjk_tailored,
             ignore_table_hints: !self.author_inline || self.layout_tweaks.ignore_table_hints,
+            ignore_font_hints: self.layout_tweaks.ignore_font_hints,
             native_table_widths: self.layout_tweaks.native_table_widths,
             simple_default_tab_stops: !self.author_inline || self.no_publisher_styles,
             ..Style::default()
@@ -1423,6 +1427,11 @@ impl BookStyle {
             let accept_fit = fit_content && element.tag == "p";
             if !style.ignore_table_hints
                 && let Some(hints) = &element.table_hints
+            {
+                hints.cascade(&mut winners);
+            }
+            if !style.ignore_font_hints
+                && let Some(hints) = &element.font_hints
             {
                 hints.cascade(&mut winners);
             }
