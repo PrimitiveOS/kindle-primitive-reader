@@ -5437,9 +5437,19 @@ fn shape_paragraph(
         }
         breaker.finish();
     };
+    // Float contours break with the scaled widths: on the pinned runtime a word moves up
+    // a line beside a float at 95% (`scripts/koreader-float-word-spacing-check.lua`).
+    // Other paragraphs break once with natural spaces, then scale the final lines.
+    let scale_before_break = contour.is_some();
+    if let Some(pair) = settings.percent_word_spacing
+        && scale_before_break
+    {
+        layout.set_word_spacing_percent(&block.text, pair.scaling, pair.minimum, &preformatted_runs);
+    }
     run_breaks(&mut layout);
     if let Some(pair) = settings.percent_word_spacing
         && !measuring
+        && !scale_before_break
     {
         // Preserve the spaces of every soft-wrapped line (they keep natural width),
         // then scale the spaces of the final lines and break again.
