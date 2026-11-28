@@ -128,7 +128,6 @@ finds each space changes by exactly -1 px at 95% and -3 px at 75%. The Rust test
 
 Plain, exact first-line and measure breaks run once with natural spaces, and lines that
 wrap keep their natural spaces; only the last line of a paragraph shrinks, as on the
-pinned runtime. Float contours are the exception: beside a float card, KOReader fits one more word at 95%, so
-contour paragraphs still scale before breaking. `scripts/koreader-word-spacing-lines-check.lua` shows this in drawn pixels
+pinned runtime. Float contours follow the same rule on a stable fixture (`tests/fixtures/word-spacing-float-stable.epub`). In one other float fixture, KOReader moves one word up a line at 95%, which the rule does not explain yet. `scripts/koreader-word-spacing-lines-check.lua` shows this in drawn pixels
 (`tests/fixtures/word-spacing-wrapped.epub`). See the F-9 row in
 `docs/koreader-gap-register.md`.
