@@ -22405,12 +22405,15 @@ mod tests {
             app.open_path(&fixture.book).unwrap();
             app.controls.dictionary_on_single_word = Some(false);
             app.controls.selection_long_press_action = action;
-            let reading = &app.active.as_ref().unwrap().reading;
-            let origin = reading.probe.fragment("tide-note").unwrap();
+            let origin = app.active.as_ref().unwrap().reading.probe.fragment("tide-note").unwrap();
             let mut start = origin.clone();
             start.offset += "The ".len();
             let mut end = start.clone();
             end.offset += "first".len();
+            // The fragment's page can differ from page 0 after line fitting changes.
+            let page = app.active.as_ref().unwrap().reading.probe.page_for(&start).unwrap();
+            { let chapter = app.active.as_ref().unwrap().reading.chapter; app.active.as_mut().unwrap().reading.go_to_page(chapter, page).unwrap(); }
+            let reading = &app.active.as_ref().unwrap().reading;
             let selected = reading.probe.select_range(&start, &end).unwrap();
             let bounds = reading.highlight_rects(&selected)[0];
             let point =
@@ -22896,10 +22899,13 @@ mod tests {
         let mut disabled = fixture.app();
         disabled.open_path(&fixture.book).unwrap();
         disabled.controls.dictionary_on_single_word = Some(false);
-        let reading = &disabled.active.as_ref().unwrap().reading;
-        let start = reading.probe.fragment("tide-note").unwrap();
+        let start = disabled.active.as_ref().unwrap().reading.probe.fragment("tide-note").unwrap();
         let mut end = start.clone();
         end.offset += "The".len();
+        // The fragment's page can differ from page 0 after line fitting changes.
+        let page = disabled.active.as_ref().unwrap().reading.probe.page_for(&start).unwrap();
+        { let chapter = disabled.active.as_ref().unwrap().reading.chapter; disabled.active.as_mut().unwrap().reading.go_to_page(chapter, page).unwrap(); }
+        let reading = &disabled.active.as_ref().unwrap().reading;
         let selected = reading.probe.select_range(&start, &end).unwrap();
         let bounds = reading.highlight_rects(&selected)[0];
         let point = rectangle_center(Rect::new(bounds.x, bounds.y, bounds.width, bounds.height));

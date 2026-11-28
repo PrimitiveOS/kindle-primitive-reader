@@ -126,8 +126,8 @@ whole pixels and the scaled width truncates (`floor(round(space) * percent / 100
 finds each space changes by exactly -1 px at 95% and -3 px at 75%. The Rust test
 `space_deltas_match_the_koreader_oracle_at_42_px` pins the same widths.
 
-Open: on the pinned runtime, lines that wrap to a next line keep their natural
-spaces; only the last line of a paragraph shrinks. Reader still scales every
-space. `scripts/koreader-word-spacing-lines-check.lua` shows this in drawn pixels
+On the plain break path, lines that wrap to a next line keep their natural
+spaces; only the last line of a paragraph shrinks, as on the pinned runtime. The
+contour (float wrap), exact-break and measure paths still scale before breaking. `scripts/koreader-word-spacing-lines-check.lua` shows this in drawn pixels
 (`tests/fixtures/word-spacing-wrapped.epub`). See the F-9 row in
 `docs/koreader-gap-register.md`.

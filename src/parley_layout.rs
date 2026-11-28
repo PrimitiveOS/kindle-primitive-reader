@@ -5343,14 +5343,22 @@ fn shape_paragraph(
     if has_nowrap {
         layout.set_wrap_nowrap_on_overflow(true);
     }
-    if let Some(pair) = settings.percent_word_spacing {
-        let preserved: Vec<_> = block
-            .styled_text
-            .iter()
-            .filter(|run| styles[run.element].preformatted_spaces)
-            .map(|run| run.bytes.clone())
-            .collect();
-        layout.set_word_spacing_percent(&block.text, pair.scaling, pair.minimum, &preserved);
+    // Word spacing is applied before breaking, except on the plain break path below,
+    // which breaks once with natural spaces and scales only the final lines
+    // (CREngine rule, see docs/word-spacing.md).
+    let preformatted_runs: Vec<_> = block
+        .styled_text
+        .iter()
+        .filter(|run| styles[run.element].preformatted_spaces)
+        .map(|run| run.bytes.clone())
+        .collect();
+    let plain_break = contour.is_none()
+        && pass.exact_break().is_none()
+        && !matches!(pass, first_line::Pass::Measure);
+    if let Some(pair) = settings.percent_word_spacing
+        && !plain_break
+    {
+        layout.set_word_spacing_percent(&block.text, pair.scaling, pair.minimum, &preformatted_runs);
     }
     if indent.amount > 0.0 {
         layout.set_text_indent(
@@ -5430,6 +5438,28 @@ fn shape_paragraph(
         breaker.finish();
     } else {
         layout.break_all_lines(Some(width as f32));
+        if let Some(pair) = settings.percent_word_spacing {
+            // Preserve the spaces of every soft-wrapped line (they keep natural width),
+            // then scale the spaces of the final lines and break again.
+            let mut preserved: Vec<std::ops::Range<usize>> = preformatted_runs.clone();
+            let lines: Vec<_> = layout.lines().map(|line| line.text_range()).collect();
+            for (index, range) in lines.iter().enumerate() {
+                let Some(next) = lines.get(index + 1) else { break };
+                if next.start == range.end {
+                    preserved.push(range.start..next.start);
+                }
+            }
+            preserved.sort_by_key(|range| range.start);
+            let mut merged: Vec<std::ops::Range<usize>> = Vec::with_capacity(preserved.len());
+            for range in preserved {
+                match merged.last_mut() {
+                    Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+                    _ => merged.push(range),
+                }
+            }
+            layout.set_word_spacing_percent(&block.text, pair.scaling, pair.minimum, &merged);
+            layout.break_all_lines(Some(width as f32));
+        }
     }
     if matches!(pass, first_line::Pass::Measure) {
         return layout;

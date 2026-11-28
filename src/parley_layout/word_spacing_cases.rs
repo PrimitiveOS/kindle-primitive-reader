@@ -405,3 +405,86 @@ fn space_deltas_match_the_koreader_oracle_at_42_px() {
         }
     }
 }
+
+// The same 24 words as tests/fixtures/word-spacing-wrapped.epub, laid out through
+// Reader's paragraph path at 42 px in a 1156 px text width (the KOReader check
+// scripts/koreader-word-spacing-lines-check.lua). CREngine keeps the natural spaces
+// on the wrapped first line and shrinks only the last line.
+#[test]
+fn wrapped_paragraph_keeps_natural_spaces_on_the_first_line_and_shrinks_the_last() {
+    let path = crate::test_fixture("word-spacing-wrapped.epub");
+    let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let words: Vec<String> = (0..24)
+        .map(|index| {
+            format!(
+                "a{}{}",
+                char::from(b'a' + (index / 26) as u8),
+                char::from(b'a' + (index % 26) as u8)
+            )
+        })
+        .collect();
+    let text = words.join(" ");
+    let markup = format!("<html><body><p>{text}</p></body></html>");
+    let positions = |pair: Option<WordSpacePercent>| {
+        let probe = crate::Probe::from_book_content(
+            Book::open(&path).unwrap(),
+            crate::Engine::Parley,
+            &fonts,
+            Settings {
+                width: 1264,
+                height: 1606,
+                margin: 54,
+                font_size: 42.,
+                percent_word_spacing: pair,
+                ..Settings::default()
+            },
+            0,
+            Some(markup.clone()),
+        )
+        .unwrap();
+        let block = &probe.source.blocks[0];
+        assert_eq!(block.text, text);
+        let mut out = Vec::new();
+        for range in crate::selection::word_ranges(&block.text) {
+            let start = probe.anchor(block.key, range.start);
+            let end = probe.anchor(block.key, range.end);
+            let selected = probe.select_range(&start, &end).unwrap();
+            let page = probe.page_for(&start).unwrap();
+            let boxes = probe.selection_rects(page, &selected);
+            let [rect] = &boxes[..] else {
+                panic!("one rect per word: {boxes:?}")
+            };
+            out.push((rect.y as f32, rect.x as f32));
+        }
+        out
+    };
+    let natural = positions(None);
+    let scaled = positions(Some(WordSpacePercent {
+        scaling: 95,
+        minimum: 75,
+    }));
+    assert_eq!(natural.len(), 24);
+    let first_row = natural[0].0;
+    let last_row = natural[23].0;
+    assert!(last_row > first_row, "the paragraph must wrap");
+    for (index, (&(row, x), &(_, scaled_x))) in natural.iter().zip(&scaled).enumerate() {
+        if row == first_row {
+            assert!(
+                (x - scaled_x).abs() < 0.5,
+                "word {index} on a wrapped line moved by {}",
+                scaled_x - x
+            );
+        } else {
+            assert!(
+                scaled_x <= x + 0.5,
+                "word {index} on the last line did not shrink: {x} -> {scaled_x}"
+            );
+        }
+    }
+    let (_, natural_last) = natural[23];
+    let (_, scaled_last) = scaled[23];
+    assert!(
+        natural_last - scaled_last > 5.0,
+        "last-line words must move left by one space reduction per space"
+    );
+}
