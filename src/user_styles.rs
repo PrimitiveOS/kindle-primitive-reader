@@ -761,7 +761,10 @@ pub(crate) const PRESETS: &[Preset] = &[
         title: "Ignore authored page breaks",
         group: "breaks",
         priority: 0,
-        effect: Effect::Css("* {break-before:auto !important;break-after:auto !important;}"),
+        // KOReader keeps headings with the text after them (its epub.css-restoring tweak).
+        effect: Effect::Css(
+            "* {break-before:auto !important;break-after:auto !important;} h1,h2,h3,h4,h5,h6 {break-after:avoid !important;}",
+        ),
     },
     Preset {
         id: "headings-new-page",

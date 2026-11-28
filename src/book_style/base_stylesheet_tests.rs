@@ -223,3 +223,16 @@ fn font_and_body_presentation_hints_apply_by_default_and_a_tweak_turns_them_off(
     assert!(f.text_ink.is_none());
     assert!(q.text_ink.is_none());
 }
+
+#[test]
+fn ignoring_publisher_breaks_keeps_headings_with_the_text_after_them() {
+    let markup = r##"<html><body><h1 id="h" style="page-break-after:always!important">Heading</h1><p id="p">Text</p></body></html>"##;
+    let mut data = crate::user_styles::Data::default();
+    data.choose(1, "publisher-breaks-none", Some(true)).unwrap();
+    let (source, styles) = styled_with_user_css(markup, &data.snapshot(1).unwrap());
+    let heading = element(&source, &styles, "h");
+    assert!(matches!(
+        heading.page_breaks.after,
+        crate::publisher_breaks::Edge::Avoid
+    ));
+}
