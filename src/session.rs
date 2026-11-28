@@ -863,9 +863,8 @@ impl BookConfig {
         self.chapter_offsets
             .get_or_init(|| book.chapter_offsets().unwrap_or_default());
         let facing = self.requested_facing_geometry();
-        let single_page_layout = !self.scroll && facing.is_none() && !self.hidden_flows.enabled;
         // Each facing leaf is composed at leaf width with the same note bands, so the
-        // note styles and in-page bands stay on for two-page layout too.
+        // note styles, in-page bands and publisher render modes stay on for two-page layout.
         let note_layout = !self.scroll && !self.hidden_flows.enabled;
         let user_styles = self
             .user_styles
@@ -875,7 +874,7 @@ impl BookConfig {
             in_page_footnotes: self.settings.in_page_footnotes && note_layout,
             ..self.settings
         };
-        let full = if full.publisher_render_mode.is_some() && !single_page_layout {
+        let full = if full.publisher_render_mode.is_some() && !note_layout {
             crate::PublisherRenderMode::Reader.apply(full)
         } else {
             full
@@ -4162,6 +4161,45 @@ mod tests {
         assert!(rects.iter().all(|rect| rect.x + rect.width <= WIDTH as i32));
         assert!(rects.iter().any(|rect| rect.x >= band.x as i32
             && rect.x < (band.x + FACING_PAGE_WIDTH) as i32));
+    }
+
+    #[test]
+    fn publisher_render_mode_stays_on_for_facing_leaves_and_pauses_in_scroll() {
+        let settings = crate::PublisherRenderMode::Web.apply(Settings {
+            width: WIDTH,
+            height: PAGE_HEIGHT,
+            font_size: 25.0,
+            ..Settings::default()
+        });
+        let config = |scroll, facing_pages| BookConfig {
+            viewport: ReadingViewport::PORTRAIT,
+            user_hyphenation: Default::default(),
+            user_styles: Default::default(),
+            chapter_offsets: Default::default(),
+            quote_prefixes: Default::default(),
+            screen_pages: Default::default(),
+            eager_layouts: Default::default(),
+            folder_snapshot: None,
+            engine: Engine::Parley,
+            book: crate::test_fixture("render-mode-composition.epub"),
+            fonts: vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+            font_roles: Default::default(),
+            settings,
+            scroll,
+            facing_pages,
+            hide_nonlinear: false,
+            hidden_flows: Default::default(),
+        };
+
+        let facing = Reading::restore(config(false, true), 0, 0, None).unwrap();
+        assert!(facing.uses_facing_pages());
+        assert_eq!(
+            facing.probe.settings.publisher_render_mode,
+            Some(crate::PublisherRenderMode::Web)
+        );
+
+        let continuous = Reading::restore(config(true, false), 0, 0, None).unwrap();
+        assert_eq!(continuous.probe.settings.publisher_render_mode, None);
     }
 
     #[test]

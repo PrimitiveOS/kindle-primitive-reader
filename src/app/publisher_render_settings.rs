@@ -12,10 +12,7 @@ impl Reader {
             || reading.probe.pages_right_to_left()
         {
             Some("Requires a horizontal left-to-right EPUB")
-        } else if reading.config.scroll
-            || reading.config.facing_pages
-            || reading.config.hidden_flows.enabled
-        {
+        } else if reading.config.scroll || reading.config.hidden_flows.enabled {
             Some("Requires one-page reading")
         } else if !reading.config.settings.publisher_styles {
             Some("Turn on Publisher CSS")
