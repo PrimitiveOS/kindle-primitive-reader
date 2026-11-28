@@ -106,7 +106,15 @@ mode too: on the pinned KOReader, the scroll full height of
 hidden flows keep the mode as well; the flow tests keep their markers resolved
 under Web. Two-page spreads keep the mode on each leaf, at the leaf width.
 No publisher-render pause is left in the Reader layout; RTL and vertical text
-still use Reader's layout. EPUBs with right-to-left spines and
+still use Reader's layout.
+
+Scroll view was compared on the first screen of the same fixture, Legacy and
+Web, with the pinned KOReader and Reader (`docs/screenshots/render-mode-scroll-*.png`).
+Both engines keep blocks left-aligned in Legacy. In Web, the centred box starts
+at the same horizontal position (about 389 px), and the floating card keeps its
+text to the right. Margins and font metrics differ between the two setups, so
+this is a structural match, not a pixel comparison. Hidden-flow frames are not
+compared yet. EPUBs with right-to-left spines and
 vertical text keep their existing layout.
 
 [Reader Layout on Mac](screenshots/render-mode-reader-layout.png) ·
