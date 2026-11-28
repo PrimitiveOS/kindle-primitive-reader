@@ -253,7 +253,8 @@ fn run_browser_and_export(epub: Option<&Path>, pdf_original: Option<&Path>, chap
         .find(|book| book["primitiveos_book_id"] == format!("{epub_id:016x}"))
         .unwrap();
     let entries = epub["entries"].as_array().unwrap();
-    assert_eq!(entries.len(), 2);
+    // The page bookmark is exported with the highlight and note.
+    assert_eq!(entries.len(), 3);
     let cross = entries
         .iter()
         .find(|entry| entry["note"] == "Spanning reading flow")
@@ -272,8 +273,16 @@ fn run_browser_and_export(epub: Option<&Path>, pdf_original: Option<&Path>, chap
         .iter()
         .find(|book| book["primitiveos_book_id"] == format!("{pdf_id:016x}"))
         .unwrap();
-    assert_eq!(pdf["entries"][0]["text"], pdf_text);
-    assert_eq!(pdf["entries"][0]["page"], page + 1);
+    // The PDF page bookmark leads in reading order; the highlight follows it.
+    assert_eq!(pdf["entries"][0]["sort"], "bookmark");
+    let highlight = pdf["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["sort"] == "highlight")
+        .unwrap();
+    assert_eq!(highlight["text"], pdf_text);
+    assert_eq!(highlight["page"], page + 1);
     assert_eq!(
         crate::koreader_import::parse(&export)
             .unwrap()

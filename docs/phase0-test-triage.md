@@ -2,40 +2,63 @@
 
 Written for: the Reader owner. It separates failures that predate the uncommitted work from those it added, and records the decisions taken.
 
-## Status update (current run)
+## Status (Phase 0 exit)
 
-Latest full library run, working tree, `RUST_MIN_STACK=67108864`: **1862 passed, 16 failed, 77 ignored**. Earlier sections below record the state when they were written and are kept for their decisions; the counts in the tables are historical.
+Latest full library run, `cargo test --offline --locked --lib` with `RUST_MIN_STACK=67108864` on `feature/reader-parity-workspace` after `a630f022` plus the workflow export test fix: **1863 passed, 15 failed, 77 ignored** (108 s). The tables further down are the state when they were written and keep their decisions; their counts are historical.
 
-- Of the 16 current failures, about 25 also appear in the `HEAD` list and the rest do not; the split is approximate (see below). The `HEAD` list in `/tmp` is a 58-name subset and is not an authoritative baseline, so the split is approximate.
-- Decisions taken since the table above, each in the test or code named:
+- Compile: the Kindle cross-compile passed at this tree (`cargo zigbuild --offline --locked --release --features kindle --target armv7-unknown-linux-musleabihf --bins`, exit 0). Compile only, no device.
+- Not re-run in this pass: the workspace-wide `--workspace --tests` run and the integration targets. The library target is the one re-run.
+- Working tree: only `src/app/workflow_integration_tests.rs` was uncommitted before this pass; the other fixes are in the commits listed in the Decisions section.
+- Decisions taken since the first table (each in the test or code named):
   - Search continuation starts from the current match rather than the visible-page edge (`src/app/nearby_search.rs`). Behavior change; confirm against KOReader before relying on it.
-  - On a fit-width fixed page, a horizontal swipe pans only when the page overflows horizontally; otherwise it turns the page. Vertical swipes still pan as before (`src/fixed_session.rs`, `swipe_pans`). Previously every swipe panned under fit-width, so the page could not be turned by swiping. Confirm against KOReader's swipe behavior on fit-width pages.
+  - On a fit-width fixed page, a horizontal swipe pans only when the page overflows horizontally; otherwise it turns the page. Vertical swipes still pan as before (`src/fixed_session.rs`, `swipe_pans`). Confirm against KOReader's swipe behavior on fit-width pages.
   - Annotation transfer previews run in the background, and fixed-page transfers need the explicit "Use standard preview" choice; the tests wait for the job and take that path.
-  - Russian hyphenation: `шестьдесят` is the exception-table check (`шесть-де-сят`); `сегодня` is checked against the TeX pattern result `се-год-ня`. The earlier expectation of a break after `сего` had no source. This is a decision, and a Russian reviewer should confirm the pattern result.
-  - Vertical right-to-left anchors: block keys are byte offsets in the generated markup, so the writing mode changes them. The relayout now carries a passage to the block at the same position with identical text (`remap_text_location`, `src/text_flow.rs`); the test checks offset and inset, not the raw key.
+  - Russian hyphenation: `шестьдесят` is the exception-table check (`шесть-де-сят`); `сегодня` is checked against the TeX pattern result `се-год-ня`. A Russian reviewer should confirm the pattern result.
+  - Vertical right-to-left anchors: block keys are byte offsets in the generated markup, so the writing mode changes them. The relayout carries a passage to the block at the same position with identical text (`remap_text_location`, `src/text_flow.rs`); the test checks offset and inset, not the raw key.
   - Open risk: the direction attribute also shifts block keys relative to HEAD's plain-text markup, so a position saved before this change may not resolve on restore. Not yet verified.
-  - Library exports list the page bookmark in reading order (bookmark before its highlights), and clippings include the saved bookmark record. The export tests now expect that output (`src/app/library_export/tests.rs`).
+  - Library exports list the page bookmark in reading order (bookmark before its highlights), and clippings include the saved bookmark record. The export tests expect that output (`src/app/library_export/tests.rs`, `src/app/workflow_integration_tests.rs`).
   - Reflow chapter jumps run on a worker. Test helpers (`settle_chapter_jump`, `tap_chapter`) wait for the job before asserting the chapter.
-  - A single tap on the top-right corner bookmarks by default (G-1). The two-finger duration test therefore uses a mid-page fallback tap, so it measures only the duration boundaries.
+  - A single tap on the top-right corner bookmarks by default (G-1). The two-finger duration test uses a mid-page fallback tap, so it measures only the duration boundaries.
   - Gesture screen headings moved after the settings rows; the multiswipe test points at the current group headings.
   - Style-tweak diagnostics use `display:block` as the unsupported example, since `display:none` is supported.
   - Fixed-page and reflow end-of-book turns and list rows on later pages: tests tick one second past the deadline and page through long lists.
-  - Open: the page-browser test needs a multi-page chapter containing the `tide-*` anchors; the field-notes fixture has them only on a single-page chapter 0.
-  - End of book: a tall fit-width page scrolls before it ends, so the resume test presses until the prompt opens. Queued page turns applied by the tick now run one second past their deadline in the test helper.
+  - End of book: a tall fit-width page scrolls before it ends, so the resume test presses until the prompt opens.
   - Lookup lists: settings rows come first and dictionary rows follow; the tests find their rows by title across pages.
   - Real-book pass (Kindle copies, desktop example and `verify_document`): psychology-of-money, complexity, the-gioi-5000-nam, subtle-art (EPUB) and little-book-stoicism (PDF) all open, paint, turn and resume.
   - Profile tile zoom: a profile applies its tile when any target or tile-count field is selected. Decoding migrates the legacy fit-and-zoom field, so checking only that field dropped the tile on open (`src/fixed_session.rs`, `restore_fixed_profiles_with`).
-  - Empty included-settings profiles save without a notice, as the profile documentation states. Tests reopen the included settings and compare with the saved cleared profile.
+  - Empty included-settings profiles save without a notice, as the profile documentation states.
   - Publisher render mode: an absent mode and an explicit Reader mode mean the same default; tests normalise that one field.
-  - Plain `.zip` files are listed as unavailable unless they open as ZIP archives (`src/library.rs`, `is_zip_archive`). The browser reads only the central directory.
-  - Fixed-page overlay and tap-turn tests now match the current defaults: fit-width permits overlap; a queued turn is applied at its deadline.
-  - A fit-width comic page taller than the screen scrolls before it turns, as `automatic_turn_scrolls_down_a_tall_fixed_page_before_turning` specifies; the comic test allows that first press.
-  - Page-bookmark searches are asynchronous. Tests wait for them with `settle_page_bookmark_search` (`src/app/page_bookmark_navigation.rs`) instead of asserting immediately.
+  - Plain `.zip` files are listed as unavailable unless they open as ZIP archives (`src/library.rs`, `is_zip_archive`).
+  - Fixed-page overlay and tap-turn tests match the current defaults: fit-width permits overlap; a queued turn is applied at its deadline.
+  - A fit-width comic page taller than the screen scrolls before it turns, as `automatic_turn_scrolls_down_a_tall_fixed_page_before_turning` specifies.
+  - Page-bookmark searches are asynchronous. Tests wait with `settle_page_bookmark_search` (`src/app/page_bookmark_navigation.rs`).
   - Imported backups reject out-of-range fixed-page values; local files still clamp (`src/document_defaults.rs`).
   - Vertical-margin presets use trusted layout rules because the strict user-CSS validator rejects `margin-top` and `margin-bottom` (`src/user_styles.rs`).
   - Stale test expectations corrected where the code is deliberate: `:not`/`:is`/`:where` selectors, all visibility keywords, `display:none`, CP437 `\pc` in RTF, 4-bit TIFF grayscale, HTMLZ `index` tie-break, the 2 MiB plain-text limit, sidecar page-with-note bookmarks, and DjVu field support.
-- Still failing, with known causes: vertical right-to-left text anchors (renderer has no vertical line spans), Russian hyphenation exception (`сегодня` not in the code), and about 50 app-level fixed-page, PDF overlay, export, profile and bookmark-browser UI tests in the uncommitted work.
-- Not done: the desktop behavior pass, committing the fixes, and Phases 1–7.
+
+## Current failures (15), causes and decisions
+
+These are the failures in the status run above. The "Cause" column says what was isolated; where it says "not isolated", the assertion is recorded but its source was not traced in Phase 0. Recommendations are mine; the owner confirms the ones marked **owner**.
+
+| # | Test | Where | Observed | Cause | Decision |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `footnotes::layout_roots::…eight_actual_stock_oracle_roots…` | `src/footnotes/layout_roots/tests.rs:207` | Note `noteE` pulls in the next sibling `<p>` ("Control F text…") | **Real defect** in footnote root/excerpt selection (`extract_inner`, `LayoutRoots::root`) | Fix in Phase 1.7 with the stock oracle set; do not patch blind in Phase 0 |
+| 2 | `parley_layout::flow_tests::marker_rehomes…` | `src/parley_layout/flow_tests.rs:15` | `Err("A layout line has invalid projected boundaries")` | **Real defect**: a list-marker rehoming case reaches an invariant error | Fix before list-marker work (Phase 1.6); also needed for the excluded list-marker test |
+| 3 | `session::tests::night_pages…` | `src/session.rs:4421` | Night page background `10` vs expected `245` in one surface | Not isolated (night background on the illustration path) | Investigate in Phase 1.4 with a screenshot |
+| 4 | `bookmark_browser::…browser_covers_sources…` | `src/app/bookmark_browser/tests.rs:386` | After Back, `None` vs `Partial` | Not isolated; the test expects the Results list after Back | **Owner:** should Back return to Results or Sources? Recommend Results (where the reader came from) |
+| 5 | `bookmark_browser::…landscape_…retains_a_result…` | `src/app/bookmark_browser/tests.rs:619` | Retained result row not in `list_window()` | Row paging in landscape; the test does not page to it | Test fix: page the list to the row (no production change) |
+| 6 | `custom_contents::…fixed_thumbnail_chapter…` | `src/app/custom_contents.rs:635` | Thumbnail pixels differ from the expected capture | Not isolated; a render change in fixed thumbnails | Re-capture after review, then update the expected pixels |
+| 7 | `nearby_search::fixed_tests::finds_pdf_pages…` | `src/app/nearby_search.rs:2181` | 2 matches vs 4 expected | Two tests disagree on whether a fresh fixed search includes the visible page; changing it broke four passing tests | **Owner:** recommend keeping the current behaviour (includes the visible page) and updating this expectation |
+| 8 | `nearby_search::fixed_tests::cancels_fixed_search…` | `src/app/nearby_search.rs:2529` | Edge notice `None` vs "No earlier matching page" | Probable defect: the edge notice is not set on the cancel path (a reorder attempt was reverted) | Fix in Phase 1.7 (a real missing notice) |
+| 9 | `reading_viewport_stage::…scan_text_viewport_stages_rolls_back…` | `src/app/reading_viewport_stage.rs:586` | Landscape scan reflow now renders; test expects rejection | Behaviour changed with `view_size_supported` | **Owner:** recommend allowing landscape scan reflow and updating the test to expect a render with landscape controls |
+| 10 | `page_overview::ribbon_map…` | `src/app/page_overview/ribbon_map/tests.rs:120` | `Some(0)` vs `Some(1)` | Not isolated; ribbon focus index off by one for reflow chapters | Investigate in Phase 1.7 |
+| 11 | `app::tests::extends_one_saved_pdf_note…` | `src/app.rs:18283` | 1 page vs 2 after extension | Not isolated | Investigate in Phase 3.4 (highlights and PDF annotations); recorded |
+| 12 | `app::tests::fixed_tile_zoom_controls…` | `src/app.rs:16953` | Tap returns `None` vs `Partial` | Not isolated (tile-zoom control tap on a scan) | Investigate with the scan reflow work |
+| 13 | `app::tests::protected_pdf_prompt…` | `src/app.rs:23395` | 0 vs 1 | Not isolated (protected-PDF prompt path) | Investigate; recorded |
+| 14 | `typography_pagination_tests::page_browser…` | `src/app/typography_pagination_tests.rs:60` | `unwrap` on `None` | Fixture gap: `tide-*` anchors exist only in single-page chapter 0 | Test fixture fix: add a multi-page chapter with those anchors (no production change) |
+| 15 | `visual_navigation::overview_resizes…` | `src/app/visual_navigation.rs:222` | `None` vs `Partial` | Not isolated; the overview resize returns no change | Investigate with the page-overview work |
+
+Summary of the 15: 2 real production defects (rows 1, 2), 1 probable missing notice (row 8), 1 fixture gap (row 14), 2 owner decisions with a recommendation (rows 7, 9), 1 owner decision on expected behaviour (row 4), 1 test-only fix (row 5), and 7 not isolated in Phase 0 (rows 3, 6, 10–13, 15). None of the 15 was fixed by weakening a test.
 
 ## Desktop behavior pass (Phase 0.4, partial)
 
@@ -48,14 +71,14 @@ What was reviewed (book screen):
 - Comic: a fit-width page renders with footer controls.
 - Footer clipping (fixed): the caption layout box keeps its configured stock height (14 units, 28 px), which two tests pin. The caption font line is 48 px, so the glyphs were clipped. The caption is now drawn in a rectangle grown to its line height about the same centre (`footer_caption_text_rect`, `src/app/reading_footer.rs`). Layout, cover and progress track geometry are unchanged, and the desktop screenshot shows the full caption.
 
-Kindle cross-compile (compile only, no device): `cargo zigbuild --locked --release --features kindle --target armv7-unknown-linux-musleabihf --bins` succeeded. `reader-kindle` is a statically linked 32-bit ARM ELF (EABI5), and `reader-probe` also built. It produced 60 warnings, which were not triaged.
+Kindle cross-compile (compile only, no device): `cargo zigbuild --locked --release --features kindle --target armv7-unknown-linux-musleabihf --bins` succeeded, and re-ran successfully at the final tree (see Status). `reader-kindle` is a statically linked 32-bit ARM ELF (EABI5), and `reader-probe` also built. It produced 60 warnings, which were not triaged.
 
-Not yet done: the parity review of the other screens, dark-mode review beyond the navigation capture, the `verify_*` drivers against the cached corpus, and the Kindle cross-compile.
+Not run: the parity review of the other screens, dark-mode review beyond the navigation capture, and the `verify_*` parity drivers against the cached corpus (no parity corpus is available here). The `verify_document` real-book runs are in the external copy `kindle-verify-run2/`.
 
 ## Method
 
 - Command (CI equivalent): `cargo test --locked --workspace --tests --no-fail-fast` with `RUST_MIN_STACK=67108864` (CI now sets it, `.github/workflows/ci.yml`).
-- Working tree: `feature/reader-parity-workspace` with the uncommitted changes in `git status`.
+- Working tree: `feature/reader-parity-workspace`. The changes were committed in the series listed under Decisions.
 - Baseline: the committed `HEAD` `7885d35b`, run in a temporary worktree with the same command (since removed). The comparison is exact by test name.
 
 ## Results (library target; integration tests and binaries pass)
@@ -247,8 +270,15 @@ source::numeric_references::tests::search_display_and_saved_selection_use_normal
 
 ## Open decisions for the owner
 
-1. Pagination and page-position expectations (chapter navigation, facing pages, scrolling, fixed search fit): decide whether the layout changed or the expectations are stale.
-2. The app-level search navigation failures (for example, the second search step returns the first match again in `app::tests::ordinary_search_keyboard_selects_original_quotes_and_spaces_in_both_directions`): this is a real behaviour question, not a fixture issue.
-3. The excluded list-marker test: what should list-marker anchors and marker counts mean now?
-4. Publishing `MultiTouch` to the tools repository (see `koreader-gap-register.md`, build section), which needs explicit approval.
-5. Whether to keep the working-tree changes as a single WIP commit on `feature/reader-parity-workspace`. They are not committed: committing would include your uncommitted feature work.
+Current list (the 15 failures above), with the decisions the owner needs to confirm:
+
+1. Rows 7 and 9: whether a fresh fixed search includes the visible page, and whether landscape scan reflow is allowed.
+2. Row 4: whether Back in the bookmark browser returns to Results or Sources.
+3. Rows 1 and 2: confirm these are fixed in Phase 1 (footnote excerpts and the list-marker layout error), not patched during Phase 0.
+4. Publishing `MultiTouch` to the tools repository (see `koreader-gap-register.md`, build section) needs explicit approval. Not done.
+5. The commit series on `feature/reader-parity-workspace` holds the Phase 0 work. Nothing was merged to `main`.
+
+Earlier questions, resolved in this pass:
+
+- The pagination expectations were settled per test (see Decisions above).
+- The list-marker test remains excluded (`#[cfg(any())]`); its intent still needs an owner answer.
