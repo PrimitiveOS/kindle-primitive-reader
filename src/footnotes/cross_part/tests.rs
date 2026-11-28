@@ -781,3 +781,52 @@ fn an_epub_cross_spine_note_gets_a_band_only_with_the_in_page_epub_preset() {
     let without_preset = Reading::restore(config(false), 0, 0, None).unwrap();
     assert!(without_preset.probe.foreign_band(0).is_none());
 }
+
+#[test]
+fn a_tap_in_an_epub_cross_spine_band_selects_the_note_source() {
+    use crate::session::{BookConfig, PAGE_HEIGHT, Reading, ReadingViewport};
+    use primitive_app::WIDTH;
+    let mut data = crate::user_styles::Data::default();
+    data.choose(1, "footnote-inpage_epub", Some(true)).unwrap();
+    let config = BookConfig {
+        viewport: ReadingViewport::PORTRAIT,
+        user_hyphenation: Default::default(),
+        user_styles: data.snapshot(1).unwrap(),
+        chapter_offsets: Default::default(),
+        quote_prefixes: Default::default(),
+        screen_pages: Default::default(),
+        eager_layouts: Default::default(),
+        folder_snapshot: None,
+        engine: Engine::Parley,
+        book: test_fixture("in-page-cross-spine.epub"),
+        fonts: vec![test_fixture("fonts/NotoSans-Regular.ttf")],
+        font_roles: Default::default(),
+        settings: Settings {
+            width: WIDTH,
+            height: PAGE_HEIGHT,
+            font_size: 42.0,
+            in_page_footnotes: true,
+            ..Default::default()
+        },
+        scroll: false,
+        facing_pages: false,
+        hide_nonlinear: false,
+        hidden_flows: Default::default(),
+    };
+    let reading = Reading::restore(config, 0, 0, None).unwrap();
+    assert!(reading.probe.foreign_band(0).is_some());
+    let mut hit = None;
+    'scan: for y in (PAGE_HEIGHT / 2..PAGE_HEIGHT).step_by(4) {
+        for x in (0..WIDTH).step_by(4) {
+            if reading.probe.foreign_band_at(0, x as f32, y as f32).is_none() {
+                continue;
+            }
+            if let Some(word) = reading.word_at(x as f32, y as f32) {
+                hit = Some(word);
+                break 'scan;
+            }
+        }
+    }
+    let word = hit.expect("a band word should be selectable");
+    assert_eq!(word.start.chapter, "notes.xhtml");
+}
