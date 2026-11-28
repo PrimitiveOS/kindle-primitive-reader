@@ -33,7 +33,7 @@ decide; check before implementing), **intentional** (kept different on purpose, 
 | F-5 | `.ttc` faces: one row per file, first face only | KOReader enumerates faces | `docs/reading-font-collections.md` | low | partial |
 | F-6 | Hinting: Skrifa native versus FreeType; no cross-engine raster check | `creoptions.lua:630-637` | `docs/koreader-sdl-reference-controls.json` B-font_hinting | low | verify |
 | F-7 | Typography language rows (38 selectable languages without exact CREngine dictionaries) | `readertypography.lua`, `creoptions.lua` | `docs/koreader-sdl-reference-controls.json` typography rows | medium | partial |
-| F-8 | Custom hyphenation rules: needs 4+ characters, horizontal text only, 4,096 entries | `readeruserhyph.lua`; `readerhighlight.lua:221-232` | `docs/english-hyphenation.md:195-199`; `src/user_hyphenation.rs:16-17` | low | partial |
+| F-8 | Custom hyphenation rules: four written characters, horizontal text only, 4,096 entries | `readeruserhyph.lua`; `readerhighlight.lua:221-232` | Closed. Four graphemes (the segment count includes the end boundary, so `< 5` is four), horizontal text only (`src/app/user_hyphenation.rs:238`), 4,096 entries (`src/user_hyphenation.rs`). Covered by `user_hyphenation` tests, including `eligible("word")` and `!eligible("cat")`. | low | closed |
 | F-9 | Word spacing and justification: Rust float geometry versus CREngine integer widths | CREngine (not in reference) | `docs/koreader-sdl-reference-controls.json` B-word_spacing | medium | verify |
 
 ## Style tweaks and base stylesheets (plan 1.2, 1.3, 1.4)
