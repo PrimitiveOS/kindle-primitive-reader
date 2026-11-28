@@ -86,3 +86,16 @@ Record the result in `docs/koreader-gap-register.md` under S-15.
 - Not yet checked: selection and link hit testing in the band, nested notes,
   facing pages, and continuous scroll (the band is only attempted for
   paged, non-RTL, non-vertical books).
+
+## Decisions on the two band checks
+
+- Separator spacing: keep the current gap (`font_size / 3`). It is shared
+  with the FictionBook 3 band, which is verified, and the separator does not
+  overlap host text. A tighter or looser gap would change that verified layout,
+  so it is not changed for EPUB alone.
+- Note size: keep the Legacy (80%) scale for cross-spine bands. It is Reader's
+  documented default for in-chapter notes, and KOReader's default for the same
+  note type. The full-size band does not fit Reader's bottom margin. The
+  full-size measurement from the KOReader frame is recorded above, and a
+  margin-matched KOReader run is the only evidence that could reverse this
+  decision.
