@@ -1,12 +1,40 @@
-//! Assign single-contact gestures to existing Reader actions. The SDK owns system gestures.
+//! Assign touch gestures to existing Reader actions. The SDK owns system gestures.
 use super::book_shortcuts;
 use super::{Action, BookList, DisplayLevel, Item, Reader, Screen, TopGroup, read_import_file};
 
 pub(super) mod multiswipes;
 use crate::{Result, reading_controls::ReadingControls, session::ReadingViewport};
 use primitive_app::{App, Change};
+#[cfg(feature = "multi-touch")]
+use primitive_ui::MultiTouch;
 use primitive_ui::Input;
 use serde::{Deserialize, Serialize};
+
+/// Two-finger input, mirroring `primitive_ui::MultiTouch`. The shared kit publishes that type
+/// only in tools revisions after the reader's pin, so the default build uses this copy and keeps
+/// the two-finger gesture code and its tests compiled. Enable `multi-touch` once the pinned tools
+/// revision provides `primitive_ui::MultiTouch` and `App::multi_touch`.
+#[cfg(not(feature = "multi-touch"))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum MultiTouch {
+    TwoFingerTap {
+        x: f32,
+        y: f32,
+        held_ms: u32,
+        fallback_x: f32,
+        fallback_y: f32,
+    },
+    TwoFingerSwipe {
+        dx: f32,
+        dy: f32,
+        start_x: f32,
+        start_y: f32,
+    },
+    Spread,
+    Pinch,
+    RotateClockwise,
+    RotateCounterclockwise,
+}
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -14,6 +42,8 @@ use std::{
 };
 
 pub(super) const CORNER_PAUSE_RANGE: std::ops::RangeInclusive<u8> = 5..=30;
+const DOUBLE_TAP_DISTANCE_PX: f32 = 50.0;
+const TWO_FINGER_HOLD_INTERVAL_MS: u32 = 500;
 
 pub(super) fn corner_pause_seconds(controls: &ReadingControls) -> u8 {
     controls
@@ -42,10 +72,28 @@ pub(super) enum Gesture {
     BottomLeft,
     BottomRight,
     ShortDiagonal,
+    DoubleTapLeft,
+    DoubleTapRight,
+    TwoFingerTapTopLeft,
+    TwoFingerTapTopRight,
+    TwoFingerTapBottomLeft,
+    TwoFingerTapBottomRight,
+    TwoFingerSwipeNorth,
+    TwoFingerSwipeNorthEast,
+    TwoFingerSwipeEast,
+    TwoFingerSwipeSouthEast,
+    TwoFingerSwipeSouth,
+    TwoFingerSwipeSouthWest,
+    TwoFingerSwipeWest,
+    TwoFingerSwipeNorthWest,
+    Spread,
+    Pinch,
+    RotateClockwise,
+    RotateCounterclockwise,
 }
 
 impl Gesture {
-    pub(super) const ALL: [(Self, &'static str); 17] = [
+    pub(super) const ALL: [(Self, &'static str); 35] = [
         (Self::TapTopLeft, "Tap upper left"),
         (Self::TapTopRight, "Tap upper right"),
         (Self::TapBottomLeft, "Tap lower left"),
@@ -63,6 +111,24 @@ impl Gesture {
         (Self::BottomLeft, "Bottom edge left"),
         (Self::BottomRight, "Bottom edge right"),
         (Self::ShortDiagonal, "Short diagonal swipe"),
+        (Self::DoubleTapLeft, "Double tap left"),
+        (Self::DoubleTapRight, "Double tap right"),
+        (Self::TwoFingerTapTopLeft, "Two-finger tap upper left"),
+        (Self::TwoFingerTapTopRight, "Two-finger tap upper right"),
+        (Self::TwoFingerTapBottomLeft, "Two-finger tap lower left"),
+        (Self::TwoFingerTapBottomRight, "Two-finger tap lower right"),
+        (Self::TwoFingerSwipeNorth, "Two-finger swipe north"),
+        (Self::TwoFingerSwipeNorthEast, "Two-finger swipe north-east"),
+        (Self::TwoFingerSwipeEast, "Two-finger swipe east"),
+        (Self::TwoFingerSwipeSouthEast, "Two-finger swipe south-east"),
+        (Self::TwoFingerSwipeSouth, "Two-finger swipe south"),
+        (Self::TwoFingerSwipeSouthWest, "Two-finger swipe south-west"),
+        (Self::TwoFingerSwipeWest, "Two-finger swipe west"),
+        (Self::TwoFingerSwipeNorthWest, "Two-finger swipe north-west"),
+        (Self::Spread, "Two-finger spread"),
+        (Self::Pinch, "Two-finger pinch"),
+        (Self::RotateClockwise, "Two-finger rotate clockwise"),
+        (Self::RotateCounterclockwise, "Two-finger rotate counter-clockwise"),
     ];
     pub(super) fn label(self) -> &'static str {
         Self::ALL.iter().find(|entry| entry.0 == self).unwrap().1
@@ -156,6 +222,74 @@ impl Gesture {
         }
         None
     }
+
+    fn multi_touch(input: MultiTouch, viewport: ReadingViewport) -> Option<Self> {
+        match input {
+            MultiTouch::TwoFingerTap { x, y, .. } => {
+                let (width, height) = viewport.dimensions();
+                let (width, height) = (width as f32, height as f32);
+                if !(0.0..height).contains(&y) || !(0.0..width).contains(&x) {
+                    return None;
+                }
+                let right = x >= width * 0.875;
+                let bottom = y >= height * 0.875;
+                if (!right && x >= width / 8.0) || (!bottom && y >= height / 8.0) {
+                    return None;
+                }
+                Some(match (bottom, right) {
+                    (false, false) => Self::TwoFingerTapTopLeft,
+                    (false, true) => Self::TwoFingerTapTopRight,
+                    (true, false) => Self::TwoFingerTapBottomLeft,
+                    (true, true) => Self::TwoFingerTapBottomRight,
+                })
+            }
+            MultiTouch::TwoFingerSwipe {
+                dx,
+                dy,
+                start_x,
+                start_y,
+            } => {
+                let (width, height) = viewport.dimensions();
+                if !dx.is_finite()
+                    || !dy.is_finite()
+                    || !start_x.is_finite()
+                    || !start_y.is_finite()
+                    || !(0.0..width as f32).contains(&start_x)
+                    || !(0.0..height as f32).contains(&start_y)
+                {
+                    return None;
+                }
+                let ax = dx.abs();
+                let ay = dy.abs();
+                // The shared input classifier already applies KOReader's per-contact pan
+                // threshold; rechecking the midpoint here would reject shorter valid swipes.
+                if ay > 0.577 * ax && ay < 1.732 * ax {
+                    Some(match (dx > 0.0, dy > 0.0) {
+                        (true, true) => Self::TwoFingerSwipeSouthEast,
+                        (true, false) => Self::TwoFingerSwipeNorthEast,
+                        (false, true) => Self::TwoFingerSwipeSouthWest,
+                        (false, false) => Self::TwoFingerSwipeNorthWest,
+                    })
+                } else if ax > ay {
+                    Some(if dx > 0.0 {
+                        Self::TwoFingerSwipeEast
+                    } else {
+                        Self::TwoFingerSwipeWest
+                    })
+                } else {
+                    Some(if dy > 0.0 {
+                        Self::TwoFingerSwipeSouth
+                    } else {
+                        Self::TwoFingerSwipeNorth
+                    })
+                }
+            }
+            MultiTouch::Spread => Some(Self::Spread),
+            MultiTouch::Pinch => Some(Self::Pinch),
+            MultiTouch::RotateClockwise => Some(Self::RotateClockwise),
+            MultiTouch::RotateCounterclockwise => Some(Self::RotateCounterclockwise),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -195,11 +329,13 @@ pub(super) enum Binding {
     IncreaseFont,
     DecreaseFont,
     TogglePageScroll,
+    PreviousTenPages,
+    NextTenPages,
     BookShortcut(u64),
 }
 
 impl Binding {
-    const ALL: [(Self, &'static str); 34] = [
+    const ALL: [(Self, &'static str); 36] = [
         (Self::Default, "Default behavior"),
         (Self::Ignore, "Do nothing"),
         (Self::PassThrough, "Pass through"),
@@ -237,6 +373,8 @@ impl Binding {
         (Self::IncreaseFont, "Increase font size"),
         (Self::DecreaseFont, "Decrease font size"),
         (Self::TogglePageScroll, "Toggle pages and scrolling"),
+        (Self::PreviousTenPages, "Jump back 10 pages"),
+        (Self::NextTenPages, "Jump forward 10 pages"),
     ];
     fn label(self, shortcuts: &book_shortcuts::State) -> String {
         if let Self::BookShortcut(id) = self {
@@ -258,7 +396,19 @@ pub(super) struct GestureBindings {
     corner_pause_until: Option<Instant>,
     claimed_corner_hold: bool,
     replaying_hold_release: bool,
+    pub(super) pending_double_tap: Option<PendingDoubleTap>,
+    pub(super) replaying_double_tap: bool,
     pub(super) multiswipes: multiswipes::Multiswipes,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct PendingDoubleTap {
+    x: f32,
+    y: f32,
+    deadline: Instant,
+    screen: Screen,
+    book_id: Option<u64>,
+    page: Option<usize>,
 }
 
 impl GestureBindings {
@@ -274,6 +424,8 @@ impl GestureBindings {
             corner_pause_until: None,
             claimed_corner_hold: false,
             replaying_hold_release: false,
+            pending_double_tap: None,
+            replaying_double_tap: false,
             multiswipes: multiswipes::Multiswipes::load(data),
         }
     }
@@ -383,6 +535,228 @@ impl GestureBindings {
 }
 
 impl Reader {
+    pub(super) fn multi_touch_input(&mut self, input: MultiTouch) -> Change {
+        let pending_change = self.gestures.pending_double_tap.take().and_then(|pending| {
+            self.double_tap_context_matches(pending)
+                .then(|| self.replay_double_tap(pending))
+        });
+        if let MultiTouch::TwoFingerTap {
+            held_ms,
+            fallback_x,
+            fallback_y,
+            ..
+        } = input
+        {
+            if held_ms >= TWO_FINGER_HOLD_INTERVAL_MS {
+                return pending_change.unwrap_or(Change::None);
+            }
+            if held_ms >= u32::from(self.controls.two_finger_tap_duration_ms()) {
+                let fallback = self.input(Input::Tap(fallback_x, fallback_y));
+                return pending_change.map_or(fallback, |pending| merge_changes(pending, fallback));
+            }
+        }
+        if !self.reading_overlays_clear()
+            || self.touch_locked
+            || self.selection.is_some()
+            || self.pdf_selection.is_some()
+        {
+            return pending_change.unwrap_or(Change::None);
+        }
+        let Some(gesture) = Gesture::multi_touch(input, self.reading_viewport()) else {
+            return pending_change.unwrap_or(Change::None);
+        };
+        self.gestures.multiswipes.clear_contact();
+        self.finish_interrupted_scroll();
+        self.auto_turn.activity(Instant::now());
+        let binding = self.gestures.get(gesture);
+        let change = if binding == Binding::Default {
+            match gesture {
+                Gesture::TwoFingerSwipeEast => self
+                    .dispatch_gesture_binding(Binding::Contents, None)
+                    .unwrap_or(Change::None),
+                Gesture::TwoFingerSwipeWest => self
+                    .dispatch_gesture_binding(Binding::Bookmarks, None)
+                    .unwrap_or(Change::None),
+                Gesture::TwoFingerSwipeNorth | Gesture::TwoFingerSwipeSouth => {
+                    let MultiTouch::TwoFingerSwipe { dy, .. } = input else {
+                        return pending_change.unwrap_or(Change::None);
+                    };
+                    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+                    {
+                        self.quick_display = super::QuickDisplay::read();
+                    }
+                    let level = DisplayLevel::FrontLight;
+                    if self.quick_display.level(level).is_none() {
+                        Change::None
+                    } else {
+                        self.auto_turn.activity(Instant::now());
+                        match self.quick_display.swipe(level, -dy) {
+                            Ok(()) => Change::None,
+                            Err(error) => self.report(error),
+                        }
+                    }
+                }
+                Gesture::Spread => self
+                    .dispatch_gesture_binding(Binding::IncreaseFont, None)
+                    .unwrap_or(Change::None),
+                Gesture::Pinch => self
+                    .dispatch_gesture_binding(Binding::DecreaseFont, None)
+                    .unwrap_or(Change::None),
+                _ => Change::None,
+            }
+        } else {
+            let location = match input {
+                MultiTouch::TwoFingerTap { x, y, .. } => Some((x, y)),
+                MultiTouch::TwoFingerSwipe {
+                    start_x, start_y, ..
+                } => Some((start_x, start_y)),
+                _ => None,
+            };
+            self.dispatch_gesture_binding(binding, location)
+                .unwrap_or(Change::None)
+        };
+        pending_change.map_or(change, |pending| merge_changes(pending, change))
+    }
+
+    pub(super) fn double_tap_input(&mut self, input: Input) -> Option<Change> {
+        if matches!(input, Input::Sleep | Input::Wake) {
+            self.gestures.pending_double_tap = None;
+            return None;
+        }
+
+        let now = Instant::now();
+        let current_tap = match input {
+            Input::Tap(x, y) if self.double_tap_eligible(x, y) => Some((x, y)),
+            _ => None,
+        };
+
+        if let Some(pending) = self.gestures.pending_double_tap.take() {
+            if !self.double_tap_context_matches(pending) {
+                if let Some((x, y)) = current_tap {
+                    self.gestures.pending_double_tap = Some(self.pending_double_tap(x, y, now));
+                    return Some(Change::None);
+                }
+                return None;
+            }
+            if let Some((x, y)) = current_tap
+                && now <= pending.deadline
+                && (x - pending.x).hypot(y - pending.y) <= DOUBLE_TAP_DISTANCE_PX
+            {
+                return Some(self.dispatch_double_tap(x, y));
+            }
+
+            let previous = self.replay_double_tap(pending);
+            if let Some((x, y)) = current_tap
+                && self.double_tap_eligible(x, y)
+            {
+                self.gestures.pending_double_tap = Some(self.pending_double_tap(x, y, now));
+                return Some(previous);
+            }
+
+            self.gestures.replaying_double_tap = true;
+            let current = self.input(input);
+            self.gestures.replaying_double_tap = false;
+            return Some(merge_changes(previous, current));
+        }
+
+        let (x, y) = current_tap?;
+        self.gestures.pending_double_tap = Some(self.pending_double_tap(x, y, now));
+        Some(Change::None)
+    }
+
+    pub(super) fn double_tap_deadline(&self) -> Option<Instant> {
+        self.gestures
+            .pending_double_tap
+            .map(|pending| pending.deadline)
+    }
+
+    pub(super) fn finish_double_tap(&mut self, now: Instant) -> Option<Change> {
+        let pending = self
+            .gestures
+            .pending_double_tap
+            .filter(|pending| pending.deadline <= now)?;
+        self.gestures.pending_double_tap = None;
+        Some(
+            if self.double_tap_context_matches(pending)
+                && self.double_tap_eligible(pending.x, pending.y)
+            {
+                self.replay_double_tap(pending)
+            } else {
+                Change::None
+            },
+        )
+    }
+
+    fn pending_double_tap(&self, x: f32, y: f32, now: Instant) -> PendingDoubleTap {
+        PendingDoubleTap {
+            x,
+            y,
+            deadline: now
+                + Duration::from_millis(u64::from(self.controls.double_tap_interval_ms())),
+            screen: self.screen,
+            book_id: self.open_book_id(),
+            page: self
+                .active
+                .as_ref()
+                .map(|book| book.reading.page)
+                .or_else(|| self.fixed.as_ref().map(|book| book.reading.page())),
+        }
+    }
+
+    fn double_tap_context_matches(&self, pending: PendingDoubleTap) -> bool {
+        self.screen == pending.screen
+            && self.open_book_id() == pending.book_id
+            && self
+                .active
+                .as_ref()
+                .map(|book| book.reading.page)
+                .or_else(|| self.fixed.as_ref().map(|book| book.reading.page()))
+                == pending.page
+    }
+
+    fn double_tap_eligible(&self, x: f32, y: f32) -> bool {
+        if !self.controls.double_tap_page_jump
+            || !self.reading_overlays_clear()
+            || self.touch_locked
+            || self.selection.is_some()
+            || self.pdf_selection.is_some()
+            || !x.is_finite()
+            || !y.is_finite()
+            || self.saved_mark_at(x, y)
+        {
+            return false;
+        }
+        let viewport = self.reading_viewport();
+        let (width, _) = viewport.dimensions();
+        if !(0.0..width as f32).contains(&x) || !(0.0..viewport.page_height() as f32).contains(&y) {
+            return false;
+        }
+        Gesture::touch(Input::Tap(x, y), viewport)
+            .is_none_or(|gesture| self.gestures.get(gesture) == Binding::Default)
+    }
+
+    fn replay_double_tap(&mut self, pending: PendingDoubleTap) -> Change {
+        self.gestures.replaying_double_tap = true;
+        let change = self.input(Input::Tap(pending.x, pending.y));
+        self.gestures.replaying_double_tap = false;
+        change
+    }
+
+    fn dispatch_double_tap(&mut self, x: f32, y: f32) -> Change {
+        let left = x < self.reading_viewport().dimensions().0 as f32 / 2.0;
+        let gesture = if left {
+            Gesture::DoubleTapLeft
+        } else {
+            Gesture::DoubleTapRight
+        };
+        let binding = self.gestures.get(gesture);
+        if binding == Binding::Default {
+            return self.change_page_by_relative(if left { -10 } else { 10 });
+        }
+        self.dispatch_gesture_binding(binding, Some((x, y)))
+            .unwrap_or(Change::None)
+    }
+
     pub(super) fn reading_gesture_items(&self) -> Vec<Item> {
         let multiswipes_enabled = self.gestures.multiswipes.enabled();
         let toggle = Action::Multiswipe(multiswipes::Command::Toggle);
@@ -394,6 +768,35 @@ impl Reader {
             }
         };
         let mut items = vec![
+            Item::new(
+                "Double tap page jump",
+                Action::SetReadingControls(ReadingControls {
+                    double_tap_page_jump: !self.controls.double_tap_page_jump,
+                    ..self.controls
+                }),
+            )
+            .detail(if self.controls.double_tap_page_jump {
+                "On"
+            } else {
+                "Off"
+            }),
+            Item::new(
+                "Double-tap interval",
+                Action::Show(Screen::NumberingValue(
+                    super::NumberField::DoubleTapInterval,
+                )),
+            )
+            .detail(format!("{} ms", self.controls.double_tap_interval_ms())),
+            Item::new(
+                "Two-finger tap duration",
+                Action::Show(Screen::NumberingValue(
+                    super::NumberField::TwoFingerTapDuration,
+                )),
+            )
+            .detail(format!(
+                "{} ms",
+                self.controls.two_finger_tap_duration_ms()
+            )),
             Item::new("Multiswipes", toggle).detail("Draw a shape with one finger"),
             Item::new("Preset multiswipes", submenu(Screen::Multiswipes)),
             Item::new("Custom multiswipes", submenu(Screen::CustomMultiswipes)),
@@ -527,6 +930,8 @@ impl Reader {
             Binding::Ignore => return Some(Change::None),
             Binding::Next => return Some(self.input(Input::PageForward)),
             Binding::Previous => return Some(self.input(Input::PageBack)),
+            Binding::PreviousTenPages => return Some(self.change_page_by_relative(-10)),
+            Binding::NextTenPages => return Some(self.change_page_by_relative(10)),
             Binding::Controls => {
                 let x = self.reading_viewport().dimensions().0 as f32 / 2.0;
                 return Some(self.open_reading_edge(true, x));
@@ -590,6 +995,17 @@ impl Reader {
             Binding::FitPageHeight if fixed => Action::FitHeight,
             Binding::FitPageWidth | Binding::FitPageHeight => return None,
             Binding::IncreaseFont | Binding::DecreaseFont => {
+                if fixed {
+                    return Some(self.activate(Action::AdjustFixedZoomFactor(if binding
+                        == Binding::IncreaseFont
+                    {
+                        10
+                    } else {
+                        -10
+                    }))
+                    .map(|()| self.applied_change())
+                    .unwrap_or_else(|error| self.report(error)));
+                }
                 let Some(active) = self.active.as_ref() else {
                     return Some(Change::None);
                 };
@@ -630,6 +1046,15 @@ impl Reader {
             }
             Err(error) => self.report(error),
         })
+    }
+}
+
+fn merge_changes(first: Change, second: Change) -> Change {
+    match (first, second) {
+        (Change::Exit, _) | (_, Change::Exit) => Change::Exit,
+        (Change::Full, _) | (_, Change::Full) => Change::Full,
+        (Change::Partial, _) | (_, Change::Partial) => Change::Partial,
+        _ => Change::None,
     }
 }
 

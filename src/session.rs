@@ -105,6 +105,8 @@ pub(crate) struct PagePaint {
     // The status strip clips the bitmap without covering the regular footer.
     pub header_height: u32,
     pub inverted: bool,
+    /// The page has a bookmark: its top-right corner gets KOReader's dog-ear in the page raster.
+    pub bookmarked: bool,
 }
 
 impl PagePaint {
@@ -118,6 +120,7 @@ impl PagePaint {
             passive_cover: None,
             header_height: 0,
             inverted,
+            bookmarked: false,
         }
     }
 
@@ -451,7 +454,7 @@ impl SearchLayoutRecipe {
             }
             let book = Book::open_folder_snapshot(proof.members()).map_err(io::Error::other)?;
             let probe = config
-                .layout_chapter_cancellable(book, index, None, &check)
+                .layout_chapter_cancellable(book, index, None, cancelled, &check)
                 .map_err(io::Error::other)?;
             proof.revalidate(&self.book, cancelled)?;
             if screen_pages::ScreenPageSources::read_fonts(&self.fonts).as_ref()
@@ -621,7 +624,7 @@ impl SearchLayoutRecipe {
             let sources = screen_pages::ScreenPageSources::read(&config);
             let book = config.open_book().map_err(io::Error::other)?;
             let probe = config
-                .layout_chapter_cancellable(book, index, sources, &check)
+                .layout_chapter_cancellable(book, index, sources, cancelled, &check)
                 .map_err(io::Error::other)?;
             if probe.raw_layout_sources.as_ref() != expected
                 || screen_pages::ScreenPageSources::read_paths(&config.book, &config.fonts).as_ref()
@@ -684,7 +687,7 @@ impl BookConfig {
             }
         };
         let book = Book::open_folder_snapshot(proof.members())?;
-        self.layout_chapter_cancellable(book, index, None, &check)
+        self.layout_chapter_cancellable(book, index, None, cancelled, &check)
     }
 
     pub(crate) fn search_layout_recipe(&self, probe: &Probe) -> SearchLayoutRecipe {
@@ -814,7 +817,8 @@ impl BookConfig {
         index: usize,
         sources: Option<screen_pages::ScreenPageSources>,
     ) -> Result<Probe> {
-        self.layout_chapter_cancellable(book, index, sources, &|| Ok(()))
+        let not_cancelled = std::sync::atomic::AtomicBool::new(false);
+        self.layout_chapter_cancellable(book, index, sources, &not_cancelled, &|| Ok(()))
     }
 
     fn layout_chapter_cancellable(
@@ -822,6 +826,7 @@ impl BookConfig {
         mut book: Book,
         index: usize,
         sources: Option<screen_pages::ScreenPageSources>,
+        long_chapter_cancelled: &std::sync::atomic::AtomicBool,
         check_cancelled: &dyn Fn() -> Result<()>,
     ) -> Result<Probe> {
         check_cancelled()?;
@@ -882,9 +887,62 @@ impl BookConfig {
             full
         };
         settings.validate()?;
+        let long_chapter_inputs = if self.engine == Engine::Parley
+            && book.is_reflowable_epub()
+            && !book.spine_rtl
+            && !crate::epub_members::is_folder_book(&self.book)
+            && !self.scroll
+            && facing.is_none()
+            && !self.hidden_flows.enabled
+            && !self.hide_nonlinear
+            && !settings.in_page_footnotes
+            && !settings.embedded_fonts
+            && user_styles.supports_windowed_simple_chapter()
+            && book
+                .chapter_member_size(index)
+                .is_some_and(|size| size > crate::parley_layout::MAX_TEXT_BYTES as u64)
+        {
+            check_cancelled()?;
+            let Some(sources) =
+                screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts)
+            else {
+                return Err("The large chapter source cannot be verified".into());
+            };
+            let book_stamp = sources.book_stamp();
+            if book.quote_file_stamp() != Some(&book_stamp) {
+                return Err("The EPUB changed before long-chapter layout".into());
+            }
+            if book_stamp.len() > crate::long_chapter_plan::index::MAX_BOOK_SNAPSHOT_BYTES as u64 {
+                return Err("The EPUB exceeds the long-chapter snapshot limit".into());
+            }
+            let book_bytes = screen_pages::background::read_snapshot(
+                &self.book,
+                &book_stamp,
+                long_chapter_cancelled,
+            )
+            .map_err(|error| error.to_string())?;
+            let fonts = crate::long_chapter_plan::font_snapshot::FontSnapshots::capture(
+                &self.fonts,
+                long_chapter_cancelled,
+            )
+            .map_err(|error| error.to_string())?;
+            check_cancelled()?;
+            if screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts).as_ref()
+                != Some(&sources)
+                || book.quote_file_stamp() != Some(&book_stamp)
+            {
+                return Err("The EPUB or reading fonts changed during long-chapter layout".into());
+            }
+            Some(crate::long_chapter_plan::SnapshotInputs {
+                book_bytes: std::sync::Arc::from(book_bytes),
+                font_bytes: fonts.bytes(),
+            })
+        } else {
+            None
+        };
         let narrow = facing.is_some();
         let mut opened = Some(book);
-        let mut probe = match Probe::layout_opened_book_cancellable(
+        let mut probe = match Probe::layout_opened_book_cancellable_with_snapshots(
             &mut opened,
             self.engine,
             settings,
@@ -895,6 +953,8 @@ impl BookConfig {
             || crate::font_context(&self.fonts),
             raw_sources.is_some() || folder_raw,
             check_cancelled,
+            long_chapter_cancelled,
+            long_chapter_inputs,
         ) {
             Ok(probe) if !narrow || !probe.requests_vertical => Ok(probe),
             Err(error) if !narrow => Err(error),
@@ -938,6 +998,7 @@ impl BookConfig {
             probe.raw_folder_sources = self.folder_snapshot.clone();
         }
         if raw_sources.is_some()
+            && !probe.has_windowed_layout()
             && raw_sources == screen_pages::ScreenPageSources::read_paths(&self.book, &self.fonts)
         {
             probe.raw_layout_sources = raw_sources;
@@ -947,6 +1008,7 @@ impl BookConfig {
         }
         if eligible
             && !probe.is_vertical()
+            && (!probe.has_windowed_layout() || probe.long_page_verified)
             && probe.in_page_notes.is_none()
             && !(self.hide_nonlinear && probe.has_nonlinear_chapters())
             && sources == screen_pages::ScreenPageSources::read(self)
@@ -1376,6 +1438,13 @@ impl Reading {
         }
     }
 
+    pub(crate) fn request_custom_page_locations(
+        &mut self,
+        targets: Vec<screen_pages::CustomTarget>,
+    ) {
+        self.config.screen_pages.request_custom_targets(targets);
+    }
+
     pub(crate) fn jump_to_screen_ordinal(&mut self, ordinal: usize) -> Result<()> {
         if self.quote_marker.is_some() {
             return Err("The current chapter layout is still being prepared".into());
@@ -1442,6 +1511,37 @@ impl Reading {
             .position(&self.config, &self.probe, self.chapter, self.page)
     }
 
+    pub(crate) fn whole_book_screen_position(
+        &self,
+        chapter: usize,
+        page: usize,
+    ) -> Option<(usize, usize)> {
+        if self.quote_marker.is_some() {
+            return None;
+        }
+        self.config.screen_pages.position_in_chapter(
+            &self.config,
+            &self.probe,
+            self.chapter,
+            chapter,
+            page,
+        )
+    }
+
+    pub(crate) fn screen_page_location(&self, ordinal: usize) -> Option<(usize, usize)> {
+        if self.quote_marker.is_some() {
+            return None;
+        }
+        let target = self.config.screen_pages.target(
+            &self.config,
+            &self.probe,
+            self.chapter,
+            self.page,
+            ordinal,
+        )?;
+        Some((target.chapter, target.page))
+    }
+
     pub(crate) fn whole_book_publisher_markers(
         &self,
         allow_depth: impl Fn(usize) -> bool,
@@ -1489,6 +1589,22 @@ impl Reading {
             self.page,
             entries,
             allow_depth,
+        )
+    }
+
+    pub(crate) fn whole_book_custom_locations(
+        &self,
+        targets: &[screen_pages::CustomTarget],
+    ) -> Option<screen_pages::CustomLocations> {
+        if self.quote_marker.is_some() {
+            return None;
+        }
+        self.config.screen_pages.custom_locations(
+            &self.config,
+            &self.probe,
+            self.chapter,
+            self.page,
+            targets,
         )
     }
 
@@ -2335,10 +2451,36 @@ impl Reading {
                     .chars()
                     .chain(block.text[link.bytes.end..].chars())
                     .any(char::is_alphanumeric),
+                source_is_whole_block: block.text == linked,
                 source_block: key,
             },
             selection,
         ))
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn note_image_reference_at(
+        &self,
+        target: &Destination,
+        x: f32,
+        y: f32,
+    ) -> Option<crate::footnotes::ReferenceContext> {
+        if let Some(band) = self.probe.foreign_band_at(self.page, x, y) {
+            let (x, y) = band.coordinates(self.page, x, y)?;
+            let context = band.layout.image_note_reference_at(target, x, y)?;
+            return matches!(
+                context.kind,
+                crate::footnotes::Reference::Explicit | crate::footnotes::Reference::Ordinary
+            )
+            .then_some(context);
+        }
+        let (range, x, y) = self.column_at(x, y)?;
+        let (key, ordinal, href) = self.probe.image_link_context_in(range, x, y)?;
+        let resolved = Book::resolve_link(&self.probe.chapter, href).ok()?;
+        if &resolved != target {
+            return None;
+        }
+        crate::footnotes::image_reference_context(&self.probe.source, key, ordinal, href)
     }
 
     pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<Destination> {
@@ -3196,7 +3338,11 @@ fn draw_page_around_footer_buttons(
 
 pub(crate) fn draw_page_picture(canvas: &mut Canvas, page: GrayImage, paint: PagePaint) {
     let cover = paint.passive_cover;
-    let (rect, page) = paint.apply(page);
+    let bookmarked = paint.bookmarked;
+    let (rect, mut page) = paint.apply(page);
+    if bookmarked {
+        crate::app::dogear::paint_wedge(&mut page);
+    }
     draw_picture_around_cover(canvas, rect, page, cover);
 }
 
@@ -3278,6 +3424,7 @@ impl App for Reading {
                 visible: 0..self.frame.height,
                 header_height: 0,
                 inverted: false,
+                bookmarked: false,
             },
             false,
         );
@@ -3648,6 +3795,7 @@ mod tests {
                 block: block.key,
                 offset,
                 illustration: None,
+                side_bias: None,
             };
             (anchor(offset), anchor(offset + "six".len()))
         };

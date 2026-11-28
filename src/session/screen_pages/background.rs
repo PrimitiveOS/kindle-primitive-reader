@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use primitive_app::with_storage;
 
 use super::{
-    FileStamp, Generation, HeadingPages, PageSample, ScreenPageSources, ScreenPages,
-    checked_prefix, heading_pages, same_spine,
+    CustomTarget, FileStamp, Generation, HeadingPages, PageSample, ScreenPageSources, ScreenPages,
+    checked_prefix, custom_pages, heading_pages, same_spine,
 };
 use crate::epub::{Book, Chapter};
 use crate::session::Reading;
@@ -29,7 +29,7 @@ pub(crate) const ARCHIVE_LIMIT: u64 = 8 * 1024 * 1024;
 pub(super) const FONT_LIMIT: u64 = 16 * 1024 * 1024;
 pub(super) const FONT_COUNT_LIMIT: usize = 64;
 const SPINE_LIMIT: usize = 192;
-const CHAPTER_BYTES_LIMIT: u64 = 256 * 1024;
+const CHAPTER_BYTES_LIMIT: u64 = crate::long_chapter_plan::MAX_CHAPTER_BYTES as u64;
 pub(super) const FIRMWARE_FONTS: &str = "/usr/java/lib/fonts";
 
 #[derive(Default)]
@@ -60,6 +60,7 @@ struct ChapterSample {
     index: usize,
     pagination: PageSample,
     headings: HeadingPages,
+    custom_pages: Vec<(usize, usize)>,
 }
 
 struct Pending {
@@ -153,7 +154,12 @@ impl Worker {
             .as_ref()
             .is_none_or(|generation| !generation.matches(config, probe))
         {
-            *slot = Some(Generation::new(config, probe, sources));
+            *slot = Some(Generation::new(
+                config,
+                probe,
+                sources,
+                reading.config.screen_pages.custom_targets(),
+            ));
         }
         let generation = slot.as_mut().unwrap();
         let request = Request::new(reading, generation);
@@ -289,6 +295,7 @@ fn accept_result(reading: &Reading, id: &Rc<()>, result: Option<Vec<ChapterSampl
     generation.samples = completed;
     for part in result {
         generation.heading_pages[part.index] = Some(part.headings);
+        generation.custom_pages[part.index] = Some(part.custom_pages);
     }
     generation.missing = 0;
     generation.prefix = Some(prefix);
@@ -305,6 +312,8 @@ struct Request {
     sources: ScreenPageSources,
     styles: user_styles::Snapshot,
     hyphenation: user_hyphenation::Rules,
+    hide_nonlinear: bool,
+    custom_targets: Vec<CustomTarget>,
     chapters: Vec<usize>,
     witness: (usize, PageSample),
 }
@@ -321,6 +330,8 @@ impl Request {
             sources: generation.sources.clone(),
             styles: generation.styles.clone(),
             hyphenation: (*generation.hyphenation).clone(),
+            hide_nonlinear: generation.hide_nonlinear,
+            custom_targets: generation.custom_targets.clone(),
             chapters: generation
                 .samples
                 .iter()
@@ -335,32 +346,71 @@ impl Request {
 
     fn run(self, cancelled: &AtomicBool) -> Result<Vec<ChapterSample>> {
         let archive: Arc<[u8]> = read_snapshot(&self.book, &self.sources.book, cancelled)?.into();
-        let fonts =
-            crate::font_context_with_font_data(&self.fonts, Path::new(FIRMWARE_FONTS), |path| {
-                let index = self
-                    .fonts
-                    .iter()
-                    .position(|font| font == path)
-                    .ok_or("The reading font changed during indexing")?;
-                let bytes = read_snapshot(path, &self.sources.fonts[index], cancelled)?;
-                Ok(parley::fontique::Blob::new(Arc::new(bytes)))
-            })?;
-        self.verify_sources(cancelled)?;
         let mut result = Vec::with_capacity(self.chapters.len());
-        let mut book = Book::open_snapshot(archive)?;
+        let mut book = Book::open_snapshot(Arc::clone(&archive))?;
         if book.revision() != self.publication
             || !book.supports_screen_page_count()
             || !same_spine(&self.spine, &book.chapters)
         {
             return Err("The EPUB edition changed during indexing".into());
         }
-        if book
-            .chapter_offsets()?
-            .windows(2)
-            .any(|ends| ends[1] - ends[0] > CHAPTER_BYTES_LIMIT)
+        let chapter_sizes: Vec<_> = (0..book.chapters.len())
+            .map(|index| book.chapter_member_size(index))
+            .collect();
+        if chapter_sizes
+            .iter()
+            .flatten()
+            .any(|&size| size > CHAPTER_BYTES_LIMIT)
         {
             return Err("An EPUB chapter exceeds the background pagination limit".into());
         }
+        let long_chapter_layout = book.is_reflowable_epub() && !book.spine_rtl;
+        let needs_long_chapter_snapshot = !self.hide_nonlinear
+            && !self.settings.embedded_fonts
+            && !self.settings.in_page_footnotes
+            && self.styles.supports_windowed_simple_chapter()
+            && long_chapter_layout
+            && chapter_sizes.iter().flatten().any(|&size| {
+                size > crate::parley_layout::MAX_TEXT_BYTES as u64
+            })
+            && self.fonts.len()
+                <= crate::long_chapter_plan::index::MAX_FONT_SNAPSHOT_FILES;
+        let long_chapter_font_bytes = if needs_long_chapter_snapshot {
+            Some(
+                crate::long_chapter_plan::font_snapshot::FontSnapshots::capture(
+                    &self.fonts,
+                    cancelled,
+                )
+                .map_err(|error| error.to_string())?
+                .bytes(),
+            )
+        } else {
+            None
+        };
+        let fonts = crate::font_context_with_font_data(
+            &self.fonts,
+            Path::new(FIRMWARE_FONTS),
+            |path| {
+                let index = self
+                    .fonts
+                    .iter()
+                    .position(|font| font == path)
+                    .ok_or("The reading font changed during indexing")?;
+                let bytes = match long_chapter_font_bytes
+                    .as_ref()
+                    .and_then(|bytes| bytes.get(index))
+                {
+                    Some(bytes) => Arc::clone(bytes),
+                    None => Arc::new(read_snapshot(
+                        path,
+                        &self.sources.fonts[index],
+                        cancelled,
+                    )?),
+                };
+                Ok(parley::fontique::Blob::new(bytes))
+            },
+        )?;
+        self.verify_sources(cancelled)?;
         let mut opened = Some(book);
         let check = || Ok(check_cancelled(cancelled)?);
         // Check the visible chapter first. This also guards against an ostensibly
@@ -373,7 +423,22 @@ impl Request {
         );
         for index in indices {
             check()?;
-            let probe = Probe::layout_opened_book_cancellable(
+            let long_chapter_inputs = if chapter_sizes
+                .get(index)
+                .copied()
+                .flatten()
+                .is_some_and(|size| size > crate::parley_layout::MAX_TEXT_BYTES as u64)
+            {
+                long_chapter_font_bytes.as_ref().map(|font_bytes| {
+                    crate::long_chapter_plan::SnapshotInputs {
+                        book_bytes: Arc::clone(&archive),
+                        font_bytes: font_bytes.clone(),
+                    }
+                })
+            } else {
+                None
+            };
+            let probe = Probe::layout_opened_book_cancellable_with_snapshots(
                 &mut opened,
                 Engine::Parley,
                 self.settings,
@@ -384,6 +449,8 @@ impl Request {
                 || Ok(fonts.clone()),
                 true,
                 &check,
+                cancelled,
+                long_chapter_inputs,
             )?;
             if probe.is_vertical() {
                 return Err("This EPUB uses vertical page layouts".into());
@@ -396,6 +463,7 @@ impl Request {
                 index,
                 pagination: sample,
                 headings: heading_pages(&probe),
+                custom_pages: custom_pages(&probe, &self.custom_targets, index),
             });
             drop(probe);
             thread::park_timeout(CHAPTER_YIELD);
@@ -478,6 +546,7 @@ mod tests {
                 index,
                 pagination: sample,
                 headings,
+                ..
             } in counts
             {
                 let loaded = reading.config.chapter(index).unwrap();

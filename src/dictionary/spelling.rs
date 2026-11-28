@@ -143,6 +143,21 @@ impl DictionarySources {
         scope: SourceScope<'_>,
         cancel: &AtomicBool,
     ) -> io::Result<Vec<LookupEntry>> {
+        self.suggested_definitions_with_japanese_conversions(
+            query,
+            scope,
+            super::JapaneseTextConversions::default(),
+            cancel,
+        )
+    }
+
+    pub(crate) fn suggested_definitions_with_japanese_conversions(
+        &self,
+        query: &str,
+        scope: SourceScope<'_>,
+        conversions: super::JapaneseTextConversions,
+        cancel: &AtomicBool,
+    ) -> io::Result<Vec<LookupEntry>> {
         if !eligible(query) {
             return Ok(Vec::new());
         }
@@ -194,7 +209,7 @@ impl DictionarySources {
         if names.is_empty() {
             return Ok(Vec::new());
         }
-        let queries = SuggestionQueries::new(&names);
+        let queries = SuggestionQueries::new(&names, conversions);
         let mut by_word: Vec<Vec<LookupEntry>> = (0..names.len()).map(|_| Vec::new()).collect();
         let mut budget = LookupBudget {
             index_bytes: MAX_TOTAL_INDEX_BYTES,
@@ -246,7 +261,7 @@ struct SuggestionQueries {
 
 #[cfg(feature = "kindle")]
 impl SuggestionQueries {
-    fn new(words: &[String]) -> Self {
+    fn new(words: &[String], conversions: super::JapaneseTextConversions) -> Self {
         let mut names = std::collections::HashMap::<String, Vec<(usize, usize)>>::new();
         for (i, word) in words.iter().enumerate() {
             let mut add = |key: &str, rank: usize| {
@@ -265,7 +280,9 @@ impl SuggestionQueries {
                 title.push_str(&word[first.len_utf8()..].to_lowercase());
                 add(&title, 3);
             }
-            for (form, rank) in WordForms::for_word(word).spellings() {
+            for (form, rank) in
+                WordForms::for_word_with_japanese_conversions(word, conversions).spellings()
+            {
                 add(form, 4 + rank);
             }
         }

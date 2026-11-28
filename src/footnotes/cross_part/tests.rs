@@ -622,6 +622,7 @@ fn cross_part_multiple_reference_pages_keep_original_note_sources() {
         block: block.key,
         offset: block.text.find("Rainfall").unwrap(),
         illustration: None,
+        side_bias: None,
     };
     let mut end = start.clone();
     end.offset += "Rainfall".len();

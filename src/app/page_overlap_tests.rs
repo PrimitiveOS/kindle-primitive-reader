@@ -85,7 +85,8 @@ fn fixed_page_overlap_controls_apply_on_a_hardware_turn_and_restore_per_pdf() {
     let mut canvas = Canvas::new(WIDTH, HEIGHT, &font_paths).unwrap();
     let mut app = Reader::open(&fixture.root, &fixture.state, fonts.clone()).unwrap();
     app.open_path(&book).unwrap();
-    assert!(!app.fixed.as_ref().unwrap().reading.allows_page_overlap());
+    // New fixed documents open fit-width, which permits overlap.
+    assert!(app.fixed.as_ref().unwrap().reading.allows_page_overlap());
     app.activate(Action::FitPage(true)).unwrap();
     app.open_reading_edge(false, WIDTH as f32 / 2.0);
     if app.reading_panel != Some(BarPanel::ViewLayout) {
@@ -171,6 +172,14 @@ fn fixed_reflow_overlap_layout_persists_without_moving_source_page_or_bookmark()
         let position = app.current_history_location();
         let bookmarks = app.library.state(id).unwrap().bookmarks.len();
         assert!(bookmarks > 0);
+        if scan {
+            // At the default scale the OCR page fits one screen, so overlap would not pan.
+            app.fixed
+                .as_mut()
+                .unwrap()
+                .reading
+                .set_fixed_reflow_text_scale(200);
+        }
         app.activate(if scan {
             Action::ReflowScan
         } else {

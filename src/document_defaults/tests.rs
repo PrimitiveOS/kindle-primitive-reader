@@ -28,6 +28,9 @@ impl Drop for TestDirectory {
 fn fixed_templates_exclude_geometry_and_reuse_only_the_current_books_geometry() {
     let source = FixedPreferences {
         zoom: 3,
+        zoom_columns_tenths: Some(25),
+        zoom_rows_tenths: Some(15),
+        zoom_fit_axis: Some(crate::library::FixedContentFit::Height),
         turns: 1,
         crop: Some(PdfTextRect {
             x0: 0.1,
@@ -60,6 +63,78 @@ fn fixed_templates_exclude_geometry_and_reuse_only_the_current_books_geometry() 
         (current.crop, current.offset_x, current.offset_y)
     );
     assert_eq!((reset.zoom, reset.turns, reset.scan_contrast), (3, 1, true));
+    assert_eq!(reset.zoom_columns_tenths, Some(25));
+    assert_eq!(reset.zoom_rows_tenths, Some(15));
+    assert_eq!(
+        reset.zoom_fit_axis,
+        Some(crate::library::FixedContentFit::Height)
+    );
+}
+
+#[test]
+fn new_fixed_documents_default_to_the_stock_page_width_mode() {
+    let preferences = FixedDefaults::default().apply(FixedPreferences::default());
+    assert!(preferences.width_fit);
+    assert!(!preferences.height_fit);
+    assert!(preferences.content_fit.is_none());
+    assert!(preferences.is_valid());
+}
+
+#[test]
+fn fixed_reflow_direction_defaults_to_ltr_and_round_trips_rtl() {
+    use crate::library::FixedReflowDirection;
+
+    let defaults = FixedDefaults::default().apply(FixedPreferences::default());
+    assert_eq!(
+        defaults.fixed_reflow_direction.unwrap_or_default(),
+        FixedReflowDirection::LeftToRight
+    );
+
+    let template = FixedDefaults::from_view(FixedPreferences {
+        fixed_reflow_direction: Some(FixedReflowDirection::RightToLeft),
+        ..FixedPreferences::default()
+    });
+    let reopened: FixedDefaults =
+        serde_json::from_slice(&serde_json::to_vec(&template).unwrap()).unwrap();
+    assert_eq!(
+        reopened
+            .apply(FixedPreferences::default())
+            .fixed_reflow_direction,
+        Some(FixedReflowDirection::RightToLeft)
+    );
+}
+
+#[test]
+fn fixed_text_reflow_direction_defaults_to_ltr_and_round_trips_tb_rtl() {
+    use crate::library::{FixedReflowDirection, FixedTextReflowDirection};
+
+    let defaults = FixedDefaults::default().apply(FixedPreferences::default());
+    assert_eq!(
+        defaults.fixed_text_reflow_direction.unwrap_or_default(),
+        FixedTextReflowDirection::LeftToRight
+    );
+
+    let template = FixedDefaults::from_view(FixedPreferences {
+        fixed_text_reflow_direction: Some(FixedTextReflowDirection::TopToBottomRightToLeft),
+        ..FixedPreferences::default()
+    });
+    let reopened: FixedDefaults =
+        serde_json::from_slice(&serde_json::to_vec(&template).unwrap()).unwrap();
+    assert_eq!(
+        reopened
+            .apply(FixedPreferences::default())
+            .fixed_text_reflow_direction,
+        Some(FixedTextReflowDirection::TopToBottomRightToLeft)
+    );
+
+    let migrated = FixedDefaults::from_view(FixedPreferences {
+        fixed_reflow_direction: Some(FixedReflowDirection::RightToLeft),
+        ..FixedPreferences::default()
+    });
+    assert_eq!(
+        migrated.apply(FixedPreferences::default()).fixed_text_reflow_direction,
+        Some(FixedTextReflowDirection::RightToLeft)
+    );
 }
 
 #[test]
@@ -199,7 +274,6 @@ fn backup_and_profile_validators_share_exact_ranges_without_resolving_font_files
         r#"{"version":1,"fixed":{"turns":4}}"#,
         r#"{"version":1,"fixed":{"offset_x":2}}"#,
         r#"{"version":1,"fixed":{"width_fit":true,"height_fit":true}}"#,
-        r#"{"version":1,"fixed":{"scan_white_level":1}}"#,
     ] {
         assert!(validate_backup(json.as_bytes()).is_err(), "{json}");
     }

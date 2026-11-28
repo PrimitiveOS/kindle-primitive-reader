@@ -1,6 +1,11 @@
 //! Recognize publication notes before opening a reflowable internal link.
 //! The note gets a separate short-lived layout; saved book anchors stay in the original chapter.
+use std::collections::HashMap;
+
 use roxmltree::{Document, Node, ParsingOptions};
+use crate::book_style::CrFootnoteHint;
+#[cfg(feature = "kindle")]
+use crate::{book_style::Style, source::Source};
 
 pub(crate) mod cross_part;
 pub(crate) mod font_size;
@@ -12,6 +17,7 @@ const EPUB: &str = "http://www.idpf.org/2007/ops";
 const XML: &str = "http://www.w3.org/XML/1998/namespace";
 const MAX_CHARS: usize = 10_000;
 const MAX_MARKUP: usize = 96 * 1024;
+const MAX_LEGACY_BACKLINKS: usize = 128;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Reference {
@@ -46,15 +52,20 @@ impl Reference {
                     })
                 })
         };
+        let mut saw_text = false;
+        let all_text_raised = link
+            .descendants()
+            .filter(Node::is_text)
+            .filter(|n| n.text().is_some_and(|t| !t.trim().is_empty()))
+            .all(|n| {
+                saw_text = true;
+                n.ancestors().take_while(|n| *n != link).any(raised)
+            });
         if link
             .ancestors()
             .take_while(|n| !n.has_tag_name("body"))
             .any(raised)
-            || link
-                .descendants()
-                .filter(Node::is_text)
-                .filter(|n| n.text().is_some_and(|t| !t.trim().is_empty()))
-                .all(|n| n.ancestors().take_while(|n| *n != link).any(raised))
+            || saw_text && all_text_raised
         {
             Self::Raised
         } else {
@@ -67,7 +78,151 @@ pub(crate) struct ReferenceContext {
     pub kind: Reference,
     pub label: String,
     pub in_prose: bool,
+    /// The linked text is the complete canonical text of its source block.
+    /// KOReader treats this as a likely inline-TOC title, not an inferred note.
+    pub source_is_whole_block: bool,
     pub source_block: usize,
+}
+
+/// Apply the computed source hints and text-alignment cues CREngine uses for
+/// popup classification. Keep the result on link metadata used by tap handling.
+#[cfg(feature = "kindle")]
+pub(crate) fn apply_css_reference_hints(source: &mut Source, styles: &[Style]) {
+    let elements = &source.elements;
+    for block in &mut source.blocks {
+        for index in 0..block.links.len() {
+            let link = &block.links[index];
+            let hint = styles
+                .get(link.element)
+                .and_then(|style| style.cr_footnote_hint);
+            let reference = match hint {
+                Some(CrFootnoteHint::Noteref) => Some(Reference::Explicit),
+                Some(CrFootnoteHint::NoterefIgnore) => Some(Reference::Ordinary),
+                _ if link.note_reference == Reference::Unknown
+                    && link_has_computed_vertical_alignment(
+                        elements,
+                        block,
+                        link.element,
+                        &link.bytes,
+                        styles,
+                    ) =>
+                {
+                    Some(Reference::Raised)
+                }
+                _ => None,
+            };
+            if let Some(reference) = reference {
+                block.links[index].note_reference = reference;
+            }
+        }
+        for image in &mut block.images {
+            let hint = image
+                .link_element
+                .and_then(|element| styles.get(element))
+                .and_then(|style| style.cr_footnote_hint);
+            match hint {
+                Some(CrFootnoteHint::Noteref) => image.note_reference = Reference::Explicit,
+                Some(CrFootnoteHint::NoterefIgnore) => image.note_reference = Reference::Ordinary,
+                _ => {}
+            }
+        }
+    }
+}
+
+#[cfg(feature = "kindle")]
+pub(crate) fn image_reference_context(
+    source: &Source,
+    key: usize,
+    ordinal: usize,
+    href: &str,
+) -> Option<ReferenceContext> {
+    let block = source.blocks.iter().find(|block| block.key == key)?;
+    let image = block
+        .images
+        .get(ordinal)
+        .filter(|image| image.link.as_deref() == Some(href))
+        .or_else(|| {
+            let mut candidates = block
+                .images
+                .iter()
+                .filter(|image| image.link.as_deref() == Some(href));
+            let image = candidates.next()?;
+            candidates.next().is_none().then_some(image)
+        })?;
+    let text_link = image.link_element.and_then(|element| {
+        block
+            .links
+            .iter()
+            .find(|link| link.element == element && link.href == href)
+    });
+    let (label, in_prose, source_is_whole_block) = if let Some(link) = text_link {
+        let linked = block.text.get(link.bytes.clone())?;
+        let label = linked.trim();
+        let in_prose = block
+            .text
+            .get(..link.bytes.start)?
+            .chars()
+            .chain(block.text.get(link.bytes.end..)?.chars())
+            .any(char::is_alphanumeric);
+        (label.chars().take(64).collect(), in_prose, block.text == linked)
+    } else {
+        (
+            String::new(),
+            block.text.chars().any(char::is_alphanumeric),
+            block.text.is_empty()
+                && block
+                    .images
+                    .iter()
+                    .all(|candidate| candidate.link_element == image.link_element),
+        )
+    };
+    Some(ReferenceContext {
+        kind: image.note_reference,
+        label,
+        in_prose,
+        source_is_whole_block,
+        source_block: key,
+    })
+}
+
+#[cfg(feature = "kindle")]
+fn link_has_computed_vertical_alignment(
+    elements: &[crate::source::Element],
+    block: &crate::source::Block,
+    link_element: usize,
+    link_bytes: &std::ops::Range<usize>,
+    styles: &[Style],
+) -> bool {
+    let mut saw_text = false;
+    for run in &block.styled_text {
+        let start = run.bytes.start.max(link_bytes.start);
+        let end = run.bytes.end.min(link_bytes.end);
+        if start >= end || block.text[start..end].trim().is_empty() {
+            continue;
+        }
+        saw_text = true;
+
+        let mut element = Some(run.element);
+        let mut reached_link = false;
+        let mut shifted = false;
+        while let Some(index) = element {
+            let Some(style) = styles.get(index) else {
+                break;
+            };
+            if style.image_align != parley::VerticalAlign::BASELINE {
+                shifted = true;
+            }
+            if index == link_element {
+                reached_link = true;
+                break;
+            }
+            element = elements.get(index).and_then(|element| element.parent);
+        }
+        if !reached_link || !shifted {
+            return false;
+        }
+    }
+    saw_text
 }
 
 fn has_type(node: Node<'_, '_>, epub: &[&str], roles: &[&str]) -> bool {
@@ -110,14 +265,24 @@ fn block(node: Node<'_, '_>) -> bool {
 }
 
 pub(crate) fn looks_like_marker(text: &str) -> bool {
-    let text = text.trim().trim_matches(|c: char| !c.is_alphanumeric());
-    if text.is_empty() || text.len() > 4 || !text.is_ascii() {
+    // CRE ignores word separators before counting characters, so punctuation
+    // and whitespace can appear between the marker characters.
+    let text: Vec<char> = text.chars().filter(|c| c.is_alphanumeric()).collect();
+    if text.is_empty() {
         return false;
     }
-    let digits = text.bytes().filter(u8::is_ascii_digit).count();
-    let letters = text.bytes().filter(u8::is_ascii_alphabetic).count();
-    digits + letters == text.len()
-        && (letters == 0 && digits <= 3 || (1..=2).contains(&letters) && digits <= 2)
+    let digits = text.iter().filter(|c| c.is_ascii_digit()).count();
+    let letters = text.iter().filter(|c| c.is_ascii_alphabetic()).count();
+    if digits + letters != text.len() {
+        return false;
+    }
+    let roman_letters = text
+        .iter()
+        .filter(|c| matches!(c.to_ascii_lowercase(), 'i' | 'v' | 'x' | 'l' | 'c' | 'd' | 'm'))
+        .count();
+    (letters == 0 && (1..=3).contains(&digits))
+        || ((1..=2).contains(&letters) && digits <= 2)
+        || (digits == 0 && letters <= 10 && letters > 0 && roman_letters == letters)
 }
 
 fn visible_text(node: Node<'_, '_>) -> bool {
@@ -265,29 +430,53 @@ pub(crate) fn detached_legacy_evidence(
     ) else {
         return false;
     };
+    // Resolve anchor uniqueness in one bounded document walk. Rechecking the
+    // entire host DOM for each note backlink made the legacy fallback
+    // quadratic in the chapter size.
+    let mut host_anchors: HashMap<&str, Option<(usize, usize)>> = HashMap::new();
+    for node in host_document.descendants().filter(Node::is_element) {
+        let names = [
+            node.attribute("id"),
+            node.attribute((XML, "id")),
+            node.has_tag_name("a")
+                .then(|| node.attribute("name"))
+                .flatten(),
+        ];
+        for (index, name) in names.iter().enumerate() {
+            let Some(name) = name else {
+                continue;
+            };
+            if names[..index]
+                .iter()
+                .flatten()
+                .any(|prior| *prior == *name)
+            {
+                continue;
+            }
+            let position = host.fragments.get(*name).copied();
+            match host_anchors.entry(*name) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(position);
+                }
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    entry.insert(None);
+                }
+            }
+        }
+    }
     container
         .descendants()
         .filter(|node| node.has_tag_name("a"))
         .filter_map(|node| node.attribute("href"))
-        .take(16)
+        .take(MAX_LEGACY_BACKLINKS)
         .filter_map(|href| crate::epub::Book::resolve_link(note_path, href).ok())
         .any(|target| {
             let Some(id) = target.fragment.as_deref() else {
                 return false;
             };
             target.path == reference.chapter
-                && host.fragments.get(id).copied() == Some((reference.block, reference.offset))
-                && host_document
-                    .descendants()
-                    .filter(|node| {
-                        node.is_element()
-                            && (node.attribute("id") == Some(id)
-                                || node.attribute((XML, "id")) == Some(id)
-                                || node.has_tag_name("a") && node.attribute("name") == Some(id))
-                    })
-                    .take(2)
-                    .count()
-                    == 1
+                && host_anchors.get(id).copied().flatten()
+                    == Some((reference.block, reference.offset))
         })
 }
 
@@ -326,14 +515,25 @@ fn extract_inner(
         Some(roots) => roots.root(target, fragment)?,
         None => text_container(target)?,
     };
-    let explicit = context.kind == Reference::Explicit || target.ancestors().any(note_container);
+    let extension = match roots {
+        Some(roots) => roots.extend_after(target, fragment)?,
+        None => Vec::new(),
+    };
+    let hint = roots.and_then(|roots| roots.footnote_hint(fragment));
+    if hint == Some(CrFootnoteHint::FootnoteIgnore) {
+        return None;
+    }
+    let explicit = hint == Some(CrFootnoteHint::Footnote)
+        || context.kind == Reference::Explicit
+        || target.ancestors().any(note_container);
     if !explicit {
         let after = match chapter_order {
             std::cmp::Ordering::Less => true,
             std::cmp::Ordering::Equal => target.range().start > context.source_block,
             std::cmp::Ordering::Greater => false,
         };
-        if !context.in_prose
+        if context.source_is_whole_block
+            || !context.in_prose
             || toc_target
             || (!prefer && !after)
             || target.ancestors().any(heading)
@@ -343,14 +543,23 @@ fn extract_inner(
             return None;
         }
     }
-    let body = &xml[container.range()];
-    if body.len() > MAX_MARKUP || !visible_text(container) {
+    let body = popup_body(xml, container, &extension)?;
+    let contents = std::iter::once(container).chain(extension.iter().copied());
+    if body.len() > MAX_MARKUP || !contents.clone().any(visible_text) {
         return None;
     }
-    let length = container
+    let container_range = container.range();
+    let body_end = extension
+        .last()
+        .map_or(container_range.end, |node| node.range().end);
+    let length = doc
         .descendants()
         .filter(Node::is_text)
-        .filter_map(|n| n.text())
+        .filter(|node| {
+            let range = node.range();
+            range.start >= container_range.start && range.end <= body_end
+        })
+        .filter_map(|node| node.text())
         .flat_map(str::chars)
         .take(MAX_CHARS + 1)
         .count();
@@ -382,9 +591,47 @@ fn extract_inner(
         }
     }
     result.push_str("><head><title>Footnote</title></head><body>");
-    result.push_str(body);
+    result.push_str(&body);
     result.push_str("</body></html>");
     Some(result)
+}
+
+fn popup_body<'d, 'i>(
+    xml: &str,
+    container: Node<'d, 'i>,
+    extension: &[Node<'d, 'i>],
+) -> Option<String> {
+    let range = container.range();
+    let last = extension.last().copied().unwrap_or(container);
+    let last_end = last.range().end;
+    let mut body = xml.get(range.start..last_end)?.to_owned();
+    if extension.is_empty() {
+        return Some(body);
+    }
+
+    let common = container
+        .ancestors()
+        .find(|ancestor| *ancestor == last || last.ancestors().any(|node| node == *ancestor))?;
+    let mut current = last.parent_element();
+    while let Some(ancestor) = current {
+        if ancestor.range().start >= range.start {
+            let end = ancestor.range().end;
+            let close_start = xml.get(..end)?.rfind('<')?;
+            let closing_tag = xml.get(close_start..end)?;
+            if !closing_tag.starts_with("</") || !closing_tag.ends_with('>') {
+                return None;
+            }
+            if body.len().saturating_add(closing_tag.len()) > MAX_MARKUP {
+                return None;
+            }
+            body.push_str(closing_tag);
+        }
+        if ancestor == common {
+            return Some(body);
+        }
+        current = ancestor.parent_element();
+    }
+    None
 }
 
 #[cfg(test)]
@@ -397,6 +644,7 @@ mod tests {
             kind,
             label: label.into(),
             in_prose: true,
+            source_is_whole_block: false,
             source_block: 0,
         }
     }

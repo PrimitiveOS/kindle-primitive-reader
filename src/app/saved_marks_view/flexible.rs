@@ -60,6 +60,13 @@ fn is_saved_mark(action: &Action) -> bool {
     )
 }
 
+fn has_inline_icon(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::Bookmark(_) | Action::Highlight(_) | Action::PdfHighlight(_)
+    )
+}
+
 impl MarkRow {
     fn measure(
         canvas: &mut Canvas,
@@ -69,6 +76,7 @@ impl MarkRow {
         layout: NavigationLayout,
     ) -> Self {
         let is_mark = is_saved_mark(&item.action);
+        let icon_space = if has_inline_icon(&item.action) { 56 } else { 0 };
         let font = if is_mark { requested_font } else { 18 };
         let normalized_title = item
             .title
@@ -88,7 +96,7 @@ impl MarkRow {
         let title = TitleFit::measure_limited(
             canvas,
             label,
-            Rect::new(0, 0, row.w - 120, available),
+            Rect::new(0, 0, row.w - 120 - icon_space, available),
             font,
             if is_mark { max_lines } else { 1 },
         );
@@ -111,6 +119,7 @@ impl MarkRow {
         item: &Item,
         has_separator: bool,
         color: Option<HighlightColor>,
+        icon: Option<primitive_ui::Icon>,
     ) {
         let row = self.rect;
         let pressed = canvas.control_pressed(row, false);
@@ -123,12 +132,20 @@ impl MarkRow {
         } else {
             SECONDARY
         };
-        let text_x = row.x + 32;
+        let icon_space = if icon.is_some() { 56 } else { 0 };
+        let text_x = row.x + 32 + icon_space;
+        if let Some(icon) = icon {
+            canvas.icon(
+                Rect::new(row.x + 32, row.y + (row.h - 40) / 2, 40, 40),
+                icon,
+                ink,
+            );
+        }
         let title_height = self.title.height();
         let title_y = row.y + (row.h - title_height - self.caption_height) / 2;
         self.title.draw(
             canvas,
-            Rect::new(text_x, title_y, row.w - 120, title_height),
+            Rect::new(text_x, title_y, row.w - 120 - icon_space, title_height),
             self.normalized_title.as_deref().unwrap_or(&item.title),
             ink,
         );
@@ -138,7 +155,7 @@ impl MarkRow {
                 Rect::new(
                     text_x,
                     title_y + title_height,
-                    row.w - 120,
+                    row.w - 120 - icon_space,
                     self.caption_height,
                 ),
                 caption,
@@ -341,6 +358,7 @@ impl Reader {
                 item,
                 self.controls.bookmark_list_separators && index + 1 < page.rows.len(),
                 self.bookmark_row_color(&item.action),
+                self.saved_mark_icon(&item.action),
             );
         }
         let previous = self.list_page > 0;

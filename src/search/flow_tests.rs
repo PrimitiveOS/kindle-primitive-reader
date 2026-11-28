@@ -114,6 +114,7 @@ fn directional_matches_cross_hidden_joins_in_both_directions_and_do_not_leak_con
     let origin = Anchor {
         raw_caret: None,
         illustration: None,
+        side_bias: None,
         book: book.revision(),
         chapter: book.chapters[0].href.clone(),
         revision: source.revision,
@@ -180,7 +181,9 @@ fn loaded_chapters_cannot_cross_style_or_publication_request_keys() {
         publisher_styles: false,
         ..Default::default()
     };
-    let text = nearby::ChapterText::read_with_flow(&mut book, 0, &disabled).unwrap();
+    let text = nearby::ChapterText::read_with_flow(&mut book, 0, &disabled)
+        .unwrap()
+        .with_source_only_verified_layout();
     let mut search = Search::new("Alpha").unwrap();
     assert!(
         search
@@ -190,7 +193,9 @@ fn loaded_chapters_cannot_cross_style_or_publication_request_keys() {
             .contains("styles changed")
     );
     assert!(search.is_finished());
-    let text = nearby::ChapterText::read(&mut book, 0).unwrap();
+    let text = nearby::ChapterText::read(&mut book, 0)
+        .unwrap()
+        .with_source_only_verified_layout();
     let mut search = Search::new("Alpha")
         .unwrap()
         .for_publication(book.revision() ^ 1, 1);
@@ -212,7 +217,9 @@ fn original_publication_search_returns_projected_quotes_with_canonical_spans() {
     let config = FlowConfig::default();
     let word = (0..book.chapters.len())
         .find_map(|chapter| {
-            let text = nearby::ChapterText::read_with_flow(&mut book, chapter, &config).ok()?;
+            let text = nearby::ChapterText::read_with_flow(&mut book, chapter, &config)
+                .ok()?
+                .with_source_only_verified_layout();
             let source = text.source.as_ref()?;
             source.blocks.iter().find_map(|block| {
                 let view = text.flow.view(source, block).ok()?;
@@ -234,7 +241,9 @@ fn original_publication_search_returns_projected_quotes_with_canonical_spans() {
     }
     assert!(!hits.is_empty());
     for hit in &hits {
-        let text = nearby::ChapterText::read_with_flow(&mut book, hit.chapter, &config).unwrap();
+        let text = nearby::ChapterText::read_with_flow(&mut book, hit.chapter, &config)
+            .unwrap()
+            .with_source_only_verified_layout();
         let source = text.source.as_ref().unwrap();
         assert_eq!(source.revision, hit.anchor.revision);
         let block = source

@@ -9,6 +9,21 @@ use crate::generated_contents::{OutlineEntry, OutlineTarget};
 
 type Position = (usize, usize);
 
+pub(super) fn custom_page_targets(
+    entries: &[crate::library::Bookmark],
+) -> Vec<crate::session::screen_pages::CustomTarget> {
+    entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| crate::session::screen_pages::CustomTarget {
+            index,
+            chapter: entry.position.chapter,
+            starts_chapter: entry.position.anchor.is_none() && entry.position.page == 0,
+            anchor: entry.position.anchor.clone(),
+        })
+        .collect()
+}
+
 pub(super) struct ContentsPositions {
     reading: Position,
     headings: Vec<Option<Position>>,
@@ -95,10 +110,10 @@ impl Reader {
                     && book.numbering.is_none()
                     && !(book.page_labels() > 0
                         && (self.publisher_footer_enabled() || self.publisher_margins_enabled()))
-                    && self
-                        .library
-                        .state(book.id)
-                        .is_some_and(|state| !state.custom_contents.enabled)
+                    && self.library.state(book.id).is_some_and(|state| {
+                        !state.custom_contents.enabled
+                            || !state.custom_contents.entries().is_empty()
+                    })
             })
     }
 
@@ -124,9 +139,10 @@ impl Reader {
             .then(|| References::Print(PrintedMap::new(book, &chapters)))
         });
         let fixed = self.fixed.as_ref().map(|book| &book.reading);
-        // A complete index contains page coordinates for publisher and generated
-        // headings throughout the spine. Missing or suppressed headings remain
-        // unknown; never mix their local coordinates with whole-book pages.
+        // A complete index contains page coordinates for publisher/generated
+        // headings and requested saved targets throughout the spine. Missing or
+        // suppressed targets remain unknown; never mix local coordinates with
+        // whole-book pages.
         let indexed = active.and_then(|book| {
             if references.is_some() || state.is_some_and(|state| state.custom_contents.enabled) {
                 return None;
@@ -147,15 +163,34 @@ impl Reader {
                 .collect();
             reading.whole_book_alternative_locations(&outline, |_| true)
         });
-        let indexed_pages = indexed.as_ref().map(|locations| {
-            let mut pages = vec![None; entries.len()];
-            for heading in &locations.starts {
-                if let Some(page) = pages.get_mut(heading.index) {
-                    *page = Some(Page::Fixed(heading.absolute));
-                }
-            }
-            pages
-        });
+        let custom_indexed = (self.controls.contents_chapter_lengths)
+            .then(|| {
+                let book = active?;
+                let state = state.filter(|state| state.custom_contents.enabled)?;
+                let targets = custom_page_targets(state.custom_contents.entries());
+                book.reading.whole_book_custom_locations(&targets)
+            })
+            .flatten();
+        let indexed_pages = custom_indexed
+            .as_ref()
+            .map(|locations| {
+                locations
+                    .pages
+                    .iter()
+                    .map(|page| (*page).map(Page::Fixed))
+                    .collect()
+            })
+            .or_else(|| {
+                indexed.as_ref().map(|locations| {
+                    let mut pages = vec![None; entries.len()];
+                    for heading in &locations.starts {
+                        if let Some(page) = pages.get_mut(heading.index) {
+                            *page = Some(Page::Fixed(heading.absolute));
+                        }
+                    }
+                    pages
+                })
+            });
         let resolved: Vec<_> = entries
             .iter()
             .map(|entry| {
@@ -263,6 +298,8 @@ impl Reader {
         let end = if let Some(fixed) = fixed {
             Some(Page::Fixed(fixed.count()))
         } else if let Some(locations) = &indexed {
+            Some(Page::Fixed(locations.count))
+        } else if let Some(locations) = &custom_indexed {
             Some(Page::Fixed(locations.count))
         } else if let Some(references) = &references {
             references.total(active?).map(|label| Page::Reference {

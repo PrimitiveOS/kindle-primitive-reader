@@ -448,6 +448,7 @@ fn selection(
     let anchor = |index: usize, offset| Anchor {
         raw_caret: None,
         illustration: None,
+        side_bias: None,
         book,
         chapter: chapter.to_owned(),
         revision: source.revision,
@@ -584,6 +585,7 @@ mod tests {
             Anchor {
                 raw_caret: None,
                 illustration: None,
+                side_bias: None,
                 book: 712,
                 chapter: "shore.xhtml".to_owned(),
                 revision: source.revision,
@@ -596,6 +598,7 @@ mod tests {
             Anchor {
                 raw_caret: None,
                 illustration: None,
+                side_bias: None,
                 block: source.blocks[1].key,
                 offset: "مرحبا".len(),
                 ..mark.start.clone()

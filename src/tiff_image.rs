@@ -1885,7 +1885,8 @@ mod tests {
         let order = ByteOrder::Little;
         let bytes = fixture(order, GRAY, &STRIPS);
         for (tag, value) in [
-            (258, 4),
+            // 4-bit grayscale is supported; 3 bits is not a TIFF depth here.
+            (258, 3),
             (259, 6),
             (262, 2),
             (266, 2),
@@ -1903,7 +1904,11 @@ mod tests {
                 value,
                 order,
             );
-            assert_eq!(decode(&unsupported).unwrap_err(), TiffError::Unsupported);
+            assert_eq!(
+                decode(&unsupported).unwrap_err(),
+                TiffError::Unsupported,
+                "tag {tag} value {value}"
+            );
         }
         let sample_format = field(&bytes, 339, order);
         let mut subifd = bytes.clone();

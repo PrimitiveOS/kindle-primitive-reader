@@ -228,6 +228,28 @@ impl History {
         )
     }
 
+    /// Reading time by the source chapter recorded for each reflow visit.
+    /// Fixed-page documents and older visits stay in the unassigned group.
+    pub(crate) fn chapters_in_period(
+        &self,
+        period: Period,
+        start: Date,
+        book: u64,
+        zone: Zone,
+    ) -> Vec<(Option<super::ReflowChapter>, Totals)> {
+        let mut groups = BTreeMap::<Option<super::ReflowChapter>, Group>::new();
+        for visit in self
+            .dated_by_period(period, Some(book), zone, 0)
+            .filter_map(|(date, visit)| (date == start).then_some(visit))
+        {
+            groups.entry(visit.reflow_chapter).or_default().add(visit);
+        }
+        groups
+            .into_iter()
+            .map(|(chapter, group)| (chapter, group.totals()))
+            .collect()
+    }
+
     pub(crate) fn periods_since(
         &self,
         period: Period,

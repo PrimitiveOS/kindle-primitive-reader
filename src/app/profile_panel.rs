@@ -116,6 +116,12 @@ impl Reader {
         {
             return self.profile_value_items(index);
         }
+        if let Screen::ReadingProfileZoom(index) = self.screen {
+            return self.profile_zoom_items(index);
+        }
+        if let Screen::ReadingProfileFonts(index) = self.screen {
+            return self.profile_font_items(index);
+        }
         if let Screen::ReadingProfileBookRendering(index) = self.screen {
             return self.profile_rendering_items(index, &rendering_choices::BOOK);
         }
@@ -233,6 +239,42 @@ impl Reader {
                 Action::ToggleReadingProfileField(field),
             )
         }));
+        items
+    }
+
+    fn profile_font_items(&self, index: usize) -> Vec<Item> {
+        let Some(Profile::Text { preferences, .. }) = self.profiles.get(index) else {
+            return Vec::new();
+        };
+        let language = self.controls.interface_language;
+        let selected = preferences.font_file.as_deref();
+        let mut items = vec![Item::new(
+            language.reading_font_text("Device fonts"),
+            Action::SetProfileFont(index, None),
+        )];
+        if selected.is_none() {
+            items[0].detail = Some(language.reading_profile_text("Selected").into());
+        }
+        items.extend(self.available_fonts.iter().map(|filename| {
+            let item = Item::new(
+                filename,
+                Action::SetProfileFont(index, Some(filename.clone())),
+            );
+            if selected == Some(filename.as_str()) {
+                item.detail(language.reading_profile_text("Selected"))
+            } else {
+                item
+            }
+        }));
+        items.push(
+            Item::new(
+                language.reading_font_text("Add more fonts"),
+                Action::Heading,
+            )
+            .detail(language.reading_font_text(
+                "Copy fonts to reader/data/fonts or a subfolder",
+            )),
+        );
         items
     }
 

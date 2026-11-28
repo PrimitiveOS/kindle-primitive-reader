@@ -15,6 +15,14 @@ pub(crate) enum MarkerKind {
     LowerRoman,
     UpperRoman,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum MarkerPosition {
+    #[default]
+    Outside,
+    Inside,
+}
+
 impl MarkerKind {
     pub(crate) fn css(name: &str) -> Option<Self> {
         Some(match name {

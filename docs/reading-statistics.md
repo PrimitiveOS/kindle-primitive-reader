@@ -7,7 +7,7 @@ Open **Tools › Reading statistics**, **Reading data › Reading statistics**, 
 | Summary | Recorded reading time, distinct reading screens, capped page time, earlier undated screen time, daily history and calendar |
 | Reading progress | Seven dated bars, weekly totals and averages, and separate Session and Today cards |
 | Daily history | Dates in reverse order, reading time, distinct screens and books; tap a date for its timeline |
-| Time range | Compare reading time and distinct screens by week or month, then open a period for its individual books |
+| Time range | Compare reading time and distinct screens by week or month, then open a period for its individual books and chapter-attributed reading time |
 | Calendar | A month grid with reading time, book titles that span consecutive days, and an optional hourly histogram. Tap a day, swipe, or use page buttons to change months. |
 | Day timeline | An hourly histogram and book intervals clipped to the selected day; tap an interval for its book sessions and **Continue reading** |
 | Settings | Enable statistics, set visit limits, freeze finished books, choose the starting weekday, edit the timeline start, apply the shift to the calendar, limit book spans, show the histogram, and browse future months. |
@@ -238,6 +238,14 @@ Daily history groups visits by their civil start date. Reader clips the elapsed 
 Disabling statistics or freezing a finished book pauses all three time trackers, including the existing screen-time and pace counters. Sleep, USB storage and non-reading screens pause recording. Short intervals on the same page can combine across sleep toward the minimum, without counting the pause or resetting the visit's maximum. Returning to Library finishes that visit. Timeline rows merge adjacent intervals for the same book when their gap is no more than the larger of 30 seconds and the minimum visit time. Gaps contribute no reading time to totals or the histogram.
 
 Elapsed time comes from the monotonic clock. UTC timestamps provide dates. If the observed wall clock changes independently, the ambiguous interval stays explicitly undated; later reliable intervals can receive dates again. Dates before 2000 are also treated as uncertain device time. Changing the device time zone regroups known instants in its current local zone. [Device time zone and day boundaries](device-local-time.md) Whole-second clock sampling allows two seconds of observation tolerance.
+
+Book-period details group newly recorded reflow visits by source publication and
+chapter. Different source publications remain separate if the same library
+entry changes editions. Fixed-page visits and older journal records without a
+chapter index appear in **Fixed pages or older sessions**. Chapter numbers are
+source-spine order, starting at one; publication chapter titles are not
+reconstructed. This implementation remains unverified pending the statistics
+test and simulator pass. Existing statistics files require no migration.
 
 ## Existing data and storage
 

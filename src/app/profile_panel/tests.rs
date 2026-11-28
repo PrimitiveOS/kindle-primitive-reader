@@ -288,16 +288,16 @@ fn reading_profile_fields_are_drafts_and_apply_only_selected_text_settings() {
     assert_eq!(row(&mut app, "Included settings"), Change::Partial);
     assert_eq!(row(&mut app, "Clear all"), Change::Partial);
     let (save, cancel) = field_buttons(NavigationLayout::PORTRAIT);
-    screen_tap(&mut app, save);
-    assert_eq!(app.screen, Screen::ReadingProfileFields(0));
-    assert_eq!(fs::read(&app.profiles_path).unwrap(), legacy);
-    assert_eq!(row(&mut app, "Font size"), Change::Partial);
-    assert!(app.notice.is_none());
     capture_test_screen(&app, &fonts, "READER_PROFILE_FIELDS_TEXT", false);
     assert_eq!(screen_tap(&mut app, cancel), Change::Partial);
     assert_eq!(fs::read(&app.profiles_path).unwrap(), legacy);
     assert_eq!(row(&mut app, "Included settings"), Change::Partial);
     assert_eq!(row(&mut app, "Clear all"), Change::Partial);
+    assert_eq!(screen_tap(&mut app, save), Change::Partial);
+    assert_eq!(app.screen, Screen::ReadingProfile(0));
+    assert!(app.profiles[0].selection().is_empty());
+    assert_ne!(fs::read(&app.profiles_path).unwrap(), legacy);
+    assert_eq!(row(&mut app, "Included settings"), Change::Partial);
     assert_eq!(row(&mut app, "Font size"), Change::Partial);
     assert_eq!(app.input(Input::PageForward), Change::Partial);
     assert_eq!(screen_tap(&mut app, save), Change::Partial);
@@ -357,15 +357,17 @@ fn reading_profile_fields_apply_provider_specific_comic_and_djvu_settings() {
     app.save_reading_profile("Atlas contrast").unwrap();
     let original = serde_json::to_value(&app.profiles).unwrap();
     let mut invalid = original.clone();
-    invalid[0]["fixed"]["settings"]["scan_gamma_tenths"] = 20.into();
+    // Gamma is valid from SCAN_GAMMA_MIN (8) to SCAN_GAMMA_MAX (500); 501 is out of range.
+    invalid[0]["fixed"]["settings"]["scan_gamma_tenths"] = 501.into();
     assert!(reading_profiles::decode(invalid).is_err());
     let mut invalid = original;
-    invalid[0]["fields"] = serde_json::json!(["scan_contrast", "crop_margin"]);
+    // Facing pages belong to comics and EPUBs, not DjVu.
+    invalid[0]["fields"] = serde_json::json!(["scan_contrast", "spreads"]);
     assert!(reading_profiles::decode(invalid).is_err());
     app.edit_profile_fields(0).unwrap();
     app.set_profile_fields(false).unwrap();
     app.toggle_profile_field(Field::ScanContrast).unwrap();
-    assert!(app.toggle_profile_field(Field::CropMargin).is_err());
+    assert!(app.toggle_profile_field(Field::Spreads).is_err());
     capture_test_screen(&app, &fonts, "READER_PROFILE_FIELDS_DJVU", true);
     assert_eq!(
         screen_tap(&mut app, field_buttons(NavigationLayout::PORTRAIT).0),

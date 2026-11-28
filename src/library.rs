@@ -48,15 +48,17 @@ pub const MAX_PDF_HIGHLIGHTS: usize = 256;
 pub(crate) const MAX_PDF_HIGHLIGHT_BOUNDS: usize = 64;
 pub(crate) const MAX_HIGHLIGHT_TEXT_BYTES: usize = 8192;
 pub(crate) const MAX_NOTE_BYTES: usize = 4096;
-const MAX_FIXED_ZOOM: usize = 4;
+pub(crate) const MAX_FIXED_ZOOM: usize = 4;
 const MAX_FIXED_OFFSET: f32 = 32_768.0;
 pub const MAX_CONTINUOUS_GAP: u16 = 128;
-pub const MIN_SCAN_WHITE_LEVEL: u8 = 192;
 pub const MAX_STRAIGHTEN_DEGREES: u8 = 25;
-pub const MAX_SCAN_WHITE_LEVEL: u8 = 254;
 pub(crate) const SCAN_GAMMA_DEFAULT: u16 = 10;
 pub(crate) const SCAN_GAMMA_MIN: u16 = 8;
 pub(crate) const SCAN_GAMMA_MAX: u16 = 500;
+pub(crate) const DEFAULT_SCAN_REFLOW_TEXT_SCALE: u16 = 105;
+pub(crate) const MIN_SCAN_REFLOW_TEXT_SCALE: u16 = 20;
+pub(crate) const MAX_SCAN_REFLOW_TEXT_SCALE: u16 = 200;
+pub(crate) const SCAN_REFLOW_TEXT_SCALE_STEP: u16 = 5;
 pub(crate) const DEFAULT_CROP_MARGIN: u8 = 10;
 pub(crate) const MAX_CROP_MARGIN: u8 = 150;
 const MIN_CROP_SIZE: f32 = 0.025;
@@ -765,6 +767,15 @@ pub struct FixedTileZoom {
     pub width_factor: f32,
 }
 
+/// How a detected fixed-page content box is fitted to the reading viewport.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixedContentFit {
+    Full,
+    Width,
+    Height,
+}
+
 impl FixedTileZoom {
     fn is_valid(&self) -> bool {
         (1..=80).contains(&self.count_tenths)
@@ -776,12 +787,29 @@ impl FixedTileZoom {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct FixedPreferences {
     pub zoom: usize,
+    /// Manual zoom factor in hundredths (100 = 1×; supported range 0.1×–20×).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_factor_hundredths: Option<u16>,
+    /// Use KOReader's manual zoom genus: trim to content, fit width, then scale by the factor.
+    pub manual_zoom: bool,
     /// Absolute screen pixels per PDF point for a bounded destination fit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub precise_scale: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tile_zoom: Option<FixedTileZoom>,
+    /// Last selected number of horizontal tiles, retained while another target is active.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_columns_tenths: Option<u8>,
+    /// Last selected number of vertical tiles, retained while another target is active.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_rows_tenths: Option<u8>,
+    /// Fit axis retained while the active zoom target is Columns, Rows, or Manual.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_fit_axis: Option<FixedContentFit>,
     pub turns: u8,
+    /// Automatically trim a fixed page to its detected content and choose its fit axis.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_fit: Option<FixedContentFit>,
     pub width_fit: bool,
     pub height_fit: bool,
     pub continuous: bool,
@@ -795,6 +823,9 @@ pub struct FixedPreferences {
     pub continuous_gap: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scan_white_level: Option<u8>,
+    /// Apply automatic global paper cleanup to eligible fixed-page scans.
+    #[serde(skip_serializing_if = "is_false")]
+    pub dewatermark: bool,
     pub offset_x: f32,
     pub offset_y: f32,
     pub right_to_left: bool,
@@ -827,6 +858,24 @@ pub struct FixedPreferences {
     pub continuous_crop: Option<ContinuousCrop>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fixed_reflow_spacing: Option<FixedReflowSpacing>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_reflow_columns: Option<FixedReflowColumns>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_reflow_word_gap: Option<FixedReflowWordGap>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_reflow_alignment: Option<FixedReflowAlignment>,
+    /// OCR word-image reflow supports horizontal LTR and RTL only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_reflow_direction: Option<FixedReflowDirection>,
+    /// Text-layer reflow also supports vertical top-to-bottom, right-to-left.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_text_reflow_direction: Option<FixedTextReflowDirection>,
+    /// OCR scan reflow scale in percent, matching KOReader's 0.05 adjustments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_reflow_text_scale: Option<u16>,
+    /// Old unpublished candidates stored a nominal pixel height here.
+    #[serde(skip)]
+    pub fixed_reflow_text_height: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -843,6 +892,130 @@ pub enum FixedReflowSpacing {
     #[default]
     Medium,
     Large,
+}
+
+/// Maximum number of scan columns to detect when reflowing OCR word images.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixedReflowColumns {
+    One,
+    #[default]
+    Two,
+    Three,
+}
+
+impl FixedReflowColumns {
+    pub(crate) fn count(self) -> u8 {
+        match self {
+            Self::One => 1,
+            Self::Two => 2,
+            Self::Three => 3,
+        }
+    }
+}
+
+/// OCR word spacing during fixed-page reflow.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixedReflowWordGap {
+    Small,
+    #[default]
+    Auto,
+    Large,
+}
+
+impl FixedReflowWordGap {
+    pub(crate) fn manual_ratio(self) -> Option<f32> {
+        match self {
+            Self::Small => Some(0.05),
+            Self::Auto => None,
+            Self::Large => Some(0.375),
+        }
+    }
+}
+
+/// Text alignment for OCR word-image reflow.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixedReflowAlignment {
+    #[default]
+    Auto,
+    Left,
+    Center,
+    Right,
+    Justify,
+}
+
+/// Writing direction used when OCR word images are reflowed.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixedReflowDirection {
+    #[default]
+    LeftToRight,
+    RightToLeft,
+    TopToBottomRightToLeft,
+}
+
+impl FixedReflowDirection {
+    pub(crate) const ALL: [Self; 3] = [
+        Self::LeftToRight,
+        Self::RightToLeft,
+        Self::TopToBottomRightToLeft,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::LeftToRight => "LTR",
+            Self::RightToLeft => "RTL",
+            Self::TopToBottomRightToLeft => "TBRTL",
+        }
+    }
+}
+
+/// Writing direction for embedded-text fixed-document reflow.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixedTextReflowDirection {
+    #[default]
+    LeftToRight,
+    RightToLeft,
+    TopToBottomRightToLeft,
+}
+
+impl FixedTextReflowDirection {
+    pub(crate) const ALL: [Self; 3] = [
+        Self::LeftToRight,
+        Self::RightToLeft,
+        Self::TopToBottomRightToLeft,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::LeftToRight => "LTR",
+            Self::RightToLeft => "RTL",
+            Self::TopToBottomRightToLeft => "TBRTL",
+        }
+    }
+}
+
+impl From<FixedReflowDirection> for FixedTextReflowDirection {
+    fn from(value: FixedReflowDirection) -> Self {
+        match value {
+            FixedReflowDirection::LeftToRight => Self::LeftToRight,
+            FixedReflowDirection::RightToLeft => Self::RightToLeft,
+            FixedReflowDirection::TopToBottomRightToLeft => Self::TopToBottomRightToLeft,
+        }
+    }
+}
+
+impl FixedReflowAlignment {
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Auto,
+        Self::Left,
+        Self::Center,
+        Self::Right,
+        Self::Justify,
+    ];
 }
 
 impl FixedReflowSpacing {
@@ -890,7 +1063,23 @@ impl FixedPreferences {
             .tile_zoom
             .filter(FixedTileZoom::is_valid)
             .filter(|_| precise_scale.is_none());
-        let width_fit = self.width_fit && tile_zoom.is_none() && precise_scale.is_none();
+        let zoom_factor_hundredths = self
+            .zoom_factor_hundredths
+            .filter(|factor| (10..=2000).contains(factor));
+        let continuous = self.continuous && tile_zoom.is_none() && precise_scale.is_none();
+        let spread = self.spread && tile_zoom.is_none() && precise_scale.is_none();
+        let manual_zoom = self.manual_zoom
+            && tile_zoom.is_none()
+            && precise_scale.is_none()
+            && !continuous
+            && !spread;
+        let content_fit = self
+            .content_fit
+            .filter(|_| tile_zoom.is_none() && precise_scale.is_none() && !continuous && !spread);
+        let width_fit = self.width_fit
+            && content_fit.is_none()
+            && tile_zoom.is_none()
+            && precise_scale.is_none();
         let scan_gamma = self.scan_gamma_tenths.filter(valid_scan_gamma);
         Self {
             zoom: if tile_zoom.is_some() || precise_scale.is_some() {
@@ -898,29 +1087,64 @@ impl FixedPreferences {
             } else {
                 self.zoom.min(MAX_FIXED_ZOOM)
             },
+            zoom_factor_hundredths,
+            manual_zoom,
             tile_zoom,
+            zoom_columns_tenths: self.zoom_columns_tenths.filter(|value| (1..=80).contains(value)),
+            zoom_rows_tenths: self.zoom_rows_tenths.filter(|value| (1..=80).contains(value)),
+            zoom_fit_axis: self.zoom_fit_axis,
             precise_scale,
             turns: self.turns % 4,
+            content_fit,
             width_fit,
             height_fit: self.height_fit
+                && content_fit.is_none()
                 && !width_fit
                 && tile_zoom.is_none()
                 && precise_scale.is_none(),
-            continuous: self.continuous && tile_zoom.is_none() && precise_scale.is_none(),
-            spread: self.spread && tile_zoom.is_none() && precise_scale.is_none(),
+            continuous,
+            spread,
             continuous_gap: self.continuous_gap.min(MAX_CONTINUOUS_GAP),
             straighten_limit: self.straighten_limit.min(MAX_STRAIGHTEN_DEGREES),
-            scan_white_level: self.scan_white_level.filter(valid_white_level),
+            scan_white_level: self.scan_white_level.filter(|&level| level != u8::MAX),
+            dewatermark: self.dewatermark,
             scan_contrast: self.scan_contrast && scan_gamma.is_none(),
             scan_gamma_tenths: scan_gamma.filter(|&value| value != SCAN_GAMMA_DEFAULT),
             zoom_overlap_h: self.zoom_overlap_h.filter(|value| *value <= 90),
             zoom_overlap_v: self.zoom_overlap_v.filter(|value| *value <= 90),
             offset_x: normalized_offset(f64::from(self.offset_x)),
             offset_y: normalized_offset(f64::from(self.offset_y)),
-            continuous_crop: self.continuous_crop.filter(|_| !self.semi_auto_crop),
+            semi_auto_crop: self.semi_auto_crop && content_fit.is_none() && !manual_zoom,
+            continuous_crop: self
+                .continuous_crop
+                .filter(|_| !self.semi_auto_crop && content_fit.is_none() && !manual_zoom),
             fixed_reflow_spacing: self
                 .fixed_reflow_spacing
                 .filter(|value| *value != FixedReflowSpacing::Medium),
+            fixed_reflow_columns: self
+                .fixed_reflow_columns
+                .filter(|value| *value != FixedReflowColumns::Two),
+            fixed_reflow_word_gap: self
+                .fixed_reflow_word_gap
+                .filter(|value| *value != FixedReflowWordGap::Auto),
+            fixed_reflow_alignment: self
+                .fixed_reflow_alignment
+                .filter(|value| *value != FixedReflowAlignment::Auto),
+            fixed_reflow_direction: self
+                .fixed_reflow_direction
+                .filter(|value| *value != FixedReflowDirection::default()),
+            fixed_text_reflow_direction: self
+                .fixed_text_reflow_direction
+                .filter(|value| *value != FixedTextReflowDirection::default()),
+            fixed_reflow_text_scale: self
+                .fixed_reflow_text_scale
+                .or_else(|| {
+                    self.fixed_reflow_text_height
+                        .and_then(legacy_scan_text_height_scale)
+                })
+                .filter(valid_fixed_reflow_text_scale)
+                .filter(|&scale| scale != DEFAULT_SCAN_REFLOW_TEXT_SCALE),
+            fixed_reflow_text_height: None,
             crop_margin_hundredths: self
                 .crop_margin_hundredths
                 .filter(|&value| value != DEFAULT_CROP_MARGIN && value <= MAX_CROP_MARGIN),
@@ -947,6 +1171,8 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0)
         };
+        // Absent optional numbers stay absent; `integer` substitutes 0 and must not be used for them.
+        let optional_integer = |key| values.get(key).and_then(serde_json::Value::as_u64);
         let optional_switch = |key| values.get(key).and_then(serde_json::Value::as_bool);
         let optional_overlap = |key| {
             values
@@ -964,9 +1190,24 @@ impl<'de> Deserialize<'de> for FixedPreferences {
                     .unwrap_or(0.0),
             )
         };
+        let content_fit = values.get("content_fit").and_then(|value| match value {
+            serde_json::Value::Bool(true) => Some(FixedContentFit::Full),
+            serde_json::Value::Bool(false) => None,
+            _ => serde_json::from_value(value.clone()).ok(),
+        });
+        let zoom_factor_hundredths = values
+            .get("zoom_factor_hundredths")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|factor| u16::try_from(factor).ok());
+        // Older in-progress candidate saves had a factor but no explicit target. Interpret
+        // those as Manual so their visible zoom does not silently change on upgrade.
+        let manual_zoom = switch("manual_zoom")
+            || (values.get("manual_zoom").is_none() && zoom_factor_hundredths.is_some());
         let width_fit = switch("width_fit");
         Ok(Self {
             zoom: integer("zoom").min(MAX_FIXED_ZOOM as u64) as usize,
+            zoom_factor_hundredths,
+            manual_zoom,
             precise_scale: values
                 .get("precise_scale")
                 .and_then(serde_json::Value::as_f64)
@@ -974,21 +1215,32 @@ impl<'de> Deserialize<'de> for FixedPreferences {
             tile_zoom: values
                 .get("tile_zoom")
                 .and_then(|value| serde_json::from_value(value.clone()).ok()),
+            zoom_columns_tenths: values
+                .get("zoom_columns_tenths")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u8::try_from(value).ok()),
+            zoom_rows_tenths: values
+                .get("zoom_rows_tenths")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u8::try_from(value).ok()),
+            zoom_fit_axis: values
+                .get("zoom_fit_axis")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
             turns: (integer("turns") % 4) as u8,
+            content_fit,
             width_fit,
             height_fit: !width_fit && switch("height_fit"),
             continuous: switch("continuous"),
             spread: switch("spread"),
             scan_contrast: switch("scan_contrast"),
-            scan_gamma_tenths: u16::try_from(integer("scan_gamma_tenths")).ok(),
+            scan_gamma_tenths: optional_integer("scan_gamma_tenths").and_then(|value| u16::try_from(value).ok()),
             force_ocr: switch("force_ocr"),
             straighten_limit: integer("straighten_limit").min(u64::from(MAX_STRAIGHTEN_DEGREES))
                 as u8,
             dither: switch("dither"),
             continuous_gap: integer("continuous_gap").min(u64::from(MAX_CONTINUOUS_GAP)) as u16,
-            scan_white_level: u8::try_from(integer("scan_white_level"))
-                .ok()
-                .filter(valid_white_level),
+            scan_white_level: optional_integer("scan_white_level").and_then(|value| u8::try_from(value).ok()),
+            dewatermark: switch("dewatermark"),
             offset_x: offset("offset_x"),
             offset_y: offset("offset_y"),
             right_to_left: switch("right_to_left"),
@@ -1017,17 +1269,50 @@ impl<'de> Deserialize<'de> for FixedPreferences {
             fixed_reflow_spacing: values
                 .get("fixed_reflow_spacing")
                 .and_then(|value| serde_json::from_value(value.clone()).ok()),
+            fixed_reflow_columns: values
+                .get("fixed_reflow_columns")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
+            fixed_reflow_word_gap: values
+                .get("fixed_reflow_word_gap")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
+            fixed_reflow_alignment: values
+                .get("fixed_reflow_alignment")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
+            fixed_reflow_direction: values
+                .get("fixed_reflow_direction")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
+            fixed_text_reflow_direction: values
+                .get("fixed_text_reflow_direction")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
+            fixed_reflow_text_scale: values
+                .get("fixed_reflow_text_scale")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|scale| u16::try_from(scale).ok())
+                .filter(valid_fixed_reflow_text_scale)
+                .or_else(|| {
+                    values
+                        .get("fixed_reflow_text_height")
+                        .and_then(serde_json::Value::as_u64)
+                        .and_then(|height| u8::try_from(height).ok())
+                        .and_then(legacy_scan_text_height_scale)
+                }),
+            fixed_reflow_text_height: None,
         }
         .normalized())
     }
 }
 
-pub(crate) fn valid_scan_gamma(value: &u16) -> bool {
-    (SCAN_GAMMA_MIN..=SCAN_GAMMA_MAX).contains(value)
+fn valid_fixed_reflow_text_scale(scale: &u16) -> bool {
+    (MIN_SCAN_REFLOW_TEXT_SCALE..=MAX_SCAN_REFLOW_TEXT_SCALE).contains(scale)
+        && (*scale - MIN_SCAN_REFLOW_TEXT_SCALE) % SCAN_REFLOW_TEXT_SCALE_STEP == 0
 }
 
-fn valid_white_level(level: &u8) -> bool {
-    (MIN_SCAN_WHITE_LEVEL..=MAX_SCAN_WHITE_LEVEL).contains(level)
+pub(crate) fn legacy_scan_text_height_scale(height: u8) -> Option<u16> {
+    ((24..=72).contains(&height) && (height - 24) % 8 == 0).then_some(u16::from(height) * 5 / 2)
+}
+
+pub(crate) fn valid_scan_gamma(value: &u16) -> bool {
+    (SCAN_GAMMA_MIN..=SCAN_GAMMA_MAX).contains(value)
 }
 
 fn normalized_offset(value: f64) -> f32 {
@@ -1931,6 +2216,13 @@ impl Library {
                                 .unwrap_or(false) =>
                     {
                         BrowseKind::KindleProtected { size }
+                    }
+                    // Plain ZIP files must be real archives; the directory check is bounded.
+                    Some(DocumentFormat::Archive) if !is_zip_archive(&path) => {
+                        BrowseKind::Unavailable {
+                            size,
+                            too_large: false,
+                        }
                     }
                     Some(format) if size <= format.max_bytes() => {
                         let saved = known_metadata
@@ -3599,6 +3891,14 @@ pub(crate) fn safe_path(path: &Path) -> bool {
         && path.components().all(|component| matches!(component, Component::Normal(name) if name.to_str().is_some_and(|name| !name.starts_with('.'))))
 }
 
+/// Whether a file opens as a ZIP archive. Only the end-of-central-directory is read.
+fn is_zip_archive(path: &Path) -> bool {
+    fs::File::open(path)
+        .ok()
+        .and_then(|file| ZipArchive::new(BufReader::new(file)).ok())
+        .is_some()
+}
+
 fn has_extension(path: &Path, extension: &str) -> bool {
     path.extension()
         .and_then(|name| name.to_str())
@@ -3838,7 +4138,7 @@ mod tests {
         fs::write(root.join(".private.txt"), b"hidden").unwrap();
         File::create(root.join("Too big.TXT"))
             .unwrap()
-            .set_len(MAX_INPUT as u64 + 1)
+            .set_len(crate::loose::MAX_TEXT_INPUT as u64 + 1)
             .unwrap();
 
         let mut library = Library::open(&root, &scratch.0.join("reader.json")).unwrap();
@@ -3878,7 +4178,7 @@ mod tests {
         assert_eq!(book.author.as_deref(), Some("Author"));
         assert!(matches!(
             browse.entries[4].kind,
-            BrowseKind::Unavailable { size, too_large: true } if size == MAX_INPUT as u64 + 1
+            BrowseKind::Unavailable { size, too_large: true } if size == crate::loose::MAX_TEXT_INPUT as u64 + 1
         ));
 
         let books = library.browse(Path::new("Books")).unwrap();
@@ -4020,6 +4320,7 @@ mod tests {
         let anchor = Anchor {
             raw_caret: None,
             illustration: None,
+            side_bias: None,
             book: 1,
             chapter: "chapter.xhtml".into(),
             revision: 2,
@@ -4117,7 +4418,7 @@ mod tests {
         .unwrap();
         File::create(root.join("large.txt"))
             .unwrap()
-            .set_len(MAX_INPUT as u64 + 1)
+            .set_len(crate::loose::MAX_TEXT_INPUT as u64 + 1)
             .unwrap();
         fs::write(root.join("other.dat"), text).unwrap();
         let mut library = Library::open(&root, &scratch.0.join("reader.json")).unwrap();
@@ -4454,12 +4755,13 @@ mod tests {
         assert!(!legacy.zoom_bottom_to_top());
 
         let options: FixedPreferences = serde_json::from_str(
-            r#"{"dither":true,"scan_white_level":900,"continuous_gap":999999,
+            r#"{"dither":true,"dewatermark":true,"scan_white_level":900,"continuous_gap":999999,
                "zoom_overlap_h":67,"zoom_overlap_v":0,"zoom_direction_vertical":true,
                "zoom_bottom_to_top":true}"#,
         )
         .unwrap();
         assert!(options.dither);
+        assert!(options.dewatermark);
         assert_eq!(options.continuous_gap, MAX_CONTINUOUS_GAP);
         assert_eq!(options.scan_white_level, None);
         assert_eq!(options.zoom_overlap_h(), 67);
@@ -4473,6 +4775,7 @@ mod tests {
         let reopened: FixedPreferences =
             serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
         assert_eq!(reopened, saved);
+        assert!(reopened.dewatermark);
         assert_eq!(reopened.zoom_overlap_h(), 67);
         assert_eq!(reopened.zoom_overlap_v(), 0);
         assert!(reopened.zoom_direction_vertical());
@@ -4488,8 +4791,55 @@ mod tests {
             }
             .normalized()
             .scan_white_level,
+            Some(120)
+        );
+        assert_eq!(
+            FixedPreferences {
+                scan_white_level: Some(u8::MAX),
+                ..saved
+            }
+            .normalized()
+            .scan_white_level,
             None
         );
+    }
+
+    #[test]
+    fn fixed_text_reflow_direction_defaults_to_ltr_and_round_trips_vertical_mode() {
+        let legacy: FixedPreferences = serde_json::from_str(r#"{"width_fit":true}"#).unwrap();
+        assert_eq!(legacy.fixed_text_reflow_direction, None);
+        assert_eq!(
+            legacy.fixed_text_reflow_direction.unwrap_or_default(),
+            FixedTextReflowDirection::LeftToRight
+        );
+
+        let saved = FixedPreferences {
+            fixed_text_reflow_direction: Some(FixedTextReflowDirection::TopToBottomRightToLeft),
+            ..FixedPreferences::default()
+        };
+        let reopened =
+            serde_json::from_slice::<FixedPreferences>(&serde_json::to_vec(&saved).unwrap())
+                .unwrap();
+        assert_eq!(reopened, saved);
+    }
+
+    #[test]
+    fn fixed_scan_reflow_direction_defaults_to_ltr_and_round_trips_vertical_mode() {
+        let legacy: FixedPreferences = serde_json::from_str(r#"{"width_fit":true}"#).unwrap();
+        assert_eq!(legacy.fixed_reflow_direction, None);
+        assert_eq!(
+            legacy.fixed_reflow_direction.unwrap_or_default(),
+            FixedReflowDirection::LeftToRight
+        );
+
+        let saved = FixedPreferences {
+            fixed_reflow_direction: Some(FixedReflowDirection::TopToBottomRightToLeft),
+            ..FixedPreferences::default()
+        };
+        let reopened =
+            serde_json::from_slice::<FixedPreferences>(&serde_json::to_vec(&saved).unwrap())
+                .unwrap();
+        assert_eq!(reopened, saved);
     }
 
     #[test]
@@ -4561,9 +4911,15 @@ mod tests {
             state.fixed_preferences,
             FixedPreferences {
                 zoom: 4,
+                zoom_factor_hundredths: None,
+                manual_zoom: false,
                 precise_scale: None,
                 tile_zoom: None,
+                zoom_columns_tenths: None,
+                zoom_rows_tenths: None,
+                zoom_fit_axis: None,
                 turns: 3,
+                content_fit: None,
                 width_fit: true,
                 height_fit: false,
                 continuous: false,
@@ -4573,6 +4929,7 @@ mod tests {
                 dither: false,
                 continuous_gap: 0,
                 scan_white_level: None,
+                dewatermark: false,
                 straighten_limit: 0,
                 force_ocr: false,
                 offset_x: MAX_FIXED_OFFSET,
@@ -4591,6 +4948,13 @@ mod tests {
                 semi_auto_crop: false,
                 continuous_crop: None,
                 fixed_reflow_spacing: None,
+                fixed_reflow_columns: None,
+                fixed_reflow_word_gap: None,
+                fixed_reflow_alignment: None,
+                fixed_reflow_direction: None,
+                fixed_text_reflow_direction: None,
+                fixed_reflow_text_scale: None,
+                fixed_reflow_text_height: None,
             }
         );
         assert!(state.fixed_preferences.is_valid());
@@ -4639,6 +5003,7 @@ mod tests {
         let anchor = |offset| Anchor {
             raw_caret: None,
             illustration: None,
+            side_bias: None,
             book: 1,
             chapter: "chapter.xhtml".into(),
             revision: 1,

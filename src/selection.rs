@@ -668,9 +668,19 @@ impl Probe {
     }
 
     /// A bounded automatic-word scan from the original source start. It stops
-    /// at punctuation, inline block boundaries and 20 Unicode scalar values.
-    /// The returned endpoint is an actual source anchor, never a lookup form.
+    /// at punctuation, inline block boundaries, and the configured CJK
+    /// look-ahead. The endpoint is an actual source anchor, never a lookup form.
     pub(crate) fn dictionary_scan(&self, selection: &TextSelection) -> Option<TextSelection> {
+        self.dictionary_scan_with_limit(selection, crate::dictionary::DEFAULT_CJK_SCAN_LENGTH)
+    }
+
+    /// Like `dictionary_scan`, using the user's configured CJK prefix limit.
+    pub(crate) fn dictionary_scan_with_limit(
+        &self,
+        selection: &TextSelection,
+        lookahead: usize,
+    ) -> Option<TextSelection> {
+        let max_characters = crate::dictionary::scan_character_limit(lookahead);
         if selection.start.raw_caret.is_some() || selection.end.raw_caret.is_some() {
             if self.select_raw_anchors(&selection.start, &selection.end)? != *selection
                 || selection.start.block != selection.end.block
@@ -690,7 +700,7 @@ impl Probe {
             let tail = bound.raw().get(start..)?;
             let length = tail
                 .char_indices()
-                .take(crate::dictionary::MAX_SCAN_CHARACTERS)
+                .take(max_characters)
                 .take_while(|(_, c)| crate::dictionary::cjk_word_character(*c))
                 .map(|(i, c)| i + c.len_utf8())
                 .last()?;
@@ -710,7 +720,9 @@ impl Probe {
         }
         #[cfg(feature = "kindle")]
         if let Some(band) = self.foreign_band_for_anchors(&selection.start, &selection.end) {
-            return band.layout.note_dictionary_scan(selection);
+            return band
+                .layout
+                .note_dictionary_scan_with_limit(selection, lookahead);
         }
         let spans = self.selection_spans(&selection.start, &selection.end)?;
         if spans.first != spans.last {
@@ -725,7 +737,7 @@ impl Probe {
         let tail = view.text().get(start..)?;
         let length = tail
             .char_indices()
-            .take(crate::dictionary::MAX_SCAN_CHARACTERS)
+            .take(max_characters)
             .take_while(|(_, c)| crate::dictionary::cjk_word_character(*c))
             .map(|(i, c)| i + c.len_utf8())
             .last()?;
@@ -1460,6 +1472,15 @@ impl crate::footnotes::cross_part::Layout {
     }
 
     pub(crate) fn note_dictionary_scan(&self, selection: &TextSelection) -> Option<TextSelection> {
+        self.note_dictionary_scan_with_limit(selection, crate::dictionary::DEFAULT_CJK_SCAN_LENGTH)
+    }
+
+    pub(crate) fn note_dictionary_scan_with_limit(
+        &self,
+        selection: &TextSelection,
+        lookahead: usize,
+    ) -> Option<TextSelection> {
+        let max_characters = crate::dictionary::scan_character_limit(lookahead);
         let spans = self.note_spans(&selection.start, &selection.end)?;
         if spans.first != spans.last {
             return None;
@@ -1473,7 +1494,7 @@ impl crate::footnotes::cross_part::Layout {
         let tail = view.text().get(start..)?;
         let length = tail
             .char_indices()
-            .take(crate::dictionary::MAX_SCAN_CHARACTERS)
+            .take(max_characters)
             .take_while(|(_, c)| crate::dictionary::cjk_word_character(*c))
             .map(|(i, c)| i + c.len_utf8())
             .last()?;
@@ -1671,6 +1692,7 @@ impl crate::footnotes::cross_part::Layout {
                     .chars()
                     .chain(block.text.get(link.bytes.end..)?.chars())
                     .any(char::is_alphanumeric),
+                source_is_whole_block: block.text == linked,
                 source_block: block.key,
             },
             selection,
@@ -1747,6 +1769,7 @@ impl crate::footnotes::cross_part::Layout {
             block: key,
             offset,
             illustration: None,
+            side_bias: None,
         })
     }
 

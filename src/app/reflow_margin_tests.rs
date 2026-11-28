@@ -1,5 +1,6 @@
 use super::*;
 use crate::Settings;
+use crate::app::NumberField;
 use crate::app::tests::{Fixture, capture_test_screen};
 use crate::selection::{HighlightRect, TextSelection};
 use std::path::PathBuf;
@@ -19,6 +20,10 @@ fn tap(app: &mut Reader, label: &str) {
 }
 
 fn adjust(app: &mut Reader, edge: &str, step: &str) {
+    adjust_edge(app, edge, step, false);
+}
+
+fn adjust_edge(app: &mut Reader, edge: &str, step: &str, held: bool) {
     let bars = app.reading_bars();
     let (row, _) = bars
         .row_labels
@@ -33,7 +38,32 @@ fn adjust(app: &mut Reader, edge: &str, step: &str) {
                 && (row.y..row.y + row.h).contains(&(button.rect.y + button.rect.h / 2))
         })
         .unwrap();
-    tap_rect(app, cell.rect);
+    let x = (cell.rect.x + cell.rect.w / 2) as f32;
+    let y = (cell.rect.y + cell.rect.h / 2) as f32;
+    let input = if held {
+        Input::LongTap(x, y)
+    } else {
+        Input::Tap(x, y)
+    };
+    assert_ne!(app.input(input), Change::None);
+    assert_eq!(app.reading_panel, Some(BarPanel::TextMargins));
+}
+
+fn adjust_horizontal(app: &mut Reader, label: &str, held: bool) {
+    let button = app
+        .reading_bars()
+        .buttons
+        .into_iter()
+        .find(|button| button.label == label)
+        .unwrap();
+    let x = (button.rect.x + button.rect.w / 2) as f32;
+    let y = (button.rect.y + button.rect.h / 2) as f32;
+    let input = if held {
+        Input::LongTap(x, y)
+    } else {
+        Input::Tap(x, y)
+    };
+    assert_ne!(app.input(input), Change::None);
     assert_eq!(app.reading_panel, Some(BarPanel::TextMargins));
 }
 
@@ -135,9 +165,15 @@ fn adjusts_each_edge_from_the_page_and_restores_the_same_source_after_reopen() {
     let rows = before.len() / width;
     app.open_reading_edge(false, 500.0);
     tap(&mut app, "Margins");
-    adjust(&mut app, "Left", "+12");
+    adjust_horizontal(&mut app, "L+", true);
+    adjust_horizontal(&mut app, "L+", true);
+    adjust_horizontal(&mut app, "L+", false);
+    adjust_horizontal(&mut app, "L+", false);
     assert_eq!(geometry(&app), (66, 54, 54, 54, false));
-    adjust(&mut app, "Right", "-12");
+    adjust_horizontal(&mut app, "R−", true);
+    adjust_horizontal(&mut app, "R−", true);
+    adjust_horizontal(&mut app, "R−", false);
+    adjust_horizontal(&mut app, "R−", false);
     assert_eq!(geometry(&app), (66, 42, 54, 54, false));
     let b = &mut app.active.as_mut().unwrap().reading;
     assert_eq!(b.probe.page_for(&anchor), Some(b.page));
@@ -210,6 +246,98 @@ fn adjusts_each_edge_from_the_page_and_restores_the_same_source_after_reopen() {
     if let Some(p) = std::env::var_os("READER_MARGIN_REPORT") {
         let record = serde_json::json!({"translated_ink_pixels":ink,"translated_layout_rows":rows,"shift_px":12,"selected_source_bytes":selected.text.len(),"highlight_rects":rects.len(),"chapter_one_based":chapter+1,"reopened_anchor":true,"reset_identical_frame":true});
         std::fs::write(p, serde_json::to_vec(&record).unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn paired_horizontal_margin_editor_sets_both_edges_and_rejects_invalid_pairs() {
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    app.open_path(&fixture.book).unwrap();
+
+    let field = NumberField::ReadingSideMargins;
+    app.open_reading_edge(false, 500.0);
+    tap(&mut app, "Margins");
+    tap(&mut app, "54 / 54 px");
+    assert_eq!(app.screen, Screen::NumberingValue(field));
+    assert_eq!(app.editor.string(), "54,54");
+    app.editor.text = "66,42".chars().collect();
+    app.editor.caret = app.editor.text.len();
+    app.apply_numbering_input(field).unwrap();
+    assert_eq!(geometry(&app), (66, 42, 54, 54, false));
+
+    for value in ["66", "66,42,10", "66,9999", "-1,42", " ,42"] {
+        app.show(Screen::NumberingValue(field));
+        app.editor.text = value.chars().collect();
+        app.editor.caret = app.editor.text.len();
+        assert!(
+            app.apply_numbering_input(field).is_err(),
+            "accepted {value}"
+        );
+        assert_eq!(geometry(&app), (66, 42, 54, 54, false));
+    }
+}
+
+#[test]
+fn vertical_margin_steppers_use_five_pixel_holds_and_keep_linked_edges_in_sync() {
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    app.open_reading_edge(false, 500.0);
+    tap(&mut app, "Margins");
+
+    adjust_edge(&mut app, "Top", "+1", false);
+    assert_eq!(geometry(&app), (54, 54, 55, 54, false));
+    adjust_edge(&mut app, "Top", "+1", true);
+    assert_eq!(geometry(&app), (54, 54, 60, 54, false));
+
+    tap(&mut app, "Linked");
+    assert_eq!(geometry(&app), (54, 54, 57, 57, true));
+    adjust_edge(&mut app, "Bottom", "+1", true);
+    assert_eq!(geometry(&app), (54, 54, 62, 62, true));
+    adjust_edge(&mut app, "Top", "-1", false);
+    assert_eq!(geometry(&app), (54, 54, 61, 61, true));
+}
+
+#[test]
+fn margin_preset_and_adjustment_rows_keep_oasis_touch_targets_at_least_100px() {
+    let fixture = Fixture::new();
+    let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+    let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+    app.open_path(&fixture.book).unwrap();
+    app.open_reading_edge(false, 500.0);
+    tap(&mut app, "Margins");
+
+    if app.reading_viewport().dimensions().0 < 1_072 {
+        return;
+    }
+    let bars = app.reading_bars();
+    for (label, expected_buttons) in [
+        ("L/R preset", 9),
+        ("Top presets", 9),
+        ("Top · 54 px", 5),
+        ("Bottom presets", 9),
+        ("Bottom · 54 px", 5),
+    ] {
+        let (row, _) = bars
+            .row_labels
+            .iter()
+            .find(|(_, current)| current == label)
+            .unwrap();
+        let targets = bars
+            .buttons
+            .iter()
+            .filter(|button| (row.y..row.y + row.h).contains(&(button.rect.y + button.rect.h / 2)))
+            .collect::<Vec<_>>();
+        assert_eq!(targets.len(), expected_buttons, "{label}");
+        assert!(
+            targets
+                .iter()
+                .all(|button| { button.rect.w >= 100 && button.rect.h >= 100 }),
+            "{label} contains a target smaller than 100 px"
+        );
     }
 }
 

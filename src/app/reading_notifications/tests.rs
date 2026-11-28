@@ -186,7 +186,7 @@ fn reading_notifications_pdf_contrast_and_fit_are_routed_to_their_own_switches()
     app.open_path(&pdf).unwrap();
     let original = app.current_history_location().unwrap().position;
     text_panel(&mut app, BarPanel::View, "View");
-    tap_choice(&mut app, "Fit", "Fit height");
+    tap_choice(&mut app, "Fit", "Height");
     assert!(app.notifications.history.is_empty());
 
     text_panel(&mut app, BarPanel::Scan, "Scan");
@@ -211,8 +211,10 @@ fn reading_notifications_pdf_contrast_and_fit_are_routed_to_their_own_switches()
         Some(15)
     );
     text_panel(&mut app, BarPanel::View, "View");
-    tap_choice(&mut app, "Fit", "Fit width");
-    assert_eq!(visible(&app), Some("Fit width"));
+    // Fit changes are silent, as on the earlier Height choice: the fit axis is shown by the bar itself.
+    let before = app.notifications.history.len();
+    tap_choice(&mut app, "Fit", "Width");
+    assert_eq!(app.notifications.history.len(), before);
     assert_eq!(app.current_history_location().unwrap().position, original);
 }
 

@@ -7,15 +7,17 @@ use primitive_app::with_storage;
 use primitive_ui::{CAPTION, Canvas, GrayImage, HAIRLINE, Input, Rect};
 
 use crate::fixed_session::FixedReading;
-use crate::library::FixedReflowSpacing;
+use crate::library::{
+    DEFAULT_SCAN_REFLOW_TEXT_SCALE, FixedReflowAlignment, FixedReflowColumns,
+    FixedReflowDirection, FixedReflowSpacing, FixedReflowWordGap, MAX_SCAN_REFLOW_TEXT_SCALE,
+    FixedTextReflowDirection, MIN_SCAN_REFLOW_TEXT_SCALE, SCAN_REFLOW_TEXT_SCALE_STEP,
+};
 use crate::scan_reflow::ScanReflow;
 use crate::session::page_overlap::Marker;
 use crate::session::{PAGE_REFRESH_GAP, PagePaint, PageTurns, ReadingViewport, draw_page_picture};
 use crate::{Anchor, PageOverlapStyle, Probe, Result, Settings};
 
-const MIN_SCAN_HEIGHT: u32 = 24;
-const MAX_SCAN_HEIGHT: u32 = 72;
-const SCAN_SIZE_STEP: i32 = 8;
+const SCAN_SIZE_STEP: i32 = SCAN_REFLOW_TEXT_SCALE_STEP as i32;
 
 struct Controls {
     footer_y: i32,
@@ -23,6 +25,10 @@ struct Controls {
     spacing: Rect,
     panel: Rect,
     choices: [(FixedReflowSpacing, &'static str, Rect); 3],
+    column_choices: [(FixedReflowColumns, &'static str, Rect); 3],
+    word_gap_choices: [(FixedReflowWordGap, &'static str, Rect); 3],
+    alignment_choices: [(FixedReflowAlignment, &'static str, Rect); 5],
+    direction_choices: Vec<(DirectionChoice, &'static str, Rect)>,
     overlap_choices: [(bool, &'static str, Rect); 2],
     markers: [(PageOverlapStyle, Rect); 5],
     cancel: Rect,
@@ -31,14 +37,23 @@ struct Controls {
     larger: Rect,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DirectionChoice {
+    Scan(FixedReflowDirection),
+    Text(FixedTextReflowDirection),
+}
+
 impl Controls {
-    fn new(viewport: ReadingViewport) -> Self {
+    fn new(viewport: ReadingViewport, scan: bool) -> Self {
         let width = viewport.dimensions().0 as i32;
         let footer_y = viewport.page_height() as i32;
-        let panel = Rect::new(0, footer_y - 320, width, 320);
+        let panel_height = if scan { 452 } else { 386 };
+        let panel = Rect::new(0, footer_y - panel_height, width, panel_height);
         let spacing_row = panel.y + 57;
         let overlap_row = spacing_row + 66;
-        let marker_row = overlap_row + 66;
+        let alignment_row = overlap_row + 66;
+        let direction_row = alignment_row + if scan { 66 } else { 0 };
+        let marker_row = direction_row + 66;
         let action_row = marker_row + 66;
         let marker_width = (width - 76 - 10 * 4) / 5;
         let mut marker_x = 38;
@@ -48,6 +63,57 @@ impl Controls {
             marker_x += width + 10;
             (PageOverlapStyle::ALL[index], rect)
         });
+        let alignment_width = (width - 214 - 38 - 10 * 4) / 5;
+        let alignment_labels = ["Auto", "Left", "Center", "Right", "Justify"];
+        let alignment_choices = std::array::from_fn(|index| {
+            (
+                FixedReflowAlignment::ALL[index],
+                alignment_labels[index],
+                Rect::new(
+                    214 + index as i32 * (alignment_width + 10),
+                    alignment_row,
+                    alignment_width,
+                    60,
+                ),
+            )
+        });
+        let direction_start = 758;
+        let direction_step = 104;
+        let direction_choices = if scan {
+            FixedReflowDirection::ALL
+                .into_iter()
+                .enumerate()
+                .map(|(index, direction)| {
+                    (
+                        DirectionChoice::Scan(direction),
+                        direction.label(),
+                        Rect::new(
+                            direction_start + index as i32 * direction_step,
+                            direction_row,
+                            96,
+                            60,
+                        ),
+                    )
+                })
+                .collect()
+        } else {
+            FixedTextReflowDirection::ALL
+                .into_iter()
+                .enumerate()
+                .map(|(index, direction)| {
+                    (
+                        DirectionChoice::Text(direction),
+                        direction.label(),
+                        Rect::new(
+                            direction_start + index as i32 * direction_step,
+                            direction_row,
+                            96,
+                            60,
+                        ),
+                    )
+                })
+                .collect()
+        };
         Self {
             footer_y,
             width,
@@ -70,6 +136,42 @@ impl Controls {
                     Rect::new(418, spacing_row, 176, 60),
                 ),
             ],
+            column_choices: [
+                (
+                    FixedReflowColumns::One,
+                    "1",
+                    Rect::new(758, spacing_row, 96, 60),
+                ),
+                (
+                    FixedReflowColumns::Two,
+                    "2",
+                    Rect::new(864, spacing_row, 96, 60),
+                ),
+                (
+                    FixedReflowColumns::Three,
+                    "3",
+                    Rect::new(970, spacing_row, 96, 60),
+                ),
+            ],
+            word_gap_choices: [
+                (
+                    FixedReflowWordGap::Small,
+                    "Small",
+                    Rect::new(758, overlap_row, 96, 60),
+                ),
+                (
+                    FixedReflowWordGap::Auto,
+                    "Auto",
+                    Rect::new(864, overlap_row, 96, 60),
+                ),
+                (
+                    FixedReflowWordGap::Large,
+                    "Large",
+                    Rect::new(970, overlap_row, 96, 60),
+                ),
+            ],
+            alignment_choices,
+            direction_choices,
             overlap_choices: [
                 (false, "Off", Rect::new(242, overlap_row, 150, 60)),
                 (true, "On", Rect::new(406, overlap_row, 150, 60)),
@@ -90,10 +192,15 @@ enum FlowStyle {
         fonts: Vec<PathBuf>,
         settings: Settings,
         spacing: FixedReflowSpacing,
+        direction: FixedTextReflowDirection,
     },
     Scan {
-        text_height: u32,
+        text_scale: u16,
         spacing: FixedReflowSpacing,
+        columns: FixedReflowColumns,
+        word_gap: FixedReflowWordGap,
+        alignment: FixedReflowAlignment,
+        direction: FixedReflowDirection,
     },
 }
 
@@ -117,6 +224,12 @@ struct Location {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FlowPreferences {
     pub(crate) spacing: FixedReflowSpacing,
+    pub(crate) columns: FixedReflowColumns,
+    pub(crate) word_gap: FixedReflowWordGap,
+    pub(crate) alignment: FixedReflowAlignment,
+    pub(crate) direction: FixedReflowDirection,
+    pub(crate) text_direction: FixedTextReflowDirection,
+    pub(crate) text_scale: Option<u16>,
     pub(crate) overlap_enabled: bool,
     pub(crate) marker: PageOverlapStyle,
 }
@@ -128,6 +241,7 @@ impl FlowStyle {
             fonts,
             settings,
             spacing,
+            direction,
         } = self
         else {
             return Err("Choose the text reading view first".into());
@@ -146,7 +260,7 @@ impl FlowStyle {
             let base = u32::from(settings.effective_line_spacing_percent());
             settings.with_line_spacing_percent(spacing.scaled_pitch(base).clamp(50, 200) as u16)
         };
-        let probe = load_probe(title, text, fonts, settings)?;
+        let probe = load_probe(title, text, fonts, settings, *direction)?;
         Ok(Some(FlowLayout::Text(Box::new(probe))))
     }
 
@@ -159,8 +273,12 @@ impl FlowStyle {
         match self {
             Self::Text { .. } => self.layout_text(&document.page_text(page)?.text, viewport),
             Self::Scan {
-                text_height,
+                text_scale,
                 spacing,
+                columns,
+                word_gap,
+                alignment,
+                direction,
             } => {
                 let Some(words) = document
                     .cached_ocr(page)
@@ -174,8 +292,12 @@ impl FlowStyle {
                     &words,
                     viewport.dimensions().0,
                     viewport.page_height(),
-                    *text_height,
+                    *text_scale,
                     *spacing,
+                    *columns,
+                    *word_gap,
+                    *alignment,
+                    *direction,
                 )?;
                 Ok(Some(FlowLayout::Scan(layout)))
             }
@@ -188,10 +310,33 @@ impl FlowStyle {
         }
     }
 
-    fn label(&self) -> &'static str {
-        match self {
-            Self::Text { .. } => "Text",
-            Self::Scan { .. } => "Scan",
+    fn set_columns(&mut self, value: FixedReflowColumns) {
+        if let Self::Scan { columns, .. } = self {
+            *columns = value;
+        }
+    }
+
+    fn set_word_gap(&mut self, value: FixedReflowWordGap) {
+        if let Self::Scan { word_gap, .. } = self {
+            *word_gap = value;
+        }
+    }
+
+    fn set_alignment(&mut self, value: FixedReflowAlignment) {
+        if let Self::Scan { alignment, .. } = self {
+            *alignment = value;
+        }
+    }
+
+    fn set_direction(&mut self, value: FixedReflowDirection) {
+        if let Self::Scan { direction, .. } = self {
+            *direction = value;
+        }
+    }
+
+    fn set_text_direction(&mut self, value: FixedTextReflowDirection) {
+        if let Self::Text { direction, .. } = self {
+            *direction = value;
         }
     }
 
@@ -320,14 +465,29 @@ impl TextFlow {
         let saved = document.preferences();
         let preferences = FlowPreferences {
             spacing: saved.fixed_reflow_spacing.unwrap_or_default(),
+            columns: saved.fixed_reflow_columns.unwrap_or_default(),
+            word_gap: saved.fixed_reflow_word_gap.unwrap_or_default(),
+            alignment: saved.fixed_reflow_alignment.unwrap_or_default(),
+            direction: saved.fixed_reflow_direction.unwrap_or_default(),
+            text_direction: saved
+                .fixed_text_reflow_direction
+                .or_else(|| saved.fixed_reflow_direction.map(Into::into))
+                .unwrap_or_default(),
+            text_scale: saved.fixed_reflow_text_scale,
             overlap_enabled: saved.page_overlap_enabled,
             marker: saved.page_overlap_style.unwrap_or_default(),
         };
         let spacing = preferences.spacing;
         let style = if scan {
             FlowStyle::Scan {
-                text_height: 40,
+                text_scale: preferences
+                    .text_scale
+                    .unwrap_or(DEFAULT_SCAN_REFLOW_TEXT_SCALE),
                 spacing,
+                columns: preferences.columns,
+                word_gap: preferences.word_gap,
+                alignment: preferences.alignment,
+                direction: preferences.direction,
             }
         } else {
             FlowStyle::Text {
@@ -335,6 +495,7 @@ impl TextFlow {
                 fonts: fonts.to_vec(),
                 settings,
                 spacing,
+                direction: preferences.text_direction,
             }
         };
         let page = document.page();
@@ -473,7 +634,7 @@ impl TextFlow {
         turn: Option<Input>,
         document: &FixedReading,
     ) -> Result<bool> {
-        let controls = Controls::new(self.viewport);
+        let controls = Controls::new(self.viewport, matches!(self.style, FlowStyle::Scan { .. }));
         if let Some(draft) = self.layout_draft {
             return self.layout_input(input, document, &controls, draft);
         }
@@ -515,7 +676,7 @@ impl TextFlow {
 
     #[cfg(test)]
     pub(crate) fn overlap_test_targets(&self) -> [Rect; 4] {
-        let controls = Controls::new(self.viewport);
+        let controls = Controls::new(self.viewport, matches!(self.style, FlowStyle::Scan { .. }));
         [
             controls.spacing,
             controls.overlap_choices[1].2,
@@ -526,7 +687,7 @@ impl TextFlow {
 
     #[cfg(test)]
     pub(crate) fn spacing_test_targets(&self) -> [Rect; 4] {
-        let controls = Controls::new(self.viewport);
+        let controls = Controls::new(self.viewport, matches!(self.style, FlowStyle::Scan { .. }));
         [
             controls.spacing,
             controls.choices[2].2,
@@ -555,9 +716,29 @@ impl TextFlow {
                 self.layout_draft = None;
             }
             Input::Tap(x, y) if controls.apply.contains(x, y) => {
-                if draft.spacing != self.preferences.spacing {
+                let scan = matches!(self.style, FlowStyle::Scan { .. });
+                let direction_changed = if scan {
+                    draft.direction != self.preferences.direction
+                } else {
+                    draft.text_direction != self.preferences.text_direction
+                };
+                if draft.spacing != self.preferences.spacing
+                    || (scan
+                        && (draft.columns != self.preferences.columns
+                            || draft.word_gap != self.preferences.word_gap
+                            || draft.alignment != self.preferences.alignment))
+                    || direction_changed
+                {
                     let mut style = self.style.clone();
                     style.set_spacing(draft.spacing);
+                    style.set_columns(draft.columns);
+                    style.set_word_gap(draft.word_gap);
+                    style.set_alignment(draft.alignment);
+                    if scan {
+                        style.set_direction(draft.direction);
+                    } else {
+                        style.set_text_direction(draft.text_direction);
+                    }
                     self.refresh_layout(style, document)?;
                 }
                 if !draft.overlap_enabled {
@@ -573,6 +754,37 @@ impl TextFlow {
                     .find(|(_, _, rect)| rect.contains(x, y))
                 {
                     draft.spacing = *spacing;
+                } else if matches!(self.style, FlowStyle::Scan { .. })
+                    && let Some((columns, _, _)) = controls
+                        .column_choices
+                        .iter()
+                        .find(|(_, _, rect)| rect.contains(x, y))
+                {
+                    draft.columns = *columns;
+                } else if matches!(self.style, FlowStyle::Scan { .. })
+                    && let Some((word_gap, _, _)) = controls
+                        .word_gap_choices
+                        .iter()
+                        .find(|(_, _, rect)| rect.contains(x, y))
+                {
+                    draft.word_gap = *word_gap;
+                } else if matches!(self.style, FlowStyle::Scan { .. })
+                    && draft.direction != FixedReflowDirection::TopToBottomRightToLeft
+                    && let Some((alignment, _, _)) = controls
+                        .alignment_choices
+                        .iter()
+                        .find(|(_, _, rect)| rect.contains(x, y))
+                {
+                    draft.alignment = *alignment;
+                } else if let Some((direction, _, _)) = controls
+                        .direction_choices
+                        .iter()
+                        .find(|(_, _, rect)| rect.contains(x, y))
+                {
+                    match direction {
+                        DirectionChoice::Scan(direction) => draft.direction = *direction,
+                        DirectionChoice::Text(direction) => draft.text_direction = *direction,
+                    }
                 } else if let Some((enabled, _, _)) = controls
                     .overlap_choices
                     .iter()
@@ -600,25 +812,36 @@ impl TextFlow {
 
     fn resize_scan(&mut self, step: i32, document: &FixedReading) -> Result<bool> {
         let FlowStyle::Scan {
-            text_height,
+            text_scale,
             spacing,
+            columns,
+            word_gap,
+            alignment,
+            direction,
         } = self.style
         else {
             return Ok(false);
         };
-        let height = text_height
-            .saturating_add_signed(step)
-            .clamp(MIN_SCAN_HEIGHT, MAX_SCAN_HEIGHT);
-        if height == text_height {
+        let scale = (i32::from(text_scale) + step)
+            .clamp(
+                i32::from(MIN_SCAN_REFLOW_TEXT_SCALE),
+                i32::from(MAX_SCAN_REFLOW_TEXT_SCALE),
+            ) as u16;
+        if scale == text_scale {
             return Ok(false);
         }
         self.refresh_layout(
             FlowStyle::Scan {
-                text_height: height,
+                text_scale: scale,
                 spacing,
+                columns,
+                word_gap,
+                alignment,
+                direction,
             },
             document,
         )?;
+        self.preferences.text_scale = Some(scale);
         Ok(true)
     }
 
@@ -771,7 +994,7 @@ impl TextFlow {
         inverted: bool,
         guides: Option<crate::app::reading_guides::Lines>,
     ) {
-        let controls = Controls::new(self.viewport);
+        let controls = Controls::new(self.viewport, matches!(self.style, FlowStyle::Scan { .. }));
         let mut paint = PagePaint::full(inverted);
         paint.reading_guides = guides;
         if self.layout_draft.is_some() {
@@ -799,6 +1022,50 @@ impl TextFlow {
             for (choice, label, rect) in controls.choices {
                 canvas.button(rect, label, draft.spacing == choice, false);
             }
+            if matches!(self.style, FlowStyle::Scan { .. }) {
+                canvas.text(
+                    Rect::new(640, controls.choices[0].2.y + 4, 108, 52),
+                    "Columns",
+                    CAPTION,
+                );
+                for (choice, label, rect) in controls.column_choices {
+                    canvas.button(rect, label, draft.columns == choice, false);
+                }
+                canvas.text(
+                    Rect::new(640, controls.word_gap_choices[0].2.y + 4, 108, 52),
+                    "Word gap",
+                    CAPTION,
+                );
+                for (choice, label, rect) in controls.word_gap_choices {
+                    canvas.button(rect, label, draft.word_gap == choice, false);
+                }
+                canvas.text(
+                    Rect::new(38, controls.alignment_choices[0].2.y + 4, 164, 52),
+                    if draft.direction == FixedReflowDirection::TopToBottomRightToLeft {
+                        "Vertical · top"
+                    } else {
+                        "Alignment"
+                    },
+                    CAPTION,
+                );
+                if draft.direction != FixedReflowDirection::TopToBottomRightToLeft {
+                    for (choice, label, rect) in controls.alignment_choices {
+                        canvas.button(rect, label, draft.alignment == choice, false);
+                    }
+                }
+            }
+            canvas.text(
+                Rect::new(640, controls.direction_choices[0].2.y + 4, 108, 52),
+                "Direction",
+                CAPTION,
+            );
+            for (choice, label, rect) in controls.direction_choices {
+                let selected = match choice {
+                    DirectionChoice::Scan(direction) => draft.direction == direction,
+                    DirectionChoice::Text(direction) => draft.text_direction == direction,
+                };
+                canvas.button(rect, label, selected, false);
+            }
             let overlap_row = controls.overlap_choices[0].2.y;
             canvas.text(
                 Rect::new(38, overlap_row + 4, 198, 52),
@@ -818,20 +1085,26 @@ impl TextFlow {
         }
         canvas.fill(Rect::new(0, controls.footer_y, controls.width, 1), HAIRLINE);
         let step = self.layout.step(self.zoom_overlap);
+        let style_label = match &self.style {
+            FlowStyle::Text { .. } => "Text".to_owned(),
+            FlowStyle::Scan { text_scale, .. } => {
+                format!("Scan · {:.2}×", f32::from(*text_scale) / 100.0)
+            }
+        };
         let caption = format!(
             "Document page {} · {} {} of {}",
             self.document_page + 1,
-            self.style.label(),
+            style_label,
             self.top.div_ceil(step) + 1,
             self.layout.limit().div_ceil(step) + 1,
         );
         if self.layout_draft.is_none()
-            && let FlowStyle::Scan { text_height, .. } = self.style
+            && let FlowStyle::Scan { text_scale, .. } = self.style
         {
-            if text_height > MIN_SCAN_HEIGHT {
+            if text_scale > MIN_SCAN_REFLOW_TEXT_SCALE {
                 canvas.button(controls.smaller, "-", false, false);
             }
-            if text_height < MAX_SCAN_HEIGHT {
+            if text_scale < MAX_SCAN_REFLOW_TEXT_SCALE {
                 canvas.button(controls.larger, "+", false, false);
             }
         }
@@ -844,9 +1117,17 @@ impl TextFlow {
     }
 }
 
-fn load_probe(title: &str, text: &str, fonts: &[PathBuf], settings: Settings) -> Result<Probe> {
-    with_storage(|| Probe::from_text(title.into(), text, fonts, settings).map_err(io::Error::other))
-        .map_err(Into::into)
+fn load_probe(
+    title: &str,
+    text: &str,
+    fonts: &[PathBuf],
+    settings: Settings,
+    direction: FixedTextReflowDirection,
+) -> Result<Probe> {
+    with_storage(|| {
+        Probe::from_text(title.into(), text, fonts, settings, direction).map_err(io::Error::other)
+    })
+    .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -859,15 +1140,24 @@ mod tests {
     use primitive_app::WIDTH;
 
     fn authored_document(scan: bool) -> FixedReading {
-        use crate::library::{DocumentFormat, FixedPreferences};
+        use crate::library::{DocumentFormat, FixedPreferences, FixedReflowColumns, MAX_SCAN_REFLOW_TEXT_SCALE};
         let name = if scan { "raster.pdf" } else { "vector.pdf" };
+        // These fixtures were authored for single-column scrolling. The product
+        // default is two columns, so pin the premise explicitly.
+        // At the default 105% scale the 57-line OCR page fits one screen, so pin a
+        // larger scale to keep the fixture passage scrollable.
+        let preferences = FixedPreferences {
+            fixed_reflow_columns: Some(FixedReflowColumns::One),
+            fixed_reflow_text_scale: Some(MAX_SCAN_REFLOW_TEXT_SCALE),
+            ..FixedPreferences::default()
+        };
         let mut document = FixedReading::open(
             PAGE_HEIGHT,
             DocumentFormat::Pdf,
             &crate::test_fixture(&format!("scan-reflow/{name}")),
             1,
             &[],
-            FixedPreferences::default(),
+            preferences,
             None,
             None,
             None,
@@ -931,11 +1221,120 @@ mod tests {
     }
 
     #[test]
+    fn fixed_reflow_layout_applies_ltr_and_rtl_to_embedded_and_ocr_text() {
+        let tap =
+            |rect: Rect| Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let settings = Settings {
+            width: WIDTH,
+            height: PAGE_HEIGHT,
+            ..Settings::default()
+        };
+
+        for scan in [false, true] {
+            let controls = Controls::new(ReadingViewport::PORTRAIT, scan);
+            let document = authored_document(scan);
+            let mut flow = TextFlow::open(&document, "Harbor", &fonts, settings, scan).unwrap();
+            if scan {
+                assert_eq!(flow.preferences().direction, FixedReflowDirection::LeftToRight);
+            } else {
+                assert_eq!(
+                    flow.preferences().text_direction,
+                    FixedTextReflowDirection::LeftToRight
+                );
+            }
+            let source_position = document.history_point();
+            let reading_location = flow.layout.location(flow.top).unwrap();
+
+            assert!(flow
+                .input_with_turn(tap(controls.spacing), None, &document)
+                .unwrap());
+            assert!(flow
+                .input_with_turn(tap(controls.direction_choices[1].2), None, &document)
+                .unwrap());
+            if scan {
+                // The authored OCR runs left to right. A right-to-left reflow of
+                // that word order is refused, and the saved layout stays in place.
+                assert!(flow
+                    .input_with_turn(tap(controls.apply), None, &document)
+                    .is_err());
+                assert_eq!(flow.preferences().direction, FixedReflowDirection::LeftToRight);
+                assert!(matches!(
+                    &flow.style,
+                    FlowStyle::Scan {
+                        direction: FixedReflowDirection::LeftToRight,
+                        ..
+                    }
+                ));
+                assert_eq!(flow.layout.location(flow.top), Some(reading_location));
+                assert_eq!(document.history_point(), source_position);
+                return;
+            }
+            assert!(flow
+                .input_with_turn(tap(controls.apply), None, &document)
+                .unwrap());
+
+            assert_eq!(
+                flow.preferences().text_direction,
+                FixedTextReflowDirection::RightToLeft
+            );
+            assert!(matches!(
+                &flow.style,
+                FlowStyle::Text {
+                    direction: FixedTextReflowDirection::RightToLeft,
+                    ..
+                }
+            ));
+            assert_eq!(flow.layout.location(flow.top), Some(reading_location));
+            assert_eq!(document.history_point(), source_position);
+        }
+    }
+
+    #[test]
+    fn fixed_text_reflow_layout_applies_vertical_right_to_left_direction() {
+        let tap =
+            |rect: Rect| Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
+        let controls = Controls::new(ReadingViewport::PORTRAIT, false);
+        let document = authored_document(false);
+        let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let settings = Settings {
+            width: WIDTH,
+            height: PAGE_HEIGHT,
+            ..Settings::default()
+        };
+        let mut flow = TextFlow::open(&document, "Harbor", &fonts, settings, false).unwrap();
+        let reading_location = flow.layout.location(flow.top).unwrap();
+
+        assert!(flow
+            .input_with_turn(tap(controls.spacing), None, &document)
+            .unwrap());
+        assert!(flow
+            .input_with_turn(tap(controls.direction_choices[2].2), None, &document)
+            .unwrap());
+        assert!(flow
+            .input_with_turn(tap(controls.apply), None, &document)
+            .unwrap());
+
+        assert_eq!(
+            flow.preferences().text_direction,
+            FixedTextReflowDirection::TopToBottomRightToLeft
+        );
+        assert!(matches!(
+            &flow.style,
+            FlowStyle::Text {
+                direction: FixedTextReflowDirection::TopToBottomRightToLeft,
+                ..
+            }
+        ));
+        assert_eq!(flow.layout.location(flow.top), Some(reading_location));
+    }
+
+    #[test]
     fn fixed_reflow_spacing_preserves_a_later_passage_and_restores_cancelled_layout() {
-        let controls = Controls::new(ReadingViewport::PORTRAIT);
         let tap =
             |rect: Rect| Input::Tap((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
         for scan in [false, true] {
+            let controls = Controls::new(ReadingViewport::PORTRAIT, scan);
             let mut document = authored_document(scan);
             let position = document.history_point();
             let fonts = [crate::test_fixture("fonts/NotoSans-Regular.ttf")];
@@ -1081,6 +1480,7 @@ mod tests {
             fonts: fonts.to_vec(),
             settings,
             spacing: FixedReflowSpacing::Medium,
+            direction: FixedTextReflowDirection::LeftToRight,
         };
         let viewport = ReadingViewport::PORTRAIT;
         let layout = style.layout_text(texts[0], viewport).unwrap().unwrap();

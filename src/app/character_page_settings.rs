@@ -4,27 +4,42 @@ use super::{
 };
 use crate::library::{FixedTileAxis, MAX_CROP_MARGIN};
 use crate::reading_controls::{FooterTextItem, ReadingControls};
-use crate::{Result, epub::Book, library::DocumentFormat, synthetic_pages::CharacterPages};
+use crate::{
+    Result, Settings, epub::Book, library::DocumentFormat, synthetic_pages::CharacterPages,
+};
 use primitive_app::with_storage;
 use std::{borrow::Cow, io, path::PathBuf, time::Instant};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum MarginEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum NumberField {
     BookStride,
     DefaultStride,
     MarginSize,
+    ReadingSideMargins,
+    ReadingMargin(MarginEdge),
     ContentDpi(u64),
     LogicalFont(u64),
     LineSpacing(u64),
     ProfileValue(usize, crate::reading_profiles::ValueField),
     WordSpacing(super::word_spacing::Draft),
     CornerHoldPause,
+    DoubleTapInterval,
+    TwoFingerTapDuration,
     ScrollDelay,
     AutoTurn,
     AutoTurnOverlapHorizontal,
     AutoTurnOverlapVertical,
     FixedTileZoom(FixedTileAxis),
     CropMargin,
+    ScanWhiteLevel,
     ReadingGuide(super::reading_guides::Field),
     FooterTrackMinimumWidth,
     FooterTrackMarginWidth,
@@ -34,6 +49,7 @@ pub(super) enum NumberField {
     FooterContainerHeight,
     FooterContainerBottomMargin,
     FooterCustomTextRepetitions,
+    CjkScanLength,
 }
 
 fn parse_crop_margin(value: &str) -> Option<u8> {
@@ -59,6 +75,7 @@ impl NumberField {
         match self {
             Self::BookStride => Screen::PageNumbering,
             Self::DefaultStride | Self::MarginSize => Screen::NumberingDefaults,
+            Self::ReadingSideMargins | Self::ReadingMargin(_) => Screen::Book,
             Self::ContentDpi(_) | Self::LogicalFont(_) | Self::LineSpacing(_) => Screen::Book,
             Self::WordSpacing(draft) => draft
                 .profile_index()
@@ -73,11 +90,14 @@ impl NumberField {
             ) => Screen::ReadingProfileFontRendering(index),
             Self::ProfileValue(index, _) => Screen::ReadingProfileValues(index),
             Self::AutoTurn => Screen::AutoTurn,
-            Self::CornerHoldPause => Screen::Gestures,
+            Self::CornerHoldPause | Self::DoubleTapInterval | Self::TwoFingerTapDuration => {
+                Screen::Gestures
+            }
             Self::ScrollDelay => Screen::Scrolling,
             Self::AutoTurnOverlapHorizontal | Self::AutoTurnOverlapVertical => Screen::AutoTurnPan,
-            Self::FixedTileZoom(_) | Self::CropMargin => Screen::Fixed,
+            Self::FixedTileZoom(_) | Self::CropMargin | Self::ScanWhiteLevel => Screen::Fixed,
             Self::ReadingGuide(_) => Screen::ReadingGuides,
+            Self::CjkScanLength => Screen::Dictionaries,
             Self::FooterItemWidth(_, _) => Screen::FooterItemWidths,
             Self::FooterTrackMinimumWidth
             | Self::FooterTrackMarginWidth
@@ -255,8 +275,152 @@ impl Reader {
         items
     }
 
+    pub(super) fn adjust_reading_margin(&mut self, edge: MarginEdge, delta: i16) -> Result<()> {
+        let settings = self
+            .active
+            .as_ref()
+            .ok_or("No open book")?
+            .reading
+            .config
+            .settings;
+        let current = match edge {
+            MarginEdge::Left => settings.left_margin(),
+            MarginEdge::Right => settings.right_margin(),
+            MarginEdge::Top => settings.top_margin(),
+            MarginEdge::Bottom => settings.bottom_margin(),
+        };
+        let limit = match edge {
+            MarginEdge::Left | MarginEdge::Right => settings.width.min(settings.height) / 4,
+            MarginEdge::Top | MarginEdge::Bottom => settings.height / 4,
+        };
+        let value = (i64::from(current) + i64::from(delta)).clamp(0, i64::from(limit)) as u32;
+        let updated = match edge {
+            MarginEdge::Left => Settings {
+                margin_left: Some(value),
+                ..settings
+            },
+            MarginEdge::Right => Settings {
+                margin_right: Some(value),
+                ..settings
+            },
+            MarginEdge::Top => Settings {
+                margin_top: Some(value),
+                margin_bottom: if settings.link_vertical_margins {
+                    Some(value)
+                } else {
+                    settings.margin_bottom
+                },
+                ..settings
+            },
+            MarginEdge::Bottom => Settings {
+                margin_bottom: Some(value),
+                margin_top: if settings.link_vertical_margins {
+                    Some(value)
+                } else {
+                    settings.margin_top
+                },
+                ..settings
+            },
+        };
+        self.activate(Action::Text(updated))
+    }
+
     pub(super) fn apply_numbering_input(&mut self, field: NumberField) -> Result<()> {
         let value = self.editor.string();
+        if field == NumberField::ReadingSideMargins {
+            let active = self.active.as_ref().ok_or("No open book")?;
+            let settings = active.reading.config.settings;
+            let limit = settings.width.min(settings.height) / 4;
+            let mut parts = value.split(',');
+            let left = parts
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|pixels| *pixels <= limit);
+            let right = parts
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|pixels| *pixels <= limit);
+            if parts.next().is_some() || left.is_none() || right.is_none() {
+                return Err(self
+                    .controls
+                    .interface_language
+                    .numeric_picker_text(
+                        "Enter left,right pixels; each is limited to one quarter of the short page edge",
+                    )
+                    .into());
+            }
+            return self.activate(Action::Text(Settings {
+                margin_left: left,
+                margin_right: right,
+                ..settings
+            }));
+        }
+        if let NumberField::ReadingMargin(edge) = field {
+            let active = self.active.as_ref().ok_or("No open book")?;
+            let settings = active.reading.config.settings;
+            let pixels = value
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|pixels| {
+                    let limit = match edge {
+                        MarginEdge::Left | MarginEdge::Right => {
+                            settings.width.min(settings.height) / 4
+                        }
+                        MarginEdge::Top | MarginEdge::Bottom => settings.height / 4,
+                    };
+                    *pixels <= limit
+                })
+                .ok_or("Enter a margin in pixels within one quarter of the page edge")?;
+            let updated = match edge {
+                MarginEdge::Left => Settings {
+                    margin_left: Some(pixels),
+                    ..settings
+                },
+                MarginEdge::Right => Settings {
+                    margin_right: Some(pixels),
+                    ..settings
+                },
+                MarginEdge::Top => Settings {
+                    margin_top: Some(pixels),
+                    margin_bottom: if settings.link_vertical_margins {
+                        Some(pixels)
+                    } else {
+                        settings.margin_bottom
+                    },
+                    ..settings
+                },
+                MarginEdge::Bottom => Settings {
+                    margin_bottom: Some(pixels),
+                    margin_top: if settings.link_vertical_margins {
+                        Some(pixels)
+                    } else {
+                        settings.margin_top
+                    },
+                    ..settings
+                },
+            };
+            return self.activate(Action::Text(updated));
+        }
+        if field == NumberField::CjkScanLength {
+            let length = value
+                .trim()
+                .parse::<u16>()
+                .ok()
+                .filter(|length| usize::from(*length) <= crate::dictionary::MAX_CJK_SCAN_LENGTH)
+                .ok_or("Enter a CJK look-ahead length from 0 to 1,000")?;
+            let mut settings = self.dictionary_settings.clone();
+            settings.cjk_scan_length = usize::from(length);
+            self.save_source_preferences(settings)?;
+            self.show(Screen::Dictionaries);
+            return Ok(());
+        }
         if let NumberField::FixedTileZoom(axis) = field {
             let value = value.trim();
             let (whole, fraction) = value.split_once('.').unwrap_or((value, "0"));
@@ -270,6 +434,15 @@ impl Reader {
             let margin = parse_crop_margin(&value)
                 .ok_or("Enter 0.00 to 1.50 inches with up to two decimal places")?;
             return self.activate(Action::SetCropMargin(margin));
+        }
+        if field == NumberField::ScanWhiteLevel {
+            let level = value
+                .trim()
+                .parse::<u8>()
+                .map_err(|_| "Enter a white threshold from 0 to 255")?;
+            self.activate(Action::ScanWhiteLevel(Some(level)))?;
+            self.show(Screen::Fixed);
+            return Ok(());
         }
         if field == NumberField::AutoTurn {
             let seconds = value
@@ -291,6 +464,42 @@ impl Reader {
                 .ok_or("Enter a corner hold pause from 5 to 30 seconds")?;
             self.activate(Action::SetReadingControls(ReadingControls {
                 corner_hold_pause_seconds: Some(seconds),
+                ..self.controls
+            }))?;
+            self.show(field.parent());
+            return Ok(());
+        }
+        if field == NumberField::DoubleTapInterval {
+            let milliseconds = value
+                .trim()
+                .parse::<u16>()
+                .ok()
+                .filter(|milliseconds| {
+                    (crate::reading_controls::MIN_DOUBLE_TAP_INTERVAL_MS
+                        ..=crate::reading_controls::MAX_DOUBLE_TAP_INTERVAL_MS)
+                        .contains(milliseconds)
+                })
+                .ok_or("Enter a double-tap interval from 100 to 2,000 ms")?;
+            self.activate(Action::SetReadingControls(ReadingControls {
+                double_tap_interval_ms: Some(milliseconds),
+                ..self.controls
+            }))?;
+            self.show(field.parent());
+            return Ok(());
+        }
+        if field == NumberField::TwoFingerTapDuration {
+            let milliseconds = value
+                .trim()
+                .parse::<u16>()
+                .ok()
+                .filter(|milliseconds| {
+                    (crate::reading_controls::MIN_TWO_FINGER_TAP_DURATION_MS
+                        ..=crate::reading_controls::MAX_TWO_FINGER_TAP_DURATION_MS)
+                        .contains(milliseconds)
+                })
+                .ok_or("Enter a two-finger tap duration from 100 to 2,000 ms")?;
+            self.activate(Action::SetReadingControls(ReadingControls {
+                two_finger_tap_duration_ms: Some(milliseconds),
                 ..self.controls
             }))?;
             self.show(field.parent());
@@ -429,10 +638,17 @@ impl Reader {
             }
             NumberField::WordSpacing(draft) => return self.apply_word_spacing_input(draft),
             NumberField::ReadingGuide(field) => return self.set_reading_guide(field, &value),
-            NumberField::AutoTurn | NumberField::CornerHoldPause | NumberField::ScrollDelay => {
+            NumberField::AutoTurn
+            | NumberField::CornerHoldPause
+            | NumberField::DoubleTapInterval
+            | NumberField::TwoFingerTapDuration
+            | NumberField::ScrollDelay => {
                 unreachable!("handled above")
             }
-            NumberField::FixedTileZoom(_) | NumberField::CropMargin => {
+            NumberField::FixedTileZoom(_)
+            | NumberField::CropMargin
+            | NumberField::ScanWhiteLevel =>
+            {
                 unreachable!("handled above")
             }
             NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical => {
@@ -446,6 +662,9 @@ impl Reader {
             NumberField::FooterContainerHeight => unreachable!("handled above"),
             NumberField::FooterContainerBottomMargin => unreachable!("handled above"),
             NumberField::FooterCustomTextRepetitions => unreachable!("handled above"),
+            NumberField::CjkScanLength => unreachable!("handled above"),
+            NumberField::ReadingSideMargins => unreachable!("handled above"),
+            NumberField::ReadingMargin(_) => unreachable!("handled above"),
             NumberField::MarginSize => {
                 controls.numbering.label_size = number
                     .filter(|n| (8..=20).contains(n))

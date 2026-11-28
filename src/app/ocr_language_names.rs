@@ -29,6 +29,7 @@ pub(super) fn label(code: &str) -> &str {
         "dan" => "Danish",
         "dan_frak" => "Danish (Fraktur)",
         "deu" => "German",
+        "div" => "Divehi",
         "deu_frak" => "German (Fraktur, deu_frak)",
         "deu_latf" => "German (Fraktur, deu_latf)",
         "dzo" => "Dzongkha",

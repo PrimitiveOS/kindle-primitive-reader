@@ -149,6 +149,17 @@ impl Screen {
                 | Self::FooterItemWidths
                 | Self::HeaderBatterySettings
                 | Self::Gestures
+                | Self::Multiswipes
+                | Self::CustomMultiswipes
+                | Self::RecordMultiswipe
+                | Self::MultiswipeBinding(_)
+                | Self::MultiswipeActions(_)
+                | Self::AddMultiswipeAction(_)
+                | Self::MultiswipeMode(_)
+                | Self::MultiswipeQuickMenuSettings(_)
+                | Self::MultiswipeQuickMenuPosition(_)
+                | Self::EditMultiswipeAction(..)
+                | Self::RemoveMultiswipe(_)
                 | Self::MenuActivationSettings
                 | Self::Scrolling
                 | Self::GestureBinding(_)
@@ -181,6 +192,8 @@ impl Screen {
                 | Self::ReadingProfile(_)
                 | Self::ReadingProfileFields(_)
                 | Self::ReadingProfileValues(_)
+                | Self::ReadingProfileZoom(_)
+                | Self::ReadingProfileFonts(_)
                 | Self::ReadingProfileMargins(_)
                 | Self::ReadingProfileFontRendering(_)
                 | Self::ReadingProfileBookRendering(_)
@@ -233,6 +246,7 @@ impl Screen {
                     | Self::ContentsSearch
                     | Self::CustomTitle
                     | Self::BookIdentityEdit(_)
+                    | Self::MultiswipeActionName(..)
                     | Self::LibraryFind
                     | Self::DictionaryEntry
                     | Self::ProfileName(_)

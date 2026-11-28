@@ -133,7 +133,7 @@ impl SidecarProgress {
             .as_deref()
             .map(|value| crate::cre_pointer::resolve(book, value, self.cre_dom_version));
         match (cfi, pointer) {
-            (Some(Ok(a)), Some(Ok(b))) if a != b => Err(
+            (Some(Ok(a)), Some(Ok(b))) if !same_reflow_target(&a, &b) => Err(
                 "The saved CFI and CREngine pointer identify different reading positions".into(),
             ),
             (Some(Ok(a)), _) | (_, Some(Ok(a))) => Ok(a),
@@ -151,6 +151,17 @@ impl SidecarProgress {
         }
         Ok(())
     }
+}
+
+fn same_reflow_target(
+    first: &crate::epub::EpubPosition,
+    second: &crate::epub::EpubPosition,
+) -> bool {
+    let mut first_anchor = first.anchor.clone();
+    let mut second_anchor = second.anchor.clone();
+    first_anchor.side_bias = None;
+    second_anchor.side_bias = None;
+    first.chapter == second.chapter && first_anchor == second_anchor
 }
 
 /// Calculate the KOReader fingerprint using at most 12 KiB of file samples.
@@ -813,6 +824,20 @@ return {
             sidecar.resolve_fixed([0; 16], 25),
             Err(SidecarError::MissingPageCount)
         );
+    }
+
+    #[test]
+    fn cfi_side_bias_does_not_make_the_same_source_position_disagree() {
+        let mut book =
+            crate::epub::Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let cfi =
+            crate::epub_cfi::resolve(&mut book, "epubcfi(/6/2!/4/20[tide-b]/1:4[;s=b])").unwrap();
+        let mut pointer = cfi.clone();
+        pointer.anchor.side_bias = Some(crate::SideBias::After);
+        assert!(same_reflow_target(&cfi, &pointer));
+
+        pointer.anchor.offset += 1;
+        assert!(!same_reflow_target(&cfi, &pointer));
     }
 
     #[test]

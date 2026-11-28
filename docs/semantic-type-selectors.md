@@ -24,8 +24,9 @@ search and copy. A hidden note stays in canonical source but leaves the main
 reading flow. Extracted popups omit the linked stylesheet and retain their own
 inline attributes. Existing `[href]` presence matching remains supported. Other
 attribute names, full non-ASCII CRE case-table parity and namespace-collision
-precedence remain separate work. Strict user CSS still
-rejects display/visibility until the remaining consumer gates are resolved.
+precedence remain separate work. The current user-style candidate accepts
+ordinary `display:none` and visibility controls through the same flow projection;
+box reclassification remains unsupported and this interface change is unverified.
 
 The semantic-type adapter also implements CRE's dash-word (`|=`), prefix
 (`^=`), suffix (`$=`) and substring (`*=`) comparisons on the existing local

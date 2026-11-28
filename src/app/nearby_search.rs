@@ -1312,21 +1312,16 @@ impl Reader {
         let anchor = if from_edge {
             None
         } else if continuing {
-            self.result_selection
+            // Continue from the current match in the search direction, so a
+            // second occurrence on the same visible page is not skipped.
+            let current = self
+                .result_selection
                 .as_ref()
                 .ok_or("The current match has moved")?;
-            // KOReader continues beyond the current visible page, not the
-            // previous occurrence. Use the far edge in the search direction.
-            let edge = match direction {
-                SearchDirection::Previous => SearchDirection::Next,
-                SearchDirection::Next => SearchDirection::Previous,
-            };
-            Some(
-                active
-                    .reading
-                    .visible_search_boundary(edge)
-                    .ok_or("The current page has no searchable position")?,
-            )
+            Some(match direction {
+                SearchDirection::Next => current.end.clone(),
+                SearchDirection::Previous => current.start.clone(),
+            })
         } else {
             Some(
                 active

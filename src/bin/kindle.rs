@@ -22,6 +22,16 @@ fn main() -> Result<()> {
     if first.as_deref() == Some(std::ffi::OsStr::new("--wiki-images-worker")) && args.len() == 0 {
         return reader::online_lookup::image_worker();
     }
+    if first.as_deref() == Some(std::ffi::OsStr::new("--dictionary-download-worker"))
+        && args.len() == 0
+    {
+        return reader::dictionary_catalog::worker();
+    }
+    if first.as_deref() == Some(std::ffi::OsStr::new("--ocr-model-download-worker"))
+        && args.len() == 0
+    {
+        return reader::ocr_model_catalog::worker();
+    }
     let home = env::var_os("PRIMITIVE_READER_HOME")
         .map_or_else(|| PathBuf::from("/mnt/us/reader"), PathBuf::from);
     let documents = env::var_os("PRIMITIVE_READER_DOCUMENTS")

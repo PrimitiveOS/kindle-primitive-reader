@@ -10,7 +10,10 @@ description = "Offline book reader for PrimitiveOS on Kindle"
 default = ["kindle"]
 # Independent reference build for pixel comparisons against full JPEG decoding.
 reference-full-dct = ["hayro-interpret/reference-full-dct"]
-kindle = ["dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi", "dep:ureq", "dep:url", "dep:qrcodegen", "dep:self_cell", "dep:primitive-device", "dep:rusqlite"]
+# Enables the kit's two-finger input (`primitive_ui::MultiTouch` and `App::multi_touch`). Off until the
+# pinned tools revision provides them; see `src/app/gestures.rs`.
+multi-touch = []
+kindle = ["dep:bzip2", "dep:primitive-app", "dep:primitive-ui", "dep:unicode-bidi", "dep:ureq", "dep:url", "dep:zstd", "dep:qrcodegen", "dep:self_cell", "dep:primitive-device", "dep:rusqlite"]
 
 [build-dependencies]
 cc = "=1.11.2"
@@ -22,6 +25,7 @@ kurbo = "=0.13.1"
 ab_glyph_rasterizer = "=0.1.10"
 anyrender_vello_cpu = "=0.18.0"
 base64 = "=0.23.1"
+bzip2 = { version = "=0.5.2", optional = true }
 brotli-decompressor = "=5.0.3"
 blitz-dom = { version = "=0.3.0-beta.4", default-features = false }
 blitz-html = "=0.3.0-beta.4"
@@ -66,8 +70,9 @@ skrifa = { version = "=0.44.0", default-features = false, features = ["std"] }
 ureq = { version = "=3.5.2", default-features = false, features = ["rustls"], optional = true }
 url = { version = "=2.5.8", optional = true }
 unicode-bidi = { version = "=0.3.18", optional = true }
-zip = { version = "=2.6.1", default-features = false, features = ["deflate"] }
+zip = { version = "=2.6.1", default-features = false, features = ["bzip2", "deflate", "zstd"] }
 wuff = { version = "=0.2.10", default-features = false }
+zstd = { version = "=0.13.5", optional = true }
 qrcodegen = { version = "=1.8.0", optional = true }
 ring = { version = "=0.17.14", default-features = false }
 

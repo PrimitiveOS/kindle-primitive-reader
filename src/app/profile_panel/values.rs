@@ -1,7 +1,9 @@
 //! Route the reading-profile editor through the shared exact-value keyboard.
 use super::{field_buttons, *};
 use crate::app::step_buttons::StepButtons;
-use crate::reading_profiles::{Field, ValueField};
+use crate::reading_profiles::{Field, ProfileZoomChoice, ProfileZoomTarget, ValueField};
+use primitive_app::with_storage;
+use std::fs;
 
 const STEPS: [Rect; 3] = [
     Rect::new(48, LIST_Y + 286, 352, 112),
@@ -53,6 +55,47 @@ impl Reader {
                 )
             })
             .collect();
+        if general && let Profile::Fixed { .. } = profile {
+            let fit = profile
+                .zoom_fit_axis()
+                .unwrap_or(crate::library::FixedContentFit::Full);
+            let target = profile
+                .zoom_target()
+                .map(ProfileZoomTarget::label)
+                .unwrap_or("Page");
+            let fit_label = match fit {
+                crate::library::FixedContentFit::Full => "Full",
+                crate::library::FixedContentFit::Width => "Width",
+                crate::library::FixedContentFit::Height => "Height",
+            };
+            items.insert(
+                0,
+                Item::new(
+                    language.reading_profile_text("Zoom and fit"),
+                    Action::ShowProfileZoom(index),
+                )
+                .detail(format!(
+                    "{} · {}",
+                    language.reading_profile_text(target),
+                    language.reading_profile_text(fit_label)
+                )),
+            );
+        }
+        if general && let Profile::Text { preferences, .. } = profile {
+            items.insert(
+                0,
+                Item::new(
+                    language.reading_profile_text("Reading font"),
+                    Action::ShowProfileFonts(index),
+                )
+                .detail(
+                    preferences
+                        .font_file
+                        .as_deref()
+                        .unwrap_or("Device fonts"),
+                ),
+            );
+        }
         if general && let Profile::Text { preferences, .. } = profile {
             let pair = preferences.percent_word_spacing;
             let mut detail = pair.map_or_else(
@@ -120,6 +163,136 @@ impl Reader {
             items.extend(self.profile_rendering_items(index, &super::rendering_choices::FONT));
         }
         items
+    }
+
+    pub(super) fn profile_zoom_items(&self, index: usize) -> Vec<Item> {
+        let Some(Profile::Fixed { fixed, .. }) = self.profiles.get(index) else {
+            return Vec::new();
+        };
+        let language = self.controls.interface_language;
+        let selected_target = self.profiles[index].zoom_target();
+        let selected_fit = self.profiles[index].zoom_fit_axis();
+        let view = fixed.values();
+        let spreads = view.spread
+            || (fixed.provider == crate::reading_profiles::FixedProvider::Epub
+                && view.epub_spread.unwrap_or(false));
+        let mut items = vec![Item::new(
+            language.reading_profile_text("Zoom to"),
+            Action::Heading,
+        )];
+        if spreads {
+            items.push(
+                Item::new(
+                    language.reading_profile_text("Facing pages are enabled"),
+                    Action::Heading,
+                )
+                .detail(language.reading_profile_text(
+                    "Tile and manual zoom require single-page mode",
+                )),
+            );
+        }
+        for target in [
+            ProfileZoomTarget::Page,
+            ProfileZoomTarget::Content,
+            ProfileZoomTarget::Columns,
+            ProfileZoomTarget::Rows,
+            ProfileZoomTarget::Manual,
+        ] {
+            if spreads
+                && matches!(
+                    target,
+                    ProfileZoomTarget::Columns
+                        | ProfileZoomTarget::Rows
+                        | ProfileZoomTarget::Manual
+                )
+            {
+                continue;
+            }
+            let mut item = Item::new(
+                language.reading_profile_text(target.label()),
+                Action::SetProfileZoom(index, ProfileZoomChoice::Target(target)),
+            );
+            if selected_target == Some(target) {
+                item = item.detail(language.reading_profile_text("Selected"));
+            }
+            items.push(item);
+        }
+        if selected_target == Some(ProfileZoomTarget::Custom) {
+            items.push(
+                Item::new(
+                    language.reading_profile_text("Current custom zoom"),
+                    Action::Heading,
+                )
+                .detail(language.reading_profile_text("Choose a saved zoom mode")),
+            );
+        }
+        items.push(Item::new(
+            language.reading_profile_text("Fit axis"),
+            Action::Heading,
+        ));
+        for (fit, label) in [
+            (crate::library::FixedContentFit::Full, "Full"),
+            (crate::library::FixedContentFit::Width, "Width"),
+            (crate::library::FixedContentFit::Height, "Height"),
+        ] {
+            let mut item = Item::new(
+                language.reading_profile_text(label),
+                Action::SetProfileZoom(index, ProfileZoomChoice::Fit(fit)),
+            );
+            if selected_fit == Some(fit) {
+                item = item.detail(language.reading_profile_text("Selected"));
+            }
+            items.push(item);
+        }
+        items
+    }
+
+    pub(in crate::app) fn show_profile_zoom(&mut self, index: usize) -> Result<()> {
+        if !matches!(self.profiles.get(index), Some(Profile::Fixed { .. })) {
+            return Err("Zoom settings require a fixed-page profile".into());
+        }
+        self.show(Screen::ReadingProfileZoom(index));
+        Ok(())
+    }
+
+    pub(in crate::app) fn save_profile_zoom_choice(
+        &mut self,
+        index: usize,
+        choice: ProfileZoomChoice,
+    ) -> Result<()> {
+        let mut profiles = self.profiles.clone();
+        profiles
+            .get_mut(index)
+            .ok_or("That profile is unavailable")?
+            .set_zoom_choice(choice)?;
+        self.commit_profiles(profiles)?;
+        self.show(Screen::ReadingProfileZoom(index));
+        Ok(())
+    }
+
+    pub(in crate::app) fn open_profile_font_chooser(&mut self, index: usize) -> Result<()> {
+        if !matches!(self.profiles.get(index), Some(Profile::Text { .. })) {
+            return Err("Reading fonts are available only in reflowable profiles".into());
+        }
+        with_storage(|| fs::create_dir_all(&self.fonts_directory))?;
+        self.available_fonts = crate::reading_fonts::available(&self.fonts_directory)?;
+        self.show(Screen::ReadingProfileFonts(index));
+        Ok(())
+    }
+
+    pub(in crate::app) fn set_profile_font(&mut self, index: usize, font: Option<String>) -> Result<()> {
+        // Resolve the font before changing the profile so a stale or malformed
+        // file can never turn a saved profile into an unusable one.
+        let fonts = self.fonts_for(font.as_deref())?;
+        drop(fonts);
+        let mut profiles = self.profiles.clone();
+        let Some(Profile::Text { preferences, .. }) = profiles.get_mut(index) else {
+            return Err("Reading fonts are available only in reflowable profiles".into());
+        };
+        preferences.font_file = font;
+        self.commit_profiles(profiles)?;
+        self.show(Screen::ReadingProfileValues(index));
+        Ok(())
     }
 
     pub(in crate::app) fn save_profile_word_spacing(

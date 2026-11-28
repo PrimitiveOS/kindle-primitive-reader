@@ -53,6 +53,38 @@ impl Screen {
 }
 
 impl Reader {
+    pub(in crate::app) fn saved_mark_icon(&self, action: &Action) -> Option<primitive_ui::Icon> {
+        let has_note = |note: Option<&str>| note.is_some_and(|note| !note.trim().is_empty());
+        match action {
+            Action::Bookmark(_) => Some(super::bar_icons::BOOKMARK),
+            Action::Highlight(index) => {
+                let note = self
+                    .open_book_id()
+                    .and_then(|id| self.library.state(id))
+                    .and_then(|state| state.highlights.get(*index))
+                    .and_then(|mark| mark.note.as_deref());
+                Some(if has_note(note) {
+                    super::bar_icons::EDIT
+                } else {
+                    super::bar_icons::HIGHLIGHT
+                })
+            }
+            Action::PdfHighlight(index) => {
+                let note = self
+                    .open_book_id()
+                    .and_then(|id| self.library.state(id))
+                    .and_then(|state| state.pdf_highlights.get(*index))
+                    .and_then(|mark| mark.note.as_deref());
+                Some(if has_note(note) {
+                    super::bar_icons::EDIT
+                } else {
+                    super::bar_icons::HIGHLIGHT
+                })
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn list_geometry(&self) -> Geometry {
         if self.screen == Screen::Matches {
             self.match_geometry()
@@ -127,8 +159,17 @@ impl Reader {
                 SECONDARY
             };
             let link = item.accessory == RowAccessory::Disclosure;
-            let text_x = row.x + pad;
-            let text_width = row.w - 2 * pad - if link { 56 } else { 0 };
+            let mark_icon = self.saved_mark_icon(&action.action);
+            let icon_space = if mark_icon.is_some() { 56 } else { 0 };
+            if let Some(icon) = mark_icon {
+                canvas.icon(
+                    Rect::new(row.x + pad, row.y + (row.h - 40) / 2, 40, 40),
+                    icon,
+                    ink,
+                );
+            }
+            let text_x = row.x + pad + icon_space;
+            let text_width = row.w - 2 * pad - icon_space - if link { 56 } else { 0 };
             let detail_width = text_width * 2 / 5;
             let caption_aside = Rect::new(
                 text_x + text_width - detail_width,

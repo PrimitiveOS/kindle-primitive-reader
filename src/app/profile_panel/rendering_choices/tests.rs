@@ -82,7 +82,7 @@ fn profile_rendering_choices_preserve_legacy_preferences_masks_and_the_active_bo
             if initial.smooth_images {
                 "Fast"
             } else {
-                "Smooth"
+                "Best"
             },
         ),
         (Field::NightImages, "Inverted"),

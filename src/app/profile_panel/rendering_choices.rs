@@ -84,7 +84,7 @@ fn choices(field: Field) -> &'static [(&'static str, Value)] {
         Field::PublisherFonts => &[("Off", Value::Fonts(false)), ("On", Value::Fonts(true))],
         Field::ImageScaling => &[
             ("Fast", Value::SmoothImages(false)),
-            ("Smooth", Value::SmoothImages(true)),
+            ("Best", Value::SmoothImages(true)),
         ],
         Field::NightImages => &[
             ("Original", Value::InvertImages(false)),

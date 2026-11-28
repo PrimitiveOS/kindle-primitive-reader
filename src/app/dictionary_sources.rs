@@ -26,6 +26,8 @@ pub(super) struct SourcePreferences {
     pub(super) preset_cycle_after: Option<String>,
     pub(super) disable_dictionary_history: bool,
     disable_word_forms: bool,
+    pub(super) cjk_scan_length: usize,
+    pub(super) japanese_text_conversions: dictionary::JapaneseTextConversions,
     #[serde(skip_serializing_if = "Option::is_none")]
     enable_fuzzy_search: Option<bool>,
     pub(super) large_window: bool,
@@ -45,6 +47,8 @@ impl Default for SourcePreferences {
             preset_cycle_after: None,
             disable_dictionary_history: false,
             disable_word_forms: false,
+            cjk_scan_length: crate::dictionary::DEFAULT_CJK_SCAN_LENGTH,
+            japanese_text_conversions: dictionary::JapaneseTextConversions::default(),
             enable_fuzzy_search: None,
             large_window: false,
             justify_text: true,
@@ -67,6 +71,15 @@ impl SourcePreferences {
     pub(super) fn paths(&self) -> (&[PathBuf], &[PathBuf]) {
         (&self.order, &self.disabled)
     }
+
+    pub(super) fn cjk_scan_length(&self) -> usize {
+        self.cjk_scan_length
+    }
+
+    pub(super) fn japanese_text_conversions(&self) -> dictionary::JapaneseTextConversions {
+        self.japanese_text_conversions
+    }
+
     pub(super) fn backup_value(bytes: &[u8]) -> io::Result<serde_json::Value> {
         let value: serde_json::Value = serde_json::from_slice(bytes)?;
         let settings: Self = if value.is_object() {
@@ -86,6 +99,7 @@ impl SourcePreferences {
                 .chain(&settings.disabled)
                 .any(|path| !valid_dictionary_key(path))
             || !settings.presets.is_valid()
+            || settings.cjk_scan_length > crate::dictionary::MAX_CJK_SCAN_LENGTH
             || !font_size::RANGE.contains(&settings.definition_font_size)
             || settings
                 .popup_buttons
@@ -121,6 +135,9 @@ impl SourcePreferences {
             }
             if !settings.presets.is_valid() {
                 settings.presets = dictionary_presets::Settings::default();
+            }
+            if settings.cjk_scan_length > crate::dictionary::MAX_CJK_SCAN_LENGTH {
+                settings.cjk_scan_length = crate::dictionary::DEFAULT_CJK_SCAN_LENGTH;
             }
             if settings
                 .preset_cycle_after
@@ -164,6 +181,7 @@ pub(super) enum SourceAction {
     JustifyText,
     FontSize,
     DictionaryHistory,
+    JapaneseTextConversion(dictionary::JapaneseTextConversion),
 }
 
 fn toggle(paths: &mut Vec<PathBuf>, key: &Path) {
@@ -225,7 +243,7 @@ impl Reader {
         preset: Option<&[PathBuf]>,
     ) -> io::Result<dictionary::LookupReport> {
         let prefs = &self.dictionary_settings;
-        self.dictionaries.lookup_report(
+        self.dictionaries.lookup_report_with_japanese_conversions(
             word,
             dictionary::SourceScope {
                 preferred: self.book_dictionaries(),
@@ -235,6 +253,7 @@ impl Reader {
                 preset,
             },
             self.word_forms_enabled(),
+            prefs.japanese_text_conversions(),
         )
     }
 
@@ -249,8 +268,9 @@ impl Reader {
         let excluded = self.book_dictionary_exclusions().to_vec();
         let (order, disabled) = self.dictionary_settings.paths();
         let (order, disabled) = (order.to_vec(), disabled.to_vec());
+        let conversions = self.dictionary_settings.japanese_text_conversions();
         match dictionary_panel::SpellingLookup::start(move |cancel| {
-            sources.suggested_definitions(
+            sources.suggested_definitions_with_japanese_conversions(
                 &word,
                 dictionary::SourceScope {
                     preferred: &book,
@@ -259,6 +279,7 @@ impl Reader {
                     disabled: &disabled,
                     preset: preset.as_deref(),
                 },
+                conversions,
                 cancel,
             )
         }) {
@@ -269,7 +290,7 @@ impl Reader {
         }
     }
 
-    fn sort_dictionaries(&mut self) {
+    pub(in crate::app) fn sort_dictionaries(&mut self) {
         self.installed_dictionaries.sort_by(|a, b| {
             let rank = |key: &Path| {
                 self.dictionary_settings
@@ -296,6 +317,7 @@ impl Reader {
         let bytes = serde_json::to_vec(&next)?;
         if bytes.len() > MAX_PREFERENCES_BYTES
             || !next.presets.is_valid()
+            || next.cjk_scan_length > crate::dictionary::MAX_CJK_SCAN_LENGTH
             || !font_size::RANGE.contains(&next.definition_font_size)
             || next
                 .popup_buttons
@@ -343,9 +365,91 @@ impl Reader {
             )
             .detail(self.dictionary_settings.definition_font_size.to_string()),
             Item::new(
+                "CJK selection look-ahead",
+                Action::Show(Screen::NumberingValue(NumberField::CjkScanLength)),
+            )
+            .detail(format!(
+                "{} look-ahead · 0 to {}",
+                self.dictionary_settings.cjk_scan_length,
+                crate::dictionary::MAX_CJK_SCAN_LENGTH
+            )),
+            Item::new(
+                "Halfwidth to fullwidth kana",
+                Action::DictionarySource(SourceAction::JapaneseTextConversion(
+                    dictionary::JapaneseTextConversion::HalfwidthToFullwidth,
+                )),
+            )
+            .detail(
+                if self
+                    .dictionary_settings
+                    .japanese_text_conversions
+                    .halfwidth_to_fullwidth
+                {
+                    "On · ｶﾀｶﾅ to カタカナ"
+                } else {
+                    "Off"
+                },
+            ),
+            Item::new(
+                "Hiragana to katakana",
+                Action::DictionarySource(SourceAction::JapaneseTextConversion(
+                    dictionary::JapaneseTextConversion::HiraganaToKatakana,
+                )),
+            )
+            .detail(
+                if self
+                    .dictionary_settings
+                    .japanese_text_conversions
+                    .hiragana_to_katakana
+                {
+                    "On · ひらがな to ヒラガナ"
+                } else {
+                    "Off"
+                },
+            ),
+            Item::new(
+                "Katakana to hiragana",
+                Action::DictionarySource(SourceAction::JapaneseTextConversion(
+                    dictionary::JapaneseTextConversion::KatakanaToHiragana,
+                )),
+            )
+            .detail(
+                if self
+                    .dictionary_settings
+                    .japanese_text_conversions
+                    .katakana_to_hiragana
+                {
+                    "On · カタカナ to かたかな"
+                } else {
+                    "Off"
+                },
+            ),
+            Item::new(
+                "Collapse emphatic sequences",
+                Action::DictionarySource(SourceAction::JapaneseTextConversion(
+                    dictionary::JapaneseTextConversion::CollapseEmphatic,
+                )),
+            )
+            .detail(
+                if self
+                    .dictionary_settings
+                    .japanese_text_conversions
+                    .collapse_emphatic
+                {
+                    "On · すっっごーーい variants"
+                } else {
+                    "Off"
+                },
+            ),
+            Item::new(
                 "Customize buttons",
                 Action::DictionaryButtons(buttons::Command::Open),
             ),
+            Item::new(
+                "Download dictionaries",
+                Action::Show(Screen::DictionaryCatalog),
+            )
+            .detail("Browse licensed StarDict packages"),
         ];
         rows.extend(
             self.installed_dictionaries
@@ -627,6 +731,8 @@ impl Reader {
             next.justify_text = !next.justify_text;
         } else if matches!(action, SourceAction::DictionaryHistory) {
             next.disable_dictionary_history = !next.disable_dictionary_history;
+        } else if let SourceAction::JapaneseTextConversion(conversion) = action {
+            next.japanese_text_conversions.toggle(conversion);
         } else {
             let Screen::DictionaryOptions(i) = self.screen else {
                 return Err("Choose a dictionary first".into());
@@ -719,7 +825,8 @@ impl Reader {
                 | SourceAction::LargeWindow
                 | SourceAction::JustifyText
                 | SourceAction::FontSize
-                | SourceAction::DictionaryHistory => unreachable!(),
+                | SourceAction::DictionaryHistory
+                | SourceAction::JapaneseTextConversion(_) => unreachable!(),
             }
             selected_key = Some(key);
         }

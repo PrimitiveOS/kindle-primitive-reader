@@ -114,7 +114,12 @@ mod placement_tests {
                 style: Default::default(),
                 color: Default::default(),
                 page: 1,
-                bounds: Vec::new(),
+                bounds: vec![crate::fixed_text::PdfTextRect {
+                    x0: 0.1,
+                    y0: 0.1,
+                    x1: 0.4,
+                    y1: 0.2,
+                }],
                 text: "Scan note".into(),
                 note: Some("A reference for this page".into()),
                 continuation: Vec::new(),
@@ -122,6 +127,8 @@ mod placement_tests {
         app.activate(Action::Skim).unwrap();
         let layout = app.skim_layout();
         assert_eq!(app.input(tap(layout.marks[2])), Change::Partial);
+        // Mark search runs on a worker; apply its result before checking the page.
+        super::super::page_bookmark_navigation::settle_page_bookmark_search(&mut app);
         assert_eq!(app.current_position().unwrap().page, 1);
         assert!(!app.page_is_bookmarked());
         assert_eq!(app.input(tap(layout.marks[1])), Change::Partial);
@@ -130,8 +137,10 @@ mod placement_tests {
         assert_eq!(app.input(tap(layout.marks[1])), Change::Partial);
         assert!(!app.page_is_bookmarked());
         assert_eq!(app.input(hold(layout.marks[0])), Change::Partial);
+        super::super::page_bookmark_navigation::settle_page_bookmark_search(&mut app);
         assert_eq!(app.current_history_location().as_ref(), Some(&origin));
         assert_eq!(app.input(hold(layout.marks[2])), Change::Partial);
+        super::super::page_bookmark_navigation::settle_page_bookmark_search(&mut app);
         assert_eq!(app.current_position().unwrap().page, 1);
         assert!(app.back.is_empty());
         assert_eq!(app.input(hold(layout.marks[1])), Change::Partial);

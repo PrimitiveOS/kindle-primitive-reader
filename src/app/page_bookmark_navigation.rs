@@ -133,7 +133,7 @@ pub(super) struct Search {
     receiver: Option<mpsc::Receiver<Message>>,
     cancelled: Arc<AtomicBool>,
     invalidated: bool,
-    deadline: Instant,
+    pub(super) deadline: Instant,
     next_paint: Instant,
 }
 
@@ -1387,4 +1387,24 @@ impl Reader {
         }
         Ok(Change::Full)
     }
+}
+
+#[cfg(test)]
+pub(crate) fn settle_page_bookmark_search(app: &mut Reader) {
+    use primitive_app::App;
+    let stop = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < stop {
+        let busy = app
+            .page_bookmark_worker_busy
+            .load(std::sync::atomic::Ordering::Acquire);
+        match app.page_bookmark_search.as_ref().map(|search| search.deadline) {
+            // Apply the result once its preview deadline has passed.
+            Some(deadline) if !busy => {
+                app.tick(deadline + std::time::Duration::from_secs(1));
+            }
+            None if !busy => return,
+            _ => std::thread::sleep(std::time::Duration::from_millis(5)),
+        }
+    }
+    panic!("mark search did not settle");
 }

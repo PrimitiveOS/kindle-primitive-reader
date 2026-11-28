@@ -97,6 +97,24 @@ impl Reader {
             self.contents_view = None;
             return;
         };
+        let custom_targets = if self.contents_chapter_lengths_demand() {
+            self.library
+                .state(book)
+                .filter(|state| state.custom_contents.enabled)
+                .map(|state| {
+                    super::contents_position::custom_page_targets(
+                        state.custom_contents.entries(),
+                    )
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if let Some(active) = &mut self.active {
+            active
+                .reading
+                .request_custom_page_locations(custom_targets);
+        }
         let entries = self.contents_entries(book);
         let positions = self.contents_positions(&entries);
         let view = self

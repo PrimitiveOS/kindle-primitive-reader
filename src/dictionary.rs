@@ -8,8 +8,12 @@ pub(crate) use spelling::eligible as spelling_eligible;
 pub(crate) mod article;
 mod cjk_selection;
 mod word_forms;
-pub(crate) use cjk_selection::{MAX_SCAN_CHARACTERS, word_character as cjk_word_character};
+pub(crate) use cjk_selection::{
+    DEFAULT_CJK_SCAN_LENGTH, MAX_CJK_SCAN_LENGTH, scan_character_limit,
+    word_character as cjk_word_character,
+};
 use word_forms::{Ranked, WordForms};
+pub(crate) use word_forms::{JapaneseTextConversion, JapaneseTextConversions};
 
 use std::cell::{Cell, RefCell};
 use std::fs::{self, File};
@@ -110,6 +114,11 @@ struct DictionaryFile {
 }
 
 impl DictionarySources {
+    #[cfg(feature = "kindle")]
+    pub(crate) fn local_directory(&self) -> PathBuf {
+        self.local.clone()
+    }
+
     #[cfg(feature = "kindle")]
     pub(crate) fn for_reader(documents: &Path, data: &Path) -> Self {
         Self {
@@ -266,6 +275,21 @@ impl DictionarySources {
         scope: SourceScope<'_>,
         with_word_forms: bool,
     ) -> io::Result<LookupReport> {
+        self.lookup_report_with_japanese_conversions(
+            word,
+            scope,
+            with_word_forms,
+            JapaneseTextConversions::default(),
+        )
+    }
+
+    pub(crate) fn lookup_report_with_japanese_conversions(
+        &self,
+        word: &str,
+        scope: SourceScope<'_>,
+        with_word_forms: bool,
+        conversions: JapaneseTextConversions,
+    ) -> io::Result<LookupReport> {
         let word = word.trim();
         if word.len() > MAX_WORD_BYTES {
             return Ok(LookupReport::default());
@@ -277,7 +301,8 @@ impl DictionarySources {
         }
         let (sources, mut first_error) = self.enabled(scope)?;
         let folded = CaseMapper::new().fold_string(term);
-        let forms = with_word_forms.then(|| WordForms::for_word(term));
+        let forms = with_word_forms
+            .then(|| WordForms::for_word_with_japanese_conversions(term, conversions));
         let query = Query {
             forms: forms.as_ref(),
             word,
@@ -404,6 +429,39 @@ fn dictionary_files(root: &Path, entries: &mut usize, limit: usize) -> io::Resul
     }
     files.sort_unstable();
     Ok(files)
+}
+
+/// Validate downloaded StarDict files with the same metadata and index reader
+/// used for lookup before the catalog installer publishes the package.
+pub(crate) fn validate_star_dict_package(root: &Path) -> io::Result<String> {
+    let Some(root) = dictionary_root(root)? else {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "The dictionary package has no files",
+        ));
+    };
+    let mut entries = 0;
+    for path in dictionary_files(&root, &mut entries, MAX_DICTIONARIES)? {
+        let result = (|| {
+            let info = Info::load(open_dictionary_file(&root, &path)?)?;
+            if info.words == 0 {
+                return Err(invalid("The dictionary index is empty"));
+            }
+            let mut budget = LookupBudget {
+                index_bytes: info.index_size,
+                dictzip_bytes: MAX_DZ_LOOKUP_BYTES,
+            };
+            let (index, data) = open_index_and_data(&root, &path, &info, &mut budget)?;
+            visit_index(index, &info, data.len()?, |_, _, _, _| Ok(()))?;
+            Ok(info.title)
+        })();
+        if let Ok(title) = result {
+            return Ok(title);
+        }
+    }
+    Err(invalid(
+        "The archive contains no usable StarDict dictionary",
+    ))
 }
 
 struct Info {

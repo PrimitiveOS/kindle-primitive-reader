@@ -33,7 +33,19 @@ impl Default for Templates {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct FixedDefaults {
     zoom: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    zoom_factor_hundredths: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    zoom_columns_tenths: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    zoom_rows_tenths: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    zoom_fit_axis: Option<crate::library::FixedContentFit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) manual_zoom: Option<bool>,
     turns: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_fit: Option<crate::library::FixedContentFit>,
     width_fit: bool,
     height_fit: bool,
     continuous: bool,
@@ -48,8 +60,23 @@ pub(crate) struct FixedDefaults {
     dither: bool,
     continuous_gap: u16,
     scan_white_level: Option<u8>,
+    dewatermark: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     fixed_reflow_spacing: Option<crate::library::FixedReflowSpacing>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fixed_reflow_columns: Option<crate::library::FixedReflowColumns>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fixed_reflow_word_gap: Option<crate::library::FixedReflowWordGap>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fixed_reflow_alignment: Option<crate::library::FixedReflowAlignment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fixed_reflow_direction: Option<crate::library::FixedReflowDirection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fixed_text_reflow_direction: Option<crate::library::FixedTextReflowDirection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fixed_reflow_text_scale: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fixed_reflow_text_height: Option<u8>,
     right_to_left: bool,
     zoom_overlap_h: u8,
     zoom_overlap_v: u8,
@@ -66,8 +93,15 @@ impl Default for FixedDefaults {
     fn default() -> Self {
         Self {
             zoom: 0,
+            zoom_factor_hundredths: None,
+            zoom_columns_tenths: None,
+            zoom_rows_tenths: None,
+            zoom_fit_axis: None,
+            manual_zoom: None,
             turns: 0,
-            width_fit: false,
+            content_fit: None,
+            // KOReader's pinned default zoom mode is `pagewidth`.
+            width_fit: true,
             height_fit: false,
             continuous: false,
             spread: false,
@@ -79,7 +113,15 @@ impl Default for FixedDefaults {
             dither: false,
             continuous_gap: 0,
             scan_white_level: None,
+            dewatermark: false,
             fixed_reflow_spacing: None,
+            fixed_reflow_columns: None,
+            fixed_reflow_word_gap: None,
+            fixed_reflow_alignment: None,
+            fixed_reflow_direction: None,
+            fixed_text_reflow_direction: None,
+            fixed_reflow_text_scale: None,
+            fixed_reflow_text_height: None,
             right_to_left: false,
             zoom_overlap_h: 40,
             zoom_overlap_v: 40,
@@ -94,11 +136,28 @@ impl Default for FixedDefaults {
 }
 
 impl FixedDefaults {
+    pub(crate) fn migrated(self) -> Self {
+        Self {
+            fixed_reflow_text_scale: self.fixed_reflow_text_scale.or_else(|| {
+                self.fixed_reflow_text_height
+                    .and_then(crate::library::legacy_scan_text_height_scale)
+            }),
+            fixed_reflow_text_height: None,
+            ..self
+        }
+    }
+
     pub(crate) fn from_view(view: FixedPreferences) -> Self {
         let view = view.normalized();
         Self {
             zoom: view.zoom,
+            zoom_factor_hundredths: view.zoom_factor_hundredths,
+            zoom_columns_tenths: view.zoom_columns_tenths,
+            zoom_rows_tenths: view.zoom_rows_tenths,
+            zoom_fit_axis: view.zoom_fit_axis,
+            manual_zoom: Some(view.manual_zoom),
             turns: view.turns,
+            content_fit: view.content_fit,
             width_fit: view.width_fit,
             height_fit: view.height_fit,
             continuous: view.continuous,
@@ -111,7 +170,22 @@ impl FixedDefaults {
             dither: view.dither,
             continuous_gap: view.continuous_gap,
             scan_white_level: view.scan_white_level,
+            dewatermark: view.dewatermark,
             fixed_reflow_spacing: view.fixed_reflow_spacing,
+            fixed_reflow_columns: Some(view.fixed_reflow_columns.unwrap_or_default()),
+            fixed_reflow_word_gap: Some(view.fixed_reflow_word_gap.unwrap_or_default()),
+            fixed_reflow_alignment: Some(view.fixed_reflow_alignment.unwrap_or_default()),
+            fixed_reflow_direction: Some(view.fixed_reflow_direction.unwrap_or_default()),
+            fixed_text_reflow_direction: Some(
+                view.fixed_text_reflow_direction
+                    .or_else(|| view.fixed_reflow_direction.map(Into::into))
+                    .unwrap_or_default(),
+            ),
+            fixed_reflow_text_scale: Some(
+                view.fixed_reflow_text_scale
+                    .unwrap_or(crate::library::DEFAULT_SCAN_REFLOW_TEXT_SCALE),
+            ),
+            fixed_reflow_text_height: None,
             right_to_left: view.right_to_left,
             zoom_overlap_h: view.zoom_overlap_h(),
             zoom_overlap_v: view.zoom_overlap_v(),
@@ -126,9 +200,19 @@ impl FixedDefaults {
     pub(crate) fn apply(self, geometry: FixedPreferences) -> FixedPreferences {
         FixedPreferences {
             zoom: self.zoom,
+            zoom_factor_hundredths: self.zoom_factor_hundredths,
+            zoom_columns_tenths: self.zoom_columns_tenths,
+            zoom_rows_tenths: self.zoom_rows_tenths,
+            zoom_fit_axis: self.zoom_fit_axis,
+            // Older candidate defaults had a factor but no explicit target. Treat that saved
+            // factor as Manual; current defaults write Some(false) when Manual is inactive.
+            manual_zoom: self
+                .manual_zoom
+                .unwrap_or(self.zoom_factor_hundredths.is_some()),
             precise_scale: None,
             tile_zoom: None,
             turns: self.turns,
+            content_fit: self.content_fit,
             width_fit: self.width_fit,
             height_fit: self.height_fit,
             continuous: self.continuous,
@@ -141,7 +225,15 @@ impl FixedDefaults {
             dither: self.dither,
             continuous_gap: self.continuous_gap,
             scan_white_level: self.scan_white_level,
+            dewatermark: self.dewatermark,
             fixed_reflow_spacing: self.fixed_reflow_spacing,
+            fixed_reflow_columns: self.fixed_reflow_columns,
+            fixed_reflow_word_gap: self.fixed_reflow_word_gap,
+            fixed_reflow_alignment: self.fixed_reflow_alignment,
+            fixed_reflow_direction: self.fixed_reflow_direction,
+            fixed_text_reflow_direction: self.fixed_text_reflow_direction,
+            fixed_reflow_text_scale: self.migrated().fixed_reflow_text_scale,
+            fixed_reflow_text_height: None,
             right_to_left: self.right_to_left,
             zoom_overlap_h: Some(self.zoom_overlap_h),
             zoom_overlap_v: Some(self.zoom_overlap_v),
@@ -157,6 +249,7 @@ impl FixedDefaults {
             offset_x: geometry.offset_x,
             offset_y: geometry.offset_y,
         }
+        .normalized()
     }
 }
 
@@ -226,7 +319,35 @@ fn validate_templates(templates: &Templates) -> io::Result<()> {
 }
 /// Shared with the user-data backup importer. It performs no filesystem work.
 pub(crate) fn validate_backup(bytes: &[u8]) -> io::Result<()> {
-    decode(bytes).map(|_| ())
+    decode(bytes)?;
+    // Local saved files clamp an oversized legacy zoom. An imported backup is
+    // rejected instead, so out-of-range values never enter the library silently.
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    use crate::library::{MAX_CONTINUOUS_GAP, MAX_FIXED_ZOOM, MAX_STRAIGHTEN_DEGREES};
+    let limits = [
+        ("zoom", MAX_FIXED_ZOOM as u64),
+        ("turns", 3),
+        ("straighten_limit", u64::from(MAX_STRAIGHTEN_DEGREES)),
+        ("continuous_gap", u64::from(MAX_CONTINUOUS_GAP)),
+    ];
+    let fit = |key| {
+        value
+            .pointer(&format!("/fixed/{key}"))
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+    };
+    if fit("width_fit") && fit("height_fit") {
+        return Err(invalid());
+    }
+    for (key, max) in limits {
+        let value = value
+            .pointer(&format!("/fixed/{key}"))
+            .and_then(serde_json::Value::as_u64);
+        if value.is_some_and(|value| value > max) {
+            return Err(invalid());
+        }
+    }
+    Ok(())
 }
 /// Validate profile/default data independently of any device viewport or font file.
 pub(crate) fn validate_preferences(p: &BookPreferences) -> io::Result<()> {

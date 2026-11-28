@@ -96,7 +96,7 @@ fn multiswipe_can_open_a_saved_book_shortcut() {
 #[test]
 fn groups_in_contact_directions_at_stock_threshold_and_release_window() {
     let fixture = Fixture::new();
-    let mut shape = Multiswipes::load(&fixture.state);
+    let mut shape = Multiswipes::load(&fixture.root);
     let mut replay = |positions: &[(f32, f32)], release| {
         for (index, &end) in positions.iter().enumerate() {
             assert_eq!(
@@ -140,6 +140,78 @@ fn groups_in_contact_directions_at_stock_threshold_and_release_window() {
         shape.observe(pan(START, ELBOW, 310, PanPhase::Release)),
         None
     );
+}
+
+#[test]
+fn rejects_overlong_strokes_instead_of_matching_their_max_leg_prefix() {
+    let fixture = Fixture::new();
+    let record = |directions: &[Direction]| {
+        let mut multiswipes = Multiswipes::load(&fixture.root);
+        let mut point = START;
+        for (index, direction) in directions.iter().copied().enumerate() {
+            point = match direction {
+                Direction::N => (point.0, point.1 - 120.0),
+                Direction::E => (point.0 + 120.0, point.1),
+                Direction::S => (point.0, point.1 + 120.0),
+                Direction::W => (point.0 - 120.0, point.1),
+                _ => unreachable!("test uses cardinal directions"),
+            };
+            assert_eq!(
+                multiswipes.observe(pan(
+                    START,
+                    point,
+                    (index as u64 + 1) * 20,
+                    PanPhase::Move,
+                )),
+                None
+            );
+        }
+        multiswipes.observe(pan(START, point, 700, PanPhase::Release))
+    };
+
+    let cycle = [E, N, W, S];
+    let directions = (0..=MAX_LEGS)
+        .map(|index| match index {
+            index if index + 1 == MAX_LEGS => E,
+            index if index == MAX_LEGS => N,
+            index => cycle[index % cycle.len()],
+        })
+        .collect::<Vec<_>>();
+    let maximum_shape = Shape::new(&directions[..MAX_LEGS]);
+    assert_eq!(
+        record(&directions[..MAX_LEGS]),
+        Some(maximum_shape)
+    );
+    assert_eq!(record(&directions), None);
+    assert_eq!(
+        Shape::try_from(String::from(maximum_shape)).unwrap(),
+        maximum_shape
+    );
+    let overlong = directions
+        .iter()
+        .map(|direction| Direction::ALL[*direction as usize - 1].1)
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(Shape::try_from(overlong).is_err());
+}
+
+#[test]
+fn multiswipes_can_start_in_screen_edge_zones() {
+    let fixture = Fixture::new();
+    let mut reader = canvas_reader(&fixture);
+    reader.open_path(&fixture.book).unwrap();
+    let shape = Shape::new(&[N, E]);
+    reader.activate_multiswipe(Command::Toggle).unwrap();
+    reader
+        .activate_multiswipe(Command::Bind(shape, Binding::Bookmarks))
+        .unwrap();
+    reader.show(Screen::Book);
+
+    assert_eq!(
+        touch(&mut reader, &[(50.0, 540.0), (210.0, 540.0)], (50.0, 700.0)),
+        Change::Partial
+    );
+    assert_eq!(reader.screen, Screen::Bookmarks);
 }
 
 #[test]
@@ -335,4 +407,163 @@ fn landscape_pdf_reserves_edges_and_drops_interrupted_shapes() {
     reader.input(Input::Wake);
     reader.touch_pan(pan(START, ELBOW, 310, PanPhase::Release));
     assert_eq!(reader.screen, Screen::Fixed);
+}
+
+#[test]
+fn action_sequences_persist_order_modes_and_cycle_position() {
+    let fixture = Fixture::new();
+    let shape = Shape::new(&[N, E]);
+    let mut multiswipes = Multiswipes::load(&fixture.root);
+    multiswipes.save(&Command::Toggle).unwrap();
+    multiswipes
+        .save(&Command::Bind(shape, Binding::Bookmarks))
+        .unwrap();
+    multiswipes
+        .save(&Command::AddAction(shape, Binding::Contents))
+        .unwrap();
+    multiswipes
+        .save(&Command::SetMode(shape, RunMode::OneByOne))
+        .unwrap();
+
+    assert_eq!(
+        multiswipes.configured_actions(shape),
+        Some(vec![
+            ActionEntry::new(Binding::Bookmarks),
+            ActionEntry::new(Binding::Contents),
+        ])
+    );
+    assert_eq!(multiswipes.run_mode(shape), RunMode::OneByOne);
+    assert_eq!(multiswipes.next_cycle_action(shape), Some(Binding::Bookmarks));
+    assert_eq!(multiswipes.next_cycle_action(shape), Some(Binding::Contents));
+    assert_eq!(multiswipes.next_cycle_action(shape), Some(Binding::Bookmarks));
+
+    multiswipes
+        .save(&Command::MoveAction(shape, 1, true))
+        .unwrap();
+    assert_eq!(
+        multiswipes.configured_actions(shape),
+        Some(vec![
+            ActionEntry::new(Binding::Contents),
+            ActionEntry::new(Binding::Bookmarks),
+        ])
+    );
+    multiswipes
+        .save(&Command::RemoveAction(shape, 1))
+        .unwrap();
+    assert_eq!(
+        multiswipes.configured_actions(shape),
+        Some(vec![ActionEntry::new(Binding::Contents)])
+    );
+
+    let reopened = Multiswipes::load(&fixture.root);
+    assert_eq!(reopened.run_mode(shape), RunMode::OneByOne);
+    assert_eq!(
+        reopened.configured_actions(shape),
+        Some(vec![ActionEntry::new(Binding::Contents)])
+    );
+}
+
+#[test]
+fn legacy_single_binding_profiles_remain_readable_as_one_action() {
+    let old: Profile = serde_json::from_str(
+        r#"{"enabled":true,"assigned":{"north east":"bookmarks"},"custom":{}}"#,
+    )
+    .unwrap();
+    let shape = Shape::new(&[N, E]);
+    let multiswipes = Multiswipes {
+        path: PathBuf::new(),
+        profile: old,
+        stroke: None,
+        draft: None,
+        cycle: BTreeMap::new(),
+    };
+
+    assert_eq!(
+        multiswipes.configured_actions(shape),
+        Some(vec![ActionEntry::new(Binding::Bookmarks)])
+    );
+    assert_eq!(multiswipes.run_mode(shape), RunMode::ExecuteAll);
+}
+
+#[test]
+fn quick_menu_selects_actions_and_pages_over_long_sequences() {
+    let actions = (0..20)
+        .map(|index| if index % 2 == 0 { Binding::Bookmarks } else { Binding::Contents })
+        .map(ActionEntry::new)
+        .collect();
+    let mut menu = QuickMenu::new(
+        Shape::new(&[N, E]),
+        actions,
+        START,
+        ELBOW,
+        1264,
+        1680,
+        QuickMenuPosition::Gesture,
+        false,
+    );
+    menu.actions[9].separator_after = true;
+    let (panel, _, _, visible, _) = menu.layout();
+    assert_eq!((panel.x, panel.y), (330, 48));
+    assert!(visible < menu.actions.len());
+    assert_eq!(menu.input(Input::PageForward), QuickChoice::Stay);
+    assert!(menu.first > 0);
+    let first_row = menu.input(Input::Tap(
+        (panel.x + 100) as f32,
+        (panel.y + 120) as f32,
+    ));
+    assert_eq!(first_row, QuickChoice::Action(9, Binding::Contents));
+    assert_eq!(
+        menu.input(Input::Tap(
+            (panel.x + 100) as f32,
+            (panel.y + 92 + 66 + 12 + 10) as f32,
+        )),
+        QuickChoice::Action(10, Binding::Bookmarks)
+    );
+    let (_, run_all, _, _, _) = menu.layout();
+    assert_eq!(
+        menu.input(Input::Tap(
+            (run_all.x + 10) as f32,
+            (run_all.y + 10) as f32,
+        )),
+        QuickChoice::All
+    );
+}
+
+#[test]
+fn quick_menu_preferences_and_action_metadata_persist() {
+    let fixture = Fixture::new();
+    let shape = Shape::new(&[N, E]);
+    let mut multiswipes = Multiswipes::load(&fixture.root);
+    multiswipes.save(&Command::Toggle).unwrap();
+    multiswipes
+        .save(&Command::Bind(shape, Binding::Bookmarks))
+        .unwrap();
+    multiswipes
+        .save(&Command::AddAction(shape, Binding::Contents))
+        .unwrap();
+    multiswipes
+        .save(&Command::SetMode(shape, RunMode::QuickMenu))
+        .unwrap();
+    multiswipes
+        .save(&Command::SetQuickMenuPosition(shape, QuickMenuPosition::Gesture))
+        .unwrap();
+    multiswipes
+        .save(&Command::SetQuickMenuKeepOpen(shape, true))
+        .unwrap();
+    multiswipes
+        .save(&Command::ToggleSeparator(shape, 0))
+        .unwrap();
+    multiswipes.rename_action(shape, 1, "Open contents").unwrap();
+
+    let mut reopened = Multiswipes::load(&fixture.root);
+    let chain = reopened.profile.chains.get(&shape).unwrap();
+    assert_eq!(chain.quick_menu.position, QuickMenuPosition::Gesture);
+    assert!(chain.quick_menu.keep_open);
+    assert!(chain.actions[0].separator_after);
+    assert_eq!(reopened.action_name(shape, 1), Some("Open contents"));
+    reopened.rename_action(shape, 1, "   ").unwrap();
+    assert_eq!(
+        Multiswipes::load(&fixture.root).action_name(shape, 1),
+        None
+    );
 }

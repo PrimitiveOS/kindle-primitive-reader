@@ -534,6 +534,7 @@ mod tests {
                 block: block.key,
                 offset,
                 illustration: None,
+                side_bias: None,
             };
             let start = anchor(offset);
             let selection = band

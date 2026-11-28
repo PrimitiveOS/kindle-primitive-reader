@@ -85,6 +85,22 @@ pub(crate) enum WritingMode {
     VerticalLr,
 }
 
+/// CREngine hints used to classify note links before following them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CrFootnoteHint {
+    Footnote,
+    FootnoteIgnore,
+    Noteref,
+    NoterefIgnore,
+}
+
+#[derive(Clone, Copy)]
+enum CrFootnoteHintValue {
+    Set(CrFootnoteHint),
+    Inherit,
+    Clear,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum BoxSizing {
     #[default]
@@ -636,6 +652,8 @@ pub(crate) struct Style {
     /// Computed, nonnegative publisher or user word spacing.
     pub(crate) word_spacing: CssLength,
     pub(crate) allow_small_note_text: bool,
+    /// Non-inherited private hint used by KOReader's note-link classifier.
+    pub(crate) cr_footnote_hint: Option<CrFootnoteHint>,
     pub text_rise: TextRise,
     pub decoration: TextDecoration,
     pub(crate) link_ink: Option<u8>,
@@ -681,6 +699,7 @@ pub(crate) struct Style {
     pub(crate) caption_bottom: bool,
     pub background: Option<u8>,
     pub marker: crate::list_marker::MarkerKind,
+    pub marker_position: crate::list_marker::MarkerPosition,
     pub image_width: Option<ImageLength>,
     pub image_height: Option<ImageLength>,
     pub image_max_width: Option<ImageLength>,
@@ -727,6 +746,7 @@ impl Default for Style {
             letter_spacing: CssLength::default(),
             word_spacing: CssLength::default(),
             allow_small_note_text: false,
+            cr_footnote_hint: None,
             text_rise: TextRise::default(),
             decoration: TextDecoration::default(),
             link_ink: None,
@@ -771,6 +791,7 @@ impl Default for Style {
             caption_bottom: false,
             background: None,
             marker: crate::list_marker::MarkerKind::None,
+            marker_position: crate::list_marker::MarkerPosition::Outside,
             image_width: None,
             image_height: None,
             image_max_width: None,
@@ -1282,6 +1303,7 @@ impl BookStyle {
             style.generated = None;
             style.first_letter = None;
             style.first_line = None;
+            style.cr_footnote_hint = None;
             if element.tag == "a" {
                 style.link_ink = self.layout_tweaks.link_ink.map(|ink| ink as u8);
             }
@@ -1437,6 +1459,13 @@ impl BookStyle {
             }
             for (_, property) in winners.into_iter().flatten() {
                 match property {
+                    Property::CrFootnoteHint(value) => {
+                        style.cr_footnote_hint = match value {
+                            CrFootnoteHintValue::Set(value) => Some(*value),
+                            CrFootnoteHintValue::Inherit => parent.cr_footnote_hint,
+                            CrFootnoteHintValue::Clear => None,
+                        };
+                    }
                     Property::Reset(16, reset) => {
                         decoration = user_css::decoration(*reset, parent.decoration)
                     }
@@ -1578,6 +1607,11 @@ impl BookStyle {
                         });
                     }
                     Property::Marker(kind) => style.marker = *kind,
+                    Property::MarkerPosition(position) => style.marker_position = *position,
+                    Property::ListStyleShorthand(kind, position) => {
+                        style.marker = *kind;
+                        style.marker_position = *position;
+                    }
                     Property::Background(gray) => style.background = *gray,
                     Property::TextColor(gray) => style.text_ink = (*gray).or(parent.text_ink),
                     Property::Alignment(alignment) => style.alignment = Some(*alignment),
@@ -2809,6 +2843,15 @@ fn declarations(input: &mut Parser<'_>) -> Vec<Declaration> {
                 property: Property::LigatureExtras(extra),
                 important: decl.important,
             });
+        } else if let Property::ListStyleShorthand(kind, position) = decl.property {
+            result.push(Declaration {
+                property: Property::Marker(kind),
+                important: decl.important,
+            });
+            result.push(Declaration {
+                property: Property::MarkerPosition(position),
+                important: decl.important,
+            });
         } else if let Property::ResetMany(keys, reset) = decl.property {
             result.extend(keys.into_iter().map(|key| Declaration {
                 property: Property::Reset(key, reset),
@@ -2863,7 +2906,9 @@ const RUBY_POSITION: usize = 67;
 const TAB_SIZE: usize = 68;
 const WORD_SPACING: usize = 69;
 const TEXT_COLOR: usize = 70;
-const CASCADE_PROPERTY_COUNT: usize = 71;
+const CR_FOOTNOTE_HINT: usize = 71;
+const LIST_STYLE_POSITION: usize = 72;
+const CASCADE_PROPERTY_COUNT: usize = 73;
 type Winners<'a> = [Option<(Priority, &'a Property)>; CASCADE_PROPERTY_COUNT];
 
 #[derive(Clone, Copy)]
@@ -2905,8 +2950,10 @@ fn choose<'a>(
             Property::VariantShorthand(..) => continue,
             Property::LigatureShorthand(..) => continue,
             Property::FontShorthand(..) => continue,
+            Property::ListStyleShorthand(..) => continue,
             Property::Display(_) => 40,
             Property::Visibility(_) => 41,
+            Property::CrFootnoteHint(_) => CR_FOOTNOTE_HINT,
             Property::MaxWidth(_) => 42,
             Property::MaxHeight(value) if !accept_fit && value.pixels(1, 1.0) == Some(0.0) => {
                 continue;
@@ -2955,6 +3002,7 @@ fn choose<'a>(
             Property::Height(_) => 12,
             Property::VerticalAlign(_) => 13,
             Property::Marker(_) => 14,
+            Property::MarkerPosition(_) => LIST_STYLE_POSITION,
             Property::Indent(_) => 15,
             Property::Decoration(_) => 16,
             Property::BreakBefore(_) => 17,
@@ -3021,6 +3069,7 @@ impl Weight {
 }
 
 enum Property {
+    CrFootnoteHint(CrFootnoteHintValue),
     GeneratedContent(Vec<pseudo::ContentPart>),
     InitialLetter(Option<pseudo::InitialLetter>),
     Display(Display),
@@ -3046,6 +3095,11 @@ enum Property {
     Decoration(Option<TextDecoration>),
     Indent(Option<TextIndent>),
     Marker(crate::list_marker::MarkerKind),
+    MarkerPosition(crate::list_marker::MarkerPosition),
+    ListStyleShorthand(
+        crate::list_marker::MarkerKind,
+        crate::list_marker::MarkerPosition,
+    ),
     Family(Vec<Family>),
     FontSource(Vec<String>),
     FontShorthand(Vec<Property>),
@@ -3119,6 +3173,22 @@ impl<'i> DeclarationParser<'i> for Properties {
             }
             input.reset(&before);
             let property = match name.to_ascii_lowercase().as_ref() {
+                "-cr-hint" => {
+                    let value = input.expect_ident()?.to_ascii_lowercase();
+                    Property::CrFootnoteHint(match value.as_str() {
+                        "footnote" => CrFootnoteHintValue::Set(CrFootnoteHint::Footnote),
+                        "footnote-ignore" => {
+                            CrFootnoteHintValue::Set(CrFootnoteHint::FootnoteIgnore)
+                        }
+                        "noteref" => CrFootnoteHintValue::Set(CrFootnoteHint::Noteref),
+                        "noteref-ignore" => {
+                            CrFootnoteHintValue::Set(CrFootnoteHint::NoterefIgnore)
+                        }
+                        "inherit" => CrFootnoteHintValue::Inherit,
+                        "none" | "initial" | "unset" | "revert" => CrFootnoteHintValue::Clear,
+                        _ => return Err(ParseError::unexpected_token()),
+                    })
+                }
                 "content" => Property::GeneratedContent(pseudo::parse_content(input)?),
                 "initial-letter" | "-webkit-initial-letter" => {
                     Property::InitialLetter(pseudo::parse_initial_letter(input)?)
@@ -3570,19 +3640,51 @@ impl<'i> DeclarationParser<'i> for Properties {
                     })
                 }
                 "line-height" => parse_line_height(input)?,
-                "list-style-type" | "list-style" => {
+                "list-style-type" => Property::Marker(
+                    crate::list_marker::MarkerKind::css(
+                        &input.expect_ident()?.to_ascii_lowercase(),
+                    )
+                    .ok_or_else(ParseError::unexpected_token)?,
+                ),
+                "list-style-position" => {
+                    let position = input.expect_ident()?.to_ascii_lowercase();
+                    Property::MarkerPosition(match position.as_str() {
+                        "inside" => crate::list_marker::MarkerPosition::Inside,
+                        "outside" => crate::list_marker::MarkerPosition::Outside,
+                        _ => return Err(ParseError::unexpected_token()),
+                    })
+                }
+                "list-style" => {
                     let mut marker = None;
+                    let mut position = None;
                     while !input.is_exhausted() {
                         let token = input.expect_ident()?.to_ascii_lowercase();
-                        if token == "inside" || token == "outside" {
-                            continue;
+                        match token.as_str() {
+                            "inside" | "outside" => {
+                                if position.is_some() {
+                                    return Err(ParseError::unexpected_token());
+                                }
+                                position = Some(if token == "inside" {
+                                    crate::list_marker::MarkerPosition::Inside
+                                } else {
+                                    crate::list_marker::MarkerPosition::Outside
+                                });
+                            }
+                            _ => {
+                                if marker.is_some() {
+                                    return Err(ParseError::unexpected_token());
+                                }
+                                marker = Some(
+                                    crate::list_marker::MarkerKind::css(&token)
+                                        .ok_or_else(ParseError::unexpected_token)?,
+                                );
+                            }
                         }
-                        marker = Some(
-                            crate::list_marker::MarkerKind::css(&token)
-                                .ok_or_else(ParseError::unexpected_token)?,
-                        );
                     }
-                    Property::Marker(marker.ok_or_else(ParseError::unexpected_token)?)
+                    Property::ListStyleShorthand(
+                        marker.unwrap_or(crate::list_marker::MarkerKind::Disc),
+                        position.unwrap_or(crate::list_marker::MarkerPosition::Outside),
+                    )
                 }
                 "background" | "background-color" => Property::Background(background(input)?),
                 "color" => {

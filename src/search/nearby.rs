@@ -53,6 +53,7 @@ impl NearbySearch {
     ) -> Result<Option<SearchHit>> {
         self.scan(chapter, anchor, cancel, book.chapters.len(), |ci| {
             ChapterText::read_with_flow(book, ci, &self.flow_config)
+                .map(ChapterText::with_source_only_verified_layout)
         })
     }
 
@@ -324,6 +325,7 @@ impl NearbySearch {
                                 block: block.key,
                                 offset: first.start,
                                 illustration: None,
+                                side_bias: None,
                             };
                             let end = Anchor {
                                 raw_caret: None,
@@ -432,6 +434,21 @@ impl ChapterText {
         layout.verify(self.book, &self.href, source, &self.flow_config)?;
         self.raw_layout = Some(layout);
         Ok(self)
+    }
+
+    /// Source-only search (no probe, so no raw-whitespace spans to verify) uses an explicit verified
+    /// layout with no raw blocks; it orders blocks as canonical search does. Production search always
+    /// attaches a probe-verified layout instead (`app::nearby_search`, `with_verified_raw_layout`).
+    pub(crate) fn with_source_only_verified_layout(mut self) -> Self {
+        if let Some(source) = &self.source {
+            self.raw_layout = Some(super::raw_layout::VerifiedRawLayout::verified_without_raw_blocks(
+                self.book,
+                &self.href,
+                source.revision,
+                self.flow_config.clone(),
+            ));
+        }
+        self
     }
 
     pub(crate) fn read(book: &mut Book, index: usize) -> Result<Self> {
@@ -614,7 +631,7 @@ mod tests {
         let chapters = book.chapters.len();
         let cancelled = AtomicBool::new(false);
         let search = |direction| NearbySearch::new("Linh", false, false, direction).unwrap();
-        let mut read = |index| ChapterText::read(&mut book, index);
+        let mut read = |index| ChapterText::read(&mut book, index).map(ChapterText::with_source_only_verified_layout);
         let first = search(SearchDirection::Next)
             .scan_from(0, publication, None, None, &cancelled, chapters, &mut read)
             .unwrap()

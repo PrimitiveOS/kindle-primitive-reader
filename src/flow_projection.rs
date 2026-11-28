@@ -1,11 +1,8 @@
-//! A layout view of canonical reading text. It is deliberately not enabled in
-//! renderers yet: every text consumer must adopt the same view before hiding UI
-//! or a custom CSS declaration can promise complete display/visibility support.
-//!
+//! A bounded reading view of canonical source text shared by layout and search.
 //! Source extraction records origins without changing any canonical byte, key,
 //! revision or legacy-offset map. Display suppression removes origins here;
 //! visibility changes only the paint flag and leaves text/metrics available.
-#![allow(dead_code)] // Foundation; consumer migration is a separate acceptance gate.
+#![allow(dead_code)] // Some source-origin mapping paths still need integration.
 
 use std::{
     borrow::Cow,

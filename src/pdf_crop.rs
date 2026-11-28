@@ -144,6 +144,49 @@ pub(crate) fn full_auto(
     }
 }
 
+/// Detect used content from a bounded grayscale render supplied by any fixed-page provider.
+/// The coordinates returned remain normalized to the original source page.
+pub(crate) fn full_auto_rendered(
+    pixels: &mut [u8],
+    width: u32,
+    size: (f32, f32),
+    scale: f32,
+    screen_width: u32,
+    margin_hundredths: u8,
+    seed: Option<Seed>,
+) -> crate::Result<PdfTextRect> {
+    if width == 0
+        || pixels.is_empty()
+        || pixels.len() % width as usize != 0
+        || !scale.is_finite()
+        || scale <= 0.0
+        || !size.0.is_finite()
+        || !size.1.is_finite()
+        || size.0 <= 0.0
+        || size.1 <= 0.0
+        || screen_width <= 1
+        || margin_hundredths > crate::library::MAX_CROP_MARGIN
+    {
+        return Err("The page raster cannot be used to detect content".into());
+    }
+    normalize_ink_polarity(pixels, width as usize);
+    discard_isolated_specks(pixels, width as usize, scale);
+    let detected = bounds(pixels, width as usize, FULL_PAGE)
+        .and_then(|ink| {
+            padded_native_bounds(
+                ink,
+                size,
+                screen_width,
+                margin_hundredths,
+                BoundsMode::FullPage,
+            )
+        })
+        .filter(|crop| crop.x1 - crop.x0 > 0.1 || crop.y1 - crop.y0 > 0.1);
+    Ok(detected
+        .or_else(|| seed.and_then(|seed| seed.normalized(size)))
+        .unwrap_or(FULL_PAGE))
+}
+
 pub(crate) fn manual(pdf: &Pdf, page: usize, seed: Option<Seed>) -> crate::Result<PdfTextRect> {
     let size = pdf.page_size(page)?;
     if let Some(area) = seed.and_then(|seed| seed.normalized(size)) {
@@ -186,6 +229,7 @@ fn detect_ink(
             turns: 0,
         },
     )?;
+    normalize_ink_polarity(&mut pixels, width as usize);
     if filter_specks {
         discard_isolated_specks(&mut pixels, width as usize, scale);
     }
@@ -193,6 +237,62 @@ fn detect_ink(
 }
 
 const INK_THRESHOLD: u8 = 192;
+
+/// Normalize the bounded raster so pixels near its border background become
+/// white and contrasting content becomes dark. This handles both white-on-dark
+/// pages and gray paper without mistaking a large dark illustration on an
+/// ordinary light page for a dark page. The work buffer is only used by the
+/// detector; the displayed image is unchanged.
+fn normalize_ink_polarity(pixels: &mut [u8], width: usize) {
+    if width == 0 || pixels.is_empty() || pixels.len() % width != 0 {
+        return;
+    }
+    let height = pixels.len() / width;
+    if height == 0 {
+        return;
+    }
+
+    let mut border = Vec::with_capacity(width.saturating_mul(2) + height.saturating_mul(2));
+    border.extend_from_slice(&pixels[..width]);
+    border.extend_from_slice(&pixels[(height - 1) * width..height * width]);
+    for y in 0..height {
+        border.push(pixels[y * width]);
+        border.push(pixels[y * width + width - 1]);
+    }
+    border.sort_unstable();
+    let median = border[border.len() / 2];
+    let uniform = border
+        .iter()
+        .filter(|sample| (**sample).abs_diff(median) <= 16)
+        .count();
+    if uniform * 4 < border.len() * 3 {
+        // A mixed border may be a full-bleed illustration rather than a page
+        // background. Keep the legacy dark-ink path rather than guessing.
+        return;
+    }
+    if median >= 128 {
+        let background = u16::from(median);
+        for pixel in pixels {
+            let value = u16::from(*pixel);
+            *pixel = if value >= background {
+                u8::MAX
+            } else {
+                (255 - (background - value) * 255 / background) as u8
+            };
+        }
+    } else {
+        let background = u16::from(median);
+        let range = 255 - background;
+        for pixel in pixels {
+            let value = u16::from(*pixel);
+            *pixel = if value <= background {
+                u8::MAX
+            } else {
+                (255 - (value - background) * 255 / range) as u8
+            };
+        }
+    }
+}
 
 fn discard_isolated_specks(pixels: &mut [u8], width: usize, scale: f32) {
     // Native PDF points keep the speck cutoff consistent across raster sizes.
@@ -343,6 +443,53 @@ pub(crate) mod tests {
     use super::*;
 
     pub(crate) const SIZE: (f32, f32) = (600.0, 800.0);
+
+    #[test]
+    fn content_detection_handles_dark_and_light_page_backgrounds() {
+        let width = 64usize;
+        let height = 64usize;
+        let expected = PdfTextRect {
+            x0: 12.0 / width as f32,
+            y0: 8.0 / height as f32,
+            x1: 52.0 / width as f32,
+            y1: 56.0 / height as f32,
+        };
+
+        for (background, foreground) in [
+            (u8::MAX, 0),
+            (220, 0),
+            (128, 0),
+            (127, u8::MAX),
+            (64, u8::MAX),
+            (0, u8::MAX),
+        ] {
+            let mut pixels = vec![background; width * height];
+            for y in 8..56 {
+                for x in 12..52 {
+                    pixels[y * width + x] = foreground;
+                }
+            }
+            // A single border speck must not change the inferred polarity or
+            // enlarge the detected content bounds.
+            pixels[0] = foreground;
+            normalize_ink_polarity(&mut pixels, width);
+            discard_isolated_specks(&mut pixels, width, 1.0);
+            let found = bounds(&pixels, width, FULL_PAGE).unwrap();
+            for (actual, expected) in [found.x0, found.y0, found.x1, found.y1]
+                .into_iter()
+                .zip([expected.x0, expected.y0, expected.x1, expected.y1])
+            {
+                assert!((actual - expected).abs() < 0.001, "{actual} != {expected}");
+            }
+        }
+
+        let mut mixed_border = vec![u8::MAX; width * height];
+        mixed_border[..width].fill(0);
+        mixed_border[(height - 1) * width..].fill(0);
+        let original = mixed_border.clone();
+        normalize_ink_polarity(&mut mixed_border, width);
+        assert_eq!(mixed_border, original);
+    }
 
     pub(crate) fn fixture() -> Vec<u8> {
         let stream = |contents: &str| {

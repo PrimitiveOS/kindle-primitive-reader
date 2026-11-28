@@ -257,19 +257,26 @@ impl<'i> DeclarationParser<'i> for StrictProperties {
         input.reset(&before);
         let property_name = name.to_ascii_lowercase();
         let property_name = property_name.as_str();
+        let unsupported_display_value = property_name == "display"
+            && !self.pseudo_only
+            && !reset
+                .as_ref()
+                .is_some_and(|value| value.eq_ignore_ascii_case("none"));
         if matches!(
             property_name,
             "margin" | "margin-top" | "margin-bottom" | "clear" | "font"
         ) || property_name == "float" && !self.first_letter_only
-            || !self.pseudo_only && matches!(property_name, "display" | "visibility")
+            || unsupported_display_value
         {
-            return Err(error(
-                input,
-                format!("Unsupported user CSS until reading consumers are migrated: {name}"),
-            ));
+            let detail = if unsupported_display_value {
+                "Only display:none is supported for ordinary elements; box reclassification is unsupported"
+            } else {
+                "Unsupported user CSS property"
+            };
+            return Err(error(input, format!("{detail}: {name}")));
         }
         if name.eq_ignore_ascii_case("src")
-            || reset.is_some_and(|s| {
+            || reset.as_ref().is_some_and(|s| {
                 s.eq_ignore_ascii_case("revert") || s.eq_ignore_ascii_case("revert-layer")
             })
         {

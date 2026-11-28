@@ -1,13 +1,68 @@
 //! Reading adjustments that can be applied without leaving the visible page.
-use super::{Action, BarPanel, Reader, Screen};
 use crate::app::NumberField;
+use crate::app::character_page_settings::MarginEdge;
+use crate::library::FixedContentFit;
+use super::{Action, BarPanel, Reader, Screen};
+use crate::app::bar_icons::{
+    BOTTOM_MARGIN_LESS, BOTTOM_MARGIN_MORE, FIT_FULL, FIT_HEIGHT, FIT_WIDTH, LEFT_MARGIN_LESS,
+    LEFT_MARGIN_MORE, RIGHT_MARGIN_LESS, RIGHT_MARGIN_MORE, TOP_MARGIN_LESS, TOP_MARGIN_MORE,
+    ZOOM_COLUMNS, ZOOM_CONTENT, ZOOM_IN, ZOOM_MANUAL, ZOOM_OUT, ZOOM_PAGE, ZOOM_ROWS,
+};
 use crate::app::reading_notifications::Source;
 use crate::library::{FixedTileAxis, SCAN_GAMMA_DEFAULT, SCAN_GAMMA_MAX, SCAN_GAMMA_MIN};
 use crate::reading_controls::{ReadingOrientation, ScreenPalette};
 use crate::{BaseStylesheet, FontHinting, Settings, TextAlignment};
+use primitive_ui::Icon;
 
 fn format_scan_gamma(tenths: u16) -> String {
     format!("{}.{}", tenths / 10, tenths % 10)
+}
+
+fn zoom_factor_label(hundredths: u16) -> String {
+    let whole = hundredths / 100;
+    let fraction = hundredths % 100;
+    let number = if fraction == 0 {
+        whole.to_string()
+    } else if fraction % 10 == 0 {
+        format!("{whole}.{}", fraction / 10)
+    } else {
+        format!("{whole}.{fraction:02}")
+    };
+    format!("{number}×")
+}
+
+fn fixed_zoom_factor_choices(reading: &crate::fixed_session::FixedReading) -> Vec<Choice> {
+    const PRESETS: [(u16, &str); 8] = [
+        (70, "0.7"),
+        (100, "1"),
+        (150, "1.5"),
+        (200, "2"),
+        (300, "3"),
+        (500, "5"),
+        (1000, "10"),
+        (2000, "20"),
+    ];
+    let current = reading.zoom_factor_hundredths();
+    let selectable =
+        reading.preferences().tile_zoom.is_none() && reading.preferences().precise_scale.is_none();
+    let mut choices = PRESETS
+        .into_iter()
+        .map(|(factor, label)| {
+            Choice::option(
+                label,
+                Action::SetFixedZoomFactor(factor),
+                selectable && current == factor,
+            )
+        })
+        .collect::<Vec<_>>();
+    if selectable && !PRESETS.iter().any(|(factor, _)| *factor == current) {
+        choices.push(Choice::option(
+            format!("{:.2}", f32::from(current) / 100.0),
+            Action::SetFixedZoomFactor(current),
+            true,
+        ));
+    }
+    choices
 }
 
 pub(super) struct Choice {
@@ -16,6 +71,7 @@ pub(super) struct Choice {
     pub(super) selected: bool,
     pub(super) live: bool,
     pub(super) feedback: Option<(Source, String)>,
+    pub(super) icon: Option<Icon>,
 }
 
 impl Choice {
@@ -26,6 +82,7 @@ impl Choice {
             selected: false,
             live: true,
             feedback: None,
+            icon: None,
         }
     }
 
@@ -36,21 +93,28 @@ impl Choice {
             selected,
             live: true,
             feedback: None,
+            icon: None,
         }
     }
 
-    fn link(title: &str, action: Action) -> Self {
+    fn link(title: impl Into<String>, action: Action) -> Self {
         Self {
             title: title.into(),
             action,
             selected: false,
             live: false,
             feedback: None,
+            icon: None,
         }
     }
 
     fn with_feedback(mut self, source: Source, message: impl Into<String>) -> Self {
         self.feedback = Some((source, message.into()));
+        self
+    }
+
+    fn with_icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
         self
     }
 }
@@ -60,6 +124,7 @@ pub(super) struct ConfigRow {
     pub(super) choices: Vec<Choice>,
     pub(super) information: Option<&'static str>,
     pub(super) help: Option<Action>,
+    pub(super) label_width: Option<i32>,
 }
 
 impl ConfigRow {
@@ -82,7 +147,13 @@ impl ConfigRow {
             choices: choices.into_iter().collect(),
             information: None,
             help: None,
+            label_width: None,
         }
+    }
+
+    fn with_label_width(mut self, width: i32) -> Self {
+        self.label_width = Some(width);
+        self
     }
 }
 
@@ -518,20 +589,28 @@ impl Reader {
                         ..settings
                     };
                     return vec![
-                        edge_row("Left", settings.left_margin(), side_limit, |value| {
-                            Settings {
+                        margin_preset_row(
+                            "L/R preset",
+                            settings,
+                            side_limit,
+                            |value| {
+                                settings.left_margin() == value
+                                    && settings.right_margin() == value
+                            },
+                            |value| Settings {
                                 margin_left: Some(value),
-                                ..settings
-                            }
-                        }),
-                        edge_row("Right", settings.right_margin(), side_limit, |value| {
-                            Settings {
                                 margin_right: Some(value),
                                 ..settings
-                            }
-                        }),
-                        edge_row("Top", settings.top_margin(), vertical_limit, |value| {
-                            Settings {
+                            },
+                        )
+                        .with_label_width(MARGIN_PRESET_LABEL_WIDTH),
+                        horizontal_margin_row(settings),
+                        margin_preset_row(
+                            "Top presets",
+                            settings,
+                            vertical_limit,
+                            |value| settings.top_margin() == value,
+                            |value| Settings {
                                 margin_top: Some(value),
                                 margin_bottom: if linked {
                                     Some(value)
@@ -539,12 +618,29 @@ impl Reader {
                                     settings.margin_bottom
                                 },
                                 ..settings
-                            }
-                        }),
+                            },
+                        )
+                        .with_label_width(MARGIN_PRESET_LABEL_WIDTH),
                         edge_row(
-                            "Bottom",
-                            settings.bottom_margin(),
+                            "Top",
+                            settings.top_margin(),
                             vertical_limit,
+                            MarginEdge::Top,
+                            |value| Settings {
+                                margin_top: Some(value),
+                                margin_bottom: if linked {
+                                    Some(value)
+                                } else {
+                                    settings.margin_bottom
+                                },
+                                ..settings
+                            },
+                        ),
+                        margin_preset_row(
+                            "Bottom presets",
+                            settings,
+                            vertical_limit,
+                            |value| settings.bottom_margin() == value,
                             |value| Settings {
                                 margin_bottom: Some(value),
                                 margin_top: if linked {
@@ -553,6 +649,24 @@ impl Reader {
                                     settings.margin_top
                                 },
                                 ..settings
+                            },
+                        )
+                        .with_label_width(MARGIN_PRESET_LABEL_WIDTH),
+                        edge_row(
+                            "Bottom",
+                            settings.bottom_margin(),
+                            vertical_limit,
+                            MarginEdge::Bottom,
+                            |value| {
+                                Settings {
+                                    margin_bottom: Some(value),
+                                    margin_top: if linked {
+                                        Some(value)
+                                    } else {
+                                        settings.margin_top
+                                    },
+                                    ..settings
+                                }
                             },
                         ),
                         ConfigRow::new(
@@ -841,7 +955,7 @@ impl Reader {
                     ];
                     rows.push(ConfigRow::new(
                         "Image scaling",
-                        [("Fast", false), ("Smooth", true)].map(|(label, smooth_images)| {
+                        [("Fast", false), ("Best", true)].map(|(label, smooth_images)| {
                             Choice::option(
                                 label,
                                 Action::Text(Settings {
@@ -1026,53 +1140,135 @@ impl Reader {
                 BarPanel::View => {
                     let mut rows = Vec::new();
                     if !reading.is_spread() {
+                        let fit_axis = if prefs.zoom == 0
+                            && prefs.tile_zoom.is_none()
+                            && prefs.precise_scale.is_none()
+                            && !prefs.manual_zoom
+                        {
+                            Some(prefs.zoom_fit_axis.or(prefs.content_fit).unwrap_or(
+                                if prefs.width_fit {
+                                    FixedContentFit::Width
+                                } else if prefs.height_fit {
+                                    FixedContentFit::Height
+                                } else {
+                                    FixedContentFit::Full
+                                },
+                            ))
+                        } else {
+                            None
+                        };
                         rows.push(ConfigRow::new(
-                            "Fit",
+                            "Zoom to",
                             [
                                 Choice::option(
-                                    "Fit page",
-                                    Action::FitPage(false),
-                                    prefs.zoom == 0
-                                        && prefs.tile_zoom.is_none()
+                                    "Page",
+                                    Action::ZoomTargetContent(false),
+                                    prefs.tile_zoom.is_none()
+                                        && !prefs.manual_zoom
+                                        && prefs.zoom == 0
                                         && prefs.precise_scale.is_none()
-                                        && !prefs.width_fit
-                                        && !prefs.height_fit,
+                                        && prefs.content_fit.is_none(),
                                 )
-                                .with_feedback(Source::Toggles, "Fit page"),
-                                Choice::option("Fit width", Action::FitPage(true), prefs.width_fit)
-                                    .with_feedback(Source::Toggles, "Fit width"),
-                                Choice::option("Fit height", Action::FitHeight, prefs.height_fit)
-                                    .with_feedback(Source::Toggles, "Fit height"),
+                                .with_icon(ZOOM_PAGE),
+                                Choice::option(
+                                    "Content",
+                                    Action::ZoomTargetContent(true),
+                                    prefs.tile_zoom.is_none()
+                                        && !prefs.manual_zoom
+                                        && prefs.zoom == 0
+                                        && prefs.precise_scale.is_none()
+                                        && prefs.content_fit.is_some(),
+                                )
+                                .with_icon(ZOOM_CONTENT),
+                                Choice::option(
+                                    "Columns",
+                                    Action::SetFixedTileZoom(
+                                        FixedTileAxis::Columns,
+                                        reading.tile_zoom_count_tenths(FixedTileAxis::Columns),
+                                    ),
+                                    prefs
+                                        .tile_zoom
+                                        .is_some_and(|tile| tile.axis == FixedTileAxis::Columns),
+                                )
+                                .with_icon(ZOOM_COLUMNS),
+                                Choice::option(
+                                    "Rows",
+                                    Action::SetFixedTileZoom(
+                                        FixedTileAxis::Rows,
+                                        reading.tile_zoom_count_tenths(FixedTileAxis::Rows),
+                                    ),
+                                    prefs
+                                        .tile_zoom
+                                        .is_some_and(|tile| tile.axis == FixedTileAxis::Rows),
+                                )
+                                .with_icon(ZOOM_ROWS),
+                                Choice::option(
+                                    "Manual",
+                                    Action::ZoomTargetManual,
+                                    prefs.manual_zoom,
+                                )
+                                .with_icon(ZOOM_MANUAL),
                             ],
                         ));
-                        rows.push(ConfigRow::new(
-                            "Zoom",
-                            ["100%", "125%", "150%", "200%", "300%"]
+                        if !prefs.manual_zoom && prefs.tile_zoom.is_none() {
+                            rows.push(ConfigRow::new(
+                                "Fit",
+                                [
+                                    ("Full", FixedContentFit::Full),
+                                    ("Width", FixedContentFit::Width),
+                                    ("Height", FixedContentFit::Height),
+                                ]
                                 .into_iter()
-                                .enumerate()
-                                .map(|(index, title)| {
+                                .map(|(label, fit)| {
                                     Choice::option(
-                                        title,
-                                        Action::SetFixedZoom(index),
-                                        prefs.zoom == index
-                                            && prefs.tile_zoom.is_none()
-                                            && prefs.precise_scale.is_none(),
+                                        label,
+                                        Action::SetFixedFitAxis(fit),
+                                        fit_axis == Some(fit),
                                     )
+                                    .with_icon(match fit {
+                                        FixedContentFit::Full => FIT_FULL,
+                                        FixedContentFit::Width => FIT_WIDTH,
+                                        FixedContentFit::Height => FIT_HEIGHT,
+                                    })
                                 }),
-                        ));
-                    }
-                    if reading.supports_tile_zoom() {
-                        for axis in [FixedTileAxis::Columns, FixedTileAxis::Rows] {
-                            let selected = prefs
-                                .tile_zoom
-                                .filter(|tile| tile.axis == axis)
-                                .map(|tile| tile.count_tenths);
+                            ));
+                        } else if prefs.manual_zoom {
+                            rows.push(ConfigRow::new(
+                                "Zoom factor",
+                                fixed_zoom_factor_choices(reading),
+                            ));
+                            let zoom_factor = reading.zoom_factor_hundredths();
+                            rows.push(ConfigRow::new(
+                                "Fine",
+                                [
+                                    Choice::option(
+                                        "−0.1×",
+                                        Action::AdjustFixedZoomFactor(-10),
+                                        false,
+                                    )
+                                    .with_icon(ZOOM_OUT),
+                                    Choice::option(
+                                        zoom_factor_label(zoom_factor),
+                                        Action::SetFixedZoomFactor(zoom_factor),
+                                        true,
+                                    ),
+                                    Choice::option(
+                                        "+0.1×",
+                                        Action::AdjustFixedZoomFactor(10),
+                                        false,
+                                    )
+                                    .with_icon(ZOOM_IN),
+                                ],
+                            ));
+                        } else if let Some(tile) = prefs.tile_zoom {
+                            let axis = tile.axis;
+                            let selected = reading.tile_zoom_count_tenths(axis);
                             let presets = (1_u8..=8).map(|count| {
                                 let count_tenths = count * 10;
                                 Choice::option(
                                     count.to_string(),
                                     Action::SetFixedTileZoom(axis, count_tenths),
-                                    selected == Some(count_tenths),
+                                    selected == count_tenths,
                                 )
                             });
                             let custom = Choice::link(
@@ -1254,19 +1450,34 @@ impl Reader {
                         ));
                     }
                     if reading.supports_scan_contrast() {
+                        let current = prefs.scan_white_level.unwrap_or(255);
+                        let presets = [255_u8, 224, 192, 160, 128, 96, 64, 32].map(|level| {
+                            Choice::option(
+                                level.to_string(),
+                                Action::ScanWhiteLevel((level != 255).then_some(level)),
+                                current == level,
+                            )
+                        });
                         rows.push(ConfigRow::new(
                             "Scan white level",
+                            presets.into_iter().chain([Choice::link(
+                                "Fine tune",
+                                Action::Show(Screen::NumberingValue(NumberField::ScanWhiteLevel)),
+                            )]),
+                        ));
+                    }
+                    if reading.supports_dewatermark() && prefs.scan_white_level.is_none() {
+                        rows.push(ConfigRow::new(
+                            "Dewatermark",
                             [
-                                ("Original", None),
-                                ("Low", Some(248)),
-                                ("Medium", Some(235)),
-                                ("High", Some(220)),
+                                ("Off", false),
+                                ("On", true),
                             ]
-                            .map(|(title, level)| {
+                            .map(|(label, enabled)| {
                                 Choice::option(
-                                    title,
-                                    Action::ScanWhiteLevel(level),
-                                    prefs.scan_white_level == level,
+                                    label,
+                                    Action::Dewatermark(enabled),
+                                    prefs.dewatermark == enabled,
                                 )
                             }),
                         ));
@@ -1396,16 +1607,95 @@ fn margin_row(title: &str, current: u32, update: impl Fn(u32) -> Settings) -> Co
     )
 }
 
-fn edge_row(title: &str, current: u32, limit: u32, update: impl Fn(u32) -> Settings) -> ConfigRow {
+fn horizontal_margin_row(settings: Settings) -> ConfigRow {
     ConfigRow::new(
-        format!("{title} · {current} px"),
-        [-12, -1, 1, 12].map(|step: i32| {
-            let value = (current as i32 + step).clamp(0, limit as i32) as u32;
-            Choice::option(
-                format!("{step:+}"),
-                Action::Text(update(value)),
-                value == current,
-            )
+        "L/R margins",
+        [
+            Choice::link(
+                format!(
+                    "{} / {} px",
+                    settings.left_margin(),
+                    settings.right_margin()
+                ),
+                Action::Show(Screen::NumberingValue(NumberField::ReadingSideMargins)),
+            ),
+            Choice::live("L−", Action::AdjustReadingMargin(MarginEdge::Left, -1))
+                .with_icon(LEFT_MARGIN_LESS),
+            Choice::live("L+", Action::AdjustReadingMargin(MarginEdge::Left, 1))
+                .with_icon(LEFT_MARGIN_MORE),
+            Choice::live("R−", Action::AdjustReadingMargin(MarginEdge::Right, -1))
+                .with_icon(RIGHT_MARGIN_LESS),
+            Choice::live("R+", Action::AdjustReadingMargin(MarginEdge::Right, 1))
+                .with_icon(RIGHT_MARGIN_MORE),
+        ],
+    )
+}
+
+fn edge_row(
+    title: &str,
+    current: u32,
+    limit: u32,
+    edge: MarginEdge,
+    update: impl Fn(u32) -> Settings,
+) -> ConfigRow {
+    let mut choices = Vec::new();
+    choices.extend([-12, -1, 1, 12].map(|step: i32| {
+        let value = (current as i32 + step).clamp(0, limit as i32) as u32;
+        let action = if step == -1 || step == 1 {
+            Action::AdjustReadingMargin(edge, step as i16)
+        } else {
+            Action::Text(update(value))
+        };
+        let icon = match (edge, step.is_negative()) {
+            (MarginEdge::Top, true) => TOP_MARGIN_LESS,
+            (MarginEdge::Top, false) => TOP_MARGIN_MORE,
+            (MarginEdge::Bottom, true) => BOTTOM_MARGIN_LESS,
+            (MarginEdge::Bottom, false) => BOTTOM_MARGIN_MORE,
+            _ => unreachable!("only vertical margins have edge controls"),
+        };
+        Choice::option(format!("{step:+}"), action, value == current).with_icon(icon)
+    }));
+    choices.push(Choice::link(
+        "Set",
+        Action::Show(Screen::NumberingValue(NumberField::ReadingMargin(edge))),
+    ));
+    ConfigRow::new(format!("{title} · {current} px"), choices)
+}
+
+/// KOReader's page-margin choices are expressed in size-scaled logical pixels.
+/// Keep those named stops alongside Reader's physical-pixel fine adjustments.
+const KOREADER_MARGIN_STOPS: [(u32, &str); 9] = [
+    (5, "5"),
+    (10, "10"),
+    (15, "15"),
+    (20, "20"),
+    (30, "30"),
+    (50, "50"),
+    (70, "70"),
+    (100, "100"),
+    (140, "140"),
+];
+
+// Full-width preset hit areas stay at least 100 px wide on a 1,072 px display.
+const MARGIN_PRESET_LABEL_WIDTH: i32 = 140;
+
+fn scaled_koreader_margin(value: u32, settings: Settings) -> u32 {
+    let short_side = settings.width.min(settings.height);
+    value.saturating_mul(short_side).div_ceil(600)
+}
+
+fn margin_preset_row(
+    title: &str,
+    settings: Settings,
+    limit: u32,
+    selected: impl Fn(u32) -> bool,
+    update: impl Fn(u32) -> Settings,
+) -> ConfigRow {
+    ConfigRow::new(
+        title,
+        KOREADER_MARGIN_STOPS.map(|(value, label)| {
+            let pixels = scaled_koreader_margin(value, settings).min(limit);
+            Choice::option(label, Action::Text(update(pixels)), selected(pixels))
         }),
     )
 }

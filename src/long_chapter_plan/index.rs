@@ -1,7 +1,8 @@
-//! Unwired page-index experiment over immutable EPUB and font snapshots.
+//! Snapshot-bound page index and bounded replay for oversized EPUB chapters.
 //!
-//! This proves only the inputs used to build this index. It does not bind them
-//! to a live Reader, verify filesystem state, or authorize a reading handoff.
+//! Reader separately binds the captured EPUB and font inputs to its active
+//! session before installing this index. Replay remains limited to the
+//! computed layouts accepted by the simple streaming renderer.
 use super::{
     LayoutMode, LongChapterPlan, cancelled, pagination::SimplePagination,
     shape_witness::ShapeWitness,
@@ -15,9 +16,11 @@ use parley::{FontContext, GenericFamily};
 use std::ops::Range;
 use std::sync::{Arc, atomic::AtomicBool};
 
-const MAX_BOOK_BYTES: usize = 16 * 1024 * 1024;
-const MAX_FONT_BYTES: usize = 16 * 1024 * 1024;
-const MAX_FONTS: usize = 8;
+pub(crate) const MAX_BOOK_SNAPSHOT_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_FONT_SNAPSHOT_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_FONT_SNAPSHOT_FILES: usize = 8;
+const MAX_FONT_BYTES: usize = MAX_FONT_SNAPSHOT_BYTES;
+const MAX_FONTS: usize = MAX_FONT_SNAPSHOT_FILES;
 const MAX_LINES: usize = 30_000;
 
 struct LineRecord {
@@ -44,6 +47,8 @@ pub(crate) struct PageIndex {
     styles: Vec<crate::book_style::Style>,
     plan: LongChapterPlan,
     bounds: Vec<f32>,
+    extent: f32,
+    painted_bottom: f32,
     lines: Vec<LineRecord>,
     page_lines: Vec<Option<Range<usize>>>,
     batches: Vec<BatchIndex>,
@@ -51,6 +56,7 @@ pub(crate) struct PageIndex {
     book_digest: [u8; 32],
     font_ids: Vec<u64>,
     font_digests: Vec<[u8; 32]>,
+    replay_fonts: FontContext,
     settings: Settings,
     mode: LayoutMode,
     user_styles: crate::user_styles::Snapshot,
@@ -206,15 +212,16 @@ impl PageIndex {
         cancelled(cancel)?;
         settings.validate()?;
         if book_bytes.is_empty()
-            || book_bytes.len() > MAX_BOOK_BYTES
+            || book_bytes.len() > MAX_BOOK_SNAPSHOT_BYTES
             || settings.embedded_fonts
-            || !user_styles.is_empty()
+            || !user_styles.supports_windowed_simple_chapter()
         {
             return Err("This book or font configuration cannot be indexed safely".into());
         }
         let book_digest = digest(&book_bytes, cancel)?;
         cancelled(cancel)?;
         let (mut fonts, identities, font_digests) = captured_fonts(font_bytes, cancel)?;
+        let replay_fonts = fonts.clone();
         let mut book = Book::open_snapshot(Arc::clone(&book_bytes))?;
         cancelled(cancel)?;
         if !book.is_reflowable_epub()
@@ -243,10 +250,9 @@ impl PageIndex {
             settings.typography.respect_embedded,
         )?;
         source.resolve_hyphenation_languages(main_language, settings.typography.respect_embedded);
-        // Never load an external stylesheet or embedded font into this proof.
-        if !source.stylesheets.is_empty() {
-            return Err("This chapter has unsupported stylesheet resources".into());
-        }
+        // Publisher stylesheets are read only from the immutable EPUB
+        // snapshot. The stream below accepts their computed text styles only
+        // when the resulting geometry passes its conservative layout gates.
         let author = BookStyle::load_with_base(&mut book, &href, &source, &mut fonts, settings)
             .with_user_css(&user_styles)?;
         let (styles, quotes) = author.compute_deferred_quotes(&source.elements, settings, None);
@@ -337,6 +343,8 @@ impl PageIndex {
             styles,
             plan,
             bounds,
+            extent,
+            painted_bottom,
             lines: records,
             page_lines,
             batches,
@@ -344,6 +352,7 @@ impl PageIndex {
             book_digest,
             font_ids: identities,
             font_digests,
+            replay_fonts,
             settings,
             mode,
             user_styles,
@@ -363,7 +372,7 @@ impl PageIndex {
         cancel: &AtomicBool,
     ) -> bool {
         !book.is_empty()
-            && book.len() <= MAX_BOOK_BYTES
+            && book.len() <= MAX_BOOK_SNAPSHOT_BYTES
             && digest(book, cancel).is_ok_and(|value| value == self.book_digest)
             && fonts.len() == self.font_digests.len()
             && fonts
@@ -380,16 +389,36 @@ impl PageIndex {
             && rules == self.rules.as_ref()
     }
 
+    pub(crate) fn matches_live_chapter(
+        &self,
+        book: u64,
+        href: &str,
+        source: &Source,
+        xhtml: &str,
+    ) -> bool {
+        self.plan.book == book
+            && self.plan.href == href
+            && self.plan.revision == source.revision
+            && source.revision == self.source.revision
+            && source.matches_input(xhtml)
+            && xhtml == self.xhtml
+            && super::simple_source(source, &self.styles)
+            && source.blocks.len() == self.source.blocks.len()
+            && source
+                .blocks
+                .iter()
+                .zip(&self.source.blocks)
+                .all(|(active, captured)| {
+                    active.key == captured.key && active.text == captured.text
+                })
+    }
+
     /// Replay one bounded batch from its exact prior layout state and discard
     /// it unless source ranges, geometry, selected captured fonts and glyphs
     /// match the index transcript. Call only on a worker.
     pub(crate) fn replay_batch(&self, index: usize, cancel: &AtomicBool) -> Result<VerifiedBatch> {
         cancelled(cancel)?;
-        let (fonts, identities) = register_fonts(&self.font_bytes, cancel)?;
-        if identities != self.font_ids {
-            return Err("The long chapter font registration changed".into());
-        }
-        self.replay_batch_with_fonts(index, cancel, fonts, &identities)
+        self.replay_batch_with_fonts(index, cancel, self.replay_fonts.clone(), &self.font_ids)
     }
 
     fn replay_batch_with_fonts(
@@ -458,25 +487,16 @@ impl PageIndex {
             .page_bounds(page)
             .ok_or("The long chapter page is unavailable")?;
         let mut batches = Vec::new();
+        let batch_range = self
+            .page_batch_range(page)
+            .ok_or("The long chapter page has no replay batches")?;
         if let Some(lines) = self.page_lines.get(page).and_then(Option::as_ref) {
-            let first = self
-                .batches
-                .partition_point(|batch| batch.lines.end <= lines.start);
-            let end = self
-                .batches
-                .partition_point(|batch| batch.lines.start < lines.end);
-            if first >= end {
-                return Err("The long chapter page has no replay batches".into());
-            }
             batches
-                .try_reserve_exact(end - first)
+                .try_reserve_exact(batch_range.len())
                 .map_err(|_| "The long chapter page cannot be reserved")?;
-            let (fonts, identities) = register_fonts(&self.font_bytes, cancel)?;
-            if identities != self.font_ids {
-                return Err("The long chapter font registration changed".into());
-            }
+            let fonts = self.replay_fonts.clone();
             let mut covered = lines.start;
-            for index in first..end {
+            for index in batch_range {
                 cancelled(cancel)?;
                 let batch = self
                     .batches
@@ -492,7 +512,7 @@ impl PageIndex {
                     index,
                     cancel,
                     fonts.clone(),
-                    &identities,
+                    &self.font_ids,
                 )?);
             }
             if covered != lines.end {
@@ -501,6 +521,23 @@ impl PageIndex {
         }
         cancelled(cancel)?;
         Ok(VerifiedPage { bounds, batches })
+    }
+
+    /// Return the contiguous replay window needed by a page. Empty pages use
+    /// an empty range so callers can cache them without reshaping neighboring
+    /// batches on every repeated capture.
+    pub(crate) fn page_batch_range(&self, page: usize) -> Option<Range<usize>> {
+        self.page_bounds(page)?;
+        let Some(lines) = self.page_lines.get(page)?.as_ref() else {
+            return Some(0..0);
+        };
+        let first = self
+            .batches
+            .partition_point(|batch| batch.lines.end <= lines.start);
+        let end = self
+            .batches
+            .partition_point(|batch| batch.lines.start < lines.end);
+        (first < end).then_some(first..end)
     }
 
     /// Render one page only after every contributing batch matches its
@@ -522,8 +559,55 @@ impl PageIndex {
         self.bounds.len().saturating_sub(1)
     }
 
+    pub(crate) fn painted_bottom(&self) -> f32 {
+        self.painted_bottom
+    }
+
+    pub(crate) fn layout_extent(&self) -> f32 {
+        self.extent
+    }
+
+    pub(crate) fn page_bounds_vector(&self) -> Vec<f32> {
+        self.bounds.clone()
+    }
+
+    pub(crate) fn reader_lines(&self) -> Vec<Line> {
+        self.lines
+            .iter()
+            .map(|line| Line {
+                block: line.block,
+                bytes: line.bytes.clone(),
+                spans: None,
+                additional_sources: None,
+                raw_whitespace: None,
+                top: line.top,
+                bottom: line.bottom,
+                page_extension: [0.0, 0.0],
+                missing_glyphs: 0,
+            })
+            .collect()
+    }
+
+    pub(crate) fn styles(&self) -> &[crate::book_style::Style] {
+        &self.styles
+    }
+
     pub(crate) fn page_bounds(&self, page: usize) -> Option<Range<f32>> {
         (page < self.page_count()).then(|| self.bounds[page]..self.bounds[page + 1])
+    }
+
+    pub(crate) fn page_for_bounds(&self, range: &Range<f32>) -> Option<usize> {
+        if !range.start.is_finite() || !range.end.is_finite() || range.start > range.end {
+            return None;
+        }
+        let page = self
+            .bounds
+            .partition_point(|bound| *bound <= range.start)
+            .checked_sub(1)?;
+        let bounds = self.page_bounds(page)?;
+        (bounds.start.to_bits() == range.start.to_bits()
+            && bounds.end.to_bits() == range.end.to_bits())
+        .then_some(page)
     }
 
     /// Follow the ordinary simple-source anchor lookup. Legacy-revision, raw

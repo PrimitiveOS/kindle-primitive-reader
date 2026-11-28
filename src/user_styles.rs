@@ -114,6 +114,17 @@ pub(crate) struct LayoutTweaks {
     pub(crate) disable_first_line: bool,
     pub(crate) normal_line_height_percent: Option<u8>,
     pub(crate) steady_line_heights: bool,
+    pub(crate) vertical_margins: Option<VerticalMargins>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VerticalMargins {
+    /// Page margins on the body element.
+    Body,
+    /// Vertical margins on every element.
+    All,
+    /// Vertical margins on paragraphs and list items.
+    Paragraphs,
 }
 
 #[repr(u8)]
@@ -147,7 +158,17 @@ impl LayoutTweaks {
                 Some("p {margin-top:0 !important;margin-bottom:0 !important;}")
             }
         };
-        browser.into_iter().chain(spacing)
+        let margins = match self.vertical_margins {
+            None => None,
+            Some(VerticalMargins::Body) => Some(
+                "body {margin-top:0 !important;margin-right:0 !important;margin-bottom:0 !important;margin-left:0 !important;}",
+            ),
+            Some(VerticalMargins::All) => Some("* {margin-top:0 !important;margin-bottom:0 !important;}"),
+            Some(VerticalMargins::Paragraphs) => {
+                Some("p, li {margin-top:0 !important;margin-bottom:0 !important;}")
+            }
+        };
+        browser.into_iter().chain(spacing).chain(margins)
     }
 
     pub(crate) fn paragraph_edges(self, follows_paragraph: bool) -> [bool; 2] {
@@ -255,6 +276,10 @@ impl Snapshot {
         if layout.steady_line_heights {
             digest.consume(b"\0steady-line-heights");
         }
+        if let Some(margins) = layout.vertical_margins {
+            digest.consume(b"\0vertical-margins");
+            digest.consume([margins as u8]);
+        }
         Ok(Self {
             css: css.into(),
             digest: digest.finalize().0,
@@ -270,6 +295,11 @@ impl Snapshot {
             && self.layout == LayoutTweaks::default()
             && self.notes.epub_size.is_none()
             && !self.has_in_page_fb2_notes()
+    }
+    /// The long-chapter stream can evaluate captured CSS through its computed
+    /// style gates, but cannot apply the separate layout-tweak or note modes.
+    pub(crate) fn supports_windowed_simple_chapter(&self) -> bool {
+        self.layout == LayoutTweaks::default() && self.notes == InPageNotes::default()
     }
     pub(crate) fn layout_tweaks(&self) -> LayoutTweaks {
         self.layout
@@ -347,6 +377,9 @@ impl Snapshot {
 #[derive(Clone, Copy)]
 pub(crate) enum Effect {
     Css(&'static str),
+    /// Vertical margin resets are applied as trusted layout rules, because the
+    /// strict user-CSS validator rejects `margin`, `margin-top` and `margin-bottom`.
+    VerticalMargins(VerticalMargins),
     NativeTableWidth(&'static str),
     TailorCjk,
     Monochrome,
@@ -633,7 +666,7 @@ pub(crate) const PRESETS: &[Preset] = &[
         title: "Ignore publisher page margins",
         group: "body-margin",
         priority: 0,
-        effect: Effect::Css("body {margin:0 !important;}"),
+        effect: Effect::VerticalMargins(VerticalMargins::Body),
     },
     Preset {
         id: "margin_horizontal_all_0",
@@ -668,14 +701,14 @@ pub(crate) const PRESETS: &[Preset] = &[
         title: "Ignore all vertical margins",
         group: "vertical-margin",
         priority: 0,
-        effect: Effect::Css("* {margin-top:0 !important;margin-bottom:0 !important;}"),
+        effect: Effect::VerticalMargins(VerticalMargins::All),
     },
     Preset {
         id: "paragraph_no_vertical_margin",
         title: "Ignore vertical paragraph margins",
         group: "vertical-margin",
         priority: 0,
-        effect: Effect::Css("p, li {margin-top:0 !important;margin-bottom:0 !important;}"),
+        effect: Effect::VerticalMargins(VerticalMargins::Paragraphs),
     },
     Preset {
         id: "vertical-padding-none",
@@ -1232,6 +1265,7 @@ impl Data {
                 Effect::Monochrome => layout.monochrome = true,
                 Effect::BrowserParagraphs => layout.browser_paragraphs = true,
                 Effect::ParagraphSpacing(spacing) => layout.paragraph_spacing = spacing,
+                Effect::VerticalMargins(margins) => layout.vertical_margins = Some(margins),
                 Effect::FullWidthImages => {
                     layout.full_width_images = true;
                     css.push_str("img {width:100% !important;}\n");

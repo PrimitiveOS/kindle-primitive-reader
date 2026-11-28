@@ -8,6 +8,67 @@ comparatives, such as *happily* → *happy*, *happiest* → *happy*,
 candidate matches retain their order. These newly added forms await integrated
 and device testing; they do not imply a complete English morphological model.
 
+## Japanese polite and honorific forms
+
+The current unverified candidate also resolves common polite i-adjective forms
+such as `高くありませんでした` to `高い`, and na-adjective or noun copulas
+such as `静かではありませんでした` to `静か`. For respectful or humble
+phrases, it removes the productive `お`/`ご` prefix and applies the corresponding
+verb-stem or `する` noun rule. Examples include `お読みしました` and
+`お読みになっていました` → `読む`, and `ご利用になりました` → `利用する`.
+Common request and benefactive phrases also reduce through `ください` and
+`いただく`: `お読みください` → `読む`, `ご確認ください` and
+`ご確認いただきました` → `確認する`, and `ご利用いただけませんでした`
+→ `利用する`. These suffixes are considered only after an `お` or `ご`
+prefix, so standalone `ください` and `いただく` remain literal lookups. Each
+result remains only a bounded lookup candidate; an installed dictionary must
+contain the exact headword before Reader shows it. Direct conjugations rank
+ahead of candidates that require multiple auxiliary reductions. Original
+selected text and its reading anchor are never rewritten.
+
+The candidate also reduces common te/de auxiliary phrases before deconjugating
+the underlying verb, including `食べてください` → `食べる`,
+`読んでいただきました` → `読む`, `読んでもらえた` → `読む`,
+`読んでくれた` → `読む`, and `書いてみました` → `書く`. It covers common
+request, benefactive, trial, aspect, and motion auxiliaries in bounded forms.
+The expanded candidate also unwraps connective `ながら` / `つつ` forms such as
+`読みながら` and `読みつつあります`, and common te/de trial, preparation and
+completion forms such as `読んでみたかった`, `書いておきたかった`, and
+`読んでしまいたい`. It accepts these auxiliaries only after a te/de stem.
+Higher-politeness i-adjective negatives such as `高くはありませんでした`
+and `高くございませんでした`, plus classical suppositional forms such as
+`高かろう` and `よかろう`, also reduce to bounded dictionary candidates.
+Colloquial negative `ねえ` / `ねぇ` / `ねー` forms reduce through `ない` before
+the verb or adjective step. The candidate also handles classical adjective
+endings such as `美しき` → `美しい`, `しげ` forms such as `悲しげ` → `悲しい`,
+and kana-final negative imperatives such as `読むな` → `読む`.
+Negative appearance forms such as `高くなさそうでした` also reduce to
+`高い`; the irregular `よくなさそう` and `かっこよくなさそう` retain the
+`いい` / `よい` dictionary-headword alternatives.
+Common obligation and compulsion phrases now reduce through their negative
+verb stem, including `読まなくてはならない`, `食べなければいけない`,
+`勉強しないといけない`, `読まなきゃならない`, and
+`食べなくっちゃいけない`. The same bounded path covers
+`読まずにはいられない`, `食べないではいられない`, and
+`使わざるを得ない`.
+Irregular candidates also include `よかった` → `いい` / `よい`,
+`かっこよくない` → `かっこいい` / `かっこよい`, and `信じた` →
+`信じる` / `信ずる`. Common `ずる` forms include polite, negative, potential,
+causative, `なさい`, and `すぎる` variants; older dictionaries can also match
+inflections of `為る`. The bounded negative-form rules cover common `ぬ` / `ん`
+endings, and literary or dialectal `うた` / `うて` forms such as `問うた` →
+`問う`.
+These rules are independently authored: KOReader's bundled Yomichan table is
+GPL-3.0-or-later, while this repository uses PolyForm Noncommercial, so that
+table is not included. This expanded candidate is not yet behavior-verified.
+
+KOReader's Japanese plugin documents that its deinflection rules come from
+Yomichan's data, copied verbatim and licensed GPL-3.0-or-later. Reader uses
+independently authored productive morphology and does not bundle that rule
+table. Wider irregular, archaic, dialectal and lexicalized forms remain open;
+this candidate has not yet had integrated or device verification. [KOReader
+Japanese plugin source and data notice](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/plugins/japanese.koplugin/README.md)
+
 ![Looking up carried in the Harbour Dictionary](screenshots/dictionary-word-form.png)
 
 In Dictionaries, **Word forms by default** sets how Reader handles inflections. **Fuzzy search by default** controls the extra spelling scan after a miss. Both are on for a fresh installation. Each book or PDF can use its own choice for either setting. **Use the default fuzzy search setting** returns that edition to the library preference. On upgrade, any existing Word forms choice supplies the initial fuzzy choice at the same scope. Each setting can then be changed separately.

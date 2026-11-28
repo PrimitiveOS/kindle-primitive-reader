@@ -767,7 +767,7 @@ fn styles_viewport_fits_publisher_and_base_choices_with_large_night_toolbars() {
     tap(&mut app, rendering);
     let rendering = app.reading_button("Rendering");
     assert!(rendering.y >= 0 && rendering.h >= 100);
-    let stylesheet = app.reading_button_in_row("Base stylesheet", "Traditional");
+    let stylesheet = app.reading_button_in_row("Base stylesheet (hold for default)", "Traditional");
     let embedded = app.reading_button_in_row("Publisher CSS", "Off");
     assert!(embedded.y >= 0 && embedded.bottom() <= landscape.dimensions().1 as i32);
     press(&app, &mut wide, embedded, true);

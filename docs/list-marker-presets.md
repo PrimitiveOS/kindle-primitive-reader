@@ -12,6 +12,16 @@ An ordered list nested inside an unordered list keeps its numbering unless
 the decimal preset is enabled. Marker shapes and numbers stay outside the
 original text reported by search or clipboard selection.
 
+Publisher CSS can select `list-style-position: inside` or use the equivalent
+`list-style` shorthand. The current implementation candidate gives the marker
+an inline layout box on the first line while keeping it out of the book's
+canonical text, so selection and search continue to address the original
+passage. The default remains the outside position. This new layout path has
+not yet been built or compared with KOReader. The pinned CREngine interface
+exposes the built-in list marker types and inside/outside position; custom
+`@counter-style` rules and image markers are outside that reference scope.
+[Pinned CREngine list styles](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/include/cssdef.h#L1576-L1615)
+
 ## Mac comparison
 
 The shared chapter covers ring, square and hidden unordered markers, a

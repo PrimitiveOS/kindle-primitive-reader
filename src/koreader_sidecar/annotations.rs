@@ -212,9 +212,11 @@ mod tests {
             [5]={page="/a",page="/b"},
         }, nested={annotations={{page="/wrong"}}} }"#;
         let result = parse_annotations(data).unwrap();
-        assert_eq!(result.unavailable, 3);
+        // The numeric page and the duplicate-key record are unknown. A page with a
+        // note and no range is a KOReader bookmark carrying that note.
+        assert_eq!(result.unavailable, 2);
         assert!(
-            matches!(&result.marks[..], [SidecarMark::Bookmark {pointer,label:Some(label),created_at:None,..}, SidecarMark::Highlight{color:crate::highlight_style::HighlightColor::Gray,style:crate::highlight_style::HighlightStyle::Underline,start,end,text,note:Some(note),created_at:None}] if pointer=="/node" && label=="Chapter one" && start=="/a" && end=="/b" && text=="Some text" && note=="Remember")
+            matches!(&result.marks[..], [SidecarMark::Bookmark {pointer,label:Some(label),created_at:None,..}, SidecarMark::Highlight{color:crate::highlight_style::HighlightColor::Gray,style:crate::highlight_style::HighlightStyle::Underline,start,end,text,note:Some(note),created_at:None}, SidecarMark::Bookmark {pointer: note_pointer, ..}] if pointer=="/node" && label=="Chapter one" && start=="/a" && end=="/b" && text=="Some text" && note=="Remember" && note_pointer=="/note")
         );
         assert!(parse_annotations(b"return {annotations={{page=foo()}}}").is_err());
         assert!(parse_annotations(b"return {annotations={},annotations={}}").is_err());

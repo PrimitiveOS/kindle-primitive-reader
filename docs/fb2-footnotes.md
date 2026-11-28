@@ -28,6 +28,32 @@ names, excluded paragraph targets, and duplicate IDs.
 [KOReader comments popup](screenshots/fb2-stock-comments.png) ·
 [Reader comments popup](screenshots/fb2-reader-comments.png)
 
+The current Reader candidate also reads computed publisher `-cr-hint` values
+when classifying popup links. `noteref` and `noteref-ignore` apply to the
+source link; `footnote` and `footnote-ignore` apply to the destination. These
+explicit hints take precedence over markup heuristics. It also checks the
+computed vertical alignment of every nonempty text run inside an otherwise
+unmarked source link, following CRE's raised-reference cue. The export-root
+guard still declines ambiguous or reclassified CSS layouts. The popup now
+walks subsequent final blocks in document order, including nested wrappers, and
+preserves balanced XHTML as it extends the excerpt. It stops before document
+fragment/body boundaries, headings, new anchors, forced page breaks, or
+uncertain CSS boxes. Exact CRE range and
+stop-boundary parity remain open. As in CRE's source-context check, inferred
+references are now rejected when their linked text is the complete text of the
+source block, which avoids opening inline contents headings as notes. Explicit
+semantic and `-cr-hint` references keep their forced behavior. The inferred
+marker check now follows CRE's length rules for one to three digits, one to two
+letters with up to two digits, and one to ten Roman numeral characters, while
+ignoring punctuation and spaces. These changes are candidates and have not yet
+been behaviorally verified.
+
+Linked images now retain the source anchor's semantic noteref role and computed
+`-cr-hint` override. Image hit testing carries the image's canonical block and
+ordinal into popup classification; links inside a foreign note panel resolve
+against that note's own chapter. Image-only references do not invent a text
+selection. These image-link paths remain unverified.
+
 ## In-page footnotes and endnotes
 
 Open **Style tweaks** while reading a FictionBook. **In-page FB2 footnotes**

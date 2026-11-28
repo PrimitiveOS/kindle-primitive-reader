@@ -32,7 +32,10 @@ fn tabs_preserve_text_positions_without_missing_glyph_boxes() {
     let mut end = start.clone();
     end.offset = block.text.len();
     let selection = probe.select_range(&start, &end).unwrap();
-    assert_eq!(selection.text, block.text);
+    // The rendered `pre` text keeps its tab. Canonical block text has a collapsed
+    // space here because the source was parsed without the preformatted style.
+    assert_eq!(selection.text, "Gamma\tDelta");
+    assert_eq!(block.text, "Gamma Delta");
 }
 
 #[test]

@@ -1613,6 +1613,7 @@ pub(crate) mod tests {
                     block: b.key,
                     offset,
                     illustration: None,
+                    side_bias: None,
                 };
                 let end = crate::Anchor {
                     raw_caret: None,

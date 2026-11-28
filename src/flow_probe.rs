@@ -181,7 +181,7 @@ mod tests {
             raw_caret: None,
             offset: plain.source.blocks[0].text.len(),
             ..old.clone()
-        };
+};
         let canonical = plain.select_range(&old, &end).unwrap();
         assert!(canonical.text.contains("SECRET") && canonical.text.contains("TRAP"));
         assert_eq!(
@@ -221,7 +221,7 @@ mod tests {
             raw_caret: None,
             offset: anchor.offset + "GHOST".len(),
             ..anchor.clone()
-        };
+};
         let selected = styled.select_range(&anchor, &end).unwrap();
         assert_eq!(selected.text, "GHOST");
         assert_eq!(
@@ -283,7 +283,7 @@ mod tests {
                 raw_caret: None,
                 offset: a.offset + word.len(),
                 ..a.clone()
-            };
+};
             assert_eq!(styled.select_range(&a, &end).unwrap().text, word);
             assert!(
                 !styled
@@ -318,14 +318,14 @@ mod tests {
             raw_caret: None,
             offset: book.offset + 4,
             ..book.clone()
-        };
+};
         let selection = shown.select_range(&book, &end).unwrap();
         let hidden_start = hidden.matches("BOOK")[0].clone();
         let hidden_end = crate::Anchor {
             raw_caret: None,
             offset: hidden_start.offset + 4,
             ..hidden_start.clone()
-        };
+};
         let hidden_selection = hidden.select_range(&hidden_start, &hidden_end).unwrap();
         assert_eq!(
             shown.selection_rects(0, &selection),
@@ -372,7 +372,7 @@ mod tests {
             raw_caret: None,
             offset: ghost.offset + 5,
             ..ghost.clone()
-        };
+};
         let selected = hidden.select_range(&ghost, &end).unwrap();
         assert_eq!(selected.text, "GHOST");
         let page = hidden.page_for(&ghost).unwrap();
@@ -383,7 +383,7 @@ mod tests {
             raw_caret: None,
             offset: visible_start.offset + 5,
             ..visible_start.clone()
-        };
+};
         let visible_selected = visible.select_range(&visible_start, &visible_end).unwrap();
         assert_eq!(rects, visible.selection_rects(page, &visible_selected));
         let r = rects[0];
@@ -405,6 +405,7 @@ mod tests {
             kind: crate::footnotes::Reference::Explicit,
             label: "1".into(),
             in_prose: true,
+            source_is_whole_block: false,
             source_block: 0,
         };
         for id_on_aside in [true, false] {
@@ -475,7 +476,7 @@ mod tests {
             raw_caret: None,
             offset: block.text.find(' ').unwrap(),
             ..cafe.clone()
-        };
+};
         let selection = probe.select_range(&cafe, &text_end).unwrap();
         assert_eq!(selection.text, "cafe\u{301}");
         let rect = probe.selection_rects(0, &selection)[0];
@@ -518,7 +519,7 @@ mod tests {
             raw_caret: None,
             offset: visible.offset + "Visible before the marker.".len() - 1,
             ..visible.clone()
-        };
+};
         assert_eq!(probe.page_for(&pagebreak), probe.page_for(&last_character));
     }
 

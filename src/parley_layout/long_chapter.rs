@@ -1,8 +1,9 @@
-//! Unwired simple-Parley continuation for oversized chapter groundwork.
+//! Bounded Parley continuation for supported oversized EPUB chapters.
 //!
 //! A batch retains its original Source blocks and absolute y coordinates. It is
-//! neither a page nor a replacement Probe, and cannot be used for reading
-//! until full layout/source/font proof and all consumers are integrated.
+//! neither a page nor a replacement Probe. The live reader binds the stream's
+//! page index to the current source and replays only the batches needed to
+//! paint a verified page.
 use super::*;
 use crate::long_chapter_plan::{
     LayoutMode, LongChapterPlan, MAX_BATCH_BLOCKS, cancelled, simple_source,
@@ -69,7 +70,7 @@ impl<'a> SimpleLayoutStream<'a> {
         settings.validate()?;
         if !plan.matches_source(source, xhtml)
             || !simple_source(source, styles)
-            || !user_styles.is_empty()
+            || !user_styles.supports_windowed_simple_chapter()
             || mode.scroll
             || mode.facing_pages
             || mode.hidden_flows
@@ -346,15 +347,24 @@ impl<'a> SimpleLayoutStream<'a> {
             }
             self.line_count += layout.len();
             for line in layout.lines().rev() {
-                let text = input
+                input
                     .text
                     .get(line.text_range())
                     .ok_or("The long chapter line is unavailable")?;
-                if text.chars().any(|ch| !ch.is_whitespace())
-                    || line.items().any(|item| matches!(item,
-                        PositionedLayoutItem::GlyphRun(run) if run.advance() > 0.0 && run.style().brush.decoration != TextDecoration::default()))
-                {
-                    self.painted_bottom = 0.0_f32.max(origin + line.metrics().content_block_max_coord);
+                let has_painted_content = line.items().any(|item| match item {
+                    PositionedLayoutItem::GlyphRun(run) if run.style().brush.painted => {
+                        input
+                            .text
+                            .get(run.run().text_range())
+                            .is_some_and(|text| text.chars().any(|ch| !ch.is_whitespace()))
+                            || run.advance() > 0.0
+                                && run.style().brush.decoration != TextDecoration::default()
+                    }
+                    _ => false,
+                });
+                if has_painted_content {
+                    self.painted_bottom =
+                        0.0_f32.max(origin + line.metrics().content_block_max_coord);
                     break;
                 }
             }

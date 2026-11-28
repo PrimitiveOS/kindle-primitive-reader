@@ -519,9 +519,12 @@ Short or raised EPUB 2-style references in prose can also open this popup when
 the target is a unique semantic note or contains a backlink to the exact,
 uniquely identified source anchor. Contents destinations, ambiguous IDs,
 ordinary links and links lacking this evidence retain the existing fallback.
-Backlink inspection is limited to the first 16 links in the extracted note.
-The backlink's mapped source offset must equal the selected reference start;
-leading whitespace inside a reference link can therefore cause a safe fallback.
+Backlink inspection considers up to the first 128 links with an `href` in the
+extracted note. The host chapter's candidate IDs are indexed in one bounded
+DOM walk, and the backlink's mapped source offset must equal the selected
+reference start. Duplicate host IDs are rejected. A backlink beyond the scan
+limit, or leading whitespace inside a reference link, can still cause a safe
+fallback.
 
 The candidate currently requires a verified note reference, a fragment and a local
 packaged EPUB with a verified source and fonts. EPUBs up to 16 MiB use an

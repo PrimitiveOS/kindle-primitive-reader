@@ -29,6 +29,30 @@ impl Members {
         matches!(self, Self::Zip(archive) if archive.missing.contains_key(name.as_bytes()))
     }
 
+    /// Whether the referenced member can be opened as a stream. CREngine emits
+    /// an unsupported-item DocFragment for an openable current-version spine
+    /// member, even when its contents cannot be parsed as XHTML.
+    pub(crate) fn has_stream(&mut self, name: &str) -> Result<bool> {
+        match self {
+            Self::Zip(archive) => {
+                if archive.missing.contains_key(name.as_bytes()) {
+                    return Ok(false);
+                }
+                let Some(index) = archive.zip.index_for_name(name) else {
+                    return Ok(false);
+                };
+                let entry = archive.zip.by_index_raw(index)?;
+                if entry.is_dir() {
+                    return Err("An EPUB spine item points to a directory".into());
+                }
+                Ok(true)
+            }
+            Self::Folder(root) => folder_member_stream(root, name),
+            #[cfg(feature = "kindle")]
+            Self::Snapshot(members) => Ok(members.contains_key(name)),
+        }
+    }
+
     pub(crate) fn open(path: &Path) -> Result<Self> {
         if is_folder_book(path) {
             return Ok(Self::Folder(path.parent().unwrap().canonicalize()?));
@@ -90,6 +114,37 @@ impl Members {
             }
         }
     }
+}
+
+fn folder_member_stream(root: &Path, name: &str) -> Result<bool> {
+    if !is_archive_path(name) || name.len() > 4096 || name.split('/').count() > 32 {
+        return Err("Invalid extracted EPUB member path".into());
+    }
+    let parts: Vec<_> = name.split('/').collect();
+    let mut path = root.to_owned();
+    for (index, part) in parts.iter().enumerate() {
+        path.push(part);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.file_type().is_symlink() {
+            return Err("An extracted EPUB resource cannot be a symbolic link".into());
+        }
+        if index + 1 < parts.len() && !metadata.is_dir() {
+            return Err("An extracted EPUB member has a non-directory parent".into());
+        }
+        if index + 1 == parts.len() && !metadata.is_file() {
+            return Err("An EPUB spine item is not a regular file".into());
+        }
+    }
+    let canonical = path.canonicalize()?;
+    if !canonical.starts_with(root) {
+        return Err("Choose a resource inside this EPUB folder".into());
+    }
+    File::open(canonical)?;
+    Ok(true)
 }
 
 fn folder_file(root: &Path, name: &str) -> Result<File> {

@@ -396,7 +396,11 @@ impl Reader {
         }
     }
 
-    pub(super) fn tap_saved_mark(&mut self, x: f32, y: f32) -> Option<Change> {
+    pub(super) fn saved_mark_at(&self, x: f32, y: f32) -> bool {
+        self.saved_mark_hits(x, y).is_some()
+    }
+
+    fn saved_mark_hits(&self, x: f32, y: f32) -> Option<Vec<usize>> {
         let viewport = self.reading_viewport();
         let (screen_width, screen_height) = viewport.dimensions();
         let bottom = if self.hidden_overlap_footer() {
@@ -411,9 +415,7 @@ impl Reader {
         {
             return None;
         }
-        let Some(book) = self.open_book_id().and_then(|id| self.library.state(id)) else {
-            return None;
-        };
+        let book = self.open_book_id().and_then(|id| self.library.state(id))?;
         // Both engines use the same visible rectangles used to paint each saved mark.
         let hits: Vec<usize> = if self.screen == Screen::Book
             && let Some(active) = &self.active
@@ -449,10 +451,7 @@ impl Reader {
                         })
                 })
                 .map(|(i, _)| i)
-                .collect::<Vec<_>>();
-            if !hits.is_empty() && self.reflow_tap_link(x, y).is_some() {
-                return Some(self.handle_book(Input::Tap(x, y)));
-            }
+                .collect();
             hits
         } else if self.screen == Screen::Fixed
             && let Some(fixed) = &self.fixed
@@ -508,16 +507,21 @@ impl Reader {
                         })
                     })
                     .map(|(i, _)| i)
-                    .collect::<Vec<_>>();
-            if !hits.is_empty() && self.fixed_tap_link(x, y).is_some() {
-                return Some(self.handle_fixed(Input::Tap(x, y)));
-            }
+                    .collect();
             hits
         } else {
             return None;
         };
-        if hits.is_empty() {
-            return None;
+        (!hits.is_empty()).then_some(hits)
+    }
+
+    pub(super) fn tap_saved_mark(&mut self, x: f32, y: f32) -> Option<Change> {
+        let hits = self.saved_mark_hits(x, y)?;
+        if self.screen == Screen::Book && self.reflow_tap_link(x, y).is_some() {
+            return Some(self.handle_book(Input::Tap(x, y)));
+        }
+        if self.screen == Screen::Fixed && self.fixed_tap_link(x, y).is_some() {
+            return Some(self.handle_fixed(Input::Tap(x, y)));
         }
         let view = if hits.len() == 1 {
             self.saved_view(hits[0])

@@ -608,6 +608,7 @@ fn original_hidden_footnotes_retain_canonical_targets_and_independent_popup_text
                     kind: footnotes::Reference::Explicit,
                     label: "1".into(),
                     in_prose: true,
+                    source_is_whole_block: false,
                     source_block: 0,
                 },
                 std::cmp::Ordering::Equal,

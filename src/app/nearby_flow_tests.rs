@@ -124,7 +124,10 @@ fn reflow_search_edge_controls_find_and_highlight_source_passages() {
                 Some(&boundary),
                 &AtomicBool::new(false),
                 chapters,
-                |index| ChapterText::read_with_flow(&mut book, index, &context.flow),
+                |index| {
+                    ChapterText::read_with_flow(&mut book, index, &context.flow)
+                        .map(ChapterText::with_source_only_verified_layout)
+                },
             )
             .unwrap()
             .unwrap()

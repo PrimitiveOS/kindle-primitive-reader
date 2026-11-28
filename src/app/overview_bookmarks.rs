@@ -422,11 +422,10 @@ mod tests {
                 .zip(&bookmarked)
                 .enumerate()
                 .all(|(pixel, (before, after))| {
-                    before == after
-                        || tile.contains(
-                            (pixel % WIDTH as usize) as f32,
-                            (pixel / WIDTH as usize) as f32,
-                        )
+                    let (x, y) = ((pixel % WIDTH as usize) as f32, (pixel / WIDTH as usize) as f32);
+                    // The skim track shows the saved mark for the bookmarked page.
+                    let skim_mark = (1320.0..1370.0).contains(&y);
+                    before == after || tile.contains(x, y) || skim_mark
                 })
         );
         capture_test_screen(

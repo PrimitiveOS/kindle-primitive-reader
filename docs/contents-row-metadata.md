@@ -14,8 +14,12 @@ opening Contents with chapter lengths enabled requests a bounded background
 layout of the book; lengths appear when that layout has resolved the outline.
 The Contents screen remains usable while this work runs. Stable page maps calculate
 lengths from their reference labels, using source anchors for mapped endpoints.
-Reader leaves unavailable labels and lengths blank, including for unsupported
-layouts, suppressed headings, or custom contents without indexed anchors.
+Reader leaves unavailable labels and lengths blank for unsupported layouts,
+suppressed headings, stale or unresolved anchors, and lengths adjacent to an
+unknown boundary. Custom entries at a spine start or at a saved anchor within a
+chapter can use the whole-book index when the layout supports it. The background
+index resolves each saved anchor against that chapter's rendered pages; it does
+not assume that a bookmark is a heading.
 
 KOReader appends the length beside the title, aligns the page label to the right,
 and only draws leaders if at least three dots fit. Its reflow lengths can use
@@ -25,9 +29,10 @@ reference where available. [KOReader chapter length rules](https://github.com/ko
 
 The Reader workflow tests open a PDF with nested outline entries and Roman and
 decimal labels and an EPUB with publisher labels and unopened targets. They
-check the displayed values, saved settings and exact jump destinations. A
-24-row integration test enables lengths from Contents settings, checks stable
-labels and jumps from the final visible row. The captures are from the desktop
-renderer.
+check the displayed values, saved settings and exact jump destinations. An
+authored but unrun workflow covers custom EPUB entries at heading starts and an
+interior saved anchor across the whole-book page index. A 24-row integration
+test enables lengths from Contents settings, checks stable labels and jumps
+from the final visible row. The captures are from the desktop renderer.
 
 [PDF Contents](screenshots/contents-numbered-pdf.png) · [EPUB Contents](screenshots/contents-numbered-epub.png) · [Dark mode](screenshots/contents-numbered-dark.png) · [24 rows with stable labels](screenshots/contents-numbered-dense.png)

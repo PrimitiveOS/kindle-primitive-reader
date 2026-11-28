@@ -18,12 +18,16 @@ fn tap(app: &mut Reader, rect: Rect) {
 }
 
 fn choose(app: &mut Reader, label: &str) {
-    let (_, rows) = app.list_window();
-    let row = rows
-        .iter()
-        .position(|item| item.title == label)
-        .unwrap_or_else(|| panic!("Missing row {label:?} on {:?}", app.screen));
-    tap(app, app.list_geometry().row(row));
+    // Long filter lists page; advance until the labelled row is on screen.
+    for _ in 0..8 {
+        let (_, rows) = app.list_window();
+        if let Some(row) = rows.iter().position(|item| item.title == label) {
+            tap(app, app.list_geometry().row(row));
+            return;
+        }
+        app.list_page += 1;
+    }
+    panic!("Missing row {label:?} on {:?}", app.screen);
 }
 
 fn mount_marks(app: &mut Reader, fixture: &Fixture, pdf: &std::path::Path) -> (u64, u64) {

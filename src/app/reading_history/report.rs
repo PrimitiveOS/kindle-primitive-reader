@@ -1,10 +1,11 @@
 use super::*;
-use crate::reading_stats::history::report::Totals;
+use crate::reading_stats::history::{ReflowChapter, report::Totals};
 
 #[derive(Default)]
 pub(super) struct ReportView {
     periods: Vec<(Date, Totals)>,
     books: Vec<(u64, Totals)>,
+    chapters: Vec<(Option<ReflowChapter>, Totals)>,
     pub(super) period_list_page: usize,
     pub(super) book_list_page: usize,
 }
@@ -47,7 +48,12 @@ impl Reader {
                     .reading_history
                     .books_in_period(period, start, book, Zone::Local);
             }
-            Page::PeriodBook(_, _, _) => view.book_list_page = previous,
+            Page::PeriodBook(period, start, id) => {
+                view.book_list_page = previous;
+                view.chapters =
+                    self.reading_history
+                        .chapters_in_period(period, start, id, Zone::Local);
+            }
             _ => {}
         }
     }
@@ -156,6 +162,47 @@ impl Reader {
                     )
                     .detail(totals.screens.to_string()),
                 ];
+                let mut publications: Vec<_> = view
+                    .chapters
+                    .iter()
+                    .filter_map(|(chapter, _)| chapter.map(|chapter| chapter.publication))
+                    .collect();
+                publications.sort_unstable();
+                publications.dedup();
+                if !view.chapters.is_empty() {
+                    items.push(Item::new(
+                        language.history_report_text("Chapter reading time"),
+                        Action::Heading,
+                    ));
+                    items.extend(view.chapters.iter().map(|(chapter, chapter_totals)| {
+                        let title = match chapter {
+                            Some(chapter) => {
+                                let chapter_number = chapter.chapter.saturating_add(1);
+                                if publications.len() > 1 {
+                                    let edition = publications
+                                        .iter()
+                                        .position(|&id| id == chapter.publication)
+                                        .unwrap_or_default()
+                                        + 1;
+                                    format!(
+                                        "{} {edition} · {} {chapter_number}",
+                                        language.history_report_text("Edition"),
+                                        language.history_report_text("Chapter")
+                                    )
+                                } else {
+                                    format!(
+                                        "{} {chapter_number}",
+                                        language.history_report_text("Chapter")
+                                    )
+                                }
+                            }
+                            None => language
+                                .history_report_text("Fixed pages or older sessions")
+                                .to_owned(),
+                        };
+                        Item::new(title, Action::Heading).detail(counts(*chapter_totals))
+                    }));
+                }
                 if self.library.state(id).is_some() {
                     items.push(Item::new(
                         language.history_report_text("Continue reading"),

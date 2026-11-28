@@ -41,6 +41,30 @@ fn user_origin_ranks_before_normal_author_and_above_inline_author_important() {
         "author normal beats more-specific main/user normal"
     );
 }
+
+#[test]
+fn list_style_position_inherits_and_the_shorthand_sets_both_values() {
+    use crate::list_marker::{MarkerKind, MarkerPosition};
+
+    let markup = r#"<html><body>
+        <ol id="outer" style="list-style-position:inside">
+          <li id="inherited">One</li>
+          <li id="overridden" style="list-style-position:outside">Two</li>
+        </ol>
+        <ul id="shorthand" style="list-style:circle inside"><li id="circle">Three</li></ul>
+        <ul id="position-only" style="list-style:inside"><li id="disc">Four</li></ul>
+      </body></html>"#;
+    let (source, computed) = styles(markup, "");
+
+    assert_eq!(at(&source, &computed, "outer").marker_position, MarkerPosition::Inside);
+    assert_eq!(at(&source, &computed, "inherited").marker_position, MarkerPosition::Inside);
+    assert_eq!(at(&source, &computed, "overridden").marker_position, MarkerPosition::Outside);
+    assert_eq!(at(&source, &computed, "shorthand").marker, MarkerKind::Circle);
+    assert_eq!(at(&source, &computed, "circle").marker, MarkerKind::Circle);
+    assert_eq!(at(&source, &computed, "circle").marker_position, MarkerPosition::Inside);
+    assert_eq!(at(&source, &computed, "disc").marker, MarkerKind::Disc);
+    assert_eq!(at(&source, &computed, "disc").marker_position, MarkerPosition::Inside);
+}
 #[test]
 fn important_parent_does_not_protect_child_and_user_ties_keep_source_order() {
     let (source, s) = styles(
@@ -70,11 +94,10 @@ fn css_wide_values_resolve_inheritance_and_initial_values_before_computed_paddin
 #[test]
 fn strict_css_diagnostics_reject_unimplemented_features_and_bound_work() {
     for (css, detail) in [
-        ("p {display:none}", "display"),
-        ("p {visibility:hidden}", "visibility"),
+        ("p {display:block}", "Only display:none"),
         ("p {margin-top:1em}", "margin-top"),
         ("img {float:left}", "float"),
-        ("p:not(.x) {font-weight:700}", "selector"),
+        ("p:hover {font-weight:700}", "selector"),
         ("@import 'https://example.test/a.css';", "at-rule"),
         ("@font-face{font-family:x;src:url(x)}", "at-rule"),
         ("p{font-size:revert}", "font-size"),
@@ -104,6 +127,44 @@ fn strict_css_diagnostics_reject_unimplemented_features_and_bound_work() {
             validate_user_css(css).unwrap_or_else(|e| panic!("{}: {e}", p.id));
         }
     }
+}
+
+#[test]
+fn user_display_and_visibility_use_the_shared_rendered_flow_projection() {
+    let (source, computed) = styles(
+        "<html><body><p id='body'>Before <span id='cut'>SECRET</span><span id='veil'>hidden <b id='restore'>visible</b></span> after.</p></body></html>",
+        "#cut{display:none}#veil{visibility:hidden}#restore{visibility:visible}",
+    );
+    assert!(at(&source, &computed, "cut").flow.suppressed);
+    assert!(!at(&source, &computed, "veil").flow.suppressed);
+    assert!(!at(&source, &computed, "veil").flow.painted);
+    assert!(at(&source, &computed, "restore").flow.painted);
+
+    let flow = crate::flow_view::ChapterFlow::from_styles(&source, &computed).unwrap();
+    let body = source
+        .elements
+        .iter()
+        .position(|element| element.id.as_deref() == Some("body"))
+        .unwrap();
+    let block = source
+        .blocks
+        .iter()
+        .find(|block| block.element == body)
+        .unwrap();
+    let view = flow.view(&source, block).unwrap();
+    assert!(!view.text().contains("SECRET"));
+    assert!(view.text().contains("hidden"));
+    assert!(view.text().contains("visible"));
+    let hidden_start = view.text().find("hidden").unwrap();
+    let visible_start = view.text().find("visible").unwrap();
+    assert!(view.runs().unwrap().iter().any(|run| {
+        run.layout.start <= hidden_start
+            && hidden_start < run.layout.end
+            && !run.painted
+    }));
+    assert!(view.runs().unwrap().iter().any(|run| {
+        run.layout.start <= visible_start && visible_start < run.layout.end && run.painted
+    }));
 }
 
 #[test]
@@ -236,6 +297,34 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
             "text_align_most_right" | "text_align_all_right" => {
                 markup.replace("text-align:right!important", "text-align:left!important")
             }
+            "hyphenate_all_auto" => markup.replace(
+                "text-indent:2em!important;padding:8px!important",
+                "hyphens:none!important;text-indent:2em!important;padding:8px!important",
+            ),
+            "lineheight_all_inherit" => markup.replace(
+                "text-indent:2em!important;padding:8px!important",
+                "line-height:2.5!important;text-indent:2em!important;padding:8px!important",
+            ),
+            "h2_page-break-before_always" | "h3_page-break-before_always"
+            | "h4_page-break-before_always" | "h5_page-break-before_always"
+            | "h6_page-break-before_always" => markup.replace(
+                "</body>",
+                "<h2 id='h2'>Two</h2><p>Gap</p><h3 id='h3'>Three</h3><p>Gap</p><h4 id='h4'>Four</h4><p>Gap</p><h5 id='h5'>Five</h5><p>Gap</p><h6 id='h6'>Six</h6></body>",
+            ),
+            "sub_sup_smaller" => markup.replace(
+                "</body>",
+                "<p><sup id='sup'>1</sup><sub id='sub'>2</sub></p></body>",
+            ),
+            "ruby_font_sans_serif" | "ruby_font_size_larger" | "ruby_most_line_height_larger" => {
+                markup.replace(
+                    "</body>",
+                    "<p><ruby id='ruby'>\u{6F22}<rt id='rt'>kan</rt></ruby></p></body>",
+                )
+            }
+            "widows_orphans_all_inherit" => markup.replace(
+                "orphans:1;widows:1",
+                "orphans:3!important;widows:3!important",
+            ),
             "td_vertical_align_none" => markup.replace(
                 "<td>Cell</td>",
                 "<td id='td' style='vertical-align:middle!important'>Cell</td><th id='th' style='vertical-align:bottom!important'>Header</th>",
@@ -273,6 +362,96 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
                 assert_eq!(p.alignment, Some(Alignment::Right));
                 assert_ne!(p.alignment, old.alignment);
                 assert_eq!(at(&source, &after, "h").alignment, Some(Alignment::Right));
+            }
+            "text_align_all_left" => {
+                assert_eq!(p.alignment, Some(Alignment::Left));
+                assert_ne!(p.alignment, old.alignment);
+                assert_eq!(at(&source, &after, "h").alignment, Some(Alignment::Left));
+            }
+            "text_align_all_justify" => {
+                assert_eq!(p.alignment, Some(Alignment::Justify));
+                assert_ne!(p.alignment, old.alignment);
+                assert_eq!(
+                    at(&source, &after, "h").alignment,
+                    Some(Alignment::Justify)
+                );
+            }
+            "inherit-font-size" | "font_size_most_reset" => {
+                assert_ne!(p.size_scale, old.size_scale)
+            }
+            "body_direction_ltr" => {
+                assert_eq!(p.direction, parley::BaseDirection::Ltr);
+                assert_ne!(p.direction, old.direction);
+            }
+            "body_direction_rtl" => {
+                assert_eq!(p.direction, parley::BaseDirection::Rtl);
+                assert_ne!(p.direction, old.direction);
+            }
+            "h1_page-break-before_always" | "h2_page-break-before_always"
+            | "h3_page-break-before_always" | "h4_page-break-before_always"
+            | "h5_page-break-before_always" | "h6_page-break-before_always" => {
+                let id = match preset.id.get(..2) {
+                    Some("h1") => "h",
+                    Some(tag) => tag,
+                    None => unreachable!(),
+                };
+                assert_eq!(
+                    at(&source, &after, id).page_breaks.before,
+                    crate::publisher_breaks::Edge::Force
+                );
+                assert_ne!(
+                    at(&source, &before, id).page_breaks.before,
+                    crate::publisher_breaks::Edge::Force
+                );
+            }
+            "hyphenate_all_auto" => {
+                assert_eq!(p.hyphens, Hyphens::Auto);
+                assert_ne!(p.hyphens, old.hyphens);
+            }
+            "ligature_all_no_common_ligature" => {
+                assert!(!p.common_ligatures);
+                assert_ne!(p.common_ligatures, old.common_ligatures);
+            }
+            "line_break_cre_loose" => {
+                assert!(p.loose_nonbreaking);
+                assert!(!old.loose_nonbreaking);
+            }
+            "lineheight_all_inherit" | "ruby_most_line_height_larger" => {
+                assert_ne!(p.line_height, old.line_height)
+            }
+            "widows_avoid_orphans_allow" => {
+                let following = at(&source, &after, "following");
+                assert_eq!(following.widows, 2);
+                assert_eq!(following.orphans, 1);
+            }
+            "widows_orphans_avoid" => {
+                let following = at(&source, &after, "following");
+                assert_eq!(following.widows, 2);
+                assert_eq!(following.orphans, 2);
+            }
+            "widows_orphans_all_inherit" => {
+                assert_ne!(p.orphans, old.orphans);
+                assert_ne!(p.widows, old.widows);
+            }
+            "sub_sup_smaller" => {
+                for id in ["sup", "sub"] {
+                    assert!(at(&source, &after, id).size_scale < at(&source, &before, id).size_scale);
+                }
+            }
+            "ruby_font_sans_serif" => {
+                assert_ne!(
+                    at(&source, &after, "rt").font_family,
+                    at(&source, &before, "rt").font_family
+                );
+            }
+            "ruby_font_size_larger" => {
+                // KOReader uses the same `rt {font-size:50%}` rule. Its engine
+                // default ruby size is not verified here, so assert the rule's
+                // effect: ruby text is half of its parent's computed size.
+                let rt = at(&source, &after, "rt").size_scale;
+                let parent = at(&source, &after, "ruby").size_scale;
+                assert!((rt - parent * 0.5).abs() < 1e-4);
+                assert_ne!(rt, at(&source, &before, "rt").size_scale);
             }
             "headings-centered" => assert_ne!(
                 at(&source, &after, "h").alignment,
@@ -422,7 +601,7 @@ fn every_published_preset_changes_its_supported_computed_property_through_user_o
             _ => panic!("Add a functional assertion for {}", preset.id),
         }
     }
-    let error = validate_user_css("p {\n font-weight:700;\n display:none;\n}")
+    let error = validate_user_css("p {\n font-weight:700;\n display:block;\n}")
         .unwrap_err()
         .to_string();
     assert!(error.contains("Line 3"), "{error}");

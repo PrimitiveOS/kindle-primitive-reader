@@ -32,6 +32,23 @@ pub(crate) fn detect_reading_columns(
     width: u32,
     height: u32,
 ) -> Option<Vec<PdfTextRect>> {
+    detect_reading_columns_with_limit(pixels, width, height, 3)
+}
+
+/// Find no more than the configured number of text columns. A maximum of one
+/// deliberately disables automatic segmentation, matching KOReader's setting.
+pub(crate) fn detect_reading_columns_with_limit(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    maximum: u8,
+) -> Option<Vec<PdfTextRect>> {
+    if !(1..=3).contains(&maximum) {
+        return None;
+    }
+    if maximum == 1 {
+        return None;
+    }
     if width.min(height) < MIN_RASTER_SIDE
         || width.max(height) > MAX_OCR_SIDE
         || width.checked_mul(height)? > MAX_OCR_PIXELS
@@ -40,9 +57,14 @@ pub(crate) fn detect_reading_columns(
         return None;
     }
     let grid = ScanGrid::sample(pixels, width as usize, height as usize)?;
-    grid.three_columns()
-        .map(Vec::from)
-        .or_else(|| grid.columns().map(Vec::from))
+    match maximum {
+        2 => grid.columns().map(Vec::from),
+        3 => grid
+            .three_columns()
+            .map(Vec::from)
+            .or_else(|| grid.columns().map(Vec::from)),
+        _ => None,
+    }
 }
 
 struct ScanGrid {

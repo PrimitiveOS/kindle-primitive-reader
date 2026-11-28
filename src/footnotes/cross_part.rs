@@ -282,6 +282,14 @@ impl Band {
     /// resolved against the foreign chapter, not the host chapter.
     pub(crate) fn link_at(&self, page: usize, x: f32, y: f32) -> Option<(&str, &str)> {
         let (x, y) = self.coordinates(page, x, y)?;
+        if let Some((_, _, href)) = self.layout.renderer.image_link_context_at(
+            0.0..self.layout.extent,
+            self.layout.settings,
+            x,
+            y,
+        ) {
+            return Some((&self.layout.note.chapter, href));
+        }
         let anchor = self.layout.anchor_at(x, y)?;
         let block = self
             .layout
@@ -298,9 +306,28 @@ impl Band {
     }
 }
 
+impl Layout {
+    #[cfg(feature = "kindle")]
+    pub(crate) fn image_note_reference_at(
+        &self,
+        target: &crate::epub::Destination,
+        x: f32,
+        y: f32,
+    ) -> Option<crate::footnotes::ReferenceContext> {
+        let (key, ordinal, href) =
+            self.renderer
+                .image_link_context_at(0.0..self.extent, self.settings, x, y)?;
+        let resolved = Book::resolve_link(&self.note.chapter, href).ok()?;
+        if &resolved != target {
+            return None;
+        }
+        super::image_reference_context(&self.note.source, key, ordinal, href)
+    }
+}
+
 impl Note {
     pub(crate) fn layout(
-        self,
+        mut self,
         book: &mut Book,
         mut fonts: FontContext,
         settings: Settings,
@@ -337,6 +364,8 @@ impl Note {
         if !quotes.is_empty() {
             return None;
         }
+        #[cfg(feature = "kindle")]
+        super::apply_css_reference_hints(&mut self.source, &computed);
         for (index, style) in computed.iter_mut().enumerate() {
             if descendant(&self.source, index, self.root) {
                 if style.flow.suppressed
@@ -426,6 +455,7 @@ impl Layout {
             block: key,
             offset,
             illustration: None,
+            side_bias: None,
         })
     }
 }

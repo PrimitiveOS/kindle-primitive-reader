@@ -1,4 +1,6 @@
-//! Vertical CSS margins for retained horizontal blocks and paragraph presets.
+//! Vertical CSS margins for retained and layout-only horizontal blocks.
+use std::collections::HashMap;
+
 use crate::{
     BlockMarginMode, FloatMode, Settings,
     book_style::{ImageLength, Style, WritingMode, borders::Pattern, flow::Display},
@@ -68,6 +70,7 @@ pub(crate) fn before_blocks(
     boxes: Option<&[BoxArea]>,
     settings: Settings,
     order: Option<&[usize]>,
+    empty_hosts: Option<&HashMap<usize, Vec<usize>>>,
 ) -> Option<Vec<Space>> {
     let mode = settings.block_margins;
     let ignore_publisher = mode == BlockMarginMode::Ignore;
@@ -84,14 +87,17 @@ pub(crate) fn before_blocks(
         return None;
     }
 
-    // An owner can contain multiple source blocks. Its leading/trailing edges
-    // belong to the outer flow once, regardless of wrapping or page breaks.
+    // A visible host can span canonical blocks whose text was suppressed; its
+    // leading/trailing edges still belong to outer flow only once. The
+    // synthetic host span participates in collapse without restoring the
+    // hidden source block itself.
     let mut spans = vec![None; source.elements.len()];
     let mut following = vec![None; source.blocks.len()];
     let mut next = None;
     for index in (0..source.blocks.len()).rev() {
         let block = &source.blocks[crate::table_layout::captions::source_index(order, index)];
         following[index] = next;
+        let hosts = empty_hosts.and_then(|hosts| hosts.get(&block.key));
         if !styles[block.element].flow.suppressed {
             Span::include(
                 &mut spans[block.element],
@@ -101,6 +107,20 @@ pub(crate) fn before_blocks(
                     has_grid: block.table_cell.is_some(),
                 },
             );
+        }
+        if let Some(hosts) = hosts {
+            for &host in hosts {
+                Span::include(
+                    &mut spans[host],
+                    Span {
+                        first: index,
+                        last: index,
+                        has_grid: false,
+                    },
+                );
+            }
+        }
+        if !styles[block.element].flow.suppressed || hosts.is_some_and(|hosts| !hosts.is_empty()) {
             next = Some(index);
         }
     }
@@ -336,7 +356,7 @@ mod tests {
         )
         .unwrap()
         .compute(&source.elements);
-        let gaps = before_blocks(&source, &styles, None, settings, None)
+        let gaps = before_blocks(&source, &styles, None, settings, None, None)
             .unwrap_or_else(|| vec![Space::default(); source.blocks.len()]);
         source
             .blocks

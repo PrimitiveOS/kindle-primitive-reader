@@ -113,9 +113,9 @@ the strict user layer continues to require individual font declarations.
 | --- | --- |
 | Book snippet/imported file | 8 KiB UTF-8. |
 | Effective combined user CSS | 64 KiB, 128 rules, 32 source declarations per rule. |
-| Selectors | Type, universal, class, ID, descendant, child, adjacent sibling, `[href]`, link/any-link, first-child, first-of-type and terminal `::before`, `::after`, `::first-letter` or `::first-line`. 128 bytes/selector, 8 steps, 24 selectors/rule. |
-| Supported properties | Existing reflow typography, opaque text colors in horizontal Parley layout, padding and indentation, breaks, widows and orphans, table borders, spacing and caption side, and supported image/table dimensions. Before/after rules can set content, typography, visibility and inline display. First-letter rules can use numeric `initial-letter`, a trailing margin or a left float in supported layouts. First-line rules can set typography and text decoration. `display: none` on first-letter or first-line restores ordinary text styling. [Text color](publisher-text-color.md) · [Generated text](generated-reading-content.md) · [Publisher initials](first-letter.md) · [Publisher first lines](first-line.md) |
-| Unsupported | Publisher block margins, ordinary element display/visibility or floats, clearance, general positioned/block layout, other pseudo-elements, vendor hints and unsupported at-rules. |
+| Selectors | Type, universal, class, ID, descendant, child, adjacent sibling, `[href]`, link/any-link, first-child, first-of-type, `:not()`, `:is()` and `:where()` (nested to depth 4; `:not()`/`:is()` add specificity from their most specific argument), and terminal `::before`, `::after`, `::first-letter` or `::first-line`. 128 bytes/selector, 8 steps, 24 selectors/rule. |
+| Supported properties | Existing reflow typography, opaque text colors in horizontal Parley layout, padding and indentation, breaks, widows and orphans, table borders, spacing and caption side, and supported image/table dimensions. Ordinary elements support `display:none` and computed `visibility` (`visible`, `hidden`, `collapse`), using the shared rendered-text projection for layout, selection anchors and search. Before/after rules can set content, typography, visibility and inline display. First-letter rules can use numeric `initial-letter`, a trailing margin or a left float in supported layouts. First-line rules can set typography and text decoration. `display: none` on first-letter or first-line restores ordinary text styling. [Text color](publisher-text-color.md) · [Generated text](generated-reading-content.md) · [Publisher initials](first-letter.md) · [Publisher first lines](first-line.md) |
+| Unsupported | Ordinary display box reclassification (`block`, `inline`, table roles, and related values), publisher block margins or ordinary floats, clearance, general positioned/block layout, other pseudo-elements, vendor hints and unsupported at-rules. |
 
 Unsupported user CSS is rejected as a complete proposed change, rather than
 silently applying a partial sheet. Publisher parsing remains forgiving. The
@@ -144,15 +144,19 @@ Reference behavior was checked against KOReader
 
 - `readerstyletweak.lua:258–291,394–470,735–824,1185–1222`: ordering, live
   defaults, tri-state book choices, master switch and book CSS editing lifecycle.
+- `readerstyletweak.lua:3668–3709`: book-specific CSS explicitly demonstrates
+  hiding annoying content with `display:none !important`.
 - `readertypeset.lua:352–355`, base `cre.cpp:1760–1777`: rebuild stylesheet and
   restore position.
 - CRE `lvtinydom.cpp:19187–19200`, `lvstsheet.cpp:7504–7511`,
   `lvstyles.h:298–311` and `include/lvtinydom.h:1488–1505`: origin order and
   important declarations overriding author inline important rules.
 
-This is a supported subset, not full CRE CSS compatibility. Source tests, input
-workflows, real-file checks and screenshot receipts are retained under the
-private `build/parity-review/style-tweak-evidence` folder. Native compilation and
+This is a supported subset, not full CRE CSS compatibility. The ordinary
+element hide/show path is a new implementation candidate and remains unverified.
+Source tests, input workflows, real-file checks and screenshot receipts are
+retained under the private `build/parity-review/style-tweak-evidence` folder.
+Native compilation and
 Kindle acceptance follow the integrated candidate; this slice makes no physical
 display or release claim.
 
@@ -161,7 +165,7 @@ display or release claim.
 
 The exact corrected source passed **739 library + 14 package + 4 layout tests**;
 60 opt-in cases were ignored. Fifteen focused cases cover origin/importance,
-computed resets, a property-effect assertion for each of the 18 presets, strict
+computed resets, property-effect assertions for the 18 presets covered by that run (the current table in `src/user_styles.rs` has 91 entries, and per-preset assertions for the rest are open in `koreader-gap-register.md`), strict
 input diagnostics/caps, live inheritance, failed layout/save rollback, real
 keyboard input and lifecycle, profiles/defaults independence, import and backup
 restore. Six UI frames were reviewed for the controls and editor.

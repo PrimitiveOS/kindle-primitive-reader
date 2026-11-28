@@ -1,10 +1,12 @@
 # Adjusting page margins
 
-Open **Text → Margins** from the bottom of a reflowable book. Each edge has one-pixel and twelve-pixel adjustments. The page updates under the panel, so you can see how much room is left for text. **Reset margins** restores the Reader default of 54 pixels at each edge. **Text → Layout → Side margins** still changes both horizontal edges together.
+Open **Text → Margins** from the bottom of a reflowable book. The **L/R preset** row provides the nine KOReader size stops (5, 10, 15, 20, 30, 50, 70, 100, 140) for paired horizontal margins. In **L/R margins**, the inward/outward arrows distinguish the left and right steppers; tap for a one-pixel change or hold for a five-pixel change. Tap the current pair to open the combined `left,right` exact-value editor. Each vertical edge has a separate row of the same nine stock stops, followed by a five-control adjustment row with page-edge arrows, one-pixel taps, five-pixel holds, twelve-pixel taps and an exact **Set** editor. Values are scaled from the short screen side using KOReader's `scaleBySize` rule. The page updates under the panel. **Reset margins** restores the Reader default of 54 pixels at each edge. **Text → Layout → Side margins** still changes both horizontal edges together.
 
 | Reading controls | Page with the controls closed |
 | --- | --- |
 | [![Separate left, right, top and bottom margins in the bottom reading panel](screenshots/individual-page-margins.png)](screenshots/individual-page-margins.png) | [![Authored EPUB passage with a 66-pixel left margin, 42-pixel right margin and 73-pixel top and bottom margins](screenshots/asymmetric-reading-page.png)](screenshots/asymmetric-reading-page.png) |
+
+The controls image shows the earlier four-row horizontal editor and combined vertical controls. Replace it during the deferred simulator capture pass so the paired L/R row and separate vertical preset and adjustment rows are shown accurately.
 
 Choose **Linked** to keep the top and bottom margins equal. Linking 55 and 66 pixels sets both to 61, their rounded average. From then on, either vertical control adjusts both. **Independent** keeps the two current values and lets you change them separately. Each book remembers its edges, link setting, open panel and source passage. Existing saved uniform and paired side margins also reopen with their previous dimensions.
 
@@ -12,7 +14,8 @@ The available text width is the page width minus the left and right edges. The t
 
 ## KOReader reference
 
-The tagged KOReader controls offer a paired horizontal preset plus a detailed left/right adjustment and separate top and bottom values. Its handler accepts the two horizontal values independently. Switching on vertical synchronization rounds their average and updates both edges. Its frontend scales configuration units for the screen before passing the four margins to CREngine and can reserve footer height. PrimitiveOS Reader presents actual rendered pixels and reserves its footer outside the page surface. [KOReader horizontal and vertical controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/creoptions.lua#L132-L211) · [Margin handlers and scaling](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypeset.lua#L477-L557)
+The tagged KOReader controls offer a paired horizontal preset plus a detailed left/right adjustment and separate top and bottom values. Its horizontal popup uses two independent spin controls with one-pixel taps and five-pixel hold steps; switching on vertical synchronization rounds the average and updates both edges. Its frontend scales configuration units for the screen before passing four margins to CREngine and can reserve footer height. PrimitiveOS Reader now groups independent left and right steppers in one row, maps taps and holds to the stock one- and five-pixel steps, and keeps the exact pair editor one tap away. The Reader control stays inline in the bottom panel instead of opening KOReader's separate popup, and long-hold repeat behavior still needs comparison. The margin candidate has not yet been validated in the simulator or on Kindle. [KOReader horizontal and vertical controls](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/creoptions.lua#L132-L211) · [Margin handlers and scaling](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/apps/reader/modules/readertypeset.lua#L445-L475) · [Stock screen scaling rule](../build/parity-review/koreader-macos-reference/sources/koreader/base/ffi/framebuffer.lua#L414)
+
 
 ## Verification
 
@@ -28,6 +31,8 @@ Installed KOReader independently found a unique passage shared with each Reader 
 The two native Reader test processes peaked at 37,380 and 27,360 KiB resident memory. Four additional authored scenarios passed on the Oasis. The books, Documents file inventory, user reading state, Browser session and installed Reader retained their original checksums. All isolated device data was removed.
 
 Authored fixtures independently check horizontal illustration hit testing, vertical right-to-left columns, the Blitz renderer, both leaves of a two-page spread and the empty gutter. Other tests check old side-margin records, an explicit zero edge and an invalid saved value. The Mac suite passed 462 library tests, 14 EPUB-package tests and four layout integration tests. Seven opt-in library scenarios require separate fixtures. The screenshots use the authored test book.
+
+The paired stepper row and exact-value entry are newer implementation candidates and have not been run through the checks above. The separate-popup layout and long-hold repeat behavior remain to be compared with KOReader before parity is considered complete.
 
 ```sh
 READER_MARGIN_PANEL_IMAGE="$PWD/margins.png" \

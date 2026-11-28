@@ -216,7 +216,8 @@ impl Search {
             self.stopped = true;
             return Ok(Vec::new());
         }
-        let text = nearby::ChapterText::read_with_flow(book, self.next_chapter, &self.flow_config)?;
+        let text = nearby::ChapterText::read_with_flow(book, self.next_chapter, &self.flow_config)?
+            .with_source_only_verified_layout();
         self.step_loaded(text, book.chapters.len(), &AtomicBool::new(false))
     }
 
@@ -393,6 +394,7 @@ impl Search {
                     let anchor = Anchor {
                         raw_caret: None,
                         illustration: None,
+                        side_bias: None,
                         book: publication.0,
                         chapter: text.href.clone(),
                         revision: source.revision,
@@ -1414,15 +1416,26 @@ mod tests {
     }
 
     fn chapter_with_text(label: String, html: String) -> nearby::ChapterText {
+        let source = Source::parse(&format!("<html><body>{html}</body></html>")).ok();
+        // Source-only fixtures have no probe to verify raw spans, so they carry an explicit verified
+        // layout with no raw blocks (the gate in `search` and `search::nearby` requires one).
+        let raw_layout = source.as_ref().map(|source| {
+            raw_layout::VerifiedRawLayout::verified_without_raw_blocks(
+                1,
+                "chapter.xhtml",
+                source.revision,
+                Default::default(),
+            )
+        });
         nearby::ChapterText {
             book: 1,
             label,
             href: "chapter.xhtml".into(),
             placeholder: false,
-            source: Source::parse(&format!("<html><body>{html}</body></html>")).ok(),
+            source,
             flow: Default::default(),
             flow_config: Default::default(),
-            raw_layout: None,
+            raw_layout,
         }
     }
 

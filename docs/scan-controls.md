@@ -2,6 +2,26 @@
 
 Open a PDF, DjVu, or comic archive, open the bottom reading controls, and choose **Scan**. Reader saves the scan controls for that book. Source pages, OCR word rectangles, bookmarks and exported annotation coordinates retain their original coordinate system.
 
+## OCR scan reflow columns
+
+In **Reflow scan**, open **Layout** and choose a maximum of one, two, or three
+columns. The default is two. Reader looks for clear column gutters in the
+source raster, then orders the original OCR word images down each detected
+column. It follows the selected LTR, RTL or TBRTL direction when ordering
+columns and keeps the source word as the location anchor when the layout
+changes. LTR is the default. The choice is saved per book and is shared by
+that book's OCR scan reflow views.
+See the [reference comparison and deferred acceptance checklist](scan-reflow-columns.md).
+
+Detection is intentionally conservative. If the page does not have clear
+gutter evidence, Reader keeps the OCR-provided order. Uneven columns, text
+boxes spanning a gutter, mixed-direction pages, and complex magazine layouts
+can still need a better layout engine. This implementation has not yet entered
+the deferred unit, functional, simulator, or Kindle comparison pass.
+
+KOReader exposes the same maximum-column choices for its reflow engine, with
+two columns as its default. [Pinned option and help text](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L3007-L3035) · [KOReader default](https://github.com/koreader/koreader/blob/master/defaults.lua)
+
 ## Reading scan columns
 
 **Tools › Columns** now tries a clear three-column layout before the existing
@@ -11,9 +31,49 @@ original view without saving the temporary crops. Detection requires two
 clear gutters and repeated text in all three columns; complex magazine
 layouts, uneven or interrupted columns, and pages with ambiguous gutters can
 still be rejected. This new path awaits desktop and Kindle testing.
-KOReader exposes a separate maximum-column setting for its scan-reflow
-engine; this automatic column-view extension does not claim full reflow parity.
-[KOReader column setting](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L703-L717)
+This temporary crop view remains separate from OCR scan reflow above.
+
+## OCR scan reflow word gap
+
+The reflow **Layout** panel also has **Word gap** choices: Small, Auto and
+Large. Auto scales the measured gap between OCR word boxes with the reflow
+text; if the OCR geometry has no usable gap, it uses a conservative fallback.
+Small and Large use the pinned KOReader preset ratios against the selected
+scan text height. This is a native approximation because Reader repositions
+word-image crops instead of passing them through KOReader's k2pdfopt engine.
+The choice is saved per book and in fixed-document defaults and reading
+profiles. The implementation awaits the deferred desktop and Kindle checks.
+
+## OCR scan reflow alignment
+
+**Alignment** offers Auto, Left, Center, Right and Justify. Auto estimates the
+dominant alignment from OCR source-line geometry, then uses the selected writing
+direction when the page does not provide enough evidence. Justify distributes remaining
+line width between the word images except on a paragraph's last line. This is
+a native approximation of KOReader's text alignment option; compare its line
+breaks and source alignment on real pages before claiming parity.
+See the [source comparison and deferred checklist](scan-reflow-alignment.md).
+
+## Fixed-document reflow direction
+
+The fixed-document **Layout** panel offers **LTR**, **RTL** and **TBRTL** for
+embedded-text PDF reflow and OCR scan reflow. OCR TBRTL places word images
+top-to-bottom in columns ordered right-to-left. Each reflow mode remembers its
+own direction per book, with LTR as the default. This implementation candidate
+is unverified. See the [source comparison and deferred acceptance
+checklist](scan-reflow-direction.md).
+
+The scan-size **−** and **+** controls adjust the OCR word-image scale from
+0.20× to 2.00× in 0.05× steps. Each factor scales that source page's median
+OCR word-box height, and the footer shows the current multiplier. The saved
+default is 1.05×, corresponding to KOReader's 1.00× preset plus its default
++0.05× fine adjustment. Reader remembers the value per book and includes it
+in fixed-document defaults and profiles. KOReader's pinned controls offer
+twelve main scale choices from 0.2× to 2.0× and separate ±0.05× fine
+adjustments. Reader combines these into one fine-grained stepper and still
+repositions OCR word-image crops rather than scaling rendered text. This is
+feature-range parity, not renderer equivalence.
+See the [source comparison and deferred acceptance checklist](scan-reflow-text-size.md).
 
 ## Contrast
 
@@ -38,6 +98,37 @@ fixed-page rendering with reflow, rotation and background cleanup disabled.
 Pass the authored DjVu fixture first, then any authored comic archives
 containing a sixteen-band grayscale ramp as optional arguments.
 [PDF controls](screenshots/scan-contrast-levels.png) · [DjVu controls](screenshots/scan-contrast-djvu.png) · [Executable comparison](../scripts/verify-stock-scan-contrast.lua) · [KOReader MuPDF archive providers](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/pdfdocument.lua#L360-L387) · [Contrast presets](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L486-L507)
+
+## Scan white level
+
+Scan white level has KOReader's eight threshold presets: **255, 224, 192, 160,
+128, 96, 64** and **32**. **255** preserves the original image. **Fine tune**
+accepts every integer from 0 to 255; pixels above the threshold become white
+while darker tones stay intact, so 0 turns every nonblack pixel white. The
+saved setting is available for PDF, DjVu and comic scans. [KOReader threshold
+presets, range and step](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L528-L544) · [KOReader implementation discussion](https://github.com/koreader/koreader/pull/15412)
+
+## Dewatermark
+
+**Dewatermark** is available for PDF, DjVu and comic pages while **Scan white
+level** is 255. KOReader routes pages through its k2pdfopt page optimizer when
+this option is enabled. The Rust candidate estimates one automatic grayscale
+threshold from a bounded page histogram, then paints lighter pixels white in
+the display frame. It leaves the stored page raster, source coordinates,
+selection geometry and document file unchanged. Its threshold estimate is
+cached for the current frame and invalidated when the frame or scan tone
+settings change.
+
+This is an independent native approximation, not a port of k2pdfopt. The
+current algorithm uses one global histogram split; it does not remove spatially
+varying watermarks or perform k2pdfopt's region analysis. It has authored unit
+and fixed-session regression cases, but has not been built, run against the
+pinned KOReader renderer, captured in the simulator, or accepted on Kindle.
+Keep this feature marked partial until those comparisons close the difference.
+The k2pdfopt implementation is AGPL-3.0-or-later; no k2pdfopt source or binary
+is bundled by this candidate.
+
+[KOReader toggle and threshold dependency](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L552-L565) · [Optimized-page dispatch](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/koptinterface.lua#L400-L435) · [Optimizer API](https://github.com/koreader/libk2pdfopt/blob/1fcffeb1e61ec43265d23e2ac77d9a901f8c45d2/lib/koptimize.c#L31-L97) · [Rust threshold candidate](../src/scan_dewatermark.rs)
 
 ## Auto straighten
 

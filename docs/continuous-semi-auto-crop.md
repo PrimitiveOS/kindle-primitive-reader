@@ -58,11 +58,13 @@ The default 0.10-inch margin reserves 30 pixels across both sides on the
 300-dpi Oasis display, when both sides have room for it.
 
 Auto and Semi-auto include that margin in the detected source rectangle
-before the page fits to the screen. Manual crop uses the exact saved box.
-Full-page fit uses the full page. In continuous reading, every strip
-gets its own effective margin and width-fit scale. Changing the value
-anchors the current source location as far as the new crop allows.
-Hit testing and saved annotations use the original source coordinates.
+before the page fits to the screen. Manual crop uses the exact saved box;
+no-crop mode uses the full page. KOReader's pinned implementation and the
+stock comparison harness leave those two bounds unchanged when this value
+changes. In continuous reading, every eligible strip gets its own effective
+margin and width-fit scale. Changing the value anchors the current source
+location as far as the new crop allows. Hit testing and saved annotations use
+the original source coordinates.
 
 The pinned executable checks both authored pages at each preset,
 both endpoints and a repeat of the default. KOReader leaves manual

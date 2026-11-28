@@ -10,6 +10,7 @@ fn anchor(original: &Source, xhtml: &str, block: usize, offset: usize) -> Anchor
         block,
         offset,
         illustration: None,
+        side_bias: None,
     }
 }
 

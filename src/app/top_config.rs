@@ -1,6 +1,7 @@
 //! Actions available from the reading view's grouped top menu.
 
 use super::{Action, BookList, Item, Reader, Screen, chapter_navigation::Direction, text_items};
+use crate::library::FixedContentFit;
 use crate::reading_controls::ReadingControls;
 
 pub(super) use crate::book_menus::TopGroup;
@@ -348,13 +349,38 @@ impl Reader {
             return Vec::new();
         };
         let reading = &fixed.reading;
+        let preferences = reading.preferences();
         let mut items = Vec::new();
         if !reading.is_spread() {
             items.extend([
-                Item::new("Fit page", Action::FitPage(false)),
-                Item::new("Fit width", Action::FitPage(true)),
-                Item::new("Fit height", Action::FitHeight),
+                Item::new("Zoom to page", Action::ZoomTargetContent(false)),
+                Item::new("Zoom to content", Action::ZoomTargetContent(true)),
+                Item::new(
+                    "Zoom to columns",
+                    Action::SetFixedTileZoom(
+                        crate::library::FixedTileAxis::Columns,
+                        reading.tile_zoom_count_tenths(crate::library::FixedTileAxis::Columns),
+                    ),
+                ),
+                Item::new(
+                    "Zoom to rows",
+                    Action::SetFixedTileZoom(
+                        crate::library::FixedTileAxis::Rows,
+                        reading.tile_zoom_count_tenths(crate::library::FixedTileAxis::Rows),
+                    ),
+                ),
+                Item::new("Manual zoom", Action::ZoomTargetManual),
             ]);
+            if !preferences.manual_zoom && preferences.tile_zoom.is_none() {
+                items.extend([
+                    Item::new("Fit full", Action::SetFixedFitAxis(FixedContentFit::Full)),
+                    Item::new("Fit width", Action::SetFixedFitAxis(FixedContentFit::Width)),
+                    Item::new(
+                        "Fit height",
+                        Action::SetFixedFitAxis(FixedContentFit::Height),
+                    ),
+                ]);
+            }
         }
         items.push(Item::new("Rotate", Action::RotatePage));
         if reading.supports_spreads() {

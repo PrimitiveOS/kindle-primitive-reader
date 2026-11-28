@@ -471,7 +471,17 @@ fn accepted_opening_turn_rolls_back_pdf_and_uses_a_verified_fallback() {
         .unwrap();
     app.activate(Action::ScanGamma(27)).unwrap();
     app.save_reading_profile("Alpha wide view").unwrap();
-    include(&mut app, 0, vec![Field::FitAndZoom, Field::ScanContrast]);
+    include(
+        &mut app,
+        0,
+        vec![
+            Field::ZoomTargetFit,
+            Field::ManualZoomFactor,
+            Field::ZoomColumns,
+            Field::ZoomRows,
+            Field::ScanContrast,
+        ],
+    );
     app.activate(Action::ScanGamma(19)).unwrap();
     app.save_reading_profile("Zulu print contrast").unwrap();
     include(&mut app, 1, vec![Field::ScanContrast]);
@@ -904,7 +914,17 @@ fn opening_fixed_profiles_preserve_the_physical_page_and_project_tiled_fit() {
         .unwrap();
     app.activate(Action::ScanGamma(19)).unwrap();
     app.save_reading_profile("A tiled scan").unwrap();
-    include(&mut app, 0, vec![Field::FitAndZoom, Field::ScanContrast]);
+    include(
+        &mut app,
+        0,
+        vec![
+            Field::ZoomTargetFit,
+            Field::ManualZoomFactor,
+            Field::ZoomColumns,
+            Field::ZoomRows,
+            Field::ScanContrast,
+        ],
+    );
     app.save_reading_profile("Z overlap").unwrap();
     include(&mut app, 1, vec![Field::PanOverlap]);
     let mut profiles = app.profiles.clone();

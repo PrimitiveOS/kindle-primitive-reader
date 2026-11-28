@@ -67,18 +67,97 @@ fields! {
         PageOverlap => "Page overlap": page_overlap_enabled, page_overlap_lines, page_overlap_style;
     }
     fixed {
-        FitAndZoom => "Fit, zoom and reading mode": zoom, width_fit, height_fit, continuous;
+        FitAndZoom => "Fit, zoom and reading mode": zoom, zoom_factor_hundredths, zoom_columns_tenths, zoom_rows_tenths, zoom_fit_axis, manual_zoom, content_fit, width_fit, height_fit, continuous;
+        ZoomTargetFit => "Zoom target and fit": zoom, zoom_fit_axis, manual_zoom, content_fit, width_fit, height_fit, continuous;
+        ManualZoomFactor => "Manual zoom factor": zoom_factor_hundredths;
+        ZoomColumns => "Column zoom count": zoom_columns_tenths;
+        ZoomRows => "Row zoom count": zoom_rows_tenths;
         PageRotation => "Page rotation": turns;
         ScanContrast => "Scan contrast": scan_contrast, scan_gamma_tenths;
         ScanWhites => "Scan white level": scan_white_level;
+        Dewatermark => "Dewatermark": dewatermark;
         CropMargin => "Crop margin": crop_margin_hundredths;
         Straighten => "Auto straighten": straighten_limit;
         Dither => "Image dithering": dither;
         ScrollGap => "Page gap": continuous_gap;
         TextSpacing => "Reflow line spacing": fixed_reflow_spacing;
+        ReflowColumns => "Reflow columns": fixed_reflow_columns;
+        ReflowWordGap => "Reflow word gap": fixed_reflow_word_gap;
+        ReflowAlignment => "Reflow alignment": fixed_reflow_alignment;
+        ReflowDirection => "Reflow writing direction": fixed_reflow_direction, fixed_text_reflow_direction;
+        ReflowTextSize => "Reflow text size": fixed_reflow_text_scale;
         PanOverlap => "Zoom pan overlap": zoom_overlap_h, zoom_overlap_v;
         PanOrder => "Zoom pan direction": zoom_direction_vertical, zoom_bottom_to_top;
-        Spreads => "Facing pages": spread;
-        ReadingDirection => "Reading direction": right_to_left;
+        Spreads => "Facing pages": spread, epub_spread;
+        ReadingDirection => "Reading direction": right_to_left, epub_right_to_left;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::library::FixedContentFit;
+
+    #[test]
+    fn fixed_zoom_profile_fields_store_target_and_counts_independently() {
+        let source = FixedPreferences {
+            zoom_factor_hundredths: Some(175),
+            zoom_columns_tenths: Some(25),
+            zoom_rows_tenths: Some(15),
+            zoom_fit_axis: Some(FixedContentFit::Height),
+            manual_zoom: true,
+            ..FixedPreferences::default()
+        };
+        let mut target = FixedPreferences::default();
+        Field::ZoomTargetFit.merge_view(source, &mut target);
+        Field::ManualZoomFactor.merge_view(source, &mut target);
+        Field::ZoomColumns.merge_view(source, &mut target);
+        Field::ZoomRows.merge_view(source, &mut target);
+
+        assert_eq!(target.zoom_factor_hundredths, Some(175));
+        assert_eq!(target.zoom_columns_tenths, Some(25));
+        assert_eq!(target.zoom_rows_tenths, Some(15));
+        assert_eq!(target.zoom_fit_axis, Some(FixedContentFit::Height));
+        assert!(target.manual_zoom);
+    }
+
+    #[test]
+    fn legacy_fixed_zoom_mask_expands_to_granular_fields() {
+        let decoded = crate::reading_profiles::decode(serde_json::json!([{
+            "name": "Legacy zoom",
+            "fixed": { "settings": {} },
+            "fields": ["fit_and_zoom"]
+        }]))
+        .unwrap();
+
+        assert_eq!(
+            decoded[0].selection(),
+            [
+                Field::ZoomTargetFit,
+                Field::ManualZoomFactor,
+                Field::ZoomColumns,
+                Field::ZoomRows,
+            ]
+        );
+    }
+
+    #[test]
+    fn dewatermark_is_a_fixed_scan_profile_field_for_supported_formats() {
+        use crate::reading_profiles::FixedProvider;
+
+        for provider in [FixedProvider::Pdf, FixedProvider::Djvu, FixedProvider::Comic] {
+            assert!(provider.fields().any(|field| field == Field::Dewatermark));
+        }
+        for provider in [FixedProvider::Epub, FixedProvider::Image] {
+            assert!(!provider.fields().any(|field| field == Field::Dewatermark));
+        }
+
+        let source = FixedPreferences {
+            dewatermark: true,
+            ..FixedPreferences::default()
+        };
+        let mut target = FixedPreferences::default();
+        Field::Dewatermark.merge_view(source, &mut target);
+        assert!(target.dewatermark);
     }
 }

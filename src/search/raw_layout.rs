@@ -56,6 +56,7 @@ pub(super) fn matches_anchors(
         revision: source.revision,
         block: block.key,
         illustration: None,
+        side_bias: None,
     };
     let mut results = Vec::with_capacity(ranges.len());
     for chunk in ranges.chunks(4096) {
@@ -326,5 +327,22 @@ impl VerifiedRawLayout {
 
     pub(super) fn contains(&self, key: usize) -> bool {
         self.blocks.contains_key(&key)
+    }
+
+    /// A verified layout for a chapter with no raw-whitespace blocks. Source-only search fixtures use it
+    /// because they have no probe to verify raw spans; it orders the blocks exactly as ordinary search does.
+    pub(super) fn verified_without_raw_blocks(
+        book: u64,
+        chapter: &str,
+        revision: u64,
+        flow: super::FlowConfig,
+    ) -> Self {
+        Self {
+            book,
+            chapter: chapter.into(),
+            revision,
+            flow,
+            blocks: BTreeMap::new(),
+        }
     }
 }

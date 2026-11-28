@@ -1208,6 +1208,7 @@ fn text_document_limited(input: &str, title: &str, large: bool) -> Result<Docume
             } else {
                 MAX_OUTPUT
             },
+            None,
         )?,
         toc: Vec::new(),
         resources: BTreeMap::new(),
@@ -1256,15 +1257,35 @@ fn strip_terminal_colors(input: &str) -> Cow<'_, str> {
 }
 
 pub(crate) fn text_as_xhtml(input: &str) -> Result<String> {
-    text_as_xhtml_limited(input, MAX_OUTPUT)
+    text_as_xhtml_limited(input, MAX_OUTPUT, None)
 }
 
-fn text_as_xhtml_limited(input: &str, limit: usize) -> Result<String> {
+pub(crate) fn text_as_xhtml_with_direction(
+    input: &str,
+    direction: crate::library::FixedTextReflowDirection,
+) -> Result<String> {
+    text_as_xhtml_limited(input, MAX_OUTPUT, Some(direction))
+}
+
+fn text_as_xhtml_limited(
+    input: &str,
+    limit: usize,
+    direction: Option<crate::library::FixedTextReflowDirection>,
+) -> Result<String> {
     if input.trim().is_empty() {
         return Err("The text file is empty".into());
     }
-    let mut output =
-        String::from("<html xmlns=\"http://www.w3.org/1999/xhtml\"><head></head><body>");
+    let direction = match direction {
+        Some(crate::library::FixedTextReflowDirection::LeftToRight) => " dir=\"ltr\"",
+        Some(crate::library::FixedTextReflowDirection::RightToLeft) => " dir=\"rtl\"",
+        Some(crate::library::FixedTextReflowDirection::TopToBottomRightToLeft) => {
+            " dir=\"rtl\" style=\"writing-mode:vertical-rl\""
+        }
+        None => "",
+    };
+    let mut output = format!(
+        "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head></head><body{direction}>"
+    );
     let input = input.replace("\r\n", "\n").replace('\r', "\n");
     let mut in_paragraph = false;
     for line in input.lines() {
@@ -2509,16 +2530,16 @@ mod tests {
                 .to_string()
                 .contains("unsafe entry")
         );
+        // A top-level `index` or `default` file would break this tie, so neither
+        // candidate is named that way.
         let fixture = HtmlzFixture::new(|zip| {
-            htmlz_member(zip, "index.html", chapter);
+            htmlz_member(zip, "one.html", chapter);
             htmlz_member(zip, "another.xhtml", chapter);
         });
+        let ambiguous = Book::open(&fixture.0).err().unwrap().to_string();
         assert!(
-            Book::open(&fixture.0)
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("more than one")
+            ambiguous.contains("ambiguous HTML documents"),
+            "{ambiguous}"
         );
         let fixture = HtmlzFixture::new(|zip| {
             htmlz_member(zip, "index.html", chapter);
@@ -2547,6 +2568,34 @@ mod tests {
         assert!(text_as_xhtml("  \n\t ").is_err());
         assert!(text_as_xhtml("bad\0").is_err());
         assert!(text_as_xhtml(&"&".repeat(MAX_INPUT)).is_err());
+    }
+
+    #[test]
+    fn fixed_text_reflow_xhtml_uses_the_selected_ltr_or_rtl_base_direction() {
+        let rtl = text_as_xhtml_with_direction(
+            "مرحبا world",
+            crate::library::FixedTextReflowDirection::RightToLeft,
+        )
+        .unwrap();
+        let rtl = Source::parse(&rtl).unwrap();
+        assert_eq!(rtl.blocks[0].direction, parley::BaseDirection::Rtl);
+
+        let ltr = text_as_xhtml_with_direction(
+            "مرحبا world",
+            crate::library::FixedTextReflowDirection::LeftToRight,
+        )
+        .unwrap();
+        let ltr = Source::parse(&ltr).unwrap();
+        assert_eq!(ltr.blocks[0].direction, parley::BaseDirection::Ltr);
+
+        let vertical = text_as_xhtml_with_direction(
+            "縦書きの本文",
+            crate::library::FixedTextReflowDirection::TopToBottomRightToLeft,
+        )
+        .unwrap();
+        assert!(vertical.contains("dir=\"rtl\" style=\"writing-mode:vertical-rl\""));
+        let vertical = Source::parse(&vertical).unwrap();
+        assert_eq!(vertical.blocks[0].direction, parley::BaseDirection::Rtl);
     }
 
     #[test]

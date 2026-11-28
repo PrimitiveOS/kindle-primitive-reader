@@ -49,6 +49,115 @@ fn drain(app: &mut Reader) {
 }
 
 #[test]
+fn page_browser_indexes_saved_anchors_and_highlight_endpoints_outside_the_loaded_chapter() {
+    let fixture = Fixture::new();
+    let mut app = fixture.app();
+    app.open_path(&fixture.book).unwrap();
+    let target_chapter = 1;
+    assert_ne!(book(&app).chapter, target_chapter);
+
+    let target_probe = book(&app).config.chapter(target_chapter).unwrap();
+    let anchor = target_probe.fragment("tide-b").unwrap();
+    let target_page = target_probe.page_for(&anchor).unwrap();
+    let range_start = target_probe.page_anchor(0).unwrap();
+    let range_start_page = target_probe.page_for(&range_start).unwrap();
+    let mut range_end = target_probe
+        .page_anchor(target_probe.page_count().saturating_sub(1))
+        .unwrap();
+    range_end.side_bias = Some(crate::SideBias::Before);
+    let range_end_page = target_probe.page_for(&range_end).unwrap();
+    let range_selection = target_probe.select_range(&range_start, &range_end).unwrap();
+    drop(target_probe);
+
+    let id = app.open_book_id().unwrap();
+    let state = app.library.state_mut(id).unwrap();
+    state
+        .custom_contents
+        .save(
+            crate::library::ReadingPosition {
+                chapter: target_chapter,
+                page: 0,
+                anchor: Some(anchor.clone()),
+            },
+            "Cross-chapter anchor",
+        )
+        .unwrap();
+    state.custom_contents.enabled = true;
+    state.bookmarks.push(crate::library::Bookmark {
+        note: None,
+        updated_at: None,
+        chapter_title: None,
+        created_at: None,
+        label: "Cross-chapter bookmark".into(),
+        position: crate::library::ReadingPosition {
+            chapter: target_chapter,
+            page: 0,
+            anchor: Some(anchor.clone()),
+        },
+    });
+    app.back.push(
+        crate::library::ReadingPosition {
+            chapter: target_chapter,
+            page: 0,
+            anchor: Some(anchor.clone()),
+        }
+        .into(),
+    );
+    state.highlights.push(crate::library::Highlight {
+        updated_at: None,
+        chapter_title: None,
+        created_at: None,
+        style: Default::default(),
+        color: Default::default(),
+        selection: range_selection,
+        note: None,
+    });
+
+    app.activate(Action::Overview).unwrap();
+    assert_eq!(app.screen, Screen::PageOverview);
+    wait_for_count(&mut app);
+
+    let targets = app.overview_page_targets();
+    let reading = book(&app);
+    let indexed = reading
+        .whole_book_custom_locations(&targets.targets)
+        .unwrap();
+    let prefix: usize = (0..target_chapter)
+        .map(|chapter| reading.config.chapter(chapter).unwrap().page_count())
+        .sum();
+    let expected = prefix + target_page;
+    assert_eq!(
+        &indexed.pages[..3],
+        &[Some(expected), Some(expected), Some(expected)]
+    );
+    assert_eq!(
+        &indexed.pages[3..],
+        &[
+            Some(prefix + range_start_page),
+            Some(prefix + range_end_page)
+        ]
+    );
+    assert!(
+        app.overview
+            .as_ref()
+            .unwrap()
+            .book_outline_starts()
+            .contains(&expected)
+    );
+    assert_eq!(
+        app.overview.as_ref().unwrap().bookmark_pages(),
+        &[Some(expected)]
+    );
+    let (back_pages, forward_pages) = app.overview.as_ref().unwrap().history_pages();
+    assert_eq!(back_pages, &[Some(expected)]);
+    assert!(forward_pages.is_empty());
+    assert_eq!(
+        app.overview.as_ref().unwrap().highlight_pages(),
+        &[Some((prefix + range_start_page, prefix + range_end_page))]
+    );
+}
+
+#[test]
 fn typography_pagination_builds_the_edited_epub_index_with_the_header_off() {
     let fixture = Fixture::new();
     let path = fixture.root.join("Shore notebook.epub");

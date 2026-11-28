@@ -54,7 +54,7 @@ fn configurations_reject_bad_versions_ids_and_disabled_invalid_css_without_trunc
     data.global.insert("../bad".into());
     assert!(data.validate().is_err());
     data.global.clear();
-    data.books.entry(1).or_default().custom = Some("p{display:none}".into());
+    data.books.entry(1).or_default().custom = Some("p{display:block}".into());
     assert!(data.validate().is_err());
     data.books.get_mut(&1).unwrap().custom = Some(" ".repeat(MAX_BOOK_CSS + 1));
     assert!(data.validate().is_err());

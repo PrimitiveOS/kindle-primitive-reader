@@ -11,7 +11,7 @@ use primitive_app::{HEIGHT, WIDTH};
 use primitive_ui::{CAPTION, Canvas, HAIRLINE, Icon, Input, Rect, TextStyle};
 
 use self::bottom_config::{ConfigRow, SINGLE_VIEW_SECTIONS, TEXT_SECTIONS, VIEW_SECTIONS};
-use super::bar_icons::{EXIT, action_icon, group_icon, panel_icon};
+use super::bar_icons::{EXIT, NEXT_PAGE, PREVIOUS_PAGE, action_icon, group_icon, panel_icon};
 use super::menu_search::mark_control;
 use super::reading_notifications::Source;
 use super::top_config::TopGroup;
@@ -69,6 +69,7 @@ enum Target {
     Toggle(BarPanel),
     BottomSection(BarPanel),
     TopSection(TopGroup),
+    ScrollGroup(isize),
     Exit,
     Current(Action),
 }
@@ -80,7 +81,7 @@ impl Target {
             Self::Toggle(panel) | Self::BottomSection(panel) => Some(panel_icon(*panel)),
             Self::TopSection(group) => Some(group_icon(*group)),
             Self::Exit => Some(EXIT),
-            Self::Current(_) => None,
+            Self::Current(_) | Self::ScrollGroup(_) => None,
         }
     }
 }
@@ -141,11 +142,13 @@ impl Button {
                     icon,
                     ink,
                 );
-                canvas.text(
-                    Rect::new(rect.x + 4, rect.y + 54, rect.w - 8, size + 10),
-                    &self.label,
-                    TextStyle::new(size).bold().center().ink(ink),
-                );
+                if !self.label.is_empty() {
+                    canvas.text(
+                        Rect::new(rect.x + 4, rect.y + 54, rect.w - 8, size + 10),
+                        &self.label,
+                        TextStyle::new(size).bold().center().ink(ink),
+                    );
+                }
                 self.draw_selected(canvas, ink);
             }
             Visual::Value => {
@@ -203,6 +206,15 @@ struct Bars {
     row_help: Vec<(Rect, Action)>,
     buttons: Vec<Button>,
     menu_focus: Option<Rect>,
+    group_header: Option<(Rect, String)>,
+    group_scroll: Option<GroupScroll>,
+}
+
+#[derive(Clone, Copy)]
+struct GroupScroll {
+    first_row: usize,
+    last_first_row: usize,
+    panel: Rect,
 }
 
 impl Bars {
@@ -219,6 +231,28 @@ impl Bars {
 
     fn shortcut(&mut self, rect: Rect, label: &str, target: Target, selected: bool) {
         let visual = target.icon().map_or(Visual::Value, Visual::Shortcut);
+        self.push_visual(rect, label, target, selected, visual);
+    }
+
+    fn shortcut_with_icon(
+        &mut self,
+        rect: Rect,
+        label: &str,
+        target: Target,
+        selected: bool,
+        icon: Icon,
+    ) {
+        self.push_visual(rect, label, target, selected, Visual::Shortcut(icon));
+    }
+
+    fn push_visual(
+        &mut self,
+        rect: Rect,
+        label: &str,
+        target: Target,
+        selected: bool,
+        visual: Visual,
+    ) {
         self.buttons.push(Button {
             rect,
             label: label.to_owned(),
@@ -232,19 +266,39 @@ impl Bars {
     fn group(
         &mut self,
         above: i32,
+        available_height: i32,
+        title: &str,
         items: Vec<Item>,
         large: bool,
         at_top: bool,
         focus: Option<usize>,
+        requested_first_row: usize,
     ) {
         if items.is_empty() {
             return;
         }
         let count = items.len();
         let columns = count.min(4);
-        let rows = count.div_ceil(columns);
         let row_height = if large { 180 } else { 170 };
-        let height = rows as i32 * row_height + 20;
+        let rows = count.div_ceil(columns);
+        let max_rows_without_header = ((available_height - 20) / row_height).max(1) as usize;
+        let initially_visible = rows.min(max_rows_without_header).min(4);
+        let needs_scroll = initially_visible < rows;
+        let header_height = if needs_scroll { 58 } else { 0 };
+        let visible_rows = rows
+            .min((((available_height - 20 - header_height) / row_height).max(1)) as usize)
+            .min(4);
+        let last_first_row = rows.saturating_sub(visible_rows);
+        let mut first_row = requested_first_row.min(last_first_row);
+        if let Some(focus_row) = focus.map(|index| index / columns) {
+            if focus_row < first_row {
+                first_row = focus_row;
+            } else if focus_row >= first_row + visible_rows {
+                first_row = focus_row.saturating_add(1).saturating_sub(visible_rows);
+            }
+            first_row = first_row.min(last_first_row);
+        }
+        let height = visible_rows as i32 * row_height + header_height + 20;
         let y = if at_top { above } else { above - height };
         let panel = Rect::new(0, y, self.width, height);
         if at_top {
@@ -252,16 +306,58 @@ impl Bars {
         } else {
             self.bottom.push(panel);
         }
-        for (index, item) in items.into_iter().enumerate() {
+        if needs_scroll {
+            let header = Rect::new(32, y + 2, self.width - 64, header_height - 4);
+            let first_item = first_row * columns + 1;
+            let last_item = ((first_row + visible_rows) * columns).min(count);
+            self.group_header = Some((
+                Rect::new(header.x + 4, header.y, header.w - 140, header.h),
+                format!("{title} · {first_item}–{last_item} of {count} · swipe to scroll"),
+            ));
+            let previous = Rect::new(header.right() - 126, header.y, 58, header.h);
+            let next = Rect::new(header.right() - 62, header.y, 58, header.h);
+            if first_row > 0 {
+                self.buttons.push(Button {
+                    rect: previous,
+                    label: String::new(),
+                    detail: None,
+                    selected: false,
+                    target: Target::ScrollGroup(-1),
+                    visual: Visual::Shortcut(PREVIOUS_PAGE),
+                });
+            }
+            if first_row < last_first_row {
+                self.buttons.push(Button {
+                    rect: next,
+                    label: String::new(),
+                    detail: None,
+                    selected: false,
+                    target: Target::ScrollGroup(1),
+                    visual: Visual::Shortcut(NEXT_PAGE),
+                });
+            }
+            self.group_scroll = Some(GroupScroll {
+                first_row,
+                last_first_row,
+                panel,
+            });
+        }
+        for (visible_index, item) in items
+            .into_iter()
+            .enumerate()
+            .skip(first_row * columns)
+            .take(visible_rows * columns)
+        {
+            let row_index = visible_index / columns;
             let row = Rect::new(
                 32,
-                y + 10 + index as i32 / columns as i32 * row_height,
+                y + header_height + 10 + (row_index - first_row) as i32 * row_height,
                 panel.w - 64,
                 row_height,
             );
-            let row_columns = (count - (index / columns) * columns).min(columns);
-            let rect = cell(row, index % columns, row_columns).inset(4);
-            if focus == Some(index) {
+            let row_columns = (count - row_index * columns).min(columns);
+            let rect = cell(row, visible_index % columns, row_columns).inset(4);
+            if focus == Some(visible_index) {
                 self.menu_focus = Some(rect);
             }
             let visual = Visual::Tile(action_icon(&item.action));
@@ -300,7 +396,14 @@ impl Bars {
         // a landscape screen. Keep the standard 100 px controls in that case.
         let slots = (rows.len() + usize::from(!sections.is_empty())) as i32;
         let large = large && (current != BarPanel::TextRendering || slots * 116 + 8 <= above);
-        let row_height = if large { 116 } else { 104 };
+        let preferred_row_height = if large { 116 } else { 104 };
+        // Margins now include stock-size preset rows as well as the individual
+        // edge controls. Fit that denser panel into short landscape viewports.
+        let row_height = if current == BarPanel::TextMargins {
+            preferred_row_height.min(((above - 8) / slots).max(72))
+        } else {
+            preferred_row_height
+        };
         let section_height = if sections.is_empty() { 0 } else { row_height };
         let height = rows.len() as i32 * row_height + section_height + 8;
         let width = self.width;
@@ -322,7 +425,9 @@ impl Bars {
             if focus == Some(index) {
                 self.menu_focus = Some(Rect::new(12, y, width - 24, row_height));
             }
-            let label_width = if row.label.is_empty() { 0 } else { 272 };
+            let label_width = row
+                .label_width
+                .unwrap_or(if row.label.is_empty() { 0 } else { 272 });
             if label_width != 0 {
                 let label = Rect::new(34, y, label_width - 18, row_height);
                 self.row_labels.push((label, row.label));
@@ -353,8 +458,14 @@ impl Bars {
                 } else {
                     Target::Invoke(choice.action)
                 };
-                let rect = cell(options, index, count);
-                if !choice.live && !choice.selected {
+                let rect = if row.label_width.is_some() {
+                    full_width_cell(options, index, count)
+                } else {
+                    cell(options, index, count)
+                };
+                if let Some(icon) = choice.icon {
+                    self.shortcut_with_icon(rect, &choice.title, target, choice.selected, icon);
+                } else if !choice.live && !choice.selected {
                     self.shortcut(rect, &choice.title, target, false);
                 } else {
                     self.push(rect, choice.title, target, choice.selected);
@@ -390,6 +501,19 @@ impl Bars {
             .zip(self.bottom.last())
             .is_some_and(|(top, bottom)| top.bottom() > bottom.y)
     }
+
+    fn scroll_group_by(&self, x: f32, y: f32, delta: isize) -> Option<usize> {
+        let group = self.group_scroll?;
+        if !group.panel.contains(x, y) {
+            return None;
+        }
+        Some(
+            group
+                .first_row
+                .saturating_add_signed(delta)
+                .min(group.last_first_row),
+        )
+    }
 }
 
 fn cell(row: Rect, index: usize, count: usize) -> Rect {
@@ -398,11 +522,32 @@ fn cell(row: Rect, index: usize, count: usize) -> Rect {
     Rect::new(x + 3, row.y + 2, right - x - 6, row.h - 4)
 }
 
+fn full_width_cell(row: Rect, index: usize, count: usize) -> Rect {
+    let x = row.x + row.w * index as i32 / count as i32;
+    let right = row.x + row.w * (index as i32 + 1) / count as i32;
+    Rect::new(x, row.y + 2, right - x, row.h - 4)
+}
+
 impl Reader {
     pub(super) fn swipe_display_control(&mut self, input: Input, start_x: f32) -> Option<Change> {
         let Input::Swipe { dx, dy, start_y } = input else {
             return None;
         };
+        if !self.touch_locked
+            && matches!(self.screen, Screen::BookTools | Screen::FixedTools)
+            && (self.top_group.is_some() || self.reading_panel == Some(BarPanel::Pages))
+            && dy.abs() >= 48.0
+            && dy.abs() > dx.abs() * 1.5
+        {
+            let bars = self.reading_bars();
+            if let Some(row) = bars.scroll_group_by(
+                start_x,
+                start_y,
+                if dy < 0.0 { 1 } else { -1 },
+            ) {
+                return Some(self.set_reading_group_row(row));
+            }
+        }
         if self.touch_locked
             || self.top_group != Some(TopGroup::Settings)
             || dx.abs() < 48.0
@@ -477,12 +622,21 @@ impl Reader {
                 );
             }
             if let Some(group) = self.top_group {
+                let bottom_height = if self.reading_bottom {
+                    if large { 112 } else { 104 }
+                } else {
+                    0
+                };
+                let lower_bound = screen_height as i32 - bottom_height;
                 bars.group(
                     tabs.bottom(),
+                    (lower_bound - tabs.bottom()).max(1),
+                    language.text(group.label()),
                     self.top_config_items(group),
                     large,
                     true,
                     self.menu_search.focused_top(group),
+                    self.top_menu_row,
                 );
             }
         }
@@ -552,12 +706,20 @@ impl Reader {
                 .first()
                 .map_or(viewport.page_height() as i32, |rect| rect.y);
             if panel == BarPanel::Pages {
+                let top_bound = if self.reading_top {
+                    (if large { 112 } else { 100 }) + (if large { 112 } else { 104 })
+                } else {
+                    0
+                };
                 bars.group(
                     above,
+                    (above - top_bound).max(1),
+                    "Pages",
                     self.page_actions(),
                     large,
                     false,
                     self.menu_search.focused_bottom(panel),
+                    self.page_menu_row,
                 );
             } else if self.reading_bottom {
                 bars.configure(
@@ -572,6 +734,48 @@ impl Reader {
             }
         }
         bars
+    }
+
+    fn set_reading_group_row(&mut self, row: usize) -> Change {
+        if self.top_group.is_some() {
+            self.top_menu_row = row;
+        } else if self.reading_panel == Some(BarPanel::Pages) {
+            self.page_menu_row = row;
+        }
+        Change::Partial
+    }
+
+    fn scroll_reading_group(&mut self, rows: isize) -> Change {
+        let Some(group) = self.reading_bars().group_scroll else {
+            return Change::None;
+        };
+        let row = group
+            .first_row
+            .saturating_add_signed(rows)
+            .min(group.last_first_row);
+        self.set_reading_group_row(row)
+    }
+
+    fn reading_tool_page_input(
+        &mut self,
+        reading_screen: Screen,
+        input: Input,
+        direction: isize,
+    ) -> Change {
+        if let Some(group) = self.reading_bars().group_scroll {
+            let row = group
+                .first_row
+                .saturating_add_signed(direction)
+                .min(group.last_first_row);
+            if row != group.first_row {
+                return self.set_reading_group_row(row);
+            }
+        }
+        self.show(reading_screen);
+        match self.input(input) {
+            Change::None => Change::Partial,
+            change => change,
+        }
     }
 
     fn bottom_menu_sections(&self, panel: BarPanel) -> &'static [(BarPanel, &'static str)] {
@@ -728,6 +932,9 @@ impl Reader {
                 CAPTION.lines(2).ink(85),
             );
         }
+        if let Some((rect, title)) = bars.group_header {
+            canvas.text(rect, &title, CAPTION.bold());
+        }
         for button in bars.buttons {
             button.draw(canvas, size);
         }
@@ -770,6 +977,8 @@ impl Reader {
             passive_cover: self.reading_notification_cover(),
             header_height,
             inverted,
+            bookmarked: matches!(self.screen, Screen::Book | Screen::Fixed)
+                && self.page_is_bookmarked(),
             highlight_appearance: self.controls.highlight_appearance,
             note_marker: self.controls.note_marker,
             selection_color: (self.controls.selection_uses_highlight_color
@@ -850,6 +1059,9 @@ impl Reader {
     }
 
     fn set_bottom_panel(&mut self, panel: Option<BarPanel>) {
+        if self.reading_panel != panel {
+            self.page_menu_row = 0;
+        }
         self.reading_panel = panel;
         if panel.is_some()
             && self.reading_top
@@ -889,6 +1101,9 @@ impl Reader {
             } else {
                 self.last_top_group
             };
+            if self.top_group != Some(group) {
+                self.top_menu_row = 0;
+            }
             self.top_group = Some(group);
             self.remember_group(group);
         }
@@ -1015,6 +1230,14 @@ impl Reader {
                 }
                 match bars.button_at(x, y) {
                     Some(Target::Invoke(Action::ReadAlarm)) => self.read_alarm.stop(),
+                    Some(Target::Apply(Action::AdjustReadingMargin(edge, delta), _))
+                        if delta == -1 || delta == 1 =>
+                    {
+                        self.apply_overlay_action(Action::AdjustReadingMargin(
+                            edge,
+                            delta.saturating_mul(5),
+                        ))
+                    }
                     Some(
                         Target::Apply(Action::SetBaseStylesheet(style), _)
                         | Target::Current(Action::SetBaseStylesheet(style)),
@@ -1048,10 +1271,14 @@ impl Reader {
                     }
                     Some(Target::TopSection(group)) => {
                         self.reading_panel = None;
+                        if self.top_group != Some(group) {
+                            self.top_menu_row = 0;
+                        }
                         self.top_group = (self.top_group != Some(group)).then_some(group);
                         self.remember_group(group);
                         Change::Partial
                     }
+                    Some(Target::ScrollGroup(rows)) => self.scroll_reading_group(rows),
                     Some(Target::BottomSection(panel)) => {
                         self.set_bottom_panel(Some(panel));
                         self.remember_bottom_panel(panel);
@@ -1090,7 +1317,9 @@ impl Reader {
                     None => Change::None,
                 }
             }
-            Input::PageBack | Input::PageForward | Input::Swipe { .. } => {
+            Input::PageBack => self.reading_tool_page_input(reading_screen, input, -1),
+            Input::PageForward => self.reading_tool_page_input(reading_screen, input, 1),
+            Input::Swipe { .. } => {
                 self.show(reading_screen);
                 match self.input(input) {
                     Change::None => Change::Partial,
@@ -1098,6 +1327,23 @@ impl Reader {
                 }
             }
             _ => Change::None,
+        }
+    }
+
+    /// Test helper: scroll the open top group until `label` is on screen, so a test can reach any row.
+    #[cfg(test)]
+    pub(super) fn reveal_reading_button(&mut self, label: &str) {
+        for _ in 0..64 {
+            if self.reading_bars().buttons.iter().any(|button| button.label == label) {
+                return;
+            }
+            let Some(group) = self.reading_bars().group_scroll else {
+                return;
+            };
+            if group.first_row >= group.last_first_row {
+                return;
+            }
+            self.scroll_reading_group(1);
         }
     }
 
@@ -1140,6 +1386,47 @@ mod tests {
             (rect.x + rect.w / 2) as f32,
             (rect.y + rect.h / 2) as f32,
         ))
+    }
+
+    #[test]
+    fn long_reading_groups_keep_the_page_visible_and_scroll_vertically() {
+        let fixture = crate::app::tests::Fixture::new();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        app.show(Screen::BookTools);
+        app.reading_top = true;
+        app.reading_bottom = false;
+        app.top_group = Some(TopGroup::Settings);
+
+        let page = app.active.as_ref().unwrap().reading.page;
+        let bars = app.reading_bars();
+        let scroll = bars.group_scroll.expect("long navigation menu scrolls");
+        assert!(scroll.last_first_row > 0);
+        assert!(bars.group_header.as_ref().unwrap().1.contains("of"));
+        assert!(bars.top.last().unwrap().bottom() < app.reading_viewport().dimensions().1 as i32);
+
+        assert_eq!(app.reading_tools_input(Input::PageForward), Change::Partial);
+        assert_eq!(app.top_menu_row, 1);
+        assert_eq!(app.active.as_ref().unwrap().reading.page, page);
+        assert_eq!(app.reading_tools_input(Input::PageBack), Change::Partial);
+        assert_eq!(app.top_menu_row, 0);
+        assert_eq!(app.active.as_ref().unwrap().reading.page, page);
+
+        let panel = app.reading_bars().group_scroll.unwrap().panel;
+        let change = app
+            .swipe_display_control(
+                Input::Swipe {
+                    dx: 0.0,
+                    dy: -180.0,
+                    start_y: (panel.y + panel.h / 2) as f32,
+                },
+                (panel.x + panel.w / 2) as f32,
+            )
+            .expect("vertical swipe scrolls the open menu");
+        assert_eq!(change, Change::Partial);
+        assert_eq!(app.top_menu_row, 1);
+        assert_eq!(app.active.as_ref().unwrap().reading.page, page);
     }
 
     #[test]

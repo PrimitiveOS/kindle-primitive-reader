@@ -135,6 +135,7 @@ impl CharacterPages {
             block: point.block,
             offset: point.byte,
             illustration: None,
+            side_bias: None,
         })
     }
 }

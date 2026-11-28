@@ -225,6 +225,98 @@ fn reflow_contents_uses_existing_layout_and_exact_publisher_targets() {
 }
 
 #[test]
+fn custom_reflow_contents_use_the_whole_book_index_for_saved_anchors() {
+    let fixture = Fixture::new();
+    write_outline_fixture(&fixture.book, None, None);
+    let mut app = reader(&fixture);
+    app.open_path(&fixture.book).unwrap();
+
+    let headings: Vec<_> = ["passage1", "passage8", "passage14"]
+        .into_iter()
+        .map(|id| {
+            let reading = &app.active.as_ref().unwrap().reading;
+            let anchor = reading.probe.fragment(id).unwrap();
+            let page = reading.probe.page_for(&anchor).unwrap();
+            (id, anchor, page)
+        })
+        .collect();
+    let paragraph = {
+        let reading = &app.active.as_ref().unwrap().reading;
+        (headings[1].2 + 1..headings[2].2)
+            .find_map(|page| {
+                let anchor = reading.probe.page_anchor(page)?;
+                let location = reading.probe.page_for(&anchor)?;
+                (location > headings[1].2 && location < headings[2].2)
+                    .then_some((anchor, location))
+            })
+            .expect("a rendered paragraph page between the custom headings")
+    };
+    let book = app.open_book_id().unwrap();
+    let custom = &mut app.library.state_mut(book).unwrap().custom_contents;
+    custom.enabled = true;
+    for (id, anchor, page) in &headings {
+        custom
+            .save(
+                crate::library::ReadingPosition {
+                    chapter: 0,
+                    page: *page,
+                    anchor: Some(anchor.clone()),
+                },
+                id,
+            )
+            .unwrap();
+    }
+    custom
+        .save(
+            crate::library::ReadingPosition {
+                chapter: 0,
+                page: paragraph.1,
+                anchor: Some(paragraph.0.clone()),
+            },
+            "Paragraph note",
+        )
+        .unwrap();
+    app.controls.contents_chapter_lengths = true;
+    let origin = app.current_position();
+    app.show(Screen::Contents);
+    assert!(app.needs_screen_page_count());
+
+    let timeout = Instant::now() + std::time::Duration::from_secs(30);
+    let total = loop {
+        if let Some((_, total)) = app
+            .active
+            .as_ref()
+            .unwrap()
+            .reading
+            .whole_book_screen_pages()
+        {
+            break total;
+        }
+        assert!(Instant::now() < timeout, "whole-book page index did not finish");
+        app.tick(Instant::now());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+
+    assert_eq!(
+        numbers(&app, "passage1").chapter_length,
+        Some(headings[1].2 - headings[0].2)
+    );
+    assert_eq!(
+        numbers(&app, "passage8").chapter_length,
+        Some(paragraph.1 - headings[1].2)
+    );
+    assert_eq!(
+        numbers(&app, "Paragraph note").chapter_length,
+        Some(headings[2].2 - paragraph.1)
+    );
+    assert_eq!(
+        numbers(&app, "passage14").chapter_length,
+        Some(total - headings[2].2)
+    );
+    assert_eq!(app.current_position(), origin);
+}
+
+#[test]
 fn dense_contents_keeps_stable_labels_lengths_and_actions_visible() {
     let fixture = Fixture::new();
     fs::copy(crate::test_fixture("many-chapters.epub"), &fixture.book).unwrap();

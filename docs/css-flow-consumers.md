@@ -6,10 +6,32 @@ restoration. Publisher `display:none` omits layout/search/copy text;
 `visibility:hidden` and `collapse` retain layout/search/selection while removing
 that element's paint. A visible descendant may restore paint. Canonical source
 text, revision, fragment tuples and saved quote content remain unchanged.
+Pinned CRE keeps list-marker height, block padding and borders in the block
+flow; an empty block has no content height unless its own height or box edges
+add one. See [the pinned block renderer](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L8432-L8545) and [vertical margin collapse](https://github.com/koreader/crengine/blob/b32a88ffbbf505cf2ea5208c1a49002d70d3609f/crengine/src/lvrend.cpp#L6095-L6142).
 
-The strict user-CSS parser still rejects `display` and `visibility`. There are no
-hiding presets or a claim of complete CSS box-model support. The unresolved gates
-below must be met before exposing that interface.
+The unverified user-CSS candidate now accepts ordinary `display:none` and
+computed visibility (`visible`, `hidden`, `collapse`) through the same bounded
+projection. It does not expose a hiding preset or claim complete CSS box-model
+support. Non-`none` box reclassification and the remaining gates below stay open.
+
+The current implementation candidate also keeps layout-only paragraphs for
+an empty projected block when an eligible visible native block host (the block
+itself or an ancestor) has generated content or explicit box geometry. It
+retains canonical source block keys and carries nested host chains across
+sibling blocks. Shared ancestors take their leading edge from the first block
+and trailing edge from the last; their backgrounds and borders span the merged
+range. The candidate accounts for each host's vertical
+padding, solid opaque borders, bounded explicit/minimum height, background
+paint, before content from outer to inner hosts, and after content from inner
+to outer hosts. Empty host spans now enter the same block-margin planner as
+ordinary blocks, allowing the planner's sibling and transparent-wrapper
+collapse rules to place their outer edges. That planner combines adjacent
+positive margins by maximum and negative margins by minimum, following the
+pinned CRE flow behavior. This is source-aligned implementation work, not yet
+proof of exact CRE geometry. It does not restore suppressed text or images.
+Non-solid or translucent borders, reordered/table layouts, and whole-spine/device
+behavior remain open. This change is uncompiled and unverified.
 
 ## Shared view and stable anchors
 
@@ -121,10 +143,16 @@ are desktop-only and do not authorize replacing the official 0.1.22 package.
 
 ## Remaining acceptance gates
 
-1. A generated-only visible LI/container with all source children removed needs a
-   durable DOM/block-boundary anchor and box geometry. Its source intent remains
-   eligible; it must never be relabeled an intentional omission to hide the
-   missing geometry.
+1. The current candidate supplies canonical hidden-block boundaries and
+   layout-only paragraphs for nested visible host chains, with shared sibling
+   ancestors attached to their first and last blocks. Verify generated-only
+   visible LI/container geometry, list counters and markers, nested
+   padding/background/borders, generated text order, sibling extent merging,
+   and retained source intent. Empty host spans now use the shared block-margin
+   planner; compare its results against CRE for nested, adjacent, positive and
+   negative margins. Its source
+   intent remains eligible; it must never be relabeled an intentional omission
+   to hide missing geometry.
 2. The focused correction stops widening an inner-P target to its semantic
    aside and preserves inline attributes. Exact rendered-final ancestry,
    including inline targets inside hidden blocks and visible final ancestors,
@@ -142,3 +170,7 @@ are desktop-only and do not authorize replacing the official 0.1.22 package.
 6. Combined aggregate/native compilation, all-original rendered-spine replay and
    connected Kindle storage/paint/input acceptance remain parent integration
    gates. This phase performs no device calls, installation or release.
+7. The newly exposed ordinary-element user-CSS hide/show path has a focused
+   authored regression but no compile or runtime receipt. Exercise it through
+   the actual Style Tweaks edit/apply flow, Reader search/copy, vertical and
+   horizontal layout, and original saved-position restoration before release.

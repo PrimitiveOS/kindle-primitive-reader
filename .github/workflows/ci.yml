@@ -20,4 +20,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Reader and document tests
+        # Debug-build test threads need more than the default 2 MiB stack (see docs/phase0-test-triage.md).
+        env:
+          RUST_MIN_STACK: "67108864"
         run: cargo test --locked --workspace --tests

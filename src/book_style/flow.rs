@@ -1,6 +1,7 @@
-//! Flow metadata for the canonical-source projection. Computing these values is
-//! not permission to expose user CSS until every reading consumer is migrated.
-#![allow(dead_code)]
+//! Flow metadata for the canonical-source projection. The strict user stylesheet
+//! exposes bounded suppression and paint visibility; other box reclassification
+//! remains unsupported.
+#![allow(dead_code)] // Remaining display metadata is useful to later provider gates.
 use super::Style;
 use crate::flow_projection::ElementFlow;
 

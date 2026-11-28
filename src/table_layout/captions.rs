@@ -328,9 +328,15 @@ mod tests {
         };
         assert!(index(&ordinary, late) < index(&ordinary, north));
         let settings = crate::PublisherRenderMode::Book.apply(Settings::default());
-        let margins =
-            crate::block_margins::before_blocks(&source, &styles, None, settings, ordinary.order())
-                .unwrap();
+        let margins = crate::block_margins::before_blocks(
+            &source,
+            &styles,
+            None,
+            settings,
+            ordinary.order(),
+            None,
+        )
+        .unwrap();
         for phrase in ["East berth", "South berth", "Override caption"] {
             assert_eq!(
                 margins[index(&ordinary, block(phrase))].before,

@@ -925,6 +925,111 @@ impl Book {
         }
     }
 
+    /// Map original package spine entries to Reader chapters in spine order.
+    /// Older CREngine DOMs include only `application/xhtml+xml` entries;
+    /// current DOMs include entries for every openable spine media type.
+    pub(crate) fn spine_chapter_indices(&mut self, xhtml_only: bool) -> Result<Vec<usize>> {
+        let (package_path, package) = match &mut self.content {
+            Content::Archive {
+                archive,
+                package_path,
+                ..
+            } => {
+                let path = package_path.clone();
+                (path, xml_entry(archive, package_path)?)
+            }
+            Content::Loose { .. } | Content::Chm(_) => {
+                return Err("KOReader spine positions require an EPUB publication".into());
+            }
+        };
+        let document = parse_xml(&package)?;
+        let root = document.root_element();
+        let manifest = child(root, "manifest")?;
+        let spine = child(root, "spine")?;
+        let mut items = BTreeMap::new();
+        for item in manifest.children().filter(|node| node.has_tag_name("item")) {
+            let id = item
+                .attribute("id")
+                .ok_or("The EPUB manifest item has no ID")?;
+            let href = item
+                .attribute("href")
+                .ok_or("The EPUB manifest item has no path")?;
+            let media = item
+                .attribute("media-type")
+                .ok_or("The EPUB manifest item has no media type")?;
+            let path = Self::resolve(&package_path, href)?;
+            items.insert(id.to_owned(), (path, media.to_owned()));
+        }
+        let mut chapter_indices = Vec::new();
+        let mut chapter_index = 0usize;
+        for itemref in spine
+            .children()
+            .filter(|node| node.has_tag_name("itemref"))
+        {
+            let idref = itemref
+                .attribute("idref")
+                .ok_or("The EPUB spine item has no manifest reference")?;
+            let (path, media) = items
+                .get(idref)
+                .ok_or("The EPUB spine item is missing from its manifest")?;
+            let chapter = self
+                .chapters
+                .get(chapter_index)
+                .ok_or("The EPUB spine has more items than Reader's chapter list")?;
+            if chapter.href.as_str() != path.as_str() {
+                return Err("Reader's chapter order differs from the EPUB spine".into());
+            }
+            if !xhtml_only || media == "application/xhtml+xml" {
+                chapter_indices.push(chapter_index);
+            }
+            chapter_index += 1;
+        }
+        if chapter_index != self.chapters.len() {
+            return Err("Reader's chapter list differs from the EPUB spine".into());
+        }
+        Ok(chapter_indices)
+    }
+
+    /// Load package XHTML without applying Reader's malformed-HTML recovery.
+    /// Historical CREngine fragment counting is only safe when preceding
+    /// XHTML can be checked in its publisher-authored structure.
+    pub(crate) fn source_xhtml_chapter(&mut self, index: usize) -> Result<String> {
+        let chapter = self
+            .chapters
+            .get(index)
+            .ok_or("The saved KOReader chapter is unavailable")?;
+        if chapter.unsupported || chapter.is_svg {
+            return Err("The saved KOReader chapter is not an XHTML spine item".into());
+        }
+        let path = chapter.href.clone();
+        match &mut self.content {
+            Content::Archive { archive, .. } => {
+                xml_entry_with_declaration(archive, &path, false, MAX_REFLOW_CHAPTER_XML)
+                    .map(|(xml, _, _)| xml)
+            }
+            Content::Loose { .. } | Content::Chm(_) => {
+                Err("KOReader XHTML positions require an EPUB publication".into())
+            }
+        }
+    }
+
+    /// CREngine omits spine fragments whose member streams cannot be opened.
+    /// Account for those entries before interpreting a one-based ordinal.
+    pub(crate) fn cre_spine_stream_available(&mut self, index: usize) -> Result<bool> {
+        let path = self
+            .chapters
+            .get(index)
+            .ok_or("The saved KOReader chapter is unavailable")?
+            .href
+            .clone();
+        match &mut self.content {
+            Content::Archive { archive, .. } => archive.has_stream(&path),
+            Content::Loose { .. } | Content::Chm(_) => {
+                Err("KOReader spine positions require an EPUB publication".into())
+            }
+        }
+    }
+
     #[cfg(feature = "kindle")]
     pub(crate) fn is_fb2_note_section(&self, target: &Destination) -> bool {
         self.fb2_note_sections(&target.path)
@@ -958,21 +1063,30 @@ impl Book {
     }
 
     #[cfg(feature = "kindle")]
-    pub(crate) fn from_text(title: String, text: &str) -> Result<Self> {
-        Ok(Self::from_loose(
+    pub(crate) fn from_text(
+        title: String,
+        text: &str,
+        direction: crate::library::FixedTextReflowDirection,
+    ) -> Result<Self> {
+        // Writing direction changes presentation only. Identify the text by its
+        // direction-free markup so saved anchors survive a direction change.
+        let identity = crate::revision(&loose::text_as_xhtml(text)?);
+        let mut book = Self::from_loose(
             loose::Document {
                 metadata: Default::default(),
                 title,
                 author: None,
                 cover: None,
                 chapter_path: loose::CHAPTER_PATH.to_owned(),
-                xhtml: loose::text_as_xhtml(text)?,
+                xhtml: loose::text_as_xhtml_with_direction(text, direction)?,
                 fb2_note_sections: Default::default(),
                 toc: Vec::new(),
                 resources: BTreeMap::new(),
             },
             loose::Format::Text,
-        ))
+        );
+        book.revision = identity;
+        Ok(book)
     }
 
     fn from_loose(document: loose::Document, format: loose::Format) -> Self {
@@ -1686,6 +1800,16 @@ impl Book {
                 &ordinals,
             )?
         };
+        if matches!(
+            self.content,
+            Content::Loose {
+                format: loose::Format::Text,
+                ..
+            }
+        ) {
+            // Match the book's direction-free identity (see `from_text`).
+            source.revision = self.revision;
+        }
         if let Content::Loose {
             mobi_shadow: Some(shadow),
             ..
@@ -1806,6 +1930,19 @@ impl Book {
             offsets.push(total);
         }
         Ok(offsets)
+    }
+
+    #[cfg(feature = "kindle")]
+    pub(crate) fn chapter_member_size(&mut self, index: usize) -> Option<u64> {
+        let chapter = self.chapters.get(index)?;
+        if chapter.unsupported {
+            return None;
+        }
+        match &mut self.content {
+            Content::Archive { archive, .. } => archive.size(&chapter.href).ok(),
+            Content::Loose { xhtml, .. } => xhtml.get(&chapter.href).map(|text| text.len() as u64),
+            Content::Chm(chm) => chm.chapter_length(&chapter.href).ok(),
+        }
     }
 
     pub(crate) fn local_font(&mut self, path: &str, cap: usize) -> Result<Vec<u8>> {

@@ -104,8 +104,9 @@ fn display_and_visibility_use_the_existing_user_author_importance_and_inline_tie
 }
 #[test]
 fn strict_user_flow_properties_stay_closed_until_all_consumers_are_migrated() {
+    // `display:none` is the one supported value; every other display value
+    // stays rejected until its consumers are migrated.
     for value in [
-        "none",
         "inline",
         "block",
         "list-item",
@@ -119,19 +120,15 @@ fn strict_user_flow_properties_stay_closed_until_all_consumers_are_migrated() {
         let text = format!("p{{display:{value}}}");
         let message = validate_user_css(&text).unwrap_err().to_string();
         assert!(
-            message.contains("display") && message.contains("migrated"),
+            message.contains("Only display:none") && message.contains("display"),
             "{message}"
         );
     }
+    // Visibility uses the shared rendered-flow projection, so every keyword is accepted.
     for value in [
         "hidden", "collapse", "visible", "inherit", "initial", "unset",
     ] {
-        assert!(
-            validate_user_css(&format!("p{{visibility:{value}}}"))
-                .unwrap_err()
-                .to_string()
-                .contains("visibility")
-        );
+        validate_user_css(&format!("p{{visibility:{value}}}")).unwrap();
     }
     for value in [
         "none",

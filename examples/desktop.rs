@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use primitive_app::{App, HEIGHT, WIDTH, frame, write_png};
 use primitive_ui::{Canvas, Input};
+#[cfg(feature = "multi-touch")]
+use primitive_ui::MultiTouch;
 use reader::Result;
 use reader::app::Reader;
 
@@ -98,6 +100,22 @@ fn main() -> Result<()> {
         HEIGHT,
         &frame(&app, &mut canvas, false),
     )?;
+    app.open_path(&book)?;
+    #[cfg(feature = "multi-touch")]
+    {
+        app.multi_touch(MultiTouch::TwoFingerSwipe {
+            dx: 180.0,
+            dy: 0.0,
+            start_x: 300.0,
+            start_y: 400.0,
+        });
+        write_png(
+            &output.join("multi-touch-contents.png"),
+            WIDTH,
+            HEIGHT,
+            &frame(&app, &mut canvas, false),
+        )?;
+    }
     capture_footer(&mut app, &mut canvas, &book, &output)?;
     Ok(())
 }

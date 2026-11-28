@@ -106,7 +106,7 @@ pub(crate) struct Visit {
     id: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 pub(crate) struct ReflowChapter {
     pub publication: u64,
     pub chapter: u32,

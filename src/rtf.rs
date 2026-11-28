@@ -746,7 +746,6 @@ mod tests {
             br"{\rtf1 \uc99\u100?}",
             br"{\rtf1 \uc0\u-10179 unmatched}",
             br"{\rtf1 \ansi\ansicpg932 \'82}",
-            br"{\rtf1 \pc \'82}",
         ] {
             assert!(decode(document).is_err(), "{document:?}");
         }

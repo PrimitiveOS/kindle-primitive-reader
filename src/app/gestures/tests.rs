@@ -1,8 +1,11 @@
 use super::*;
 use crate::app::selection_viewport_tests::{adopt, capture, key, tap};
 use crate::app::tests::{Fixture, tap_contents_item};
+use primitive_app::WIDTH;
 use primitive_ui::Key;
-use std::fs;
+#[cfg(feature = "multi-touch")]
+use primitive_ui::MultiTouch;
+use std::{fs, path::PathBuf};
 
 fn canvas_reader(fixture: &Fixture) -> Reader {
     let font = crate::test_fixture("fonts/NotoSans-Regular.ttf");
@@ -19,6 +22,53 @@ fn release(x: f32, y: f32) -> Input {
         y,
         held_ms: 900,
     }
+}
+
+fn long_plain_text(fixture: &Fixture) -> PathBuf {
+    let path = fixture.root.join("Long reading session.txt");
+    fs::write(
+        &path,
+        "A measured sentence for reading gesture coverage.\n".repeat(5_000),
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn double_tap_page_jump_delays_single_taps_and_replays_them_at_timeout() {
+    let fixture = Fixture::new();
+    let mut app = canvas_reader(&fixture);
+    app.open_path(&long_plain_text(&fixture)).unwrap();
+    app.controls.double_tap_page_jump = true;
+    let before = app.active.as_ref().unwrap().reading.page;
+    let (width, height) = ReadingViewport::PORTRAIT.dimensions();
+    let point = (width as f32 - 24.0, height as f32 / 2.0);
+
+    assert_eq!(app.input(Input::Tap(point.0, point.1)), Change::None);
+    let pending = app.gestures.pending_double_tap.unwrap();
+    assert_eq!(app.active.as_ref().unwrap().reading.page, before);
+    assert!(matches!(
+        app.finish_double_tap(pending.deadline),
+        Some(Change::Partial | Change::Full)
+    ));
+    assert!(app.active.as_ref().unwrap().reading.page > before);
+}
+
+#[test]
+fn double_tap_right_jumps_forward_ten_reflow_pages() {
+    let fixture = Fixture::new();
+    let mut app = canvas_reader(&fixture);
+    app.open_path(&long_plain_text(&fixture)).unwrap();
+    app.controls.double_tap_page_jump = true;
+    let reading = &app.active.as_ref().unwrap().reading;
+    assert!(reading.probe.page_count() > 10);
+    let (width, height) = ReadingViewport::PORTRAIT.dimensions();
+    let point = (width as f32 * 0.75, height as f32 / 2.0);
+
+    assert_eq!(app.input(Input::Tap(point.0, point.1)), Change::None);
+    let change = app.input(Input::Tap(point.0, point.1));
+    assert!(matches!(change, Change::Partial | Change::Full));
+    assert_eq!(app.active.as_ref().unwrap().reading.page, 10);
 }
 
 #[test]
@@ -56,6 +106,140 @@ fn corner_gestures_follow_screen_eighths_and_leave_exit_available() {
             None
         );
     }
+}
+
+#[test]
+fn multitouch_gestures_classify_full_screen_corners_and_koreader_directions() {
+    let viewport = ReadingViewport::PORTRAIT;
+    assert_eq!(
+        Gesture::multi_touch(
+            MultiTouch::TwoFingerTap {
+                x: 20.0,
+                y: 20.0,
+                held_ms: 180,
+                fallback_x: 20.0,
+                fallback_y: 20.0,
+            },
+            viewport,
+        ),
+        Some(Gesture::TwoFingerTapTopLeft)
+    );
+    assert_eq!(
+        Gesture::multi_touch(
+            MultiTouch::TwoFingerSwipe {
+                dx: 180.0,
+                dy: 4.0,
+                start_x: 300.0,
+                start_y: 400.0,
+            },
+            viewport,
+        ),
+        Some(Gesture::TwoFingerSwipeEast)
+    );
+    assert_eq!(
+        Gesture::multi_touch(
+            MultiTouch::TwoFingerSwipe {
+                dx: 90.0,
+                dy: -100.0,
+                start_x: 300.0,
+                start_y: 400.0,
+            },
+            viewport,
+        ),
+        Some(Gesture::TwoFingerSwipeNorthEast)
+    );
+    assert_eq!(
+        Gesture::multi_touch(
+            MultiTouch::TwoFingerSwipe {
+                dx: 180.0,
+                dy: 0.0,
+                start_x: 300.0,
+                start_y: 20.0,
+            },
+            viewport,
+        ),
+        Some(Gesture::TwoFingerSwipeEast),
+        "KOReader registers two-finger swipes across the full screen"
+    );
+}
+
+#[test]
+fn multitouch_reader_defaults_match_stock_actions_and_custom_bindings_persist() {
+    let fixture = Fixture::new();
+    let mut app = canvas_reader(&fixture);
+    app.open_path(&long_plain_text(&fixture)).unwrap();
+    assert_eq!(
+        app.multi_touch_input(MultiTouch::TwoFingerSwipe {
+            dx: 180.0,
+            dy: 0.0,
+            start_x: 300.0,
+            start_y: 400.0,
+        }),
+        Change::Partial
+    );
+    assert_eq!(app.screen, Screen::Contents);
+
+    app.show(Screen::Book);
+    app.gestures
+        .set(Gesture::TwoFingerSwipeEast, Binding::Bookmark)
+        .unwrap();
+    app.multi_touch_input(MultiTouch::TwoFingerSwipe {
+        dx: 180.0,
+        dy: 0.0,
+        start_x: 300.0,
+        start_y: 400.0,
+    });
+    assert!(app.page_is_bookmarked());
+
+    app.touch_locked = true;
+    app.show(Screen::Book);
+    assert_eq!(
+        app.multi_touch_input(MultiTouch::TwoFingerSwipe {
+            dx: 0.0,
+            dy: -180.0,
+            start_x: 300.0,
+            start_y: 400.0,
+        }),
+        Change::None
+    );
+    assert_eq!(app.screen, Screen::Book);
+}
+
+#[test]
+fn multitouch_tap_uses_saved_stock_duration_boundaries() {
+    let fixture = Fixture::new();
+    let mut app = canvas_reader(&fixture);
+    app.open_path(&fixture.book).unwrap();
+    app.gestures
+        .set(Gesture::TwoFingerTapTopRight, Binding::Bookmark)
+        .unwrap();
+    app.multi_touch_input(MultiTouch::TwoFingerTap {
+        x: WIDTH as f32 - 20.0,
+        y: 20.0,
+        held_ms: 300,
+        fallback_x: WIDTH as f32 - 20.0,
+        fallback_y: 20.0,
+    });
+    assert!(!app.page_is_bookmarked());
+
+    app.multi_touch_input(MultiTouch::TwoFingerTap {
+        x: WIDTH as f32 - 20.0,
+        y: 20.0,
+        held_ms: 301,
+        fallback_x: WIDTH as f32 - 20.0,
+        fallback_y: 20.0,
+    });
+    assert!(!app.page_is_bookmarked());
+
+    app.controls.two_finger_tap_duration_ms = Some(400);
+    app.multi_touch_input(MultiTouch::TwoFingerTap {
+        x: WIDTH as f32 - 20.0,
+        y: 20.0,
+        held_ms: 399,
+        fallback_x: WIDTH as f32 - 20.0,
+        fallback_y: 20.0,
+    });
+    assert!(app.page_is_bookmarked());
 }
 
 #[test]

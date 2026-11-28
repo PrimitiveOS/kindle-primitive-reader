@@ -124,6 +124,7 @@ pub(super) fn with_fixed_geometry(
     current.scan_contrast = saved.scan_contrast;
     current.scan_gamma_tenths = saved.scan_gamma_tenths;
     current.scan_white_level = saved.scan_white_level;
+    current.dewatermark = saved.dewatermark;
     current.offset_x = saved.offset_x;
     current.offset_y = saved.offset_y;
     current

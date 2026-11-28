@@ -823,6 +823,7 @@ fn latest_bookmark_swipe_yields_to_links_and_uses_the_newest_reflow_annotation()
     assert_eq!(app.0.current_history_location(), linked);
     app.0.touch_locked = false;
     app.swipe(swipe, 620.0);
+    crate::app::page_bookmark_navigation::settle_page_bookmark_search(&mut app.0);
     assert_eq!(app.0.active.as_ref().unwrap().reading.chapter, 0);
     app.swipe(swipe_right, 420.0);
     assert_eq!(app.0.current_history_location(), linked);
@@ -831,6 +832,7 @@ fn latest_bookmark_swipe_yields_to_links_and_uses_the_newest_reflow_annotation()
     reopened.0.open_path(&fixture.book).unwrap();
     assert!(reopened.0.controls.swipe_to_latest_bookmark);
     reopened.swipe(swipe, 620.0);
+    crate::app::page_bookmark_navigation::settle_page_bookmark_search(&mut reopened.0);
     assert_eq!(reopened.0.active.as_ref().unwrap().reading.chapter, 0);
     assert_eq!(fs::read(&fixture.book).unwrap(), original);
 }
@@ -858,6 +860,7 @@ fn latest_bookmark_swipe_opens_the_saved_pdf_page_and_preserves_return_history()
         },
         620.0,
     );
+    crate::app::page_bookmark_navigation::settle_page_bookmark_search(&mut app.0);
     assert_eq!(app.0.current_position().unwrap().page, 1);
     app.swipe(
         Input::Swipe {

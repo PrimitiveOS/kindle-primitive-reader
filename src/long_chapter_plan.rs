@@ -1,9 +1,9 @@
-//! Read-only planning and replay for oversized EPUB chapters. No reading path uses this yet.
+//! Bounded planning and replay for oversized EPUB chapters.
 //!
 //! These ranges are work batches over the original Source, not pages or new
-//! spine items. They do not establish that independent layouts can be joined;
-//! the isolated index verifies a continuation transcript before returning a
-//! page's source batches, but a live renderer must prove that separately.
+//! spine items. The live Parley reader uses a snapshot-bound page index only
+//! for chapters whose computed layout passes the conservative stream checks;
+//! unsupported chapters continue through the ordinary layout path.
 #![allow(dead_code)]
 
 #[cfg(feature = "kindle")]
@@ -14,14 +14,15 @@ pub(crate) mod shape_witness;
 
 use crate::book_style::{CssLength, Style, WhiteSpace, WritingMode, flow::Display};
 use crate::epub::Book;
-use crate::flow_projection::{ElementFlow, SourceBinding};
+use crate::flow_projection::SourceBinding;
 use crate::source::Source;
 use crate::{Anchor, Result, Settings};
 use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const NORMAL_TEXT_LIMIT: usize = 512 * 1024;
-const SOURCE_LIMIT: usize = 1024 * 1024;
+pub(crate) const MAX_CHAPTER_BYTES: usize = 1024 * 1024;
+const SOURCE_LIMIT: usize = MAX_CHAPTER_BYTES;
 const BATCH_TEXT_LIMIT: usize = 128 * 1024;
 pub(crate) const MAX_BATCH_BLOCKS: usize = 256;
 const MAX_BATCHES: usize = 32;
@@ -57,6 +58,13 @@ pub(crate) struct LongChapterPlan {
     batches: Vec<Batch>,
 }
 
+/// Immutable source inputs captured by the active storage session for a
+/// bounded oversized-EPUB layout attempt.
+pub(crate) struct SnapshotInputs {
+    pub book_bytes: std::sync::Arc<[u8]>,
+    pub font_bytes: Vec<std::sync::Arc<Vec<u8>>>,
+}
+
 pub(crate) fn cancelled(flag: &AtomicBool) -> Result<()> {
     if flag.load(Ordering::Relaxed) {
         Err("Long chapter planning was cancelled".into())
@@ -67,7 +75,7 @@ pub(crate) fn cancelled(flag: &AtomicBool) -> Result<()> {
 
 fn simple_styles(styles: &[Style]) -> bool {
     styles.iter().all(|style| {
-        style.flow == ElementFlow::default()
+        !style.flow.suppressed
             && matches!(style.display, Display::Inline | Display::Block)
             && style.writing_mode == WritingMode::Horizontal
             && style.white_space == WhiteSpace::Normal
@@ -100,13 +108,11 @@ pub(crate) fn simple_source(source: &Source, styles: &[Style]) -> bool {
         && source.elements.len() <= MAX_ELEMENTS
         && source.fragments.len() <= MAX_ELEMENTS
         && styles.len() == source.elements.len()
-        && source.stylesheets.is_empty()
         && source.table_cells.is_empty()
         && source.list_counters.is_empty()
         && source.raw_only_blocks.is_empty()
         && source.elements.iter().all(|element| {
-            element.inline_style.is_none()
-                && !element.anonymous
+            !element.anonymous
                 && matches!(
                     element.tag.as_str(),
                     "html"
@@ -188,7 +194,7 @@ impl LongChapterPlan {
             || mode.hide_nonlinear
             || mode.in_page_notes
             || settings.in_page_footnotes
-            || !user_styles.is_empty()
+            || !user_styles.supports_windowed_simple_chapter()
         {
             return Err("This long chapter needs a different reading layout".into());
         }
@@ -348,5 +354,32 @@ impl LongChapterPlan {
 
     pub(crate) fn batches(&self) -> &[Batch] {
         &self.batches
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{book_style::BookStyle, epub::Book};
+
+    #[test]
+    fn simple_source_accepts_captured_stylesheets_and_inline_text_styles() {
+        let markup = r#"<html><head><style>p { font-weight: bold; text-align: center; }</style></head><body><p style="font-style: italic">A long-chapter text block.</p></body></html>"#;
+        let source = Source::parse(markup).unwrap();
+        let mut book = Book::open(&crate::test_fixture("field-notes-epub3.epub")).unwrap();
+        let href = book.chapters[0].href.clone();
+        let styles = BookStyle::load_for_flow(
+            &mut book,
+            &href,
+            &source,
+            true,
+            &Default::default(),
+        )
+        .unwrap()
+        .compute(&source.elements);
+
+        assert!(!source.stylesheets.is_empty());
+        assert!(source.elements.iter().any(|element| element.inline_style.is_some()));
+        assert!(simple_source(&source, &styles));
     }
 }

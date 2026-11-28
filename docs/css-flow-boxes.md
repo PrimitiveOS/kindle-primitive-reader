@@ -1,11 +1,12 @@
 # CSS flow: native table and publisher box helpers
 
-This slice prepares the geometry helpers for the shared computed flow masks.
-It does not enable user `display`/`visibility` declarations, replace canonical
-source cells, or claim completed renderer integration. The consumer work must
-construct one validated `table_layout::TableFlow` and pass it to the new
-`*_with_flow` entry points. The older entry points retain an identity table plan
-for existing callers; their box paint/spacing filters use the supplied masks.
+This slice implements geometry helpers for the shared computed flow masks.
+The current unverified strict user-CSS candidate enables ordinary-element
+`display:none` and computed visibility without replacing canonical source cells.
+The consumer work must construct one validated `table_layout::TableFlow` and
+pass it to the new `*_with_flow` entry points. The older entry points retain an
+identity table plan for existing callers; their box paint/spacing filters use
+the supplied masks.
 
 `TableFlow::new(source, styles)` borrows the original cell slice without copying
 on ordinary chapters and visibility-only changes. A transformed native grid
@@ -41,6 +42,9 @@ for the consumer to use while reporting degraded table layout. Other errors,
 including a projected grid exceeding 32 columns or a mismatched style vector,
 propagate. A table that is wholly suppressed needs no hint reconstruction.
 The consumer owns the narrow fallback and its visible limitation reporting.
+
+User stylesheet rules do not admit non-`none` display box reclassification;
+that behavior requires separate geometry support.
 
 `Borders::read_with_flow` and `publisher_padding::layout_with_flow` share the same
 projected cell identities. Removed cells cannot affect intrinsic column demands,

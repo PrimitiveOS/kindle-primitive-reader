@@ -174,6 +174,32 @@ fn book_dictionary_exclusions_keep_automatic_cjk_selection_on_enabled_sources() 
 }
 
 #[test]
+fn hangul_selection_uses_a_dictionary_headword_and_keeps_the_source_text() {
+    let (fixture, mut app) = authored();
+    let korean = fixture.root.join("Korean.txt");
+    fs::write(&korean, "Korean notes\n\n한국어사전입니다.\n").unwrap();
+    write_dictionary(
+        &fixture.root.join("dictionaries"),
+        "Authored Korean",
+        "sametypesequence=m\n",
+        &[("한국어", b"Korean language; an authored test definition")],
+    );
+    app.open_path(&korean).unwrap();
+
+    let initial = selected(&app, "한");
+    app.selection = Some(initial.clone());
+    app.start_cjk_selection();
+    settle(&mut app);
+
+    let expanded = app.selection.as_ref().unwrap();
+    assert_eq!(expanded.text, "한국어");
+    assert_eq!(expanded.start, initial.start);
+    app.look_up_selection().unwrap();
+    assert_eq!(app.definition_word, "한국어");
+    assert_eq!(app.definitions[0].word, "한국어");
+}
+
+#[test]
 #[ignore = "Requires a cached CJK publication and a supplied local font"]
 fn cached_cjk_publication_selection_preserves_source_and_position() {
     let path = PathBuf::from(std::env::var_os("READER_CJK_ORIGINAL").expect("publication"));

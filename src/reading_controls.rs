@@ -16,6 +16,12 @@ pub(crate) const MAX_BOOKMARK_LINES: u8 = 10;
 pub(crate) const DEFAULT_VERY_LONG_PRESS_TENTHS: u16 = 30;
 pub(crate) const MIN_VERY_LONG_PRESS_TENTHS: u16 = 9;
 pub(crate) const MAX_VERY_LONG_PRESS_TENTHS: u16 = 200;
+pub(crate) const DEFAULT_DOUBLE_TAP_INTERVAL_MS: u16 = 300;
+pub(crate) const MIN_DOUBLE_TAP_INTERVAL_MS: u16 = 100;
+pub(crate) const MAX_DOUBLE_TAP_INTERVAL_MS: u16 = 2_000;
+pub(crate) const DEFAULT_TWO_FINGER_TAP_DURATION_MS: u16 = 300;
+pub(crate) const MIN_TWO_FINGER_TAP_DURATION_MS: u16 = 100;
+pub(crate) const MAX_TWO_FINGER_TAP_DURATION_MS: u16 = 2_000;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
@@ -91,6 +97,12 @@ pub(crate) struct ReadingControls {
     pub ignore_corner_holds: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub corner_hold_pause_seconds: Option<u8>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub double_tap_page_jump: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub double_tap_interval_ms: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub two_finger_tap_duration_ms: Option<u16>,
     #[serde(skip_serializing_if = "crate::app::scrolling::Method::is_default")]
     pub scroll_method: crate::app::scrolling::Method,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1529,6 +1541,23 @@ impl ReadingControls {
             .clamp(MIN_VERY_LONG_PRESS_TENTHS, MAX_VERY_LONG_PRESS_TENTHS)
     }
 
+    pub(crate) fn double_tap_interval_ms(self) -> u16 {
+        self.double_tap_interval_ms
+            .filter(|value| {
+                (MIN_DOUBLE_TAP_INTERVAL_MS..=MAX_DOUBLE_TAP_INTERVAL_MS).contains(value)
+            })
+            .unwrap_or(DEFAULT_DOUBLE_TAP_INTERVAL_MS)
+    }
+
+    pub(crate) fn two_finger_tap_duration_ms(self) -> u16 {
+        self.two_finger_tap_duration_ms
+            .filter(|value| {
+                (MIN_TWO_FINGER_TAP_DURATION_MS..=MAX_TWO_FINGER_TAP_DURATION_MS)
+                    .contains(value)
+            })
+            .unwrap_or(DEFAULT_TWO_FINGER_TAP_DURATION_MS)
+    }
+
     pub(crate) fn very_long_press_millis(self) -> u32 {
         u32::from(self.very_long_press_tenths()) * 100
     }
@@ -1792,6 +1821,40 @@ mod tests {
         assert_eq!(reopened.very_long_press_tenths(), 45);
         let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
         assert_eq!(legacy.very_long_press_tenths(), 30);
+    }
+
+    #[test]
+    fn double_tap_page_jump_defaults_off_and_uses_a_bounded_interval() {
+        let mut controls = ReadingControls::default();
+        assert!(!controls.double_tap_page_jump);
+        assert_eq!(controls.double_tap_interval_ms(), 300);
+
+        controls.double_tap_page_jump = true;
+        controls.double_tap_interval_ms = Some(100);
+        let reopened: ReadingControls =
+            serde_json::from_slice(&serde_json::to_vec(&controls).unwrap()).unwrap();
+        assert!(reopened.double_tap_page_jump);
+        assert_eq!(reopened.double_tap_interval_ms(), 100);
+
+        controls.double_tap_interval_ms = Some(2_001);
+        assert_eq!(controls.double_tap_interval_ms(), 300);
+        let legacy: ReadingControls = serde_json::from_str(r#"{"night_pages":true}"#).unwrap();
+        assert!(!legacy.double_tap_page_jump);
+        assert_eq!(legacy.double_tap_interval_ms(), 300);
+    }
+
+    #[test]
+    fn two_finger_tap_duration_matches_stock_default_and_range() {
+        let mut controls = ReadingControls::default();
+        assert_eq!(controls.two_finger_tap_duration_ms(), 300);
+        controls.two_finger_tap_duration_ms = Some(2_000);
+        let reopened: ReadingControls =
+            serde_json::from_slice(&serde_json::to_vec(&controls).unwrap()).unwrap();
+        assert_eq!(reopened.two_finger_tap_duration_ms(), 2_000);
+        controls.two_finger_tap_duration_ms = Some(99);
+        assert_eq!(controls.two_finger_tap_duration_ms(), 300);
+        let legacy: ReadingControls = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.two_finger_tap_duration_ms(), 300);
     }
 
     #[test]

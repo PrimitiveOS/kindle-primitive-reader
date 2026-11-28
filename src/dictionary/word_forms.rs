@@ -4,6 +4,62 @@ use std::collections::HashMap;
 
 use super::MAX_RESULTS;
 
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub(crate) struct JapaneseTextConversions {
+    pub(crate) halfwidth_to_fullwidth: bool,
+    pub(crate) hiragana_to_katakana: bool,
+    pub(crate) katakana_to_hiragana: bool,
+    pub(crate) collapse_emphatic: bool,
+}
+
+impl Default for JapaneseTextConversions {
+    fn default() -> Self {
+        Self {
+            halfwidth_to_fullwidth: true,
+            hiragana_to_katakana: false,
+            katakana_to_hiragana: true,
+            collapse_emphatic: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JapaneseTextConversion {
+    HalfwidthToFullwidth,
+    HiraganaToKatakana,
+    KatakanaToHiragana,
+    CollapseEmphatic,
+}
+
+impl JapaneseTextConversions {
+    pub(crate) fn enabled(self, conversion: JapaneseTextConversion) -> bool {
+        match conversion {
+            JapaneseTextConversion::HalfwidthToFullwidth => self.halfwidth_to_fullwidth,
+            JapaneseTextConversion::HiraganaToKatakana => self.hiragana_to_katakana,
+            JapaneseTextConversion::KatakanaToHiragana => self.katakana_to_hiragana,
+            JapaneseTextConversion::CollapseEmphatic => self.collapse_emphatic,
+        }
+    }
+
+    pub(crate) fn toggle(&mut self, conversion: JapaneseTextConversion) {
+        match conversion {
+            JapaneseTextConversion::HalfwidthToFullwidth => {
+                self.halfwidth_to_fullwidth = !self.halfwidth_to_fullwidth
+            }
+            JapaneseTextConversion::HiraganaToKatakana => {
+                self.hiragana_to_katakana = !self.hiragana_to_katakana
+            }
+            JapaneseTextConversion::KatakanaToHiragana => {
+                self.katakana_to_hiragana = !self.katakana_to_hiragana
+            }
+            JapaneseTextConversion::CollapseEmphatic => {
+                self.collapse_emphatic = !self.collapse_emphatic
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct WordForms {
     pub(super) order: HashMap<String, usize>,
@@ -11,7 +67,15 @@ pub(super) struct WordForms {
 
 impl WordForms {
     pub(super) fn for_word(word: &str) -> Self {
-        let normalized = icu_normalizer::ComposingNormalizer::new_nfkc().normalize(word);
+        Self::for_word_with_japanese_conversions(word, JapaneseTextConversions::default())
+    }
+
+    pub(super) fn for_word_with_japanese_conversions(
+        word: &str,
+        conversions: JapaneseTextConversions,
+    ) -> Self {
+        let normalized =
+            japanese::compatibility_normalize(word, conversions.halfwidth_to_fullwidth);
         let mut forms = Self::english(&normalized);
         if normalized != word {
             for rank in forms.order.values_mut() {
@@ -19,21 +83,41 @@ impl WordForms {
             }
             forms.order.insert(normalized.to_string(), 0);
         }
-        let converted = japanese::hiragana(&normalized);
-        let mut original = japanese::candidates(word).into_iter();
-        let mut hiragana = converted
-            .into_iter()
-            .flat_map(|text| std::iter::once((text.clone(), 1)).chain(japanese::candidates(&text)));
-        // Interleave the two bounded sets so original and converted forms both
-        // remain useful even when a long inflection generates many candidates.
-        for index in 0..japanese::MAX_CANDIDATES {
-            let next = if index % 2 == 0 {
-                original.next().or_else(|| hiragana.next())
+
+        let variants = japanese::text_conversion_variants(&normalized, conversions);
+        let mut count = 0;
+        for (variant_index, variant) in variants.iter().enumerate() {
+            let variant_rank = if variant.as_str() == normalized.as_str() {
+                1
             } else {
-                hiragana.next().or_else(|| original.next())
+                variant_index
             };
-            let Some((variant, cost)) = next else { break };
-            forms.order.entry(variant).or_insert(cost);
+            if variant.as_str() != normalized.as_str() {
+                if forms.order.contains_key(variant) {
+                    continue;
+                }
+                forms.order.insert(variant.to_owned(), variant_rank);
+                count += 1;
+            }
+        }
+        // Preserve every enabled literal kana conversion before a large
+        // inflection set can consume the bounded candidate allowance.
+        for (variant_index, variant) in variants.iter().enumerate() {
+            let variant_rank = if variant.as_str() == normalized.as_str() {
+                1
+            } else {
+                variant_index
+            };
+            for (candidate, cost) in japanese::candidates(variant) {
+                if count >= japanese::MAX_CANDIDATES {
+                    return forms;
+                }
+                let rank = variant_rank.saturating_add(cost.saturating_sub(1));
+                if !forms.order.contains_key(&candidate) {
+                    forms.order.insert(candidate, rank);
+                    count += 1;
+                }
+            }
         }
         forms
     }

@@ -65,6 +65,10 @@ pub(crate) struct EmbeddedImage {
     pub height: Option<f32>,
     pub link: Option<String>,
     pub label: String,
+    #[cfg(feature = "kindle")]
+    pub note_reference: crate::footnotes::Reference,
+    #[cfg(feature = "kindle")]
+    pub link_element: Option<usize>,
 }
 
 pub(crate) struct Ruby {
@@ -164,6 +168,8 @@ impl Default for Extraction {
 
 pub(crate) struct Element {
     pub tag: String,
+    /// Original XHTML byte range for source-verified layout export decisions.
+    pub(crate) raw_range: Range<usize>,
     pub classes: String,
     pub(crate) selector_class_attribute: Option<String>,
     pub has_href: bool,
@@ -224,6 +230,8 @@ pub(crate) enum Stylesheet {
 pub(crate) struct InlineLink {
     #[cfg(feature = "kindle")]
     pub note_reference: crate::footnotes::Reference,
+    /// DOM element that supplied the link and its computed private CSS hints.
+    pub element: usize,
     pub bytes: Range<usize>,
     pub href: String,
 }
@@ -493,6 +501,9 @@ impl Source {
         }
         for (actual, other) in self.blocks.iter_mut().zip(&shadow.blocks) {
             for link in &other.links {
+                let Some(element) = mapped.get(link.element).copied().flatten() else {
+                    continue;
+                };
                 let Some(id) = link.href.strip_prefix('#') else {
                     continue;
                 };
@@ -511,6 +522,7 @@ impl Source {
                 actual.links.push(InlineLink {
                     #[cfg(feature = "kindle")]
                     note_reference: link.note_reference,
+                    element,
                     bytes: link.bytes.clone(),
                     href: link.href.clone(),
                 });
@@ -999,6 +1011,7 @@ impl Source {
             }
             elements.push(Element {
                 tag: node.tag_name().name().to_owned(),
+                raw_range: node.range(),
                 list_kind: crate::list_marker::MarkerKind::html(node),
                 has_href: node.has_attribute("href"),
                 selector_href_attribute,
@@ -1208,6 +1221,9 @@ impl Source {
                 .then(|| crate::svg_image::inline_source(descendant, xhtml))
                 .flatten();
                 if external.is_some() || inline_svg.is_some() {
+                    let link_anchor = descendant
+                        .ancestors()
+                        .find(|ancestor| ancestor.has_tag_name("a"));
                     let pixels = |name| {
                         descendant.attribute(name).and_then(|v| {
                             v.trim()
@@ -1234,9 +1250,7 @@ impl Source {
                         element: element_ids[&descendant.id()],
                         width: pixels("width"),
                         height: pixels("height"),
-                        link: descendant
-                            .ancestors()
-                            .find(|ancestor| ancestor.has_tag_name("a"))
+                        link: link_anchor
                             .and_then(|anchor| anchor.attribute("href"))
                             .map(str::to_owned),
                         label: descendant
@@ -1247,6 +1261,12 @@ impl Source {
                             .chars()
                             .take(128)
                             .collect(),
+                        #[cfg(feature = "kindle")]
+                        note_reference: link_anchor
+                            .map(crate::footnotes::Reference::from_node)
+                            .unwrap_or_default(),
+                        #[cfg(feature = "kindle")]
+                        link_element: link_anchor.map(|anchor| element_ids[&anchor.id()]),
                     });
                 }
                 let Some(content) = descendant.text().filter(|_| descendant.is_text()) else {
@@ -1381,6 +1401,7 @@ impl Source {
                             links.push(InlineLink {
                                 #[cfg(feature = "kindle")]
                                 note_reference: crate::footnotes::Reference::from_node(anchor),
+                                element: element_ids[&anchor.id()],
                                 bytes: start..text.len(),
                                 href: anchor.attribute("href").unwrap().to_owned(),
                             });

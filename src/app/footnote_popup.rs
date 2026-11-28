@@ -288,20 +288,26 @@ impl Reader {
         };
         let reading = &active.reading;
         let index = reading.probe.chapter_index(&target.path);
-        let (mut context, reference) = reading
-            .note_reference_at(x, y)
-            .map(|(context, selected)| (context, Some(selected)))
-            .unwrap_or_else(|| {
-                (
-                    ReferenceContext {
-                        kind: Reference::Unknown,
-                        label: String::new(),
-                        in_prose: false,
-                        source_block: 0,
-                    },
-                    None,
-                )
+        let detected_reference = reading
+            .note_image_reference_at(&target, x, y)
+            .map(|context| (context, None))
+            .or_else(|| {
+                reading
+                    .note_reference_at(x, y)
+                    .map(|(context, selected)| (context, Some(selected)))
             });
+        let (mut context, reference) = detected_reference.unwrap_or_else(|| {
+            (
+                ReferenceContext {
+                    kind: Reference::Unknown,
+                    label: String::new(),
+                    in_prose: false,
+                    source_is_whole_block: false,
+                    source_block: 0,
+                },
+                None,
+            )
+        });
         let Some(reference_chapter) =
             reference_chapter(&reading.probe, reading.chapter, reference.as_ref())
         else {

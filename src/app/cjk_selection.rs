@@ -24,11 +24,13 @@ impl Reader {
         let Some(initial) = self.selection.clone() else {
             return;
         };
-        let Some(scan) = self
-            .active
-            .as_ref()
-            .and_then(|a| a.reading.probe.dictionary_scan(&initial))
-        else {
+        let scan_length = self.dictionary_settings.cjk_scan_length();
+        let text_conversions = self.dictionary_settings.japanese_text_conversions();
+        let Some(scan) = self.active.as_ref().and_then(|a| {
+            a.reading
+                .probe
+                .dictionary_scan_with_limit(&initial, scan_length)
+        }) else {
             return;
         };
         let dictionaries = self.dictionaries.clone();
@@ -44,7 +46,7 @@ impl Reader {
         match std::thread::Builder::new()
             .name("dictionary-selection".into())
             .spawn(move || {
-                let result = dictionaries.longest_cjk_prefix(
+                let result = dictionaries.longest_cjk_prefix_with_options(
                     &text,
                     dictionary::SourceScope {
                         preferred: &book,
@@ -54,6 +56,8 @@ impl Reader {
                         ..dictionary::SourceScope::default()
                     },
                     forms,
+                    scan_length,
+                    text_conversions,
                     &flag,
                 );
                 let _ = sender.send(result);

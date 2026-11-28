@@ -506,6 +506,7 @@ impl Prepared {
                     block: context.block,
                     offset: caret.canonical_offset,
                     illustration: None,
+                    side_bias: None,
                 },
                 caret,
             };
@@ -610,6 +611,7 @@ impl Prepared {
                 block: context.block,
                 offset: caret.canonical_offset,
                 illustration: None,
+                side_bias: None,
             },
             caret,
         };
@@ -651,6 +653,7 @@ impl Prepared {
                 block: context.block,
                 offset: line.start.canonical_offset,
                 illustration: None,
+                side_bias: None,
             },
             caret: line.start.clone(),
         };

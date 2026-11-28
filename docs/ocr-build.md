@@ -5,26 +5,26 @@ or DjVu page. The app sends a bounded grayscale raster, imports the word boxes,
 and keeps recognized text with the document's reading data. Recognition can
 be cancelled. The text can be searched, selected, or opened in the page's
 reflowed text view. Reflow scan uses the original grayscale word crops from
-complete horizontal OCR. The current implementation detects consistently
-left-to-right or right-to-left text and wraps word images from the corresponding
-edge. Pages are rendered on demand, and
-the size controls keep the first visible word in view. Reading data offers
-a way to clear the OCR cache.
+complete OCR. Its Layout panel offers LTR, RTL and TBRTL ordering, with LTR as
+the default. LTR and RTL wrap word images horizontally; TBRTL arranges them
+top-to-bottom in right-to-left columns. Pages are rendered on demand, and the
+size controls keep the first visible word in view. Reading data offers a way to
+clear the OCR cache.
 
 For recognized Chinese and Japanese horizontal text, Reader joins adjacent
 Han or kana word boxes when their geometric gap is small. This avoids adding
 artificial spaces inside ordinary phrases while retaining larger visual gaps,
 line and paragraph breaks, Korean word spaces, and each word's source box.
-This reconstruction awaits integrated and Kindle testing; it does not support
-vertical Japanese layout. [KOReader's native OCR word boxes](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/koptinterface.lua#L716-L743)
+This reconstruction awaits integrated and Kindle testing. The horizontal Han
+and kana join is not used by TBRTL. [KOReader's native OCR word boxes](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/document/koptinterface.lua#L716-L743)
 
-KOReader exposes a writing-direction selector for LTR, RTL and vertical
-right-to-left scan reflow. Reader's automatic RTL path is limited to pages with
-one strong text direction and correctly ordered OCR word boxes. Mixed-direction
-text, vertical writing and an explicit direction selector remain open. The RTL
-implementation has not yet been tested on the computer or Kindle; recognition
-also requires an appropriate separately installed language model. [Pinned
-KOReader direction options](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L645-L667)
+KOReader offers LTR, RTL and top-to-bottom/right-to-left (TBRTL) writing
+direction when reflow is active; LTR is its default. Reader's current
+unverified candidate offers all three modes for OCR scan reflow. Mixed-script
+word ordering, complex layouts and interaction with the selected OCR language
+need comparison. The candidate has not been tested on the computer or Kindle;
+recognition also requires an appropriate separately installed language model.
+[Pinned KOReader direction options](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L2900-L2932) · [Reader implementation and deferred checks](scan-reflow-direction.md)
 
 | Input | Version and source |
 | --- | --- |
@@ -49,21 +49,59 @@ SHA-256 `79df64caf7bcfb2a27df5042ecb6121e196eada34da774956995747636d5bfa1`.
 Both models carry the packaged [tessdata_fast Apache 2.0 notice](licenses/ocr/tessdata_fast-LICENSE).
 The new packaging path has not yet been built or tested.
 
-Install additional compatible Tesseract `.traineddata` files in
-`reader/ocr/tessdata/` alongside the included models. Names use lowercase
-language codes such as `vie.traineddata` or `chi_sim.traineddata`. Each model
-must be a regular file of up to 16 MiB. Open OCR from the reading bar to pick
-among the installed languages, or combine a model with English for bilingual
-pages when both are installed. Reader stages only the selected one or two
-models and keeps the ordered language codes with the recognized page text. Additional models are
-provided separately under their original terms.
+Reader now has **Manage OCR language packs** in Reader Data and in the OCR
+language picker. It lists the 123 language and vertical-variant models present
+at the pinned `tessdata_fast` revision, excluding the special equation and
+orientation/script-detection models. Entries are alphabetized by their
+display names so the paged Kindle list is easier to browse. Each detail shows
+the language, exact source revision, pinned source size, source URL and Apache
+2.0 license before the user chooses **Download and install**. Only the selected
+model is fetched;
+downloaded data is not bundled in Reader. Install writes the model beside the
+included models and adds a per-model attribution file with the Apache license
+text. The picker refreshes after installation. The official model source and
+license are documented in the [pinned tessdata_fast README](https://github.com/tesseract-ocr/tessdata_fast/blob/65727574dfcd264acbb0c3e07860e4e9e9b22185/README.md).
+
+Each model must be a regular file of up to 16 MiB; downloads are checked
+against the exact size recorded by the pinned Git tree. The installer streams
+the response directly to a uniquely named file under its staging directory,
+so a model-sized in-memory copy is not needed. It checks the byte count before
+publishing the model and attribution, and removes staged or partially published
+files on failure. A download can be canceled from its detail page or by
+leaving Reader. Cancellation is checked between response chunks and during
+installation. An in-flight HTTPS read is bounded by a 90-second timeout.
+Reader stages only the selected one or two models for recognition and keeps
+the ordered language codes with recognized page text. Manual installation of
+compatible `.traineddata` files in `reader/ocr/tessdata/` remains supported.
 
 The language picker gives recognizable names to official Tesseract language
 codes and shows unknown custom model names as supplied. It uses the existing
 paged list and physical page controls. Discovery considers at most 512
 directory entries and shows at most 160 valid models, with English first when
-installed; directories larger than those bounds can have omitted models. This
-expanded picker awaits integrated testing. [Tesseract language codes](https://tesseract-ocr.github.io/tessdoc/Data-Files-in-different-versions.html) · [KOReader document-language control](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L623-L635)
+installed; directories larger than those bounds can have omitted models. The
+catalog and download flow are unverified implementation candidates. [Tesseract language codes](https://tesseract-ocr.github.io/tessdoc/Data-Files-in-different-versions.html) · [KOReader document-language control](https://github.com/koreader/koreader/blob/9192014d8bd82a91dc1012473be0f238dedfdb54/frontend/ui/data/koptoptions.lua#L623-L635)
+
+While downloading a language model, the detail screen reports the bytes
+received and the pinned total size. Progress is sent from the isolated worker
+after each 512 KiB or 750 ms, whichever comes first, and is followed by a
+separate **Verifying and installing model** status after the exact source size
+has been checked and the staged file has been synchronized. The Reader only
+redraws the progress row when that reported value changes. Cancellation stays
+available through both phases until the atomic install finishes. This visible
+progress path has not yet been built or behaviorally verified.
+
+## Deferred language-pack acceptance
+
+- [ ] Compare the catalog list with every top-level language model at the
+  pinned source revision; confirm the special `equ` and `osd` models stay out
+  of the reading-language list.
+- [ ] Exercise an installed model, a missing model, an invalid-size file,
+  successful download, network failure, cancellation during transfer, and
+  cancellation during storage installation. Confirm the Reader storage lease
+  is released and partial files are removed.
+- [ ] Verify the source-size check, Apache attribution text, reloaded language
+  picker, bilingual selection with English, reopen, and recognition using a
+  downloaded model on desktop and Oasis.
 
 The desktop OCR worker recognized 316 words from a public-domain scan with the
 pinned English model. On macOS with Tesseract 5.5.2 it also recognized all 28

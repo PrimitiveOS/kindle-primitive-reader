@@ -31,14 +31,34 @@ impl<'a> Plan<'a> {
         view: &Projection<'_>,
         styles: &'a [Style],
     ) -> Option<Self> {
-        if block.text.is_empty()
-            || !block.images.is_empty()
+        Self::new_for_hosts(block, view, styles, &[block.element])
+    }
+
+    pub(crate) fn new_for_hosts(
+        block: &LayoutBlock<'_>,
+        view: &Projection<'_>,
+        styles: &'a [Style],
+        hosts: &[usize],
+    ) -> Option<Self> {
+        Self::new_with_edges(block, view, styles, hosts, hosts)
+    }
+
+    pub(crate) fn new_with_edges(
+        block: &LayoutBlock<'_>,
+        view: &Projection<'_>,
+        styles: &'a [Style],
+        before_hosts: &[usize],
+        after_hosts: &[usize],
+    ) -> Option<Self> {
+        if !block.images.is_empty()
             || !block.ruby.is_empty()
             || styles[block.element].preformatted_spaces
         {
             return None;
         }
-        Self::compose(block, view, styles).ok().flatten()
+        Self::compose_with_edges(block, view, styles, before_hosts, after_hosts)
+            .ok()
+            .flatten()
     }
 
     pub(in crate::parley_layout) fn compose(
@@ -46,22 +66,53 @@ impl<'a> Plan<'a> {
         view: &Projection<'_>,
         styles: &'a [Style],
     ) -> Result<Option<Self>, ()> {
-        let before = Edge {
+        Self::compose_for_hosts(block, view, styles, &[block.element])
+    }
+
+    pub(in crate::parley_layout) fn compose_for_hosts(
+        block: &LayoutBlock<'_>,
+        view: &Projection<'_>,
+        styles: &'a [Style],
+        hosts: &[usize],
+    ) -> Result<Option<Self>, ()> {
+        Self::compose_with_edges(block, view, styles, hosts, hosts)
+    }
+
+    pub(in crate::parley_layout) fn compose_with_edges(
+        block: &LayoutBlock<'_>,
+        view: &Projection<'_>,
+        styles: &'a [Style],
+        before_hosts: &[usize],
+        after_hosts: &[usize],
+    ) -> Result<Option<Self>, ()> {
+        if before_hosts.is_empty() && after_hosts.is_empty() && block.pseudo_edges.is_empty() {
+            return Err(());
+        }
+        let end = std::ops::Deref::deref(block).text.len();
+        let mut edges = Vec::with_capacity(
+            before_hosts.len() + after_hosts.len() + block.pseudo_edges.len(),
+        );
+        edges.extend(before_hosts.iter().map(|&host| Edge {
             at: 0,
-            host: block.element,
+            host,
             side: Side::Before,
-        };
-        let after = Edge {
-            at: std::ops::Deref::deref(block).text.len(),
-            host: block.element,
+        }));
+        edges.extend(block.pseudo_edges.iter().map(|edge| Edge {
+            at: edge.at,
+            host: edge.host,
+            side: edge.side,
+        }));
+        edges.extend(after_hosts.iter().rev().map(|&host| Edge {
+            at: end,
+            host,
             side: Side::After,
-        };
+        }));
         let mut result = None;
         let mut cursor = 0;
-        for edge in std::iter::once(&before)
-            .chain(block.pseudo_edges.iter())
-            .chain(std::iter::once(&after))
-        {
+        for edge in &edges {
+            if styles[edge.host].flow.suppressed {
+                continue;
+            }
             let part = styles[edge.host]
                 .generated
                 .as_ref()

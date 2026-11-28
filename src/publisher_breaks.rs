@@ -7,7 +7,7 @@ mod opening;
 mod text_keeps;
 pub(crate) use empty::physical::plan as plan_empty_geometry;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Edge {
     #[default]
     Auto,

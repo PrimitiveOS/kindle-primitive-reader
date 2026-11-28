@@ -11,6 +11,7 @@ fn context() -> ReferenceContext {
         kind: Reference::Explicit,
         label: "1".into(),
         in_prose: true,
+        source_is_whole_block: false,
         source_block: 0,
     }
 }
@@ -35,6 +36,119 @@ fn excerpt(xml: &str, source: &Source, styles: &[Style], fragment: &str) -> Opti
         false,
         &roots,
     )
+}
+
+#[cfg(feature = "kindle")]
+#[test]
+fn computed_private_reference_hints_override_markup_classification() {
+    let xml = r##"<html><head><style>
+        .force { -cr-hint: noteref; }
+        .ignore { -cr-hint: noteref-ignore; }
+        </style></head><body><p>Text
+        <a class="force" href="#note">forced</a>
+        <a class="ignore" href="#note">ignored</a> after.</p></body></html>"##;
+    let (mut source, styles) = computed(xml, true);
+    footnotes::apply_css_reference_hints(&mut source, &styles);
+    let links: Vec<_> = source
+        .blocks
+        .iter()
+        .flat_map(|block| &block.links)
+        .collect();
+    assert_eq!(links.len(), 2);
+    assert_eq!(links[0].note_reference, Reference::Explicit);
+    assert_eq!(links[1].note_reference, Reference::Ordinary);
+}
+
+#[test]
+fn computed_private_target_hints_force_or_reject_note_popups() {
+    let xml = r#"<html><head><style>
+        .note { -cr-hint: footnote; }
+        .ignore { -cr-hint: footnote-ignore; }
+        </style></head><body><p id="note" class="note">A linked note.</p>
+        <p id="ordinary">Ordinary text.</p>
+        <p id="ignored" class="ignore">Not a popup.</p></body></html>"#;
+    let (source, styles) = computed(xml, true);
+    let roots = LayoutRoots::new(&source, &styles).unwrap();
+    let context = ReferenceContext {
+        kind: Reference::Unknown,
+        label: "word".into(),
+        in_prose: true,
+        source_is_whole_block: false,
+        source_block: 0,
+    };
+    assert!(
+        footnotes::extract_with_layout(
+            xml,
+            "note",
+            &context,
+            Ordering::Greater,
+            false,
+            false,
+            &roots,
+        )
+        .is_some()
+    );
+    assert!(
+        footnotes::extract_with_layout(
+            xml,
+            "ordinary",
+            &context,
+            Ordering::Greater,
+            false,
+            false,
+            &roots,
+        )
+        .is_none()
+    );
+    assert!(
+        footnotes::extract_with_layout(
+            xml,
+            "ignored",
+            &context,
+            Ordering::Greater,
+            false,
+            true,
+            &roots,
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn legacy_detached_note_finds_a_verified_backlink_after_sixteen_other_links() {
+    use crate::Anchor;
+
+    let unrelated = (0..16)
+        .map(|index| format!("<a href=\"host.xhtml#missing-{index}\">other</a> "))
+        .collect::<String>();
+    let note = format!(
+        "<html xmlns:epub=\"http://www.idpf.org/2007/ops\"><body><aside epub:type=\"footnote\"><p id=\"note\">{unrelated}<a href=\"host.xhtml#origin\">Return</a></p></aside></body></html>"
+    );
+    let host_xml = "<html><body><p><span id=\"origin\">[17]</span> Source text.</p></body></html>";
+    let host = Source::parse(host_xml).unwrap();
+    let &(block, offset) = host.fragments.get("origin").unwrap();
+    let reference = Anchor {
+        raw_caret: None,
+        book: 1,
+        chapter: "host.xhtml".into(),
+        revision: host.revision,
+        block,
+        offset,
+        illustration: None,
+        side_bias: None,
+    };
+    let (note_source, styles) = computed(&note, true);
+    let roots = LayoutRoots::new(&note_source, &styles).unwrap();
+
+    assert!(footnotes::detached_legacy_evidence(
+        &note,
+        "note",
+        "notes.xhtml",
+        &reference,
+        &host,
+        host_xml,
+        &roots,
+    ));
 }
 
 #[test]

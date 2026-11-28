@@ -1,4 +1,4 @@
-//! Unwired, bounded capture of the configured font files for a long chapter.
+//! Bounded capture of the configured font files for a supported long chapter.
 //!
 //! These snapshots bind only the named files and their read bytes. They do not
 //! establish the live Reader's font selection, system fallback or layout.

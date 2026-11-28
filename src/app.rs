@@ -34,7 +34,9 @@ mod word_spacing;
 use character_page_settings::NumberField;
 mod cjk_selection;
 mod default_settings;
+mod dictionary_catalog;
 mod dictionary_panel;
+mod ocr_model_catalog;
 use dictionary_panel::buttons as dictionary_buttons;
 mod dictionary_presets;
 mod dictionary_sources;
@@ -121,6 +123,7 @@ mod selection_popup;
 #[cfg(test)]
 mod selection_viewport_tests;
 mod semi_auto_crop;
+pub(crate) mod dogear;
 mod sidecar_marks;
 mod skim;
 mod step_buttons;
@@ -158,9 +161,9 @@ use crate::generated_contents::{GeneratedContents, OutlineTarget};
 use crate::koreader_import::{self, ExportEntry, QuoteMatch, QuoteResolver};
 use crate::koreader_sidecar::{self, SidecarProgress};
 use crate::library::{
-    BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat, FixedPreferences,
-    FixedTileAxis, FolderDirection, FolderOrder, Highlight, Library, LibraryBook, PdfHighlight,
-    ReadingPosition, ReadingStatus,
+    BookMetadata, BookPreferences, BookState, Bookmark, DocumentFormat, FixedContentFit,
+    FixedPreferences, FixedTileAxis, FolderDirection, FolderOrder, Highlight, Library, LibraryBook,
+    PdfHighlight, ReadingPosition, ReadingStatus,
 };
 use crate::ocr_job::{OcrAssets, OcrJob};
 use crate::pdf_annotations;
@@ -282,6 +285,13 @@ enum Screen {
     CustomMultiswipes,
     RecordMultiswipe,
     MultiswipeBinding(multiswipes::Shape),
+    MultiswipeActions(multiswipes::Shape),
+    AddMultiswipeAction(multiswipes::Shape),
+    MultiswipeMode(multiswipes::Shape),
+    MultiswipeQuickMenuSettings(multiswipes::Shape),
+    MultiswipeQuickMenuPosition(multiswipes::Shape),
+    EditMultiswipeAction(multiswipes::Shape, usize),
+    MultiswipeActionName(multiswipes::Shape, usize),
     RemoveMultiswipe(multiswipes::Shape),
     GestureOverview,
     ReadingData,
@@ -366,6 +376,8 @@ enum Screen {
     ReadingProfile(usize),
     ReadingProfileFields(usize),
     ReadingProfileValues(usize),
+    ReadingProfileZoom(usize),
+    ReadingProfileFonts(usize),
     ReadingProfileMargins(usize),
     ReadingProfileFontRendering(usize),
     ReadingProfileBookRendering(usize),
@@ -404,6 +416,11 @@ enum Screen {
     VocabularySearch,
     Dictionaries,
     DictionaryOptions(usize),
+    DictionaryCatalog,
+    DictionaryCatalogLanguage(usize),
+    DictionaryCatalogItem(usize, usize),
+    OcrLanguageCatalog,
+    OcrLanguageCatalogItem(usize),
     DictionaryButtons(dictionary_buttons::Page),
     DictionaryPresets(dictionary_presets::Page),
 }
@@ -476,6 +493,13 @@ impl Screen {
             Self::CustomMultiswipes => "Custom multiswipes",
             Self::RecordMultiswipe => "Record a multiswipe",
             Self::MultiswipeBinding(_) => "Multiswipe action",
+            Self::MultiswipeActions(_) => "Multiswipe action sequence",
+            Self::AddMultiswipeAction(_) => "Add multiswipe action",
+            Self::MultiswipeMode(_) => "Multiswipe action behavior",
+            Self::MultiswipeQuickMenuSettings(_) => "Quick menu options",
+            Self::MultiswipeQuickMenuPosition(_) => "Quick menu position",
+            Self::EditMultiswipeAction(_, _) => "Edit multiswipe action",
+            Self::MultiswipeActionName(_, _) => "Rename quick menu action",
             Self::RemoveMultiswipe(_) => "Remove multiswipe?",
             Self::GestureOverview => "Gesture overview",
             Self::ReadingData => "Reading data",
@@ -516,10 +540,15 @@ impl Screen {
             }
             Self::NumberingValue(NumberField::AutoTurn) => "Automatic page turns",
             Self::NumberingValue(NumberField::CornerHoldPause) => "Corner hold pause",
+            Self::NumberingValue(NumberField::DoubleTapInterval) => "Double-tap interval",
+            Self::NumberingValue(NumberField::TwoFingerTapDuration) => {
+                "Two-finger tap duration"
+            }
             Self::NumberingValue(NumberField::ScrollDelay) => "Scroll activation delay",
             Self::NumberingValue(NumberField::AutoTurnOverlapHorizontal) => "Horizontal overlap",
             Self::NumberingValue(NumberField::FixedTileZoom(axis)) => axis.label(),
             Self::NumberingValue(NumberField::CropMargin) => "Crop margin",
+            Self::NumberingValue(NumberField::ScanWhiteLevel) => "Scan white level",
             Self::NumberingValue(NumberField::ReadingGuide(field)) => field.title(),
             Self::NumberingValue(NumberField::AutoTurnOverlapVertical) => "Vertical overlap",
             Self::NumberingValue(NumberField::FooterTrackMinimumWidth) => "Progress bar width",
@@ -534,6 +563,14 @@ impl Screen {
             Self::NumberingValue(NumberField::FooterCustomTextRepetitions) => {
                 "Custom text repetitions"
             }
+            Self::NumberingValue(NumberField::CjkScanLength) => "CJK selection look-ahead",
+            Self::NumberingValue(NumberField::ReadingSideMargins) => "Left and right margins",
+            Self::NumberingValue(NumberField::ReadingMargin(edge)) => match edge {
+                character_page_settings::MarginEdge::Left => "Left margin",
+                character_page_settings::MarginEdge::Right => "Right margin",
+                character_page_settings::MarginEdge::Top => "Top margin",
+                character_page_settings::MarginEdge::Bottom => "Bottom margin",
+            },
             Self::NumberingValue(NumberField::MarginSize) => "Margin label size",
             Self::NumberingValue(_) => "Characters per page",
             Self::NumberingDefaults => "Page numbering defaults",
@@ -608,6 +645,8 @@ impl Screen {
             Self::ReadingProfile(_) | Self::ConfirmProfile(_, _) => "Reading profile",
             Self::ReadingProfileFields(_) => "Included settings",
             Self::ReadingProfileValues(_) => "Saved profile values",
+            Self::ReadingProfileZoom(_) => "Saved fixed-page zoom",
+            Self::ReadingProfileFonts(_) => "Saved profile font",
             Self::ReadingProfileMargins(_) => "Saved page margins",
             Self::ReadingProfileFontRendering(_) => "Saved font rendering",
             Self::ReadingProfileBookRendering(_) => "Saved book rendering",
@@ -648,6 +687,11 @@ impl Screen {
             Self::VocabularySearch => "Find a saved word",
             Self::Dictionaries => "Dictionaries",
             Self::DictionaryOptions(_) => "Dictionary settings",
+            Self::DictionaryCatalog => "Dictionary downloads",
+            Self::DictionaryCatalogLanguage(_) => "Available dictionaries",
+            Self::DictionaryCatalogItem(_, _) => "Dictionary details",
+            Self::OcrLanguageCatalog => "OCR language packs",
+            Self::OcrLanguageCatalogItem(_) => "OCR language details",
             Self::DictionaryButtons(page) => page.title(),
             Self::DictionaryPresets(page) => page.title(),
         }
@@ -754,6 +798,7 @@ enum Action {
     Text(Settings),
     SetBaseStylesheet(crate::BaseStylesheet),
     ConfirmBaseStylesheetDefault(crate::BaseStylesheet),
+    AdjustReadingMargin(character_page_settings::MarginEdge, i16),
     ApplyWordSpacing(u64, crate::WordSpacePercent),
     ApplyLogicalFont(u64, f64),
     FontRendering(eager_typography::Scope, Option<eager_typography::Mode>),
@@ -775,6 +820,15 @@ enum Action {
     ShowFooterFonts,
     SetFooterFontFace(Option<String>),
     ShowDictionaries,
+    InstallDictionary(usize, usize),
+    DownloadDictionaryWithoutSizeEstimate(usize, usize),
+    CheckDictionarySize(usize, usize),
+    RefreshDictionaryCatalog,
+    CycleDictionaryCatalogFilter,
+    CancelDictionaryDownload,
+    ManageOcrLanguages,
+    InstallOcrLanguage(usize),
+    CancelOcrLanguageDownload,
     DictionaryPreset(dictionary_presets::Command),
     DictionarySource(SourceAction),
     DictionaryButtons(dictionary_buttons::Command),
@@ -804,6 +858,10 @@ enum Action {
     OpeningProfileRule(usize, profile_panel::opening_rules::Command),
     ClosingProfileRule(usize, profile_panel::opening_rules::Command),
     SetProfileRendering(usize, profile_panel::rendering_choices::Value),
+    ShowProfileZoom(usize),
+    SetProfileZoom(usize, reading_profiles::ProfileZoomChoice),
+    ShowProfileFonts(usize),
+    SetProfileFont(usize, Option<String>),
     ToggleProfileMarginLink(usize),
     UpdateFooterPreset(usize),
     ApplyFooterPreset(usize),
@@ -831,6 +889,12 @@ enum Action {
     ExportSettings(export_settings::Origin, export_settings::Command),
     AnnotationExchange(annotation_exchange::Command),
     FitPage(bool),
+    FitContent(FixedContentFit),
+    ZoomTargetContent(bool),
+    ZoomTargetManual,
+    SetFixedFitAxis(FixedContentFit),
+    SetFixedZoomFactor(u16),
+    AdjustFixedZoomFactor(i16),
     FitHeight,
     SetFixedZoom(usize),
     SetFixedTileZoom(FixedTileAxis, u8),
@@ -840,6 +904,7 @@ enum Action {
     ComicSpread(bool),
     ScanContrast(bool),
     ScanGamma(u16),
+    Dewatermark(bool),
     FixedDither(bool),
     FixedGap(u16),
     ScanWhiteLevel(Option<u8>),
@@ -1152,6 +1217,8 @@ pub struct Reader {
     last_fixed_panel: BarPanel,
     top_group: Option<TopGroup>,
     last_top_group: TopGroup,
+    top_menu_row: usize,
+    page_menu_row: usize,
     reading_top: bool,
     reading_bottom: bool,
     quick_display: QuickDisplay,
@@ -1173,6 +1240,7 @@ pub struct Reader {
     match_window: Option<search_layout::MatchWindow>,
     matches_return_to_reading: bool,
     result_context: Option<result_context::ResultContext>,
+    multiswipe_menu: Option<multiswipes::QuickMenu>,
     flexible_results: std::cell::RefCell<Option<flexible_results::FlexibleResults>>,
     focused_result: Option<usize>,
     search_results_navigation: search_results_navigation::Navigation,
@@ -1240,7 +1308,16 @@ pub struct Reader {
     dictionary_preference: PathBuf,
     dictionary_settings: SourcePreferences,
     dictionary_origin: Screen,
+    dictionary_catalog: crate::dictionary_catalog::Catalog,
+    dictionary_catalog_filter: crate::dictionary_catalog::Filter,
+    dictionary_catalog_refresh: Option<crate::dictionary_catalog::CatalogRefreshJob>,
+    dictionary_catalog_refresh_attempted: bool,
+    dictionary_size_check: Option<crate::dictionary_catalog::SizeCheckJob>,
+    dictionary_size_estimate: Option<(String, std::result::Result<Option<u64>, String>, Instant)>,
     installed_dictionaries: Vec<InstalledDictionary>,
+    dictionary_download: Option<crate::dictionary_catalog::Job>,
+    ocr_model_download: Option<crate::ocr_model_catalog::Job>,
+    ocr_model_catalog_origin: Screen,
     lookup_history_path: PathBuf,
     lookup_history: LookupHistory,
     vocabulary_view: vocabulary::View,
@@ -1305,6 +1382,10 @@ impl Reader {
         let lookup_history_path = data.join("lookup-history.json");
         let lookup_history = LookupHistory::load(&lookup_history_path);
         let dictionary_settings = SourcePreferences::load(&dictionary_preference);
+        let dictionaries = DictionarySources::for_reader(documents, data);
+        let dictionary_catalog =
+            crate::dictionary_catalog::load_cache(&dictionaries.local_directory())
+                .unwrap_or_else(crate::dictionary_catalog::Catalog::fallback);
         let ocr_assets = with_storage(|| Ok(data.parent().and_then(OcrAssets::discover)))?;
         let user_hyphenation_path = data.join("user-hyphenation.json");
         let mut user_hyphenation =
@@ -1449,6 +1530,8 @@ impl Reader {
             last_fixed_panel: BarPanel::View,
             top_group: None,
             last_top_group: TopGroup::Navigation,
+            top_menu_row: 0,
+            page_menu_row: 0,
             reading_top: false,
             reading_bottom: false,
             gestures: GestureBindings::load(data),
@@ -1470,6 +1553,7 @@ impl Reader {
             match_window: None,
             matches_return_to_reading: false,
             result_context: None,
+            multiswipe_menu: None,
             flexible_results: Default::default(),
             focused_result: None,
             search_results_navigation: search_results_navigation::Navigation::default(),
@@ -1537,11 +1621,20 @@ impl Reader {
                 data.join("annotation-exchange.json"),
             ),
             library_export: library_export::Export::load(data.join("highlight-export.json")),
-            dictionaries: DictionarySources::for_reader(documents, data),
+            dictionaries,
             dictionary_preference,
             dictionary_settings,
             dictionary_origin: Screen::ReadingControls,
+            dictionary_catalog,
+            dictionary_catalog_filter: crate::dictionary_catalog::Filter::All,
+            dictionary_catalog_refresh: None,
+            dictionary_catalog_refresh_attempted: false,
+            dictionary_size_check: None,
+            dictionary_size_estimate: None,
             installed_dictionaries: Vec::new(),
+            dictionary_download: None,
+            ocr_model_download: None,
+            ocr_model_catalog_origin: Screen::ReadingData,
             lookup_history_path,
             lookup_history,
             vocabulary_view: Default::default(),
@@ -2436,6 +2529,7 @@ impl Reader {
             self.selection_mode = false;
         }
         self.flow_popup = None;
+        self.multiswipe_menu = None;
         self.end_dialog = None;
         self.close_dictionary_preset_picker();
         if screen != Screen::Dictionaries {
@@ -2557,6 +2651,7 @@ impl Reader {
                                 _,
                                 reading_profiles::ValueField::FontSize
                                     | reading_profiles::ValueField::FontWeight
+                                    | reading_profiles::ValueField::LetterSpacing
                                     | reading_profiles::ValueField::CropMargin
                                     | reading_profiles::ValueField::ScanGamma
                             )
@@ -2566,6 +2661,13 @@ impl Reader {
                 } else if matches!(screen, Screen::NumberingValue(NumberField::AutoTurn)) {
                     5
                 } else if matches!(screen, Screen::NumberingValue(NumberField::ScrollDelay)) {
+                    4
+                } else if matches!(
+                    screen,
+                    Screen::NumberingValue(
+                        NumberField::DoubleTapInterval | NumberField::TwoFingerTapDuration
+                    )
+                ) {
                     4
                 } else if matches!(
                     screen,
@@ -2602,6 +2704,11 @@ impl Reader {
                     } else {
                         3
                     }
+                } else if matches!(
+                    screen,
+                    Screen::NumberingValue(NumberField::ReadingSideMargins)
+                ) {
+                    7
                 } else {
                     4
                 },
@@ -2621,6 +2728,24 @@ impl Reader {
                 }
                 Screen::NumberingValue(NumberField::CornerHoldPause) => {
                     self.editor.text = gestures::corner_pause_seconds(&self.controls)
+                        .to_string()
+                        .chars()
+                        .collect();
+                    self.editor.caret = self.editor.text.len();
+                }
+                Screen::NumberingValue(NumberField::DoubleTapInterval) => {
+                    self.editor.text = self
+                        .controls
+                        .double_tap_interval_ms()
+                        .to_string()
+                        .chars()
+                        .collect();
+                    self.editor.caret = self.editor.text.len();
+                }
+                Screen::NumberingValue(NumberField::TwoFingerTapDuration) => {
+                    self.editor.text = self
+                        .controls
+                        .two_finger_tap_duration_ms()
                         .to_string()
                         .chars()
                         .collect();
@@ -2673,6 +2798,38 @@ impl Reader {
                         .collect();
                     self.editor.caret = self.editor.text.len();
                 }
+                Screen::NumberingValue(NumberField::CjkScanLength) => {
+                    self.editor.text = self
+                        .dictionary_settings
+                        .cjk_scan_length
+                        .to_string()
+                        .chars()
+                        .collect();
+                    self.editor.caret = self.editor.text.len();
+                }
+                Screen::NumberingValue(NumberField::ReadingMargin(edge)) => {
+                    if let Some(active) = &self.active {
+                        let settings = active.reading.config.settings;
+                        let margin = match edge {
+                            character_page_settings::MarginEdge::Left => settings.left_margin(),
+                            character_page_settings::MarginEdge::Right => settings.right_margin(),
+                            character_page_settings::MarginEdge::Top => settings.top_margin(),
+                            character_page_settings::MarginEdge::Bottom => settings.bottom_margin(),
+                        };
+                        self.editor.text = margin.to_string().chars().collect();
+                        self.editor.caret = self.editor.text.len();
+                    }
+                }
+                Screen::NumberingValue(NumberField::ReadingSideMargins) => {
+                    if let Some(active) = &self.active {
+                        let settings = active.reading.config.settings;
+                        self.editor.text =
+                            format!("{},{}", settings.left_margin(), settings.right_margin())
+                                .chars()
+                                .collect();
+                        self.editor.caret = self.editor.text.len();
+                    }
+                }
                 _ => {}
             }
             if let Screen::NumberingValue(
@@ -2710,8 +2867,26 @@ impl Reader {
             self.editor.text = format!("{margin:.2}").chars().collect();
             self.editor.caret = self.editor.text.len();
         }
+        if screen == Screen::NumberingValue(NumberField::ScanWhiteLevel)
+            && let Some(fixed) = &self.fixed
+        {
+            let level = fixed
+                .reading
+                .preferences()
+                .scan_white_level
+                .unwrap_or(u8::MAX);
+            self.editor.text = level.to_string().chars().collect();
+            self.editor.caret = self.editor.text.len();
+        }
         if screen == Screen::GoToPage {
             self.editor = Editor::new(96);
+        }
+        if let Screen::MultiswipeActionName(shape, index) = screen {
+            self.editor = Editor::new(40);
+            if let Some(name) = self.gestures.multiswipes.action_name(shape, index) {
+                self.editor.text = name.chars().collect();
+                self.editor.caret = self.editor.text.len();
+            }
         }
         if let Screen::ProfileName(mode) = screen {
             self.prepare_profile_name(mode);
@@ -3087,6 +3262,8 @@ impl Reader {
                 | Screen::ReadingProfile(_)
                 | Screen::ReadingProfileFields(_)
                 | Screen::ReadingProfileValues(_)
+                | Screen::ReadingProfileZoom(_)
+                | Screen::ReadingProfileFonts(_)
                 | Screen::ReadingProfileMargins(_)
                 | Screen::ReadingProfileFontRendering(_)
                 | Screen::ReadingProfileBookRendering(_)
@@ -3551,6 +3728,12 @@ impl Reader {
             | Screen::CustomMultiswipes
             | Screen::RecordMultiswipe
             | Screen::MultiswipeBinding(_)
+            | Screen::MultiswipeActions(_)
+            | Screen::AddMultiswipeAction(_)
+            | Screen::MultiswipeMode(_)
+            | Screen::MultiswipeQuickMenuSettings(_)
+            | Screen::MultiswipeQuickMenuPosition(_)
+            | Screen::EditMultiswipeAction(..)
             | Screen::RemoveMultiswipe(_) => {
                 return self
                     .gestures
@@ -3807,7 +3990,7 @@ impl Reader {
                         InterfaceLanguage::English => ("English", "Complete interface"),
                         InterfaceLanguage::Vietnamese => (
                             "Tiếng Việt (partial)",
-                            "Reading bars only; other controls remain in English",
+                            "Menus and reading controls are translated; some details remain in English",
                         ),
                     };
                     let selected = language == self.controls.interface_language;
@@ -3860,6 +4043,21 @@ impl Reader {
         ) {
             return self.source_rows();
         }
+        if screen == Screen::DictionaryCatalog {
+            return self.dictionary_catalog_rows();
+        }
+        if let Screen::DictionaryCatalogLanguage(index) = screen {
+            return self.dictionary_catalog_language_rows(index);
+        }
+        if let Screen::DictionaryCatalogItem(group, index) = screen {
+            return self.dictionary_catalog_item_rows(group, index);
+        }
+        if screen == Screen::OcrLanguageCatalog {
+            return self.ocr_language_catalog_rows();
+        }
+        if let Screen::OcrLanguageCatalogItem(index) = screen {
+            return self.ocr_language_catalog_item_rows(index);
+        }
         if let Screen::DictionaryOptions(i) = screen {
             return self.source_options(i);
         }
@@ -3885,6 +4083,13 @@ impl Reader {
                 Item::new("Clear recognized text", Action::Show(Screen::ClearOcr))
                     .detail("Clear saved OCR text from document pages"),
             ];
+            if self.ocr_assets.is_some() {
+                items.push(
+                    Item::new("Manage OCR language packs", Action::ManageOcrLanguages).detail(
+                        "Install offline recognition models from the pinned Tesseract catalog",
+                    ),
+                );
+            }
             if self.open_book_id().is_some() {
                 items.push(
                     Item::new(
@@ -4086,6 +4291,10 @@ impl Reader {
                             ));
                         }
                     }
+                    items.push(
+                        Item::new("Manage language packs", Action::ManageOcrLanguages)
+                            .detail("Install more offline recognition languages"),
+                    );
                     items
                 }),
                 _ => Vec::new(),
@@ -4255,21 +4464,16 @@ impl Reader {
                     .note
                     .as_deref()
                     .filter(|note| !note.trim().is_empty());
-                let title = match self.controls.annotation_list_text {
-                    AnnotationListText::NoteIfSet => note.unwrap_or(&label).to_owned(),
-                    _ => label,
-                };
-                let description =
-                    if self.controls.annotation_list_text == AnnotationListText::HighlightAndNote {
-                        note.map_or_else(
-                            || "Page bookmark".to_owned(),
-                            |text| format!("Note: {text}"),
-                        )
-                    } else if note.is_some() {
-                        "Bookmark note".to_owned()
-                    } else {
-                        "Page bookmark".to_owned()
-                    };
+                // KOReader's three "Show in items" choices all preserve a
+                // page bookmark's original text. The note modes additionally
+                // show its note; only highlight rows replace their text with
+                // a note in NoteIfSet mode.
+                let show_note = self.controls.annotation_list_text
+                    != AnnotationListText::HighlightedText;
+                let description = note.filter(|_| show_note).map_or_else(
+                    || "Page bookmark".to_owned(),
+                    |text| format!("Note: {text}"),
+                );
                 let detail = saved_mark_detail(
                     bookmark.created_at,
                     format!("{description} · {caption}"),
@@ -4280,7 +4484,7 @@ impl Reader {
                     location,
                     kind: 0,
                     storage_index: index,
-                    item: Item::new(title, Action::Bookmark(index)).detail(detail),
+                    item: Item::new(label, Action::Bookmark(index)).detail(detail),
                 });
             }
 
@@ -5048,6 +5252,7 @@ impl Reader {
             Action::Show(Screen::Library) => {
                 self.request_close(profile_panel::on_close::AfterClose::Library)?;
             }
+            Action::Show(Screen::DictionaryCatalog) => self.open_dictionary_catalog(),
             Action::Show(screen) => self.show(screen),
             Action::SearchReadingMenus => self.begin_menu_search()?,
             Action::OpenQuickstart => {
@@ -5151,12 +5356,48 @@ impl Reader {
                 self.show(Screen::Fixed);
                 self.record_position();
             }
+            Action::FitContent(fit) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.fit_content(fit)?;
+                self.show(Screen::Fixed);
+                self.record_position();
+            }
+            Action::ZoomTargetContent(content) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.set_content_fit_target(content)?;
+                self.show(Screen::Fixed);
+                self.record_position();
+            }
+            Action::ZoomTargetManual => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.set_manual_zoom_target()?;
+                self.show(Screen::Fixed);
+                self.record_position();
+            }
+            Action::SetFixedFitAxis(fit) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.set_fit_axis(fit)?;
+                self.show(Screen::Fixed);
+                self.record_position();
+            }
             Action::FitHeight => {
                 let fixed = self
                     .fixed
                     .as_mut()
                     .ok_or("Open a fixed-page document first")?;
-                fixed.reading.fit_height()?;
+                fixed.reading.set_fit_axis(FixedContentFit::Height)?;
                 self.show(Screen::Fixed);
                 self.record_position();
             }
@@ -5166,6 +5407,24 @@ impl Reader {
                     .as_mut()
                     .ok_or("Open a fixed-page document first")?;
                 fixed.reading.set_zoom(level)?;
+                self.show(Screen::Fixed);
+                self.record_position();
+            }
+            Action::SetFixedZoomFactor(factor) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.set_zoom_factor_hundredths(factor)?;
+                self.show(Screen::Fixed);
+                self.record_position();
+            }
+            Action::AdjustFixedZoomFactor(delta) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.adjust_zoom_factor_hundredths(delta)?;
                 self.show(Screen::Fixed);
                 self.record_position();
             }
@@ -5269,6 +5528,21 @@ impl Reader {
                     .ok_or("Open a fixed-page document first")?;
                 fixed.reading.set_scan_white_level(level)?;
                 self.record_position();
+            }
+            Action::Dewatermark(enabled) => {
+                let fixed = self
+                    .fixed
+                    .as_mut()
+                    .ok_or("Open a fixed-page document first")?;
+                fixed.reading.set_dewatermark(enabled)?;
+                self.show(Screen::Fixed);
+                self.record_position();
+                self.notice = Some(if enabled {
+                    "Dewatermark on"
+                } else {
+                    "Dewatermark off"
+                }
+                .into());
             }
             Action::ScanColumns => self.open_scan_columns()?,
             Action::Overview => self.open_overview()?,
@@ -5404,6 +5678,9 @@ impl Reader {
                 });
                 self.base_stylesheet_default_prompt = Some((style, fictionbook));
             }
+            Action::AdjustReadingMargin(edge, delta) => {
+                self.adjust_reading_margin(edge, delta)?;
+            }
             Action::Text(settings) => {
                 let active = self.active.as_mut().ok_or("No open book")?;
                 active.reading.reflow(settings)?;
@@ -5465,6 +5742,22 @@ impl Reader {
                 self.show(Screen::FooterSettings);
             }
             Action::ShowDictionaries => self.open_sources()?,
+            Action::InstallDictionary(group, index) => self.install_dictionary(group, index)?,
+            Action::DownloadDictionaryWithoutSizeEstimate(group, index) => {
+                self.download_dictionary_without_size_estimate(group, index)?
+            }
+            Action::CheckDictionarySize(group, index) => {
+                self.check_dictionary_size(group, index)?
+            }
+            Action::RefreshDictionaryCatalog => self.refresh_dictionary_catalog(),
+            Action::CycleDictionaryCatalogFilter => self.cycle_dictionary_catalog_filter(),
+            Action::CancelDictionaryDownload => self.cancel_dictionary_download(),
+            Action::ManageOcrLanguages => {
+                self.ocr_model_catalog_origin = self.screen;
+                self.show(Screen::OcrLanguageCatalog);
+            }
+            Action::InstallOcrLanguage(index) => self.install_ocr_language(index)?,
+            Action::CancelOcrLanguageDownload => self.cancel_ocr_language_download(),
             Action::DictionaryPreset(command) => self.dictionary_preset_command(command)?,
             Action::DictionarySource(action) => self.change_source(action)?,
             Action::DictionaryButtons(action) => self.change_dictionary_buttons(action)?,
@@ -5497,6 +5790,12 @@ impl Reader {
             Action::SetProfileRendering(index, value) => {
                 self.save_profile_rendering_choice(index, value)?
             }
+            Action::ShowProfileZoom(index) => self.show_profile_zoom(index)?,
+            Action::SetProfileZoom(index, choice) => {
+                self.save_profile_zoom_choice(index, choice)?
+            }
+            Action::ShowProfileFonts(index) => self.open_profile_font_chooser(index)?,
+            Action::SetProfileFont(index, font) => self.set_profile_font(index, font)?,
             Action::ToggleProfileMarginLink(index) => self.toggle_profile_margin_link(index)?,
             Action::UpdateFooterPreset(index) => {
                 let mut presets = self.footer_presets.clone();
@@ -5894,6 +6193,10 @@ impl Reader {
             Screen::BookIdentityEdit(field) => Some(field),
             _ => None,
         };
+        let multiswipe_action = match self.screen {
+            Screen::MultiswipeActionName(shape, index) => Some((shape, index)),
+            _ => None,
+        };
         let navigation = if self.screen.uses_navigation_viewport() {
             self.navigation_layout()
         } else {
@@ -5913,6 +6216,8 @@ impl Reader {
                 Screen::DictionaryPresets(mode.back())
             } else if book_identity.is_some() {
                 Screen::BookDetails
+            } else if let Some((shape, index)) = multiswipe_action {
+                Screen::EditMultiswipeAction(shape, index)
             } else if self.rename_collection.take().is_some() {
                 Screen::BookList
             } else {
@@ -5955,6 +6260,11 @@ impl Reader {
                 self.save_dictionary_preset_name(mode, name.trim())
             } else if let Some(field) = book_identity {
                 self.save_book_identity(field, &name)
+            } else if let Some((shape, index)) = multiswipe_action {
+                self.gestures
+                    .multiswipes
+                    .rename_action(shape, index, name.trim())
+                    .map(|()| self.show(Screen::EditMultiswipeAction(shape, index)))
             } else {
                 self.save_collection_name(name.trim())
             };
@@ -6519,6 +6829,13 @@ impl Reader {
         }
     }
 
+    pub(super) fn change_page_by_relative(&mut self, delta: isize) -> Change {
+        match self.jump_relative_pages(delta) {
+            Ok(()) => self.applied_change(),
+            Err(error) => self.report(error),
+        }
+    }
+
     /// Whether the pages are drawn light on dark. Under Primitive Launcher the launcher's theme decides; standalone,
     /// the Night pages setting does.
     fn uses_night_pages(&self) -> bool {
@@ -6534,6 +6851,8 @@ impl Reader {
 
     fn auto_turn_eligible(&self) -> bool {
         self.stats_awake
+            && self.multiswipe_menu.is_none()
+            && self.gestures.pending_double_tap.is_none()
             && self.quickstart.is_none()
             && self.chapter_navigation_job.is_none()
             && !self.scroll_pan.busy()
@@ -6597,6 +6916,19 @@ impl Reader {
             && (self.screen != Screen::GoToPage || self.eager_typography.waiting_for_layout())
         {
             return None;
+        }
+        if self.stats_awake
+            && self.screen == Screen::PageOverview
+            && self
+                .overview
+                .as_ref()
+                .is_some_and(|overview| overview.chapter.is_some())
+            && self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.reading.has_exact_local_screen_pages())
+        {
+            return Some(ScreenPageIntent::Visible);
         }
         if self.needs_screen_page_count() {
             return Some(ScreenPageIntent::Visible);
@@ -9381,22 +9713,43 @@ impl Reader {
                 .controls
                 .interface_language
                 .annotation_text("Edit note"),
-            (Screen::BookList, Some(BookList::Favorites)) => "Favorites",
-            (Screen::BookList, Some(BookList::Recent)) => "Recently read",
-            (Screen::BookList, Some(BookList::Authors)) => "Authors",
-            (Screen::BookList, Some(BookList::Author(author))) => {
-                author.as_deref().unwrap_or("Unknown author")
+            (Screen::BookList, Some(BookList::Favorites)) => {
+                self.controls.interface_language.screen_title("Favorites")
             }
-            (Screen::BookList, Some(BookList::Status(status))) => status.label(),
+            (Screen::BookList, Some(BookList::Recent)) => self
+                .controls
+                .interface_language
+                .screen_title("Recently read"),
+            (Screen::BookList, Some(BookList::Authors)) => {
+                self.controls.interface_language.screen_title("Authors")
+            }
+            (Screen::BookList, Some(BookList::Author(author))) => {
+                author.as_deref().unwrap_or_else(|| {
+                    self.controls
+                        .interface_language
+                        .screen_title("Unknown author")
+                })
+            }
+            (Screen::BookList, Some(BookList::Status(status))) => self
+                .controls
+                .interface_language
+                .library_view_text(status.label()),
             (Screen::BookList, Some(BookList::Collection(name))) => name,
             (Screen::InterfaceLanguage, _) => {
                 self.controls.interface_language.text("Interface language")
             }
-            _ => self.screen.title(),
+            _ => self
+                .controls
+                .interface_language
+                .screen_title(self.screen.title()),
         };
         let scoped_title;
         let title = if self.screen == Screen::MenuSearchResults {
-            scoped_title = format!("Menu search · {}", self.menu_search.query());
+            scoped_title = format!(
+                "{} · {}",
+                self.controls.interface_language.screen_title("Menu search"),
+                self.menu_search.query()
+            );
             &scoped_title
         } else if self.screen == Screen::Matches && self.search_chapter_active() {
             scoped_title = format!(
@@ -9532,6 +9885,7 @@ impl Reader {
                 | Screen::BookIdentityEdit(_)
                 | Screen::ProfileName(_)
                 | Screen::FooterPresetName(_)
+                | Screen::MultiswipeActionName(..)
                 | Screen::DictionaryPresets(dictionary_presets::Page::Name(_))
                 | Screen::FooterCustomText
                 | Screen::Note
@@ -9591,6 +9945,9 @@ impl Reader {
                 ) => (part.range_label(), "Set"),
                 Screen::ProfileName(_) => ("Profile name", "Save"),
                 Screen::FooterPresetName(_) => ("Status bar preset name", "Save"),
+                Screen::MultiswipeActionName(_, _) => {
+                    ("Quick menu label · up to 40 characters", "Save")
+                }
                 Screen::DictionaryPresets(dictionary_presets::Page::Name(_)) => {
                     ("Dictionary preset name", "Save")
                 }
@@ -9628,6 +9985,12 @@ impl Reader {
                     ("Page-turn interval: 1 to 86,400 seconds", "Set")
                 }
                 Screen::NumberingValue(NumberField::CornerHoldPause) => ("5 to 30 seconds", "Set"),
+                Screen::NumberingValue(NumberField::DoubleTapInterval) => {
+                    ("Double-tap interval: 100 to 2,000 ms", "Set")
+                }
+                Screen::NumberingValue(NumberField::TwoFingerTapDuration) => {
+                    ("Two-finger tap duration: 100 to 2,000 ms", "Set")
+                }
                 Screen::NumberingValue(NumberField::ScrollDelay) => ("0 to 2,000 ms", "Set"),
                 Screen::NumberingValue(
                     NumberField::AutoTurnOverlapHorizontal | NumberField::AutoTurnOverlapVertical,
@@ -9637,6 +10000,9 @@ impl Reader {
                 }
                 Screen::NumberingValue(NumberField::CropMargin) => {
                     ("Choose 0.00 to 1.50 inches", "Set")
+                }
+                Screen::NumberingValue(NumberField::ScanWhiteLevel) => {
+                    ("White threshold: 0 to 255", "Set")
                 }
                 Screen::NumberingValue(NumberField::ReadingGuide(field)) => (
                     self.controls
@@ -9668,6 +10034,23 @@ impl Reader {
                 Screen::NumberingValue(NumberField::FooterCustomTextRepetitions) => {
                     ("Custom text repetitions: 1 to 99", "Set")
                 }
+                Screen::NumberingValue(NumberField::CjkScanLength) => {
+                    ("CJK selection look-ahead: 0 to 1,000 characters", "Set")
+                }
+                Screen::NumberingValue(NumberField::ReadingMargin(_)) => {
+                    (
+                        self.controls.interface_language.numeric_picker_text(
+                            "Margin in pixels; maximum is one quarter of the page edge",
+                        ),
+                        self.controls.interface_language.numeric_picker_text("Set"),
+                    )
+                }
+                Screen::NumberingValue(NumberField::ReadingSideMargins) => (
+                    self.controls.interface_language.numeric_picker_text(
+                        "Enter left,right pixels; each is limited to one quarter of the short page edge",
+                    ),
+                    self.controls.interface_language.numeric_picker_text("Set"),
+                ),
                 Screen::NumberingValue(NumberField::MarginSize) => {
                     ("Margin text size from 8 to 20", "Set")
                 }
@@ -9915,6 +10298,13 @@ impl Reader {
                         Action::DictionarySource(SourceAction::BookFuzzySearch) => {
                             RowAccessory::Toggle(self.fuzzy_search_enabled())
                         }
+                        Action::DictionarySource(SourceAction::JapaneseTextConversion(
+                            conversion,
+                        )) => RowAccessory::Toggle(
+                            self.dictionary_settings
+                                .japanese_text_conversions()
+                                .enabled(*conversion),
+                        ),
                         Action::ChapterLevel(setting) => {
                             RowAccessory::Toggle(self.chapter_level_checked(setting))
                         }
@@ -9972,6 +10362,13 @@ impl Reader {
                                     != self.controls.ignore_corner_holds =>
                         {
                             RowAccessory::Toggle(self.controls.ignore_corner_holds)
+                        }
+                        Action::SetReadingControls(next)
+                            if self.screen == Screen::Gestures
+                                && next.double_tap_page_jump
+                                    != self.controls.double_tap_page_jump =>
+                        {
+                            RowAccessory::Toggle(self.controls.double_tap_page_jump)
                         }
                         Action::SetReadingControls(_) if self.screen == Screen::ReadingGuides => {
                             RowAccessory::Toggle(self.controls.reading_guides.enabled)
@@ -10215,6 +10612,7 @@ impl Reader {
 impl Reader {
     fn reading_overlays_clear(&self) -> bool {
         matches!(self.screen, Screen::Book | Screen::Fixed)
+            && self.multiswipe_menu.is_none()
             && self.logical_recovery.is_none()
             && self.chapter_navigation_job.is_none()
             && self.resume_recovery.is_none()
@@ -10524,6 +10922,9 @@ impl App for Reader {
         self.draw_detached_note(canvas);
         self.draw_folder_resume_gate(canvas);
         self.draw_folder_open(canvas);
+        if let Some(menu) = &self.multiswipe_menu {
+            menu.draw(canvas, &self.book_shortcuts);
+        }
     }
 
     fn press_point(&self, input: Input) -> Option<(f32, f32)> {
@@ -10568,6 +10969,9 @@ impl App for Reader {
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
+        if let Some(change) = self.multiswipe_menu_input(input) {
+            return change;
+        }
         if let Some(change) = self.reflow_completeness_input(input) {
             return change;
         }
@@ -10887,7 +11291,15 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if let Some(change) = self.multiswipe_menu_input(input) {
+            return change;
+        }
         if let Some(change) = self.reflow_completeness_input(input) {
+            return change;
+        }
+        if !self.gestures.replaying_double_tap
+            && let Some(change) = self.double_tap_input(input)
+        {
             return change;
         }
         if input == Input::Sleep {
@@ -11256,6 +11668,18 @@ impl App for Reader {
                 let current = flow.preferences();
                 if result.is_ok() && current != previous {
                     fixed.reading.set_fixed_reflow_spacing(current.spacing);
+                    fixed.reading.set_fixed_reflow_columns(current.columns);
+                    fixed.reading.set_fixed_reflow_word_gap(current.word_gap);
+                    fixed.reading.set_fixed_reflow_alignment(current.alignment);
+                    fixed.reading.set_fixed_reflow_direction(current.direction);
+                    fixed
+                        .reading
+                        .set_fixed_text_reflow_direction(current.text_direction);
+                    fixed.reading.set_fixed_reflow_text_scale(
+                        current
+                            .text_scale
+                            .unwrap_or(crate::library::DEFAULT_SCAN_REFLOW_TEXT_SCALE),
+                    );
                     fixed
                         .reading
                         .apply_page_overlap(current.overlap_enabled, current.marker);
@@ -11345,6 +11769,7 @@ impl App for Reader {
                 | Screen::BookIdentityEdit(_)
                 | Screen::ProfileName(_)
                 | Screen::FooterPresetName(_)
+                | Screen::MultiswipeActionName(..)
                 | Screen::DictionaryPresets(dictionary_presets::Page::Name(_))
         ) {
             return self.name_editor_input(input);
@@ -11477,6 +11902,18 @@ impl App for Reader {
                     Screen::RemoveCollection => self.show(Screen::BookList),
                     Screen::GestureBinding(gesture) => self.return_to_gesture_list(gesture),
                     Screen::MultiswipeBinding(shape) => self.return_to_multiswipe_list(shape),
+                    Screen::MultiswipeActions(shape) => {
+                        self.show(Screen::MultiswipeBinding(shape))
+                    }
+                    Screen::AddMultiswipeAction(shape)
+                    | Screen::MultiswipeMode(shape)
+                    | Screen::MultiswipeQuickMenuSettings(shape)
+                    | Screen::EditMultiswipeAction(shape, _) => {
+                        self.show(Screen::MultiswipeActions(shape))
+                    }
+                    Screen::MultiswipeQuickMenuPosition(shape) => {
+                        self.show(Screen::MultiswipeQuickMenuSettings(shape))
+                    }
                     Screen::RemoveMultiswipe(shape) => self.show(Screen::MultiswipeBinding(shape)),
                     Screen::RecordMultiswipe => self.show(Screen::CustomMultiswipes),
                     Screen::Multiswipes | Screen::CustomMultiswipes | Screen::GestureOverview => {
@@ -11507,6 +11944,13 @@ impl App for Reader {
                             self.restore_reading_list_ordinal(row);
                         }
                     }
+                    Screen::DictionaryCatalogItem(group, _) => {
+                        self.show(Screen::DictionaryCatalogLanguage(group))
+                    }
+                    Screen::DictionaryCatalogLanguage(_) => self.show(Screen::DictionaryCatalog),
+                    Screen::DictionaryCatalog => self.show(Screen::Dictionaries),
+                    Screen::OcrLanguageCatalogItem(_) => self.show(Screen::OcrLanguageCatalog),
+                    Screen::OcrLanguageCatalog => self.show(self.ocr_model_catalog_origin),
                     Screen::Dictionaries => self.show(self.dictionary_origin),
                     Screen::DictionaryButtons(page) => self.dictionary_button_editor_back(page),
                     Screen::DictionaryPresets(page) => self.back_from_dictionary_presets(page),
@@ -11590,6 +12034,12 @@ impl App for Reader {
                     }),
                     Screen::ReadingProfile(_) => self.show(Screen::ReadingProfiles),
                     Screen::ReadingProfileValues(index) => self.show(Screen::ReadingProfile(index)),
+                    Screen::ReadingProfileZoom(index) => {
+                        self.show(Screen::ReadingProfileValues(index))
+                    }
+                    Screen::ReadingProfileFonts(index) => {
+                        self.show(Screen::ReadingProfileValues(index));
+                    }
                     Screen::ReadingProfileMargins(index)
                     | Screen::ReadingProfileFontRendering(index)
                     | Screen::ReadingProfileBookRendering(index) => {
@@ -11763,6 +12213,11 @@ impl App for Reader {
         Change::Partial
     }
 
+    #[cfg(feature = "multi-touch")]
+    fn multi_touch(&mut self, gesture: primitive_ui::MultiTouch) -> Change {
+        self.multi_touch_input(gesture)
+    }
+
     fn deadline(&self) -> Option<Instant> {
         if let Some(open) = &self.folder_open {
             return Some(open.deadline());
@@ -11872,8 +12327,29 @@ impl App for Reader {
             .chain(self.ocr.as_ref().map(|job| job.deadline))
             .chain(self.text_flow.as_ref().and_then(TextFlow::deadline))
             .chain(self.stats.deadline())
+            .chain(
+                self.dictionary_download
+                    .as_ref()
+                    .map(crate::dictionary_catalog::Job::deadline),
+            )
+            .chain(
+                self.dictionary_catalog_refresh
+                    .as_ref()
+                    .map(crate::dictionary_catalog::CatalogRefreshJob::deadline),
+            )
+            .chain(
+                self.dictionary_size_check
+                    .as_ref()
+                    .map(crate::dictionary_catalog::SizeCheckJob::deadline),
+            )
+            .chain(
+                self.ocr_model_download
+                    .as_ref()
+                    .map(crate::ocr_model_catalog::Job::deadline),
+            )
             .chain(self.reading_history.deadline())
             .chain(self.footer_refresh_at)
+            .chain(self.double_tap_deadline())
             .chain(
                 self.auto_turn
                     .deadline()
@@ -11888,6 +12364,9 @@ impl App for Reader {
     }
 
     fn tick(&mut self, now: Instant) -> Change {
+        if let Some(change) = self.finish_double_tap(now) {
+            return change;
+        }
         if self.folder_open.is_some() {
             return self.poll_folder_open(now).unwrap_or(Change::None);
         }
@@ -11895,6 +12374,18 @@ impl App for Reader {
             return self.poll_folder_resume(now).unwrap_or(Change::None);
         }
         self.retry_folder_activation(now);
+        if let Some(change) = self.poll_ocr_model_download(now) {
+            return change;
+        }
+        if let Some(change) = self.poll_dictionary_download(now) {
+            return change;
+        }
+        if let Some(change) = self.poll_dictionary_catalog_refresh(now) {
+            return change;
+        }
+        if let Some(change) = self.poll_dictionary_size_check(now) {
+            return change;
+        }
         if let Some(change) = self.poll_folder_activation(now) {
             return change;
         }
@@ -11958,6 +12449,11 @@ impl App for Reader {
         if page_count_changed && intent == Some(ScreenPageIntent::Visible) {
             if self.screen.is_contents() {
                 self.prepare_contents(false);
+            }
+            if self.screen == Screen::PageOverview
+                && let Err(error) = self.refresh_overview()
+            {
+                return self.report(error);
             }
             return Change::Partial;
         }
@@ -12335,7 +12831,15 @@ fn column_view(original: FixedPreferences, bounds: PdfTextRect) -> FixedPreferen
         crop: Some(bounds),
         scan_contrast: original.scan_contrast,
         scan_gamma_tenths: original.scan_gamma_tenths,
+        dewatermark: original.dewatermark,
         fixed_reflow_spacing: original.fixed_reflow_spacing,
+        fixed_reflow_columns: original.fixed_reflow_columns,
+        fixed_reflow_word_gap: original.fixed_reflow_word_gap,
+        fixed_reflow_alignment: original.fixed_reflow_alignment,
+        fixed_reflow_direction: original.fixed_reflow_direction,
+        fixed_text_reflow_direction: original.fixed_text_reflow_direction,
+        fixed_reflow_text_scale: original.fixed_reflow_text_scale,
+        fixed_reflow_text_height: original.fixed_reflow_text_height,
         dither: original.dither,
         straighten_limit: original.straighten_limit,
         force_ocr: original.force_ocr,
@@ -12721,6 +13225,11 @@ impl App for ReaderRuntime {
 
     fn input(&mut self, input: Input) -> Change {
         self.0.input(self.0.controls.invert_page_turn_input(input))
+    }
+
+    #[cfg(feature = "multi-touch")]
+    fn multi_touch(&mut self, gesture: primitive_ui::MultiTouch) -> Change {
+        self.0.multi_touch_input(gesture)
     }
 
     fn swipe(&mut self, input: Input, start_x: f32) -> Change {
@@ -14088,7 +14597,7 @@ mod tests {
         assert_eq!(position(&app.active.as_ref().unwrap().reading), before);
         app.input(Input::PageForward);
         if let Some(deadline) = app.deadline() {
-            app.tick(deadline);
+            app.tick(deadline + Duration::from_secs(1));
         }
         assert_ne!(position(&app.active.as_ref().unwrap().reading), before);
         assert_eq!(
@@ -14809,6 +15318,50 @@ mod tests {
             text_row.detail.as_deref(),
             Some("Note · Reading the Shore · Page 1")
         );
+    }
+
+    #[test]
+    fn page_bookmark_show_in_items_modes_preserve_text_and_gate_the_note() {
+        let fixture = Fixture::new();
+        let mut app = fixture.app();
+        app.open_path(&fixture.book).unwrap();
+        let id = app.active.as_ref().unwrap().id;
+        app.library.state_mut(id).unwrap().bookmarks.push(Bookmark {
+            note: Some("A saved thought".into()),
+            updated_at: None,
+            chapter_title: None,
+            created_at: None,
+            label: "Saved passage label".into(),
+            position: ReadingPosition {
+                chapter: 0,
+                page: 0,
+                anchor: None,
+            },
+        });
+        app.show(Screen::Highlights);
+
+        for mode in [
+            AnnotationListText::NoteIfSet,
+            AnnotationListText::HighlightAndNote,
+        ] {
+            app.controls.annotation_list_text = mode;
+            let row = app
+                .items()
+                .into_iter()
+                .find(|item| matches!(item.action, Action::Bookmark(0)))
+                .unwrap();
+            assert_eq!(row.title, "Saved passage label");
+            assert!(row.detail.unwrap().contains("Note: A saved thought"));
+        }
+
+        app.controls.annotation_list_text = AnnotationListText::HighlightedText;
+        let row = app
+            .items()
+            .into_iter()
+            .find(|item| matches!(item.action, Action::Bookmark(0)))
+            .unwrap();
+        assert_eq!(row.title, "Saved passage label");
+        assert!(!row.detail.unwrap().contains("A saved thought"));
     }
 
     #[test]
@@ -16210,10 +16763,20 @@ mod tests {
         app.open_path(&comic).unwrap();
         assert_eq!(app.screen, Screen::Fixed);
         assert_eq!(app.fixed.as_ref().unwrap().reading.count(), 2);
-        app.input(Input::PageForward);
-        if let Some(due) = app.fixed.as_ref().unwrap().reading.deadline() {
-            assert_eq!(app.tick(due), Change::Partial);
+        // A fit-width comic page is taller than the screen, so the first forward
+        // press scrolls it down; a later press turns to the next page.
+        let mut turned = false;
+        for _ in 0..8 {
+            app.input(Input::PageForward);
+            if let Some(due) = app.fixed.as_ref().unwrap().reading.deadline() {
+                app.tick(due + Duration::from_secs(1));
+            }
+            if app.fixed.as_ref().unwrap().reading.page() == 1 {
+                turned = true;
+                break;
+            }
         }
+        assert!(turned);
         assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
         app.activate(Action::RotatePage).unwrap();
         app.activate(Action::FitPage(false)).unwrap();
@@ -16288,6 +16851,7 @@ mod tests {
     }
 
     pub(super) fn tap_reading_control(app: &mut Reader, label: &str) -> Change {
+        app.reveal_reading_button(label);
         let rect = app.reading_button(label);
         app.input(Input::Tap(
             (rect.x + rect.w / 2) as f32,
@@ -16381,6 +16945,10 @@ mod tests {
         }
         view_controls(&mut app);
         assert_eq!(
+            tap_reading_config_choice(&mut app, "Zoom to", "Columns"),
+            Change::Partial
+        );
+        assert_eq!(
             tap_reading_config_choice(&mut app, "Columns", "2"),
             Change::Partial
         );
@@ -16393,6 +16961,10 @@ mod tests {
 
         view_controls(&mut app);
         capture_test_screen(&app, &fonts, "READER_FIXED_TILE_ZOOM_FRAME", false);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Zoom to", "Rows"),
+            Change::Partial
+        );
         assert_eq!(
             tap_reading_config_choice(&mut app, "Rows", "Custom"),
             Change::Partial
@@ -16419,7 +16991,95 @@ mod tests {
         assert_eq!(app.screen, Screen::Fixed);
         let reading = &app.fixed.as_ref().unwrap().reading;
         assert_eq!(reading.preferences().tile_zoom.unwrap().count_tenths, 25);
+        assert_eq!(reading.preferences().zoom_columns_tenths, Some(20));
+        assert_eq!(reading.preferences().zoom_rows_tenths, Some(25));
         assert!(reading.page_status().contains("2.5 rows"));
+
+        view_controls(&mut app);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Zoom to", "Columns"),
+            Change::Partial
+        );
+        let reading = &app.fixed.as_ref().unwrap().reading;
+        assert_eq!(
+            reading.preferences().tile_zoom.unwrap().axis,
+            FixedTileAxis::Columns
+        );
+        assert_eq!(reading.preferences().tile_zoom.unwrap().count_tenths, 20);
+        assert_eq!(reading.preferences().zoom_rows_tenths, Some(25));
+
+        view_controls(&mut app);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Zoom to", "Rows"),
+            Change::Partial
+        );
+        assert_eq!(
+            app.fixed
+                .as_ref()
+                .unwrap()
+                .reading
+                .preferences()
+                .tile_zoom
+                .unwrap()
+                .count_tenths,
+            25
+        );
+        let saved_fit = app
+            .fixed
+            .as_ref()
+            .unwrap()
+            .reading
+            .preferences()
+            .zoom_fit_axis;
+        assert!(saved_fit.is_some());
+
+        view_controls(&mut app);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Zoom to", "Content"),
+            Change::Partial
+        );
+        let content_view = app.fixed.as_ref().unwrap().reading.preferences();
+        assert!(content_view.tile_zoom.is_none());
+        assert_eq!(content_view.content_fit, saved_fit);
+
+        view_controls(&mut app);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Zoom to", "Manual"),
+            Change::Partial
+        );
+        let manual_view = app.fixed.as_ref().unwrap().reading.preferences();
+        assert!(manual_view.manual_zoom);
+        assert_eq!(manual_view.zoom_fit_axis, saved_fit);
+        assert_eq!(manual_view.zoom_columns_tenths, Some(20));
+        assert_eq!(manual_view.zoom_rows_tenths, Some(25));
+
+        view_controls(&mut app);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Zoom to", "Page"),
+            Change::Partial
+        );
+        let page_view = app.fixed.as_ref().unwrap().reading.preferences();
+        assert!(!page_view.manual_zoom);
+        assert!(page_view.tile_zoom.is_none());
+        assert_eq!(page_view.zoom_fit_axis, saved_fit);
+
+        view_controls(&mut app);
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Zoom to", "Rows"),
+            Change::Partial
+        );
+        assert_eq!(
+            app.fixed
+                .as_ref()
+                .unwrap()
+                .reading
+                .preferences()
+                .tile_zoom
+                .unwrap()
+                .count_tenths,
+            25
+        );
+
         app.input(Input::PageForward);
         app.tick(Instant::now() + Duration::from_secs(1));
         let saved = app.fixed.as_ref().unwrap().reading.preferences();
@@ -16697,6 +17357,19 @@ mod tests {
         app.open_path(&fixture.book).unwrap();
         app.open_reading_edge(false, 500.0);
         tap_reading_control(&mut app, "Rendering");
+        assert_eq!(
+            tap_reading_config_choice(&mut app, "Image scaling", "Best"),
+            Change::Partial
+        );
+        assert!(
+            app.active
+                .as_ref()
+                .unwrap()
+                .reading
+                .config
+                .settings
+                .smooth_images
+        );
         assert_eq!(
             tap_reading_config_choice(&mut app, "Image scaling", "Fast"),
             Change::Partial
@@ -20699,7 +21372,55 @@ mod tests {
         let restored = reopened.fixed.as_ref().unwrap().reading.preferences();
         assert!(!restored.scan_contrast);
         assert_eq!(restored.scan_gamma_tenths, None);
+        let white_threshold_presets: [(&str, Option<u8>); 8] = [
+            ("255", None),
+            ("224", Some(224)),
+            ("192", Some(192)),
+            ("160", Some(160)),
+            ("128", Some(128)),
+            ("96", Some(96)),
+            ("64", Some(64)),
+            ("32", Some(32)),
+        ];
+        for (label, level) in white_threshold_presets {
+            tap_reading_config_choice(&mut reopened, "Scan white level", label);
+            assert_eq!(
+                reopened
+                    .fixed
+                    .as_ref()
+                    .unwrap()
+                    .reading
+                    .preferences()
+                    .scan_white_level,
+                level,
+                "KOReader white threshold preset {label}"
+            );
+        }
         assert_eq!(reopened.current_history_location(), original);
+    }
+
+    #[test]
+    fn dewatermark_setting_is_restored_after_a_manual_white_threshold() {
+        let fixture = Fixture::new();
+        let document = fixture.root.join("Watermarked report.pdf");
+        fs::copy(crate::test_fixture("tilted-scan.pdf"), &document).unwrap();
+        let mut app = fixture.app();
+        app.open_path(&document).unwrap();
+        app.activate(Action::Dewatermark(true)).unwrap();
+        assert!(app.fixed.as_ref().unwrap().reading.preferences().dewatermark);
+
+        app.activate(Action::ScanWhiteLevel(Some(224))).unwrap();
+        let overridden = app.fixed.as_ref().unwrap().reading.preferences();
+        assert_eq!(overridden.scan_white_level, Some(224));
+        assert!(overridden.dewatermark);
+
+        app.activate(Action::ScanWhiteLevel(None)).unwrap();
+        app.save().unwrap();
+        let mut reopened = fixture.app();
+        reopened.open_path(&document).unwrap();
+        let restored = reopened.fixed.as_ref().unwrap().reading.preferences();
+        assert_eq!(restored.scan_white_level, None);
+        assert!(restored.dewatermark);
     }
 
     #[test]
@@ -20753,7 +21474,8 @@ mod tests {
         assert_eq!(app.reading_panel, None);
         assert_eq!(tap_reading_control(&mut app, "View"), Change::Partial);
         assert_eq!(app.reading_panel, Some(BarPanel::View));
-        assert_eq!(tap_reading_control(&mut app, "Fit width"), Change::Partial);
+        // Width is already the default fit for a new fixed-page edition, so tapping it changes nothing.
+        assert_eq!(tap_reading_control(&mut app, "Width"), Change::None);
         assert_eq!(app.screen, Screen::FixedTools);
         assert_eq!(app.reading_panel, Some(BarPanel::View));
         assert!(app.fixed.as_ref().unwrap().reading.preferences().width_fit);
@@ -21769,7 +22491,7 @@ mod tests {
                 return change;
             }
             let deadline = app.deadline().expect("queued fixed page turn deadline");
-            app.tick(deadline)
+            app.tick(deadline + Duration::from_secs(1))
         };
 
         let page_one_text = app.fixed.as_ref().unwrap().reading.page_text(0).unwrap();
@@ -21923,7 +22645,7 @@ mod tests {
                 return change;
             }
             let deadline = app.deadline().expect("queued fixed page turn deadline");
-            app.tick(deadline)
+            app.tick(deadline + Duration::from_secs(1))
         };
 
         let first_text = app.fixed.as_ref().unwrap().reading.page_text(0).unwrap();

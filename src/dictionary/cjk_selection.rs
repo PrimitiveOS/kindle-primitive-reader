@@ -1,15 +1,21 @@
-//! One bounded dictionary-index pass for an automatic CJK word selection.
+//! One bounded dictionary-index pass for automatic CJK and Hangul selection.
 #[cfg(feature = "kindle")]
 use super::*;
 #[cfg(feature = "kindle")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub(crate) const MAX_SCAN_CHARACTERS: usize = 20;
+pub(crate) const DEFAULT_CJK_SCAN_LENGTH: usize = 20;
+pub(crate) const MAX_CJK_SCAN_LENGTH: usize = 1000;
 #[cfg(feature = "kindle")]
 const MAX_SELECTION_TERMS: usize = 4096;
+#[cfg(feature = "kindle")]
+const MAX_SELECTION_TERM_BYTES: usize = 3 * 1024 * 1024;
 
 pub(crate) fn word_character(c: char) -> bool {
-    matches!(c, '\u{3041}'..='\u{3096}' | '\u{3099}'..='\u{309f}' |
+    matches!(c, '\u{1100}'..='\u{11ff}' | '\u{3130}'..='\u{318f}' |
+        '\u{a960}'..='\u{a97f}' | '\u{ac00}'..='\u{d7af}' | '\u{d7b0}'..='\u{d7ff}' |
+        '\u{ffa0}'..='\u{ffdc}' |
+        '\u{3041}'..='\u{3096}' | '\u{3099}'..='\u{309f}' |
         '\u{30a1}'..='\u{30fa}' | '\u{30fc}'..='\u{30ff}' |
         '\u{ff66}'..='\u{ff9f}' | '\u{fe00}'..='\u{fe0f}' | '\u{e0100}'..='\u{e01ef}' | '\u{3400}'..='\u{4dbf}' |
         '\u{4e00}'..='\u{9fff}' | '\u{f900}'..='\u{faff}' |
@@ -28,7 +34,49 @@ impl DictionarySources {
         with_forms: bool,
         cancel: &AtomicBool,
     ) -> io::Result<Option<usize>> {
-        let (forms, ends) = prefix_forms(text, with_forms);
+        self.longest_cjk_prefix_with_limit(
+            text,
+            scope,
+            with_forms,
+            DEFAULT_CJK_SCAN_LENGTH,
+            cancel,
+        )
+    }
+
+    pub(crate) fn longest_cjk_prefix_with_limit(
+        &self,
+        text: &str,
+        scope: SourceScope<'_>,
+        with_forms: bool,
+        lookahead: usize,
+        cancel: &AtomicBool,
+    ) -> io::Result<Option<usize>> {
+        self.longest_cjk_prefix_with_options(
+            text,
+            scope,
+            with_forms,
+            lookahead,
+            JapaneseTextConversions::default(),
+            cancel,
+        )
+    }
+
+    pub(crate) fn longest_cjk_prefix_with_options(
+        &self,
+        text: &str,
+        scope: SourceScope<'_>,
+        with_forms: bool,
+        lookahead: usize,
+        conversions: JapaneseTextConversions,
+        cancel: &AtomicBool,
+    ) -> io::Result<Option<usize>> {
+        let (forms, ends) =
+            prefix_forms_with_limit(
+                text,
+                with_forms,
+                scan_character_limit(lookahead),
+                conversions,
+            );
         if ends.is_empty() {
             return Ok(None);
         }
@@ -134,13 +182,57 @@ impl DictionarySources {
 
 #[cfg(feature = "kindle")]
 fn prefix_forms(text: &str, with_forms: bool) -> (WordForms, Vec<usize>) {
+    prefix_forms_with_limit(
+        text,
+        with_forms,
+        scan_character_limit(DEFAULT_CJK_SCAN_LENGTH),
+        JapaneseTextConversions::default(),
+    )
+}
+
+pub(crate) fn scan_character_limit(lookahead: usize) -> usize {
+    lookahead
+        .min(MAX_CJK_SCAN_LENGTH)
+        .max(1)
+        .saturating_add(1)
+}
+
+#[cfg(feature = "kindle")]
+fn insert_selection_form(
+    forms: &mut WordForms,
+    bytes: &mut usize,
+    word: String,
+    rank: usize,
+) -> bool {
+    if forms.order.contains_key(&word) {
+        return true;
+    }
+    let Some(total) = bytes.checked_add(word.len()) else {
+        return false;
+    };
+    if forms.order.len() >= MAX_SELECTION_TERMS || total > MAX_SELECTION_TERM_BYTES {
+        return false;
+    }
+    *bytes = total;
+    forms.order.insert(word, rank);
+    true
+}
+
+#[cfg(feature = "kindle")]
+fn prefix_forms_with_limit(
+    text: &str,
+    with_forms: bool,
+    max_characters: usize,
+    conversions: JapaneseTextConversions,
+) -> (WordForms, Vec<usize>) {
     let ends: Vec<_> = text
         .char_indices()
-        .take(MAX_SCAN_CHARACTERS)
+        .take(max_characters.min(MAX_CJK_SCAN_LENGTH.saturating_add(1)))
         .take_while(|(_, c)| word_character(*c))
         .map(|(i, c)| i + c.len_utf8())
         .collect();
     let mut forms = WordForms::default();
+    let mut form_bytes = 0usize;
     // A source endpoint must not leave a combining voicing mark or variation
     // selector outside the selected rendered character.
     let maximum = ends.last().copied().unwrap_or(0);
@@ -155,13 +247,27 @@ fn prefix_forms(text: &str, with_forms: bool) -> (WordForms, Vec<usize>) {
         .collect();
     for (rank, &end) in ends.iter().enumerate() {
         let prefix = &text[..end];
-        forms.order.entry(prefix.into()).or_insert(rank);
-        if with_forms {
-            for (candidate, _) in WordForms::for_word(prefix).spellings() {
-                if forms.order.len() == MAX_SELECTION_TERMS {
-                    break;
+        if !insert_selection_form(&mut forms, &mut form_bytes, prefix.into(), rank) {
+            break;
+        }
+    }
+    if with_forms {
+        for (rank, &end) in ends.iter().enumerate() {
+            let prefix = &text[..end];
+            if prefix.len() > super::MAX_WORD_BYTES {
+                continue;
+            }
+            for (candidate, _) in
+                WordForms::for_word_with_japanese_conversions(prefix, conversions).spellings()
+            {
+                if !insert_selection_form(
+                    &mut forms,
+                    &mut form_bytes,
+                    candidate.into(),
+                    rank,
+                ) {
+                    return (forms, ends);
                 }
-                forms.order.entry(candidate.into()).or_insert(rank);
             }
         }
     }
@@ -341,12 +447,21 @@ mod tests {
         assert_eq!(ends[0], "食べました".len());
         assert_eq!(forms.rank("食べる"), Some(0));
         assert!(forms.order.keys().all(|s| !s.contains('。')));
-        let (forms, ends) = prefix_forms(&"あ".repeat(1000), true);
-        assert_eq!(ends.len(), MAX_SCAN_CHARACTERS);
+        let (forms, ends) = prefix_forms_with_limit(
+            // One character more than the scan limit, so the limit (not the text) bounds the endpoints.
+            &"あ".repeat(MAX_CJK_SCAN_LENGTH + 1),
+            true,
+            scan_character_limit(MAX_CJK_SCAN_LENGTH),
+            JapaneseTextConversions::default(),
+        );
+        assert_eq!(ends.len(), MAX_CJK_SCAN_LENGTH + 1);
         assert!(forms.order.len() <= MAX_SELECTION_TERMS);
         for punctuation in ['・', '･', '、', '。', '「', '」', ' ', '\n', '！', 'a'] {
             assert!(!word_character(punctuation));
         }
         assert!(word_character('𠮷'));
+        for hangul in ['한', 'ㄱ', 'ᄀ', 'ᅡ', 'ᆨ', 'ﾡ'] {
+            assert!(word_character(hangul), "{hangul}");
+        }
     }
 }

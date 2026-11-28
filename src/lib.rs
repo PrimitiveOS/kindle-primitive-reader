@@ -14,6 +14,8 @@ mod chm;
 pub mod comic;
 pub mod cre_pointer;
 pub mod dictionary;
+#[cfg(feature = "kindle")]
+pub mod dictionary_catalog;
 pub mod djvu;
 #[cfg(feature = "kindle")]
 pub mod document_check;
@@ -71,6 +73,8 @@ mod note_marker;
 mod ocr;
 #[cfg(feature = "kindle")]
 mod ocr_job;
+#[cfg(feature = "kindle")]
+pub mod ocr_model_catalog;
 pub mod odt;
 mod odt_sections;
 #[cfg(feature = "kindle")]
@@ -100,6 +104,8 @@ mod rtf;
 mod scan_columns;
 #[cfg(feature = "kindle")]
 mod scan_deskew;
+#[cfg(feature = "kindle")]
+mod scan_dewatermark;
 #[cfg(feature = "kindle")]
 mod scan_reflow;
 pub mod search;
@@ -546,8 +552,10 @@ impl Default for Settings {
             font_kerning: true,
             font_kerning_mode: None,
             font_hinting: FontHinting::Off,
-            smooth_images: true,
-            invert_night_images: false,
+            // KOReader defaults image scaling to Fast and night image
+            // inversion to On.
+            smooth_images: false,
+            invert_night_images: true,
             page_overlap_enabled: false,
             page_overlap_lines: 1,
             page_overlap_style: PageOverlapStyle::Dim,
@@ -757,6 +765,14 @@ impl Settings {
     }
 }
 
+/// Side of a pagination boundary to which a saved text location is attached.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SideBias {
+    Before,
+    After,
+}
+
 /// A text location in a specific revision of a chapter. Page numbers are derived.
 /// Offsets are UTF-8 bytes in the whitespace-normalized text of a block.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -778,6 +794,9 @@ pub struct Anchor {
     /// Zero-based picture within a text-empty block holding several illustrations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub illustration: Option<usize>,
+    /// Preserve an imported format's choice of side when this anchor is a page break.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_bias: Option<SideBias>,
 }
 
 fn reject_raw_caret_output<S: serde::Serializer>(
@@ -1177,6 +1196,8 @@ chapter_probe! {
     raw_folder_sources: Option<std::sync::Arc<session::screen_pages::folder_sources::FolderProof>>,
     #[cfg(feature = "kindle")]
     foreground_font_sources: Option<Vec<session::screen_pages::FileStamp>>,
+    /// True only when a windowed chapter's page bounds were checked against the long-chapter index.
+    pub(crate) long_page_verified: bool,
     #[cfg(feature = "kindle")]
     pub(crate) layout_identity: std::sync::Arc<()>,
     settings: Settings,
@@ -1214,10 +1235,11 @@ impl Probe {
         text: &str,
         fonts: &[PathBuf],
         settings: Settings,
+        direction: library::FixedTextReflowDirection,
     ) -> Result<Self> {
         settings.validate()?;
         Self::from_book(
-            Book::from_text(title, text)?,
+            Book::from_text(title, text, direction)?,
             Engine::Parley,
             fonts,
             settings,
@@ -1337,6 +1359,37 @@ impl Probe {
         load_fonts: impl Fn() -> Result<FontContext>,
         allow_raw_layout: bool,
         check_cancelled: &dyn Fn() -> Result<()>,
+    ) -> Result<Self> {
+        let not_cancelled = std::sync::atomic::AtomicBool::new(false);
+        Self::layout_opened_book_cancellable_with_snapshots(
+            opened,
+            engine,
+            settings,
+            chapter,
+            excerpt,
+            user_rules,
+            user_styles,
+            load_fonts,
+            allow_raw_layout,
+            check_cancelled,
+            &not_cancelled,
+            None,
+        )
+    }
+
+    pub(crate) fn layout_opened_book_cancellable_with_snapshots(
+        opened: &mut Option<Book>,
+        engine: Engine,
+        settings: Settings,
+        chapter: usize,
+        excerpt: Option<String>,
+        user_rules: &user_hyphenation::Rules,
+        user_styles: &user_styles::Snapshot,
+        load_fonts: impl Fn() -> Result<FontContext>,
+        allow_raw_layout: bool,
+        check_cancelled: &dyn Fn() -> Result<()>,
+        long_chapter_cancelled: &std::sync::atomic::AtomicBool,
+        long_chapter_inputs: Option<crate::long_chapter_plan::SnapshotInputs>,
     ) -> Result<Self> {
         let book = opened.as_mut().ok_or("Reading source is unavailable")?;
         if book.is_fixed_layout() {
@@ -1458,6 +1511,7 @@ impl Probe {
         #[cfg(feature = "kindle")]
         let mut custom_hyphenation_allowed = Vec::new();
         let mut publisher_edges = Vec::new();
+        let mut long_page_bounds = None;
         let mut reading_flow = flow_view::ChapterFlow::default();
         #[cfg(feature = "kindle")]
         let mut requests_vertical = false;
@@ -1501,125 +1555,173 @@ impl Probe {
                     quote_plan,
                     check_cancelled,
                 )?;
+                #[cfg(feature = "kindle")]
+                footnotes::apply_css_reference_hints(&mut source, &styles);
                 reading_flow = flow_view::ChapterFlow::from_styles(&source, &styles)?;
                 #[cfg(feature = "kindle")]
                 {
                     custom_hyphenation_allowed =
                         styles.iter().map(hyphenation::allows_user_rules).collect();
                 }
-                // Decide writing mode from retained display input. Hidden media or
-                // horizontal-only subtrees cannot force a visible vertical chapter
-                // down the horizontal fallback path.
-                let mut has_text = false;
-                let mut vertical = !source.elements.iter().enumerate().any(|(index, element)| {
-                    !styles[index].flow.suppressed
-                        && !element.selector_only
-                        && element.tag == "table"
+                let chapter_text_bytes = source.blocks.iter().fold(0usize, |total, block| {
+                    total.saturating_add(block.text.len())
                 });
-                for original in &source.blocks {
-                    if styles[original.element].flow.suppressed {
-                        continue;
-                    }
-                    let block = reading_flow.layout_block(&source, original)?;
-                    vertical &= block.images.is_empty();
-                    if !block.text.is_empty() {
-                        has_text = true;
-                        vertical &= styles[block.element].writing_mode
-                            == book_style::WritingMode::VerticalRl
-                            && block.styled_text.iter().all(|run| {
-                                styles[run.element].writing_mode
-                                    == book_style::WritingMode::VerticalRl
-                            });
-                    }
-                }
-                vertical &= has_text;
-                #[cfg(feature = "kindle")]
+                let long_index = if chapter_text_bytes > parley_layout::MAX_TEXT_BYTES
+                    && complete
+                    && footnote_targets.is_none()
+                    && !spine_rtl
+                    && !settings.embedded_fonts
+                    && user_styles.supports_windowed_simple_chapter()
+                    && let Some(inputs) = long_chapter_inputs.as_ref()
                 {
-                    requests_vertical = vertical;
-                }
-                let vertical = vertical.then(|| {
-                    vertical_layout::VerticalChapter::with_flow(
-                        &source,
-                        &styles,
-                        fonts.clone(),
+                    check_cancelled()?;
+                    let index = crate::long_chapter_plan::index::PageIndex::build(
+                        std::sync::Arc::clone(&inputs.book_bytes),
+                        &inputs.font_bytes,
+                        chapter,
                         settings,
-                        &reading_flow,
-                    )
-                });
-                match vertical {
-                    Some(Ok((layout, lines, extent))) => {
-                        (Renderer::Vertical(Box::new(layout)), lines, extent)
+                        crate::long_chapter_plan::LayoutMode {
+                            scroll: false,
+                            facing_pages: false,
+                            hidden_flows: false,
+                            hide_nonlinear: false,
+                            in_page_notes: false,
+                        },
+                        user_styles.clone(),
+                        std::sync::Arc::new(user_rules.clone()),
+                        long_chapter_cancelled,
+                    )?;
+                    check_cancelled()?;
+                    if !index.matches_live_chapter(publication, &href, &source, &xhtml) {
+                        return Err("The long chapter snapshot does not match the open book".into());
                     }
-                    fallback => {
-                        if let Some(Err(error)) = fallback {
-                            eprintln!("reader vertical layout unavailable: {error}");
+                    Some(index)
+                } else {
+                    None
+                };
+                if let Some(index) = long_index {
+                    long_page_bounds = Some(index.page_bounds_vector());
+                    let lines = index.reader_lines();
+                    let extent = index.layout_extent();
+                    let layout =
+                        parley_layout::ParleyChapter::from_page_index(index, settings, &styles);
+                    (Renderer::Parley(layout), lines, extent)
+                } else {
+                    // Decide writing mode from retained display input. Hidden media or
+                    // horizontal-only subtrees cannot force a visible vertical chapter
+                    // down the horizontal fallback path.
+                    let mut has_text = false;
+                    let mut vertical =
+                        !source.elements.iter().enumerate().any(|(index, element)| {
+                            !styles[index].flow.suppressed
+                                && !element.selector_only
+                                && element.tag == "table"
+                        });
+                    for original in &source.blocks {
+                        if styles[original.element].flow.suppressed {
+                            continue;
                         }
-                        let has_table = source.blocks.iter().any(|b| b.table_cell.is_some())
-                            || settings.repair_css_tables
-                                && styles.iter().any(|style| {
-                                    !style.flow.suppressed
-                                        && style.display == book_style::flow::Display::TableCell
+                        let block = reading_flow.layout_block(&source, original)?;
+                        vertical &= block.images.is_empty();
+                        if !block.text.is_empty() {
+                            has_text = true;
+                            vertical &= styles[block.element].writing_mode
+                                == book_style::WritingMode::VerticalRl
+                                && block.styled_text.iter().all(|run| {
+                                    styles[run.element].writing_mode
+                                        == book_style::WritingMode::VerticalRl
                                 });
-                        let mut lay_out = |source: &Source, faces| {
-                            parley_layout::ParleyChapter::with_flow(
-                                book,
-                                &href,
-                                source,
-                                faces,
-                                settings,
-                                &styles,
-                                user_rules,
-                                &reading_flow,
-                                footnote_targets.as_ref(),
-                            )
-                        };
-                        let (layout, lines, extent) = if has_table {
-                            let grid = lay_out(&source, fonts.clone()).and_then(
-                                |(layout, mut lines, extent)| {
-                                    lines.sort_by(|a, b| a.top.total_cmp(&b.top));
-                                    Pagination::with_breaks_capped(
-                                        &lines,
-                                        settings.text_height() as f32,
-                                        extent,
-                                        &[],
-                                        settings.chapter_height_limit(),
-                                    )?;
-                                    Ok((layout, lines, extent))
-                                },
-                            );
-                            match grid {
-                                Ok(result) => result,
-                                Err(error)
-                                    if error.downcast_ref::<PageContentTooTall>().is_some() =>
-                                {
-                                    // A tall row can have no safe horizontal break across
-                                    // all its cells. Keep the chapter readable in source order.
-                                    drop(lay_out);
-                                    parley_layout::ParleyChapter::with_source_order(
-                                        book,
-                                        &href,
-                                        &source,
-                                        fonts,
-                                        settings,
-                                        &styles,
-                                        user_rules,
-                                        &reading_flow,
-                                    )?
-                                }
-                                Err(error) => return Err(error),
-                            }
-                        } else {
-                            lay_out(&source, fonts)?
-                        };
-                        publisher_edges = publisher_breaks::layout(
+                        }
+                    }
+                    vertical &= has_text;
+                    #[cfg(feature = "kindle")]
+                    {
+                        requests_vertical = vertical;
+                    }
+                    let vertical = vertical.then(|| {
+                        vertical_layout::VerticalChapter::with_flow(
                             &source,
                             &styles,
-                            &lines,
+                            fonts.clone(),
                             settings,
-                            layout.physical_break_runs(),
-                            layout.fitted_height_tails(),
-                        );
-                        (Renderer::Parley(layout), lines, extent)
+                            &reading_flow,
+                        )
+                    });
+                    match vertical {
+                        Some(Ok((layout, lines, extent))) => {
+                            (Renderer::Vertical(Box::new(layout)), lines, extent)
+                        }
+                        fallback => {
+                            if let Some(Err(error)) = fallback {
+                                eprintln!("reader vertical layout unavailable: {error}");
+                            }
+                            let has_table = source.blocks.iter().any(|b| b.table_cell.is_some())
+                                || settings.repair_css_tables
+                                    && styles.iter().any(|style| {
+                                        !style.flow.suppressed
+                                            && style.display == book_style::flow::Display::TableCell
+                                    });
+                            let mut lay_out = |source: &Source, faces| {
+                                parley_layout::ParleyChapter::with_flow(
+                                    book,
+                                    &href,
+                                    source,
+                                    faces,
+                                    settings,
+                                    &styles,
+                                    user_rules,
+                                    &reading_flow,
+                                    footnote_targets.as_ref(),
+                                )
+                            };
+                            let (layout, lines, extent) = if has_table {
+                                let grid = lay_out(&source, fonts.clone()).and_then(
+                                    |(layout, mut lines, extent)| {
+                                        lines.sort_by(|a, b| a.top.total_cmp(&b.top));
+                                        Pagination::with_breaks_capped(
+                                            &lines,
+                                            settings.text_height() as f32,
+                                            extent,
+                                            &[],
+                                            settings.chapter_height_limit(),
+                                        )?;
+                                        Ok((layout, lines, extent))
+                                    },
+                                );
+                                match grid {
+                                    Ok(result) => result,
+                                    Err(error)
+                                        if error.downcast_ref::<PageContentTooTall>().is_some() =>
+                                    {
+                                        // A tall row can have no safe horizontal break across
+                                        // all its cells. Keep the chapter readable in source order.
+                                        drop(lay_out);
+                                        parley_layout::ParleyChapter::with_source_order(
+                                            book,
+                                            &href,
+                                            &source,
+                                            fonts,
+                                            settings,
+                                            &styles,
+                                            user_rules,
+                                            &reading_flow,
+                                        )?
+                                    }
+                                    Err(error) => return Err(error),
+                                }
+                            } else {
+                                lay_out(&source, fonts)?
+                            };
+                            publisher_edges = publisher_breaks::layout(
+                                &source,
+                                &styles,
+                                &lines,
+                                settings,
+                                layout.physical_break_runs(),
+                                layout.fitted_height_tails(),
+                            );
+                            (Renderer::Parley(layout), lines, extent)
+                        }
                     }
                 }
             }
@@ -1674,6 +1776,12 @@ impl Probe {
             }
             Err(error) => return Err(error),
         };
+        if long_page_bounds
+            .as_ref()
+            .is_some_and(|bounds| bounds != &pages.bounds)
+        {
+            return Err("The long chapter page boundaries could not be verified".into());
+        }
         if pages.len() > 1
             && let Renderer::Parley(chapter) = &renderer
         {
@@ -1780,6 +1888,7 @@ impl Probe {
             raw_folder_sources: None,
             #[cfg(feature = "kindle")]
             foreground_font_sources: None,
+            long_page_verified: long_page_bounds.is_some(),
             #[cfg(feature = "kindle")]
             layout_identity: std::sync::Arc::new(()),
             settings,
@@ -1804,6 +1913,7 @@ impl Probe {
         if complete
             && engine == Engine::Parley
             && !spine_rtl
+            && !matches!(&probe.renderer, Renderer::Parley(layout) if layout.is_windowed())
             && user_styles.has_in_page_fb2_notes()
             && let Some(book) = opened.as_mut()
         {
@@ -2021,6 +2131,10 @@ impl Probe {
         matches!(&self.renderer, Renderer::Vertical(_))
     }
 
+    pub(crate) fn has_windowed_layout(&self) -> bool {
+        matches!(&self.renderer, Renderer::Parley(layout) if layout.is_windowed())
+    }
+
     /// The visual direction of forward page turns for this chapter.
     pub fn pages_right_to_left(&self) -> bool {
         self.spine_rtl || self.is_vertical()
@@ -2219,6 +2333,18 @@ impl Probe {
             .iter()
             .find(|link| link.bytes.contains(&offset))?;
         Some(&link.href)
+    }
+
+    pub(crate) fn image_link_context_in(
+        &self,
+        range: Range<f32>,
+        x: f32,
+        y: f32,
+    ) -> Option<(usize, usize, &str)> {
+        let Renderer::Parley(layout) = &self.renderer else {
+            return None;
+        };
+        layout.image_link_context_at(range, self.settings, x, y)
     }
 
     fn source_at(&self, range: Range<f32>, x: f32, y: f32) -> Option<(usize, usize)> {
@@ -2601,13 +2727,35 @@ impl Probe {
     pub fn page_for(&self, anchor: &Anchor) -> Option<usize> {
         let top = self.anchor_top(anchor)?;
         if let Some(pages) = &self.in_page_notes {
-            return pages.iter().position(|page| {
+            let page = pages.iter().position(|page| {
                 page.parts
                     .first()
                     .is_some_and(|part| part.y == 0 && part.source.contains(&top))
-            });
+            })?;
+            let at_boundary = pages[page]
+                .parts
+                .first()
+                .is_some_and(|part| part.y == 0 && (part.source.start - top).abs() <= 0.01);
+            return Some(
+                if anchor.side_bias == Some(SideBias::Before) && page > 0 && at_boundary {
+                    page - 1
+                } else {
+                    page
+                },
+            );
         }
-        Some(self.pages.page(top))
+        let page = self.pages.page(top);
+        let at_boundary = self
+            .pages
+            .range(page)
+            .is_some_and(|range| (range.start - top).abs() <= 0.01);
+        Some(
+            if anchor.side_bias == Some(SideBias::Before) && page > 0 && at_boundary {
+                page - 1
+            } else {
+                page
+            },
+        )
     }
 
     pub(crate) fn anchor_top(&self, anchor: &Anchor) -> Option<f32> {
@@ -3017,6 +3165,7 @@ impl Probe {
         Anchor {
             raw_caret: None,
             illustration: None,
+            side_bias: None,
             book: self.book,
             chapter: self.chapter.clone(),
             revision: self.source.revision,

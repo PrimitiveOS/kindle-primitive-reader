@@ -4,7 +4,7 @@ pub(crate) mod eager;
 pub(crate) mod embedded_fonts;
 pub(crate) mod folder_sources;
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -87,16 +87,21 @@ impl FileStamp {
             ),
         })
     }
+
+    pub(crate) fn len(&self) -> u64 {
+        self.len
+    }
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct ScreenPages(Rc<RefCell<Option<Generation>>>, Rc<Cell<Demand>>);
+pub(crate) struct ScreenPages(Rc<RefCell<Option<Generation>>>, Rc<RefCell<Demand>>);
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 struct Demand {
     navigation: bool,
     markers: bool,
     typography: Typography,
+    custom_targets: Vec<CustomTarget>,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -114,49 +119,73 @@ pub(super) struct Target {
     sample: PageSample,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CustomTarget {
+    pub(crate) index: usize,
+    pub(crate) chapter: usize,
+    pub(crate) anchor: Option<Anchor>,
+    pub(crate) starts_chapter: bool,
+}
+
+pub(crate) struct CustomLocations {
+    pub(crate) pages: Vec<Option<usize>>,
+    pub(crate) count: usize,
+}
+
 impl ScreenPages {
     pub(super) fn request_navigation(&self) {
-        let mut demand = self.1.get();
-        demand.navigation = true;
-        self.1.set(demand);
+        self.1.borrow_mut().navigation = true;
     }
 
     pub(super) fn request_markers(&self, required: bool) {
-        let mut demand = self.1.get();
-        demand.markers = required;
-        self.1.set(demand);
+        self.1.borrow_mut().markers = required;
+    }
+
+    pub(super) fn request_custom_targets(&self, targets: Vec<CustomTarget>) {
+        let changed = {
+            let mut demand = self.1.borrow_mut();
+            if demand.custom_targets == targets {
+                false
+            } else {
+                demand.custom_targets = targets;
+                true
+            }
+        };
+        if changed {
+            self.reset();
+        }
+    }
+
+    fn custom_targets(&self) -> Vec<CustomTarget> {
+        self.1.borrow().custom_targets.clone()
     }
 
     fn requested(&self) -> bool {
-        let demand = self.1.get();
+        let demand = self.1.borrow();
         demand.navigation || demand.markers || demand.typography != Typography::None
     }
 
     pub(super) fn for_relayout(&self, typography: bool, eligible: bool) -> Self {
-        let mut demand = self.1.get();
+        let mut demand = self.1.borrow().clone();
         demand.typography = if eligible && (self.typography_pending() || typography) {
             Typography::Pending
         } else {
             Typography::None
         };
-        Self(Default::default(), Rc::new(Cell::new(demand)))
+        Self(Default::default(), Rc::new(RefCell::new(demand)))
     }
 
     pub(crate) fn typography_pending(&self) -> bool {
-        self.1.get().typography == Typography::Pending
+        self.1.borrow().typography == Typography::Pending
     }
 
     pub(super) fn clear_typography(&self) {
-        let mut demand = self.1.get();
-        demand.typography = Typography::None;
-        self.1.set(demand);
+        self.1.borrow_mut().typography = Typography::None;
     }
 
     fn complete_typography(&self) {
         if self.typography_pending() {
-            let mut demand = self.1.get();
-            demand.typography = Typography::Counted;
-            self.1.set(demand);
+            self.1.borrow_mut().typography = Typography::Counted;
         }
     }
 
@@ -239,10 +268,16 @@ impl ScreenPages {
         }) {
             *slot = None;
         }
-        let generation = slot.get_or_insert_with(|| Generation::new(config, probe, sources));
+        let targets = self.custom_targets();
+        let generation = slot.get_or_insert_with(|| {
+            Generation::new(config, probe, sources, targets.clone())
+        });
         generation.record(chapter, &probe.chapter, PageSample::new(probe));
         if !generation.rejected && generation.heading_pages[chapter].is_none() {
             generation.heading_pages[chapter] = Some(heading_pages(probe));
+        }
+        if !generation.rejected && generation.custom_pages[chapter].is_none() {
+            generation.custom_pages[chapter] = Some(custom_pages(probe, &targets, chapter));
         }
         if generation.prefix.is_some() {
             self.complete_typography();
@@ -382,6 +417,38 @@ impl ScreenPages {
         })
     }
 
+    pub(super) fn custom_locations(
+        &self,
+        config: &BookConfig,
+        probe: &Probe,
+        chapter: usize,
+        page: usize,
+        targets: &[CustomTarget],
+    ) -> Option<CustomLocations> {
+        self.position(config, probe, chapter, page)?;
+        let slot = self.0.borrow();
+        let generation = slot.as_ref()?;
+        if generation.custom_targets != targets {
+            return None;
+        }
+        let prefix = generation.prefix.as_ref()?;
+        let mut pages = vec![None; targets.len()];
+        for (chapter, local) in generation.custom_pages.iter().enumerate() {
+            let start = *prefix.get(chapter)?;
+            let count = prefix.get(chapter + 1)?.checked_sub(start)?;
+            for &(index, page) in local.as_ref()? {
+                if page >= count {
+                    return None;
+                }
+                *pages.get_mut(index)? = Some(start + page);
+            }
+        }
+        Some(CustomLocations {
+            pages,
+            count: *prefix.last()?,
+        })
+    }
+
     pub(super) fn position(
         &self,
         config: &BookConfig,
@@ -394,6 +461,25 @@ impl ScreenPages {
         if !generation.matches(config, probe)
             || generation.spine.get(chapter)?.href != probe.chapter
             || *generation.samples.get(chapter)? != Some(PageSample::new(probe))
+        {
+            return None;
+        }
+        generation.position(chapter, page)
+    }
+
+    pub(super) fn position_in_chapter(
+        &self,
+        config: &BookConfig,
+        probe: &Probe,
+        current_chapter: usize,
+        chapter: usize,
+        page: usize,
+    ) -> Option<(usize, usize)> {
+        let slot = self.0.borrow();
+        let generation = slot.as_ref()?;
+        if !generation.matches(config, probe)
+            || generation.samples.get(current_chapter)?.as_ref() != Some(&PageSample::new(probe))
+            || generation.samples.get(chapter)?.is_none()
         {
             return None;
         }
@@ -414,6 +500,8 @@ struct Generation {
     spine: Vec<Chapter>,
     samples: Vec<Option<PageSample>>,
     heading_pages: Vec<Option<HeadingPages>>,
+    custom_targets: Vec<CustomTarget>,
+    custom_pages: Vec<Option<Vec<(usize, usize)>>>,
     missing: usize,
     prefix: Option<Vec<usize>>,
     rejected: bool,
@@ -436,7 +524,12 @@ impl PageSample {
 }
 
 impl Generation {
-    fn new(config: &BookConfig, probe: &Probe, sources: &ScreenPageSources) -> Self {
+    fn new(
+        config: &BookConfig,
+        probe: &Probe,
+        sources: &ScreenPageSources,
+        custom_targets: Vec<CustomTarget>,
+    ) -> Self {
         let spine = probe.chapter_entries().to_vec();
         let missing = spine.len();
         Self {
@@ -452,6 +545,8 @@ impl Generation {
             spine,
             samples: vec![None; missing],
             heading_pages: vec![None; missing],
+            custom_targets,
+            custom_pages: vec![None; missing],
             missing,
             prefix: None,
             rejected: false,
@@ -560,6 +655,7 @@ pub(super) fn heading_pages(probe: &Probe) -> HeadingPages {
                 block: block.key,
                 offset: 0,
                 illustration: None,
+                side_bias: None,
             };
             Some((block.key, probe.page_for(&anchor)?))
         })
@@ -569,6 +665,28 @@ pub(super) fn heading_pages(probe: &Probe) -> HeadingPages {
         publisher: (probe.toc.len() < MAX_HEADINGS).then(|| probe.local_contents_pages().to_vec()),
         alternative,
     }
+}
+
+fn custom_pages(
+    probe: &Probe,
+    targets: &[CustomTarget],
+    chapter: usize,
+) -> Vec<(usize, usize)> {
+    targets
+        .iter()
+        .filter(|target| target.chapter == chapter)
+        .filter_map(|target| {
+            let page = if target.starts_chapter {
+                Some(0)
+            } else {
+                target
+                    .anchor
+                    .as_ref()
+                    .and_then(|anchor| probe.page_for(anchor))
+            }?;
+            (page < probe.page_count()).then_some((target.index, page))
+        })
+        .collect()
 }
 
 pub(super) fn layout_settings(settings: Settings) -> Settings {

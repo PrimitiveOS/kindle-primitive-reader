@@ -15,7 +15,7 @@ mod fields;
 pub(crate) mod opening;
 mod values;
 pub(crate) use fields::Field;
-pub(crate) use values::{MarginEdge, ValueField};
+pub(crate) use values::{MarginEdge, ProfileZoomChoice, ProfileZoomTarget, ValueField};
 
 const MAX_BYTES: u64 = 32 * 1024;
 const MAX_PROFILES: usize = 16;
@@ -311,13 +311,76 @@ impl Profile {
                 if fixed.provider == current.provider =>
             {
                 let mut values = fixed.values();
-                let tile = if selection.contains(&Field::FitAndZoom) {
+                let prior_values = values;
+                let mut tile = if selection.contains(&Field::ZoomTargetFit) {
                     current.tile
                 } else {
                     fixed.tile
                 };
-                for field in selection {
+                for field in &selection {
+                    if *field == Field::ReflowColumns
+                        && fixed.settings.fixed_reflow_columns.is_none()
+                    {
+                        continue;
+                    }
+                    if *field == Field::ReflowWordGap
+                        && fixed.settings.fixed_reflow_word_gap.is_none()
+                    {
+                        continue;
+                    }
+                    if *field == Field::ReflowAlignment
+                        && fixed.settings.fixed_reflow_alignment.is_none()
+                    {
+                        continue;
+                    }
+                    if *field == Field::ReflowDirection
+                        && fixed.settings.fixed_reflow_direction.is_none()
+                        && fixed.settings.fixed_text_reflow_direction.is_none()
+                    {
+                        continue;
+                    }
+                    if *field == Field::ReflowTextSize
+                        && fixed.settings.fixed_reflow_text_scale.is_none()
+                        && fixed.settings.fixed_reflow_text_height.is_none()
+                    {
+                        continue;
+                    }
                     field.merge_view(current.values(), &mut values);
+                }
+                if let Some(active) = tile.as_mut() {
+                    let (count_field, prior_count, current_count) = match active.axis {
+                        FixedTileAxis::Columns => (
+                            Field::ZoomColumns,
+                            fixed
+                                .tile
+                                .filter(|tile| tile.axis == FixedTileAxis::Columns)
+                                .map(|tile| tile.count_tenths)
+                                .or(prior_values.zoom_columns_tenths),
+                            current
+                                .tile
+                                .filter(|tile| tile.axis == FixedTileAxis::Columns)
+                                .map(|tile| tile.count_tenths)
+                                .or(current.values().zoom_columns_tenths),
+                        ),
+                        FixedTileAxis::Rows => (
+                            Field::ZoomRows,
+                            fixed
+                                .tile
+                                .filter(|tile| tile.axis == FixedTileAxis::Rows)
+                                .map(|tile| tile.count_tenths)
+                                .or(prior_values.zoom_rows_tenths),
+                            current
+                                .tile
+                                .filter(|tile| tile.axis == FixedTileAxis::Rows)
+                                .map(|tile| tile.count_tenths)
+                                .or(current.values().zoom_rows_tenths),
+                        ),
+                    };
+                    active.count_tenths = if selection.contains(&count_field) {
+                        current_count.unwrap_or(20)
+                    } else {
+                        prior_count.unwrap_or(active.count_tenths)
+                    };
                 }
                 fixed.settings = FixedDefaults::from_view(values);
                 fixed.tile = tile;
@@ -343,6 +406,8 @@ pub(crate) enum FixedProvider {
     Pdf,
     Djvu,
     Comic,
+    Epub,
+    Image,
 }
 
 impl FixedProvider {
@@ -355,6 +420,8 @@ impl FixedProvider {
             Self::Pdf => "PDF documents",
             Self::Djvu => "DjVu documents",
             Self::Comic => "Comics",
+            Self::Epub => "Fixed-layout EPUB",
+            Self::Image => "Images",
         }
     }
 
@@ -363,9 +430,24 @@ impl FixedProvider {
             .iter()
             .copied()
             .filter(move |field| match field {
-                Field::CropMargin | Field::ScrollGap => self == Self::Pdf,
-                Field::Straighten | Field::TextSpacing => self != Self::Comic,
-                Field::Spreads | Field::ReadingDirection => self == Self::Comic,
+                // Decode expands the legacy aggregate before validation.
+                Field::FitAndZoom => false,
+                Field::ScrollGap => self == Self::Pdf,
+                Field::ScanContrast => {
+                    matches!(self, Self::Pdf | Self::Djvu | Self::Comic)
+                }
+                Field::ScanWhites => matches!(self, Self::Pdf | Self::Djvu | Self::Comic),
+                Field::Dewatermark => matches!(self, Self::Pdf | Self::Djvu | Self::Comic),
+                Field::ReflowColumns
+                | Field::ReflowWordGap
+                | Field::ReflowAlignment
+                | Field::ReflowDirection
+                | Field::ReflowTextSize
+                | Field::TextSpacing => matches!(self, Self::Pdf | Self::Djvu),
+                Field::Straighten => self != Self::Comic,
+                Field::Spreads | Field::ReadingDirection => {
+                    matches!(self, Self::Comic | Self::Epub)
+                }
                 _ => true,
             })
     }
@@ -405,7 +487,6 @@ impl FixedProfile {
             settings: FixedDefaults::from_view(portable),
             tile: view
                 .tile_zoom
-                .filter(|_| provider != FixedProvider::Comic)
                 .map(|tile| Tile {
                     axis: tile.axis,
                     count_tenths: tile.count_tenths,
@@ -413,7 +494,7 @@ impl FixedProfile {
         }
     }
 
-    fn values(self) -> FixedPreferences {
+    pub(crate) fn values(self) -> FixedPreferences {
         self.settings.apply(FixedPreferences::default())
     }
 
@@ -423,42 +504,82 @@ impl FixedProfile {
         mut view: FixedPreferences,
     ) -> (FixedPreferences, Option<Tile>) {
         let values = self.values();
+        let current_tile = view.tile_zoom.map(|tile| Tile {
+            axis: tile.axis,
+            count_tenths: tile.count_tenths,
+        });
         for field in fields {
             field.merge_view(values, &mut view);
         }
-        let tile = if fields.contains(&Field::FitAndZoom) {
+        let mut tile = if fields.contains(&Field::ZoomTargetFit) {
             view.tile_zoom = None;
             view.precise_scale = None;
             self.tile
         } else {
-            view.tile_zoom.map(|tile| Tile {
-                axis: tile.axis,
-                count_tenths: tile.count_tenths,
-            })
+            current_tile
         };
+        if let Some(active) = tile.as_mut() {
+            active.count_tenths = match active.axis {
+                FixedTileAxis::Columns => view.zoom_columns_tenths,
+                FixedTileAxis::Rows => view.zoom_rows_tenths,
+            }
+            .or_else(|| {
+                current_tile
+                    .filter(|current| current.axis == active.axis)
+                    .map(|current| current.count_tenths)
+            })
+            .unwrap_or(active.count_tenths);
+        }
         (view, tile)
     }
 
     fn is_valid(self) -> bool {
         let view = self.values();
+        let mut expected = Self::from_view(self.provider, view).settings;
+        if self.settings.fixed_reflow_columns.is_none() {
+            expected.fixed_reflow_columns = None;
+        }
+        if self.settings.fixed_reflow_word_gap.is_none() {
+            expected.fixed_reflow_word_gap = None;
+        }
+        if self.settings.fixed_reflow_alignment.is_none() {
+            expected.fixed_reflow_alignment = None;
+        }
+        if self.settings.fixed_reflow_direction.is_none() {
+            expected.fixed_reflow_direction = None;
+        }
+        if self.settings.fixed_text_reflow_direction.is_none() {
+            expected.fixed_text_reflow_direction = None;
+        }
+        if self.settings.fixed_reflow_text_scale.is_none()
+            && self.settings.fixed_reflow_text_height.is_none()
+        {
+            expected.fixed_reflow_text_scale = None;
+        }
+        // A legacy profile without the manual-zoom flag keeps it absent.
+        if self.settings.manual_zoom.is_none() {
+            expected.manual_zoom = None;
+        }
         view.is_valid()
-            && self.settings == Self::from_view(self.provider, view).settings
+            && self.settings.migrated() == expected
             && (!view.continuous || view.width_fit)
             && self.tile.is_none_or(|tile| {
-                self.provider != FixedProvider::Comic
-                    && (1..=80).contains(&tile.count_tenths)
+                (1..=80).contains(&tile.count_tenths)
                     && view.zoom == 0
+                    && view.precise_scale.is_none()
+                    && !view.manual_zoom
+                    && view.content_fit.is_none()
                     && !view.width_fit
                     && !view.height_fit
                     && !view.continuous
+                    && !view.spread
+                    && !(self.provider == FixedProvider::Epub
+                        && view.epub_spread.unwrap_or(false))
             })
     }
 }
 
 fn validate_selection(selection: &[Field], available: &[Field]) -> io::Result<()> {
-    if selection.is_empty() {
-        return Err(io::Error::other("Include at least one setting"));
-    }
     let supported = available
         .iter()
         .filter(|field| selection.contains(field))
@@ -493,7 +614,41 @@ pub(crate) fn load(path: &Path) -> Vec<Profile> {
 }
 
 pub(crate) fn decode(value: serde_json::Value) -> io::Result<Vec<Profile>> {
-    let profiles: Vec<Profile> = serde_json::from_value(value).map_err(io::Error::other)?;
+    let mut profiles: Vec<Profile> = serde_json::from_value(value).map_err(io::Error::other)?;
+    for profile in &mut profiles {
+        let Profile::Fixed {
+            fixed,
+            fields: Some(fields),
+            ..
+        } = &mut *profile
+        else {
+            continue;
+        };
+        if !fields.contains(&Field::FitAndZoom) {
+            continue;
+        }
+        let mut selected = fields.clone();
+        selected.retain(|field| *field != Field::FitAndZoom);
+        selected.extend([
+            Field::ZoomTargetFit,
+            Field::ManualZoomFactor,
+            Field::ZoomColumns,
+            Field::ZoomRows,
+        ]);
+        let available: Vec<_> = fixed.provider.fields().collect();
+        let migrated: Vec<_> = available
+            .iter()
+            .copied()
+            .filter(|field| selected.contains(field))
+            .collect();
+        if let Profile::Fixed {
+            fields: saved_fields,
+            ..
+        } = &mut *profile
+        {
+            *saved_fields = (migrated != available).then_some(migrated);
+        }
+    }
     validate(&profiles)?;
     Ok(profiles)
 }

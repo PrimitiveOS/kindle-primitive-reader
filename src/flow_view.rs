@@ -2,9 +2,9 @@
 //!
 //! Canonical source and saved anchors never acquire projected offsets. The
 //! default view is empty metadata; only blocks affected by a computed display
-//! or paint mask retain an owned projection. This module does not enable user
-//! display/visibility syntax or a hiding preset.
-#![allow(dead_code)] // Consumer migration is staged while the KO reference builds.
+//! or paint mask retain an owned projection. User styles expose `display:none`
+//! and computed visibility through this shared view, without box reclassification.
+#![allow(dead_code)] // Some source-mapping APIs remain staged for later consumers.
 
 use std::{
     collections::BTreeMap,
@@ -202,6 +202,7 @@ impl ChapterFlow {
         Ok(LayoutBlock {
             source: block,
             element: block.element,
+            pseudo_edges: &block.pseudo_edges,
             text,
             styled_text,
             bidi_controls: Vec::new(),
@@ -228,6 +229,10 @@ impl ChapterFlow {
 pub(crate) struct LayoutBlock<'a> {
     source: &'a Block,
     pub element: usize,
+    /// Source pseudo edges normally belong to the canonical block. A synthetic
+    /// empty-container host deliberately clears them and resolves only the
+    /// host element's own generated content.
+    pub(crate) pseudo_edges: &'a [crate::book_style::pseudo::Edge],
     pub text: &'a str,
     pub styled_text: StyledRuns<'a>,
     /// Virtual bidi metadata; the text and source offsets remain unchanged.
@@ -247,10 +252,16 @@ impl Deref for LayoutBlock<'_> {
 }
 
 impl<'a> LayoutBlock<'a> {
+    pub(crate) fn as_empty_host(mut self, element: usize) -> Self {
+        self.element = element;
+        self
+    }
+
     pub(crate) fn identity(source: &'a Block) -> Self {
         Self {
             source,
             element: source.element,
+            pseudo_edges: &source.pseudo_edges,
             text: &source.text,
             styled_text: StyledRuns::Original(&source.styled_text),
             bidi_controls: Vec::new(),
@@ -282,6 +293,7 @@ impl<'a> LayoutBlock<'a> {
         LayoutBlock {
             source: self.source,
             element,
+            pseudo_edges: self.pseudo_edges,
             text,
             styled_text: StyledRuns::Projected(runs),
             // Synthetic joined/boxed text needs its own verified ownership map.

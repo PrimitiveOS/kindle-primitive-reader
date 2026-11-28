@@ -154,6 +154,74 @@ fn reflow_profile_edits_storage_and_keeps_selection_and_book_until_explicit_appl
 }
 
 #[test]
+fn saved_profile_font_can_be_changed_without_changing_the_open_book() {
+    let fixture = Fixture::new();
+    let mut app = open(&fixture, &fixture.book);
+    app.save_reading_profile("Serif reading").unwrap();
+    let active = app.active.as_ref().unwrap().id;
+    let book_font = app.library.state(active).unwrap().preferences.font_file.clone();
+    let font_name = "Profile-NotoSans.ttf";
+    // The font chooser creates the fonts folder before it lists or copies fonts (`app.rs`, font import path).
+    fs::create_dir_all(&app.fonts_directory).unwrap();
+    fs::copy(
+        crate::test_fixture("fonts/NotoSans-Regular.ttf"),
+        app.fonts_directory.join(font_name),
+    )
+    .unwrap();
+
+    app.open_profile_font_chooser(0).unwrap();
+    assert_eq!(app.screen, Screen::ReadingProfileFonts(0));
+    assert!(app
+        .items()
+        .iter()
+        .any(|item| item.title == font_name));
+    app.set_profile_font(0, Some(font_name.into())).unwrap();
+
+    let Profile::Text { preferences, .. } = &app.profiles[0] else {
+        panic!("Expected a reflow profile");
+    };
+    assert_eq!(preferences.font_file.as_deref(), Some(font_name));
+    assert_eq!(app.library.state(active).unwrap().preferences.font_file, book_font);
+    assert_eq!(app.screen, Screen::ReadingProfileValues(0));
+    assert_eq!(
+        app.profiles[0]
+            .apply_text(&app.library.state(active).unwrap().preferences)
+            .unwrap()
+            .font_file
+            .as_deref(),
+        Some(font_name)
+    );
+}
+
+#[test]
+fn fixed_profile_edits_rotation_and_pdf_page_gap_without_changing_the_open_document() {
+    let fixture = Fixture::new();
+    let pdf = fixture.root.join("Profile actions.pdf");
+    fs::write(&pdf, striped_pdf_sized_bytes(3, 612, 820)).unwrap();
+    let mut app = open(&fixture, &pdf);
+    let document_view = app.fixed.as_ref().unwrap().reading.preferences();
+    app.save_reading_profile("Landscape scan").unwrap();
+
+    let rotation = ValueField::PageRotation;
+    show_editor(&mut app, rotation);
+    assert_eq!(app.editor.string(), "0");
+    type_value(&mut app, "45");
+    press_key(&mut app, Key::Go);
+    assert!(app.notice.as_deref().unwrap().contains("0° to 270°"));
+    type_value(&mut app, "270");
+    press_key(&mut app, Key::Go);
+    assert_eq!(app.profiles[0].value(rotation), Some(270.0));
+
+    let gap = ValueField::PageGap;
+    tap_contents_item(&mut app, gap.label());
+    assert_eq!(app.editor.string(), "0");
+    type_value(&mut app, "36");
+    press_key(&mut app, Key::Go);
+    assert_eq!(app.profiles[0].value(gap), Some(36.0));
+    assert_eq!(app.fixed.as_ref().unwrap().reading.preferences(), document_view);
+}
+
+#[test]
 fn fixed_profile_edits_each_overlap_in_landscape_and_keeps_older_values_above_84() {
     let fixture = Fixture::new();
     let path = fixture.root.join("Harbor scans.pdf");
@@ -923,6 +991,8 @@ fn saved_scan_values_follow_the_fixed_provider_and_keep_djvu_adaptive() {
         FixedProvider::Pdf,
         FixedProvider::Comic,
         FixedProvider::Djvu,
+        FixedProvider::Epub,
+        FixedProvider::Image,
     ] {
         let fixed = FixedProfile::from_view(
             provider,
@@ -942,7 +1012,7 @@ fn saved_scan_values_follow_the_fixed_provider_and_keep_djvu_adaptive() {
             apply_on_close: None,
             closing: None,
         };
-        let numeric_gamma = provider != FixedProvider::Djvu;
+        let numeric_gamma = matches!(provider, FixedProvider::Pdf | FixedProvider::Comic);
         let crop_margin = provider == FixedProvider::Pdf;
         for (field, supported) in [
             (ValueField::ScanGamma, numeric_gamma),
@@ -972,5 +1042,37 @@ fn saved_scan_values_follow_the_fixed_provider_and_keep_djvu_adaptive() {
                 }
             );
         }
+    }
+}
+
+#[test]
+fn fixed_layout_and_image_profiles_offer_only_applicable_reading_settings() {
+    use crate::reading_profiles::{FixedProfile, FixedProvider};
+
+    for (provider, has_spreads) in [(FixedProvider::Epub, true), (FixedProvider::Image, false)] {
+        let profile = Profile::Fixed {
+            name: "Fixed reading".into(),
+            fixed: FixedProfile::from_view(provider, FixedPreferences::default()),
+            fields: None,
+            apply_on_open: false,
+            opening: None,
+            opening_time: None,
+            opening_execution: None,
+            apply_on_close: None,
+            closing: None,
+        };
+        let available = profile.available();
+        assert!(available.contains(&Field::ZoomTargetFit));
+        assert!(available.contains(&Field::ManualZoomFactor));
+        assert!(available.contains(&Field::ZoomColumns));
+        assert!(available.contains(&Field::ZoomRows));
+        assert!(!available.contains(&Field::FitAndZoom));
+        assert!(available.contains(&Field::PageRotation));
+        assert!(available.contains(&Field::PanOverlap));
+        assert!(available.contains(&Field::Straighten));
+        assert!(!available.contains(&Field::ScanContrast));
+        assert!(!available.contains(&Field::ReflowColumns));
+        assert_eq!(available.contains(&Field::Spreads), has_spreads);
+        assert_eq!(available.contains(&Field::ReadingDirection), has_spreads);
     }
 }

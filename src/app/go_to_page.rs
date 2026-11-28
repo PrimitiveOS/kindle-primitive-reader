@@ -26,6 +26,14 @@ impl PageJump {
 }
 
 impl Reader {
+    pub(super) fn jump_relative_pages(&mut self, delta: isize) -> Result<()> {
+        if self.fixed.is_some() {
+            self.jump_fixed_number(&format!("{delta:+}"))
+        } else {
+            self.jump_reflow_screen_page(PageJump::Relative(delta))
+        }
+    }
+
     // Only Reader-owned validation messages are translated; unknown errors and
     // user-supplied page labels are returned verbatim.
     pub(super) fn page_jump_message(&self, message: &str) -> String {

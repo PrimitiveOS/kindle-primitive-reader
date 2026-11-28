@@ -1,8 +1,10 @@
 # Search over styled reading text
 
-This staged slice shares the chapter projection used by the renderer migration.
-It does not enable user `display`/`visibility` input or claim completed renderer
-parity. Fixed-page search remains a separate provider path.
+This slice shares the chapter projection used by the renderer and search. The
+current unverified user-CSS candidate enables ordinary `display:none` and
+visibility input through that shared context; non-`none` box reclassification
+and integrated renderer/search acceptance remain open. Fixed-page search remains
+a separate provider path.
 
 Whole-book literal/regular-expression search, directional search and their
 snippets use projected text. `display:none` content is excluded, including when

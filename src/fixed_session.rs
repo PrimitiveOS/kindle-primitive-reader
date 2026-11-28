@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -22,10 +22,12 @@ use crate::fixed_epub::{FixedEpub, FixedSpread, SpreadPlan};
 use crate::fixed_text::{PdfPageText, PdfTextRect};
 use crate::library::hidden_flows::{HiddenFlows, PageFlows, ResolvedPoint};
 use crate::library::{
-    ContinuousCrop, DEFAULT_CROP_MARGIN, DocumentFormat, FixedPreferences as View,
-    FixedReflowSpacing, FixedTileAxis, FixedTileZoom, HighlightPage, MAX_CONTINUOUS_GAP,
-    MAX_CROP_MARGIN, MAX_HIGHLIGHT_TEXT_BYTES, MAX_SCAN_WHITE_LEVEL, MIN_SCAN_WHITE_LEVEL,
-    PdfHighlight, SCAN_GAMMA_DEFAULT, valid_scan_gamma,
+    ContinuousCrop, DEFAULT_CROP_MARGIN, DocumentFormat, FixedContentFit, FixedPreferences as View,
+    FixedReflowAlignment, FixedReflowColumns, FixedReflowDirection, FixedReflowSpacing,
+    FixedTextReflowDirection,
+    FixedReflowWordGap,
+    FixedTileAxis, FixedTileZoom, HighlightPage, MAX_CONTINUOUS_GAP, MAX_CROP_MARGIN,
+    MAX_HIGHLIGHT_TEXT_BYTES, PdfHighlight, SCAN_GAMMA_DEFAULT, valid_scan_gamma,
 };
 use crate::pdf_crop::{self, Seed, Seeds};
 use crate::session::{
@@ -58,6 +60,8 @@ pub(crate) const SEARCH_FIT_CLOSE: Rect = Rect::new(
     SMALLER.h,
 );
 const ZOOM: [f32; 5] = [1.0, 1.25, 1.5, 2.0, 3.0];
+const MIN_ZOOM_FACTOR_HUNDREDTHS: u16 = 10;
+const MAX_ZOOM_FACTOR_HUNDREDTHS: u16 = 2000;
 const MAX_OCR_RASTER_SIDE: f32 = 1800.0;
 const MAX_OCR_CACHE_BYTES: u64 = 512 * 1024;
 const MAX_OCR_CACHE_PAGES: usize = 32;
@@ -99,6 +103,7 @@ pub(crate) struct FixedReading {
     page: usize,
     view: View,
     frame: GrayImage,
+    dewatermark_threshold_cache: Cell<Option<Option<u8>>>,
     deskew_cache: DeskewCache,
     visible: Vec<VisiblePage>,
     epub_spreads: Option<EpubSpreads>,
@@ -205,6 +210,7 @@ pub(crate) enum CropEdit {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum CropMode {
     SemiAuto,
+    ContentFit,
     Continuous(ContinuousCrop),
 }
 
@@ -212,6 +218,8 @@ impl CropMode {
     fn for_view(view: View) -> Option<Self> {
         if view.semi_auto_crop {
             Some(Self::SemiAuto)
+        } else if view.content_fit.is_some() || view.manual_zoom {
+            Some(Self::ContentFit)
         } else if view.continuous && view.width_fit {
             view.continuous_crop.map(Self::Continuous)
         } else {
@@ -222,7 +230,7 @@ impl CropMode {
     fn uses_margin(self) -> bool {
         matches!(
             self,
-            Self::SemiAuto | Self::Continuous(ContinuousCrop::Auto)
+            Self::SemiAuto | Self::ContentFit | Self::Continuous(ContinuousCrop::Auto)
         )
     }
 }
@@ -259,6 +267,7 @@ impl<'a> PageCrops<'a> {
         let seed = self.seeds.get(page);
         let crop = match self.mode {
             CropMode::SemiAuto => pdf_crop::detect(pdf, page, seed, WIDTH, self.margin),
+            CropMode::ContentFit => pdf_crop::full_auto(pdf, page, seed, WIDTH, self.margin),
             CropMode::Continuous(ContinuousCrop::Manual) => pdf_crop::manual(pdf, page, seed),
             CropMode::Continuous(ContinuousCrop::Auto) => {
                 pdf_crop::full_auto(pdf, page, seed, WIDTH, self.margin)
@@ -641,7 +650,10 @@ impl FixedReading {
             })?),
             _ => return Ok(None),
         };
-        let has_seeds = crop_seeds.is_some();
+        let restore_crop = crop_seeds.is_some()
+            || preferences.semi_auto_crop
+            || preferences.content_fit.is_some()
+            || preferences.manual_zoom;
         let mut reading = Self::with_source_height(
             source,
             page,
@@ -649,7 +661,7 @@ impl FixedReading {
             viewport_height,
             crop_seeds.unwrap_or_default(),
         )?;
-        if has_seeds && !reading.is_continuous() {
+        if restore_crop && !reading.is_continuous() {
             reading.restore_loaded_crop()?;
         }
         Ok(Some(reading))
@@ -756,6 +768,7 @@ impl FixedReading {
             page,
             view,
             frame,
+            dewatermark_threshold_cache: Cell::new(None),
             deskew_cache,
             visible,
             epub_spreads,
@@ -1003,6 +1016,11 @@ impl FixedReading {
             };
             view.width_fit = true;
             view.height_fit = false;
+            if view.content_fit.is_some() || view.manual_zoom {
+                view.crop = None;
+            }
+            view.content_fit = None;
+            view.manual_zoom = false;
             view.tile_zoom = None;
             view.precise_scale = None;
         } else {
@@ -1153,6 +1171,7 @@ impl FixedReading {
         }
         self.view.scan_contrast = higher;
         self.view.scan_gamma_tenths = None;
+        self.dewatermark_threshold_cache.set(None);
         Ok(())
     }
 
@@ -1165,11 +1184,56 @@ impl FixedReading {
         }
         self.view.scan_contrast = false;
         self.view.scan_gamma_tenths = (tenths != SCAN_GAMMA_DEFAULT).then_some(tenths);
+        self.dewatermark_threshold_cache.set(None);
+        Ok(())
+    }
+
+    pub(crate) fn set_dewatermark(&mut self, enabled: bool) -> Result<()> {
+        if enabled && !self.supports_dewatermark() {
+            return Err("Dewatermark is available for PDF, DjVu, and comics".into());
+        }
+        if enabled && self.view.scan_white_level.is_some() {
+            return Err("Set Scan white level to 255 before using Dewatermark".into());
+        }
+        self.view.dewatermark = enabled;
+        self.dewatermark_threshold_cache.set(None);
         Ok(())
     }
 
     pub(crate) fn set_fixed_reflow_spacing(&mut self, spacing: FixedReflowSpacing) {
         self.view.fixed_reflow_spacing = (spacing != FixedReflowSpacing::Medium).then_some(spacing);
+    }
+
+    pub(crate) fn set_fixed_reflow_columns(&mut self, columns: FixedReflowColumns) {
+        self.view.fixed_reflow_columns = (columns != FixedReflowColumns::Two).then_some(columns);
+    }
+
+    pub(crate) fn set_fixed_reflow_word_gap(&mut self, word_gap: FixedReflowWordGap) {
+        self.view.fixed_reflow_word_gap =
+            (word_gap != FixedReflowWordGap::Auto).then_some(word_gap);
+    }
+
+    pub(crate) fn set_fixed_reflow_alignment(&mut self, alignment: FixedReflowAlignment) {
+        self.view.fixed_reflow_alignment =
+            (alignment != FixedReflowAlignment::Auto).then_some(alignment);
+    }
+
+    pub(crate) fn set_fixed_reflow_direction(&mut self, direction: FixedReflowDirection) {
+        self.view.fixed_reflow_direction =
+            (direction != FixedReflowDirection::default()).then_some(direction);
+    }
+
+    pub(crate) fn set_fixed_text_reflow_direction(
+        &mut self,
+        direction: FixedTextReflowDirection,
+    ) {
+        self.view.fixed_text_reflow_direction =
+            (direction != FixedTextReflowDirection::default()).then_some(direction);
+    }
+
+    pub(crate) fn set_fixed_reflow_text_scale(&mut self, scale: u16) {
+        self.view.fixed_reflow_text_scale =
+            (scale != crate::library::DEFAULT_SCAN_REFLOW_TEXT_SCALE).then_some(scale);
     }
 
     pub(crate) fn set_force_ocr(&mut self, enabled: bool) -> Result<()> {
@@ -1202,16 +1266,16 @@ impl FixedReading {
     }
 
     pub(crate) fn set_scan_white_level(&mut self, level: Option<u8>) -> Result<()> {
-        if level
-            .is_some_and(|level| !(MIN_SCAN_WHITE_LEVEL..=MAX_SCAN_WHITE_LEVEL).contains(&level))
-        {
-            return Err("This scan white level exceeds Reader's limits".into());
-        }
         if level.is_some() && !self.supports_scan_contrast() {
             return Err("Scan white level is available for PDF, DjVu, and comics".into());
         }
-        self.view.scan_white_level = level;
+        self.view.scan_white_level = level.filter(|&level| level != u8::MAX);
+        self.dewatermark_threshold_cache.set(None);
         Ok(())
+    }
+
+    pub(crate) fn supports_dewatermark(&self) -> bool {
+        self.source.supports_dewatermark()
     }
 
     pub(crate) fn supports_rtl(&self) -> bool {
@@ -1260,6 +1324,17 @@ impl FixedReading {
                 self.page,
                 View {
                     spread: enabled,
+                    content_fit: if enabled { None } else { self.view.content_fit },
+                    manual_zoom: if enabled {
+                        false
+                    } else {
+                        self.view.manual_zoom
+                    },
+                    crop: if enabled && (self.view.content_fit.is_some() || self.view.manual_zoom) {
+                        None
+                    } else {
+                        self.view.crop
+                    },
                     epub_spread: self.epub_spreads.as_ref().map(|_| enabled),
                     ..self.view
                 },
@@ -1313,7 +1388,7 @@ impl FixedReading {
     }
 
     fn restore_loaded_crop(&mut self) -> Result<()> {
-        if self.view.semi_auto_crop {
+        if self.view.semi_auto_crop || self.view.content_fit.is_some() || self.view.manual_zoom {
             let resolved = self.resolve_crop(self.page, self.view)?;
             if resolved != self.view {
                 if let Some(anchor) = self.history_point() {
@@ -1331,8 +1406,8 @@ impl FixedReading {
     }
 
     pub(crate) fn set_crop_margin(&mut self, margin: u8) -> Result<()> {
-        if !self.supports_semi_auto_crop() || margin > MAX_CROP_MARGIN {
-            return Err("PDF crop margin must be from 0.00 to 1.50 inches".into());
+        if margin > MAX_CROP_MARGIN {
+            return Err("Page content margin must be from 0.00 to 1.50 inches".into());
         }
         if margin == self.view.crop_margin() {
             return Ok(());
@@ -1391,6 +1466,7 @@ impl FixedReading {
         let previous_cache = std::mem::take(self.detected_crops.get_mut());
         let view = View {
             semi_auto_crop: matches!(edit, CropEdit::SemiAuto(_)),
+            content_fit: None,
             continuous_crop: match edit {
                 CropEdit::Manual(_) => Some(ContinuousCrop::Manual),
                 CropEdit::Auto => Some(ContinuousCrop::Auto),
@@ -1457,13 +1533,16 @@ impl FixedReading {
     }
 
     fn resolve_crop(&self, page: usize, mut view: View) -> Result<View> {
-        if let FixedDocument::Pdf(pdf) = &self.source {
+        if view.content_fit.is_some() || view.manual_zoom {
+            view.crop = Some(self.content_crop(page, view.crop_margin())?);
+        } else if let FixedDocument::Pdf(pdf) = &self.source {
             if let Some(crops) = self.page_crops(view) {
                 view.crop = Some(crops.resolve(pdf, page)?);
             } else if view.continuous_crop.is_some() {
                 view.crop = None;
             }
         } else {
+            view.content_fit = None;
             view.semi_auto_crop = false;
             view.continuous_crop = None;
         }
@@ -1472,6 +1551,22 @@ impl FixedReading {
 
     fn page_crops(&self, view: View) -> Option<PageCrops<'_>> {
         PageCrops::for_view(view, &self.crop_seeds, &self.detected_crops)
+    }
+
+    fn content_crop(&self, page: usize, margin: u8) -> Result<PdfTextRect> {
+        let key = (page, CropMode::ContentFit, margin);
+        if let Some(crop) = self.detected_crops.borrow().get(&key).copied() {
+            return Ok(crop);
+        }
+        let crop = self
+            .source
+            .content_crop(page, margin, self.crop_seeds.get(page))?;
+        let mut cache = self.detected_crops.borrow_mut();
+        if cache.len() == 64 {
+            cache.pop_first();
+        }
+        cache.insert(key, crop);
+        Ok(crop)
     }
 
     pub(crate) fn start_crop(&mut self) -> Result<View> {
@@ -1496,9 +1591,18 @@ impl FixedReading {
             self.page,
             View {
                 turns: original.turns,
+                content_fit: original.content_fit,
                 scan_contrast: original.scan_contrast,
                 scan_gamma_tenths: original.scan_gamma_tenths,
+                dewatermark: original.dewatermark,
                 fixed_reflow_spacing: original.fixed_reflow_spacing,
+                fixed_reflow_columns: original.fixed_reflow_columns,
+                fixed_reflow_word_gap: original.fixed_reflow_word_gap,
+                fixed_reflow_alignment: original.fixed_reflow_alignment,
+                fixed_reflow_direction: original.fixed_reflow_direction,
+                fixed_text_reflow_direction: original.fixed_text_reflow_direction,
+                fixed_reflow_text_scale: original.fixed_reflow_text_scale,
+                fixed_reflow_text_height: original.fixed_reflow_text_height,
                 dither: original.dither,
                 continuous_gap: original.continuous_gap,
                 scan_white_level: original.scan_white_level,
@@ -2300,8 +2404,121 @@ impl FixedReading {
         self.apply_fit(Fit::Height)
     }
 
+    pub(crate) fn fit_content(&mut self, fit: FixedContentFit) -> Result<()> {
+        self.present(
+            self.page,
+            View {
+                zoom: 0,
+                tile_zoom: None,
+                precise_scale: None,
+                content_fit: Some(fit),
+                zoom_fit_axis: Some(fit),
+                manual_zoom: false,
+                width_fit: false,
+                height_fit: false,
+                continuous: false,
+                semi_auto_crop: false,
+                continuous_crop: None,
+                crop: None,
+                offset_x: 0.0,
+                offset_y: f32::MAX,
+                ..self.view
+            },
+        )?;
+        self.pause();
+        Ok(())
+    }
+
+    pub(crate) fn set_content_fit_target(&mut self, content: bool) -> Result<()> {
+        if content {
+            return self.fit_content(self.fit_axis());
+        }
+        let fit = match self.view.content_fit {
+            Some(FixedContentFit::Full) => Fit::Page,
+            Some(FixedContentFit::Width) => Fit::Width,
+            Some(FixedContentFit::Height) => Fit::Height,
+            None
+                if self.view.manual_zoom
+                    || self.view.tile_zoom.is_some()
+                    || self.view.zoom > 0
+                    || self.view.precise_scale.is_some() =>
+            {
+                match self.fit_axis() {
+                    FixedContentFit::Full => Fit::Page,
+                    FixedContentFit::Width => Fit::Width,
+                    FixedContentFit::Height => Fit::Height,
+                }
+            }
+            None => return Ok(()),
+        };
+        self.apply_fit(fit)
+    }
+
+    /// Match KOReader's Manual zoom genus: detect the used content bounds, fit their
+    /// width, then apply the saved manual factor (1.5× by default).
+    pub(crate) fn set_manual_zoom_target(&mut self) -> Result<()> {
+        if self.is_spread() {
+            return Err("Manual zoom is unavailable in two-page view".into());
+        }
+        let factor = self.view.zoom_factor_hundredths.unwrap_or(150);
+        self.present(
+            self.page,
+            View {
+                zoom_factor_hundredths: Some(factor),
+                zoom_fit_axis: Some(self.fit_axis()),
+                tile_zoom: None,
+                precise_scale: None,
+                manual_zoom: true,
+                continuous: false,
+                crop: None,
+                offset_x: 0.0,
+                offset_y: f32::MAX,
+                ..self.view
+            },
+        )?;
+        self.pause();
+        Ok(())
+    }
+
+    pub(crate) fn set_fit_axis(&mut self, fit: FixedContentFit) -> Result<()> {
+        if self.view.content_fit.is_some() {
+            self.fit_content(fit)
+        } else {
+            self.apply_fit(match fit {
+                FixedContentFit::Full => Fit::Page,
+                FixedContentFit::Width => Fit::Width,
+                FixedContentFit::Height => Fit::Height,
+            })
+        }
+    }
+
+    fn fit_axis(&self) -> FixedContentFit {
+        self.view.zoom_fit_axis.unwrap_or_else(|| {
+            self.view.content_fit.unwrap_or_else(|| {
+                if self.view.width_fit {
+                    FixedContentFit::Width
+                } else if self.view.height_fit {
+                    FixedContentFit::Height
+                } else {
+                    FixedContentFit::Full
+                }
+            })
+        })
+    }
+
     pub(crate) fn supports_tile_zoom(&self) -> bool {
-        matches!(self.source, FixedDocument::Pdf(_) | FixedDocument::Djvu(_))
+        !self.is_spread()
+    }
+
+    pub(crate) fn tile_zoom_count_tenths(&self, axis: FixedTileAxis) -> u8 {
+        let saved = match axis {
+            FixedTileAxis::Columns => self.view.zoom_columns_tenths,
+            FixedTileAxis::Rows => self.view.zoom_rows_tenths,
+        };
+        self.view
+            .tile_zoom
+            .filter(|tile| tile.axis == axis)
+            .map_or(saved.unwrap_or(20), |tile| tile.count_tenths)
     }
 
     fn tiled_metrics(&self) -> Option<ViewMetrics> {
@@ -2327,10 +2544,18 @@ impl FixedReading {
         }
         let size = self.source.page_size(self.page)?;
         let tile_zoom = tile_zoom(size, &self.view, self.frame_size(), axis, count_tenths);
-        let view = View {
+        let mut view = View {
+            zoom_fit_axis: Some(self.fit_axis()),
             tile_zoom: Some(tile_zoom),
             precise_scale: None,
             zoom: 0,
+            manual_zoom: false,
+            content_fit: None,
+            crop: if self.view.content_fit.is_some() || self.view.manual_zoom {
+                None
+            } else {
+                self.view.crop
+            },
             width_fit: false,
             height_fit: false,
             continuous: false,
@@ -2346,6 +2571,10 @@ impl FixedReading {
             },
             ..self.view
         };
+        match axis {
+            FixedTileAxis::Columns => view.zoom_columns_tenths = Some(count_tenths),
+            FixedTileAxis::Rows => view.zoom_rows_tenths = Some(count_tenths),
+        }
         self.present(self.page, view)?;
         self.pause();
         Ok(())
@@ -2353,12 +2582,25 @@ impl FixedReading {
 
     fn apply_fit(&mut self, fit: Fit) -> Result<()> {
         let width_fit = matches!(fit, Fit::Width);
+        let zoom_fit_axis = Some(match fit {
+            Fit::Page => FixedContentFit::Full,
+            Fit::Width => FixedContentFit::Width,
+            Fit::Height => FixedContentFit::Height,
+        });
         self.present(
             self.page,
             View {
+                zoom_fit_axis,
                 zoom: 0,
                 tile_zoom: None,
                 precise_scale: None,
+                manual_zoom: false,
+                content_fit: None,
+                crop: if self.view.content_fit.is_some() || self.view.manual_zoom {
+                    None
+                } else {
+                    self.view.crop
+                },
                 width_fit,
                 height_fit: matches!(fit, Fit::Height),
                 continuous: width_fit && self.view.continuous,
@@ -2501,8 +2743,19 @@ impl FixedReading {
             || (!self.is_spread()
                 && (self.view.zoom > 0
                     || self.tiled_view_can_pan()
-                    || self.view.width_fit
+                    || (self.view.width_fit
+                        && (dy.abs() > dx.abs() || self.horizontal_overflow()))
                     || (self.view.height_fit && dx.abs() >= dy.abs())))
+    }
+
+    /// Whether the current page is wider than the frame under the present view.
+    /// On a fit-width page, a horizontal swipe pans only when there is width to pan.
+    fn horizontal_overflow(&self) -> bool {
+        let Ok(size) = self.source.page_size(self.page) else {
+            return false;
+        };
+        let metrics = view_metrics(size, &self.view, self.frame_size());
+        metrics.width > self.frame.width as f32 + 0.5
     }
 
     pub(crate) fn input_with_status(&mut self, input: Input, show_zoom: bool) -> Result<bool> {
@@ -2792,6 +3045,10 @@ impl FixedReading {
                 None => Ok(false),
             };
         }
+        if self.view.manual_zoom {
+            let delta = i16::try_from(delta.signum() * 10).unwrap_or(0);
+            return self.adjust_zoom_factor_hundredths(delta);
+        }
         self.set_zoom(
             self.view
                 .zoom
@@ -2803,6 +3060,7 @@ impl FixedReading {
     pub(crate) fn set_zoom(&mut self, zoom: usize) -> Result<bool> {
         if self.is_spread()
             || (zoom == self.view.zoom
+                && !self.view.manual_zoom
                 && self.view.tile_zoom.is_none()
                 && self.view.precise_scale.is_none())
         {
@@ -2813,6 +3071,7 @@ impl FixedReading {
         }
         let mut view = View {
             zoom,
+            manual_zoom: false,
             tile_zoom: None,
             precise_scale: None,
             ..self.view
@@ -2836,6 +3095,49 @@ impl FixedReading {
         }
         self.present(self.page, view)?;
         Ok(true)
+    }
+
+    pub(crate) fn zoom_factor_hundredths(&self) -> u16 {
+        self.view.zoom_factor_hundredths.unwrap_or_else(|| {
+            if self.view.manual_zoom {
+                150
+            } else {
+                (ZOOM[self.view.zoom] * 100.0).round().clamp(10.0, 2000.0) as u16
+            }
+        })
+    }
+
+    pub(crate) fn set_zoom_factor_hundredths(&mut self, factor: u16) -> Result<bool> {
+        if !(MIN_ZOOM_FACTOR_HUNDREDTHS..=MAX_ZOOM_FACTOR_HUNDREDTHS).contains(&factor) {
+            return Err("Zoom factor must be between 0.1× and 20×".into());
+        }
+        if self.is_spread()
+            || (self.view.manual_zoom
+                && self.zoom_factor_hundredths() == factor
+                && self.view.tile_zoom.is_none()
+                && self.view.precise_scale.is_none())
+        {
+            return Ok(false);
+        }
+        let view = View {
+            zoom_factor_hundredths: Some(factor),
+            tile_zoom: None,
+            precise_scale: None,
+            manual_zoom: true,
+            continuous: false,
+            ..self.view
+        };
+        self.present(self.page, view)?;
+        Ok(true)
+    }
+
+    pub(crate) fn adjust_zoom_factor_hundredths(&mut self, delta: i16) -> Result<bool> {
+        let factor = i32::from(self.zoom_factor_hundredths());
+        let next = (factor + i32::from(delta)).clamp(
+            i32::from(MIN_ZOOM_FACTOR_HUNDREDTHS),
+            i32::from(MAX_ZOOM_FACTOR_HUNDREDTHS),
+        ) as u16;
+        self.set_zoom_factor_hundredths(next)
     }
 
     fn present(&mut self, page: usize, view: View) -> Result<()> {
@@ -3165,6 +3467,7 @@ impl FixedReading {
         swap(&mut self.page, &mut next.page);
         swap(&mut self.view, &mut next.view);
         swap(&mut self.frame, &mut next.frame);
+        self.dewatermark_threshold_cache.set(None);
         swap(&mut self.visible, &mut next.visible);
         swap(&mut self.deskew_cache, &mut next.deskew_cache);
         swap(&mut self.retained_viewport_anchor, &mut next.anchor);
@@ -3246,10 +3549,10 @@ impl FixedReading {
             FixedDocument::Pdf(_) => Some(FixedProvider::Pdf),
             FixedDocument::Djvu(_) => Some(FixedProvider::Djvu),
             FixedDocument::Comic(_) => Some(FixedProvider::Comic),
-            FixedDocument::Epub(_)
-            | FixedDocument::Gif(_)
-            | FixedDocument::Tiff(_)
-            | FixedDocument::Image(_) => None,
+            FixedDocument::Epub(_) => Some(FixedProvider::Epub),
+            FixedDocument::Gif(_) | FixedDocument::Tiff(_) | FixedDocument::Image(_) => {
+                Some(FixedProvider::Image)
+            }
         }
     }
 
@@ -3283,6 +3586,13 @@ impl FixedReading {
         }
         if view.continuous_crop.is_some() && !(view.continuous && view.width_fit) {
             return Err("This viewing mode conflicts with the PDF's continuous crop".into());
+        }
+        if tile.is_some()
+            && (view.spread
+                || (provider == Some(crate::reading_profiles::FixedProvider::Epub)
+                    && view.epub_spread.unwrap_or(false)))
+        {
+            return Err("Tile zoom is unavailable while facing pages are enabled".into());
         }
         if tile == original_tile
             && (View {
@@ -3393,6 +3703,7 @@ impl FixedReading {
             self.epub_spreads = new_epub_spreads;
         }
         self.frame = frame;
+        self.dewatermark_threshold_cache.set(None);
         self.visible = visible;
         self.overlap_cue = None;
         self.retained_viewport_anchor = None;
@@ -3418,9 +3729,19 @@ impl FixedReading {
             None
         };
         let white_level = self.view.scan_white_level;
-        if contrast.is_none() && white_level.is_none() && !self.view.dither {
+        let dewatermark = if self.view.dewatermark && white_level.is_none() {
+            self.dewatermark_threshold(contrast.as_ref())
+        } else {
+            None
+        };
+        if contrast.is_none()
+            && white_level.is_none()
+            && dewatermark.is_none()
+            && !self.view.dither
+        {
             return frame;
         }
+        let white_level = white_level.or(dewatermark);
         let tones: [u8; 256] = std::array::from_fn(|gray| {
             let gray = contrast.as_ref().map_or(gray as u8, |table| table[gray]);
             white_level.map_or(gray, |white| scale_scan_white(gray, white))
@@ -3440,6 +3761,15 @@ impl FixedReading {
             }
         }
         frame
+    }
+
+    fn dewatermark_threshold(&self, contrast: Option<&[u8; 256]>) -> Option<u8> {
+        if let Some(threshold) = self.dewatermark_threshold_cache.get() {
+            return threshold;
+        }
+        let threshold = crate::scan_dewatermark::threshold(&self.frame.pixels, contrast);
+        self.dewatermark_threshold_cache.set(Some(threshold));
+        threshold
     }
 
     pub(crate) fn draw(
@@ -3470,11 +3800,23 @@ impl FixedReading {
 
     pub(crate) fn page_status(&self) -> String {
         let physical = self.page + 1;
-        let zoom = if self.view.precise_scale.is_some() {
+        let zoom = if self.view.manual_zoom {
+            format!(
+                "Manual · {:.2}×",
+                f32::from(self.zoom_factor_hundredths()) / 100.0
+            )
+        } else if let Some(fit) = self.view.content_fit {
+            match fit {
+                FixedContentFit::Full => "Content · full",
+                FixedContentFit::Width => "Content · width",
+                FixedContentFit::Height => "Content · height",
+            }
+            .to_owned()
+        } else if self.view.precise_scale.is_some() {
             "Fit region".to_owned()
         } else {
             self.view.tile_zoom.map_or_else(
-                || format!("{}%", (ZOOM[self.view.zoom] * 100.0) as u32),
+                || format!("{}%", (ZOOM[self.view.zoom] * 100.0).round() as u16),
                 |tile| {
                     format!(
                         "{:.1} {}",
@@ -3707,6 +4049,54 @@ impl FixedDocument {
         }
     }
 
+    fn content_crop(
+        &self,
+        page: usize,
+        margin_hundredths: u8,
+        seed: Option<Seed>,
+    ) -> Result<PdfTextRect> {
+        const MAX_SCAN_SIDE: f32 = 1536.0;
+        let size = self.page_size(page)?;
+        if !size.0.is_finite() || !size.1.is_finite() || size.0 <= 0.0 || size.1 <= 0.0 {
+            return Err("This page has unsupported dimensions".into());
+        }
+        let scale = MAX_SCAN_SIDE / size.0.max(size.1);
+        let width = (size.0 * scale).ceil().clamp(1.0, MAX_SCAN_SIDE) as u32;
+        let height = (size.1 * scale).ceil().clamp(1.0, MAX_SCAN_SIDE) as u32;
+        let request = RenderRequest {
+            width,
+            height,
+            scale,
+            x: 0.0,
+            y: 0.0,
+            turns: 0,
+        };
+        let mut pixels = match self {
+            Self::Pdf(pdf) => pdf.render(page, request)?,
+            Self::Djvu(book) => book.render(page, request)?,
+            Self::Epub(book) => with_storage(|| {
+                let image = book.decode_page(page).map_err(io::Error::other)?;
+                image.render(request).map_err(io::Error::other)
+            })?,
+            Self::Comic(comic) => with_storage(|| {
+                let image = comic.decode_page(page).map_err(io::Error::other)?;
+                image.render(request).map_err(io::Error::other)
+            })?,
+            Self::Gif(gif) => gif.image_page(page)?.render(request)?,
+            Self::Tiff(tiff) => tiff.image_page(page)?.render(request)?,
+            Self::Image(image) => image.render(request)?,
+        };
+        crate::pdf_crop::full_auto_rendered(
+            &mut pixels,
+            width,
+            size,
+            scale,
+            WIDTH,
+            margin_hundredths,
+            seed,
+        )
+    }
+
     fn epub_spreads(&self, view: View, viewport_size: FrameSize) -> Option<EpubSpreads> {
         let Self::Epub(book) = self else { return None };
         // Legacy explicit RTL selections still apply. An unset override otherwise follows the book.
@@ -3729,6 +4119,10 @@ impl FixedDocument {
 
     fn supports_scan_contrast(&self) -> bool {
         matches!(self, Self::Pdf(_) | Self::Djvu(_) | Self::Comic(_))
+    }
+
+    fn supports_dewatermark(&self) -> bool {
+        self.supports_scan_contrast()
     }
 
     fn supports_scan_gamma(&self) -> bool {
@@ -3757,6 +4151,7 @@ impl FixedDocument {
         if !self.supports_scan_contrast() {
             view.scan_contrast = false;
             view.scan_white_level = None;
+            view.dewatermark = false;
         }
         if view.continuous
             && view.width_fit
@@ -3861,8 +4256,7 @@ impl FixedDocument {
 }
 
 fn scale_scan_white(gray: u8, white: u8) -> u8 {
-    let white = u16::from(white);
-    ((u16::from(gray) * 255 + white / 2) / white).min(255) as u8
+    if gray > white { 255 } else { gray }
 }
 
 fn ordered_gray(gray: u8, x: usize, y: usize) -> u8 {
@@ -4327,18 +4721,29 @@ fn view_metrics(
     let crop_height = height * (bottom - top);
     let width_scale = viewport_width / crop_width;
     let height_scale = height_px / crop_height;
-    let fit = if view.width_fit {
+    let fit = if view.manual_zoom {
         width_scale
-    } else if view.height_fit {
-        height_scale
     } else {
-        width_scale.min(height_scale)
+        match view.content_fit {
+            Some(FixedContentFit::Full) => width_scale.min(height_scale),
+            Some(FixedContentFit::Width) => width_scale,
+            Some(FixedContentFit::Height) => height_scale,
+            None if view.width_fit => width_scale,
+            None if view.height_fit => height_scale,
+            None => width_scale.min(height_scale),
+        }
     };
     let scale = view
         .precise_scale
         .unwrap_or_else(|| {
             view.tile_zoom.map_or_else(
-                || fit * ZOOM[view.zoom],
+                || {
+                    fit * if view.manual_zoom {
+                        f32::from(view.zoom_factor_hundredths.unwrap_or(150)) / 100.0
+                    } else {
+                        ZOOM[view.zoom]
+                    }
+                },
                 |tile| width_scale * tile.width_factor,
             )
         })
@@ -5482,6 +5887,35 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn zoom_target_and_fit_axis_change_independently() {
+        let mut reader = reading(striped_pdf(3), View::default());
+        reader.fit(true).unwrap();
+        assert!(reader.preferences().width_fit);
+
+        reader.set_content_fit_target(true).unwrap();
+        assert_eq!(
+            reader.preferences().content_fit,
+            Some(FixedContentFit::Width)
+        );
+        assert!(!reader.preferences().width_fit);
+
+        reader.set_fit_axis(FixedContentFit::Height).unwrap();
+        assert_eq!(
+            reader.preferences().content_fit,
+            Some(FixedContentFit::Height)
+        );
+        reader.set_content_fit_target(false).unwrap();
+        let preferences = reader.preferences();
+        assert!(preferences.content_fit.is_none());
+        assert!(preferences.height_fit);
+        assert!(!preferences.width_fit);
+
+        let round_trip: View =
+            serde_json::from_slice(&serde_json::to_vec(&preferences).unwrap()).unwrap();
+        assert_eq!(round_trip, preferences);
+    }
+
+    #[test]
     fn ordered_dither_quantizes_every_tone_and_preserves_its_tile_average() {
         for gray in 0..=255 {
             let values = (0..4)
@@ -5501,12 +5935,17 @@ pub(crate) mod tests {
         let source = reader.frame.pixels.clone();
         let original_viewport = reader.page_viewport().unwrap();
         assert_eq!(scale_scan_white(0, 220), 0);
-        assert_eq!(scale_scan_white(220, 220), 255);
+        assert_eq!(scale_scan_white(220, 220), 220);
         assert_eq!(scale_scan_white(255, 220), 255);
-        assert!(scale_scan_white(155, 220) > 155);
-        assert!(reader.set_scan_white_level(Some(191)).is_err());
+        assert_eq!(scale_scan_white(155, 220), 155);
+        assert_eq!(scale_scan_white(0, 0), 0);
+        assert_eq!(scale_scan_white(1, 0), 255);
+        reader.set_scan_white_level(Some(u8::MAX)).unwrap();
+        assert_eq!(reader.preferences().scan_white_level, None);
+        reader.set_scan_white_level(Some(0)).unwrap();
 
-        reader.set_scan_white_level(Some(220)).unwrap();
+        // The stripes are 25 and 51: 51 turns white while 25 stays a mid-tone for dithering.
+        reader.set_scan_white_level(Some(40)).unwrap();
         let lighter = reader.display_frame(0..PAGE_HEIGHT).pixels;
         assert!(
             lighter
@@ -5541,13 +5980,61 @@ pub(crate) mod tests {
         let saved: View =
             serde_json::from_slice(&serde_json::to_vec(&reader.preferences()).unwrap()).unwrap();
         assert!(saved.dither);
-        assert_eq!(saved.scan_white_level, Some(220));
+        assert_eq!(saved.scan_white_level, Some(40));
         reader.set_dither(false);
         reader.set_scan_white_level(None).unwrap();
         assert_eq!(
             reader.display_frame(0..PAGE_HEIGHT).pixels,
             reader.frame.pixels
         );
+    }
+
+    #[test]
+    fn dewatermark_uses_an_automatic_white_threshold_and_preserves_source_geometry() {
+        let mut reader = reading(striped_pdf(2), View::default());
+        let width = reader.frame.width as usize;
+        let height = reader.frame.height as usize;
+        let count = width * height;
+        let mut source = vec![220; count];
+        source[..count / 10].fill(30);
+        source[count / 10..count / 5].fill(120);
+        reader.frame.pixels.clone_from(&source);
+        let expected_threshold = crate::scan_dewatermark::threshold(&source, None).unwrap();
+        assert!((120..220).contains(&expected_threshold));
+
+        let viewport = reader.page_viewport().unwrap();
+        reader.set_dewatermark(true).unwrap();
+        let cleaned = reader.display_frame(0..height as u32);
+        assert!(cleaned.pixels[..count / 10].iter().all(|&tone| tone == 30));
+        assert!(cleaned.pixels[count / 10..count / 5]
+            .iter()
+            .all(|&tone| tone == 120));
+        assert!(cleaned.pixels[count / 5..].iter().all(|&tone| tone == 255));
+        assert_eq!(reader.frame.pixels, source);
+        let restored_viewport = reader.page_viewport().unwrap();
+        assert_eq!(restored_viewport.0, viewport.0);
+        assert_eq!(restored_viewport.1.x, viewport.1.x);
+        assert_eq!(restored_viewport.1.y, viewport.1.y);
+        assert_eq!(restored_viewport.1.scale, viewport.1.scale);
+        let saved: View = serde_json::from_slice(
+            &serde_json::to_vec(&reader.preferences()).unwrap(),
+        )
+        .unwrap();
+        assert!(saved.dewatermark);
+
+        // The stock UI makes Dewatermark unavailable while a manual white
+        // threshold is selected. The stored toggle returns when 255 is restored.
+        reader.set_scan_white_level(Some(100)).unwrap();
+        let manually_cleaned = reader.display_frame(0..height as u32);
+        assert!(manually_cleaned.pixels[count / 10..count / 5]
+            .iter()
+            .all(|&tone| tone == 255));
+        reader.set_scan_white_level(None).unwrap();
+        assert_ne!(reader.display_frame(0..height as u32).pixels, source);
+        reader.set_dewatermark(false).unwrap();
+        assert_eq!(reader.display_frame(0..height as u32).pixels, source);
+        assert_eq!(reader.page(), 0);
+        assert_eq!(reader.frame.pixels.len(), width * height);
     }
 
     #[test]

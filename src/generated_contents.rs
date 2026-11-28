@@ -109,6 +109,7 @@ impl GeneratedContents {
                     Anchor {
                         raw_caret: None,
                         illustration: None,
+                        side_bias: None,
                         book,
                         chapter: href.to_owned(),
                         revision: source.revision,
@@ -154,6 +155,7 @@ impl GeneratedContents {
                         Anchor {
                             raw_caret: None,
                             illustration: None,
+                            side_bias: None,
                             book,
                             chapter: href.to_owned(),
                             revision: source.revision,

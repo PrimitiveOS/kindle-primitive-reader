@@ -14,7 +14,7 @@ Open a document, reveal the upper reading bar, and choose **Settings › Documen
 
 Text defaults include the supported font, spacing, margins, layout, styles and hyphenation preferences. A removed default font falls back to device fonts with a notice. Reader retains the template's requested font name, but does not seed a broken font path into the new book's preferences.
 
-Page defaults include zoom/fit, rotation, page direction, spreads/scroll and supported scan rendering options. **Crop and pan belong to the current document.** They are excluded from the saved template. Reset retains the crop and keeps pan within the new page's bounds; a lower zoom can remove overflow and clamp a pan offset. Source page and annotations remain intact.
+Page defaults include zoom targets and fit, the Manual zoom factor, rotation, page direction, spreads/scroll, the OCR reflow column limit, word gap, alignment, scan text size, separate OCR LTR/RTL/TBRTL and embedded-text LTR/RTL/TBRTL directions, and supported scan rendering options. New fixed-page documents default to **Zoom to page · Fit width**, matching KOReader v2026.07.1's `pagewidth` default. **Crop and pan belong to the current document.** They are excluded from the saved template. Reset retains the crop and keeps pan within the new page's bounds; a lower zoom can remove overflow and clamp a pan offset. Source page and annotations remain intact.
 
 ## Relation to KOReader
 

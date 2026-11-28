@@ -84,6 +84,10 @@ impl OcrAssets {
         &self.languages
     }
 
+    pub(crate) fn model_directory(&self) -> PathBuf {
+        self.directory.join(TESSDATA)
+    }
+
     pub(crate) fn default_language(&self) -> &str {
         &self.languages[0]
     }

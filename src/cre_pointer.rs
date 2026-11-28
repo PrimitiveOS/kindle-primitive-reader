@@ -11,6 +11,7 @@ const MAX_STEPS: usize = 64;
 const TEXT_SPLIT_SIZE: usize = 8192;
 const MARKER_ID: &str = "reader-cre-position-probe";
 pub(crate) const DOM_VERSION: u32 = 20240114;
+const NORMALIZED_DOM_VERSIONS: [u32; 4] = [20200223, 20200824, 20210904, DOM_VERSION];
 
 struct Step<'a> {
     name: &'a str,
@@ -333,19 +334,21 @@ fn anchor_at(xhtml: &str, byte: usize, marker_id: &str) -> Result<(u64, usize, u
     Ok((original.revision, block.key, offset))
 }
 
-/// Resolve normalized pointers from the DOM version used by current saved KOReader EPUBs.
+/// Resolve normalized pointers from known CREngine DOM versions.
 pub fn resolve(book: &mut Book, value: &str, version: Option<u32>) -> Result<EpubPosition> {
-    if version != Some(DOM_VERSION) {
+    let version =
+        version.ok_or("This KOReader DOM version is unsupported for EPUB position import")?;
+    if !NORMALIZED_DOM_VERSIONS.contains(&version) {
         return Err("This KOReader DOM version is unsupported for EPUB position import".into());
     }
     if !book.is_reflowable_epub() {
         return Err("A CREngine EPUB position requires a reflowable book".into());
     }
     let ptr = Pointer::parse(value)?;
-    let index = match ptr.fragment.ordinal {
-        Some(index) => index - 1,
-        None if book.chapters.len() == 1 => 0,
-        None => return Err("The KOReader chapter selector is ambiguous".into()),
+    let index = if version == DOM_VERSION {
+        current_fragment_index(book, ptr.fragment.ordinal)?
+    } else {
+        legacy_xhtml_fragment_index(book, ptr.fragment.ordinal)?
     };
     let chapter = book
         .chapters
@@ -376,6 +379,7 @@ pub fn resolve(book: &mut Book, value: &str, version: Option<u32>) -> Result<Epu
         anchor: Anchor {
             raw_caret: None,
             illustration: None,
+            side_bias: None,
             book: book.revision(),
             chapter: path,
             revision,
@@ -383,6 +387,79 @@ pub fn resolve(book: &mut Book, value: &str, version: Option<u32>) -> Result<Epu
             offset,
         },
     })
+}
+
+/// The current CREngine DOM includes every openable spine member and omits
+/// absent streams. Reconstruct that merged-document sequence from the OPF.
+fn current_fragment_index(book: &mut Book, ordinal: Option<usize>) -> Result<usize> {
+    let spine_chapters = book.spine_chapter_indices(false)?;
+    let mut available = 0usize;
+    let mut sole = None;
+    for index in spine_chapters {
+        if !book.cre_spine_stream_available(index)? {
+            continue;
+        }
+        available += 1;
+        sole = Some(index);
+        if ordinal == Some(available) {
+            return Ok(index);
+        }
+    }
+    match (ordinal, available, sole) {
+        (None, 1, Some(index)) => Ok(index),
+        (None, _, _) => Err("The KOReader chapter selector is ambiguous".into()),
+        (Some(_), _, _) => Err("The saved KOReader chapter is unavailable".into()),
+    }
+}
+
+/// Before DOM_VERSION, CREngine omitted non-XHTML spine items from the merged
+/// document. Reconstruct those fragment ordinals from the EPUB package, while
+/// failing closed if an earlier XHTML fragment cannot be established.
+fn legacy_xhtml_fragment_index(book: &mut Book, ordinal: Option<usize>) -> Result<usize> {
+    let xhtml_chapters = book.spine_chapter_indices(true)?;
+    let mut available = 0usize;
+    let mut sole = None;
+    for index in xhtml_chapters {
+        let chapter = book
+            .chapters
+            .get(index)
+            .ok_or("The saved KOReader chapter is unavailable")?;
+        if chapter.unsupported || book.is_manifest_fallback(chapter) {
+            return Err("The saved KOReader XHTML fragment is ambiguous".into());
+        }
+        // A missing XHTML stream has no fragment and does not consume an ordinal.
+        if !book.cre_spine_stream_available(index)? {
+            continue;
+        }
+        let xhtml = book.source_xhtml_chapter(index)?;
+        validate_legacy_xhtml_fragment(&xhtml)?;
+        available += 1;
+        sole = Some(index);
+        if ordinal == Some(available) {
+            return Ok(index);
+        }
+    }
+    match (ordinal, available, sole) {
+        (None, 1, Some(index)) => Ok(index),
+        (None, _, _) => Err("The KOReader chapter selector is ambiguous".into()),
+        (Some(_), _, _) => Err("The saved KOReader chapter is unavailable".into()),
+    }
+}
+
+fn validate_legacy_xhtml_fragment(xhtml: &str) -> Result<()> {
+    let xml = crate::epub_xml::without_plain_doctype(xhtml);
+    let document = Document::parse_with_options(&xml, xml_options())?;
+    let root = document.root_element();
+    if !root.has_tag_name((XHTML, "html"))
+        || root
+            .children()
+            .filter(|node| node.has_tag_name((XHTML, "body")))
+            .count()
+            != 1
+    {
+        return Err("A preceding KOReader XHTML fragment cannot be verified".into());
+    }
+    Ok(())
 }
 
 /// Encode a canonical source point only when both position models agree.
@@ -569,7 +646,7 @@ fn locate_in_chapter(
                 || n.has_attribute("hidden")
                 || matches!(
                     n.tag_name().name(),
-                    "pre" | "ruby" | "script" | "style" | "noscript" | "template"
+                    "pre" | "textarea" | "ruby" | "script" | "style" | "noscript" | "template"
                 ))
     }) {
         return Err("The KOReader position addresses unsupported or hidden content".into());
@@ -729,7 +806,6 @@ mod tests {
         let xml = "<p>Here</p><p>There</p><p hidden='hidden'>Secret</p>";
         for path in [
             "/p/text().0",
-            "/p[1].1",
             "/p[3]/text().1",
             "/p[2]/text().88",
             "/p[0].0",
@@ -739,6 +815,8 @@ mod tests {
         ] {
             assert!(location(xml, path).is_err(), "{path}");
         }
+        // The indexed first paragraph is unambiguous, so its character offset is valid.
+        assert!(location(xml, "/p[1].1").is_ok());
         let mixed = "<p style='white-space:pre'>A  B</p>";
         assert!(location(mixed, "/p/text().3").is_err());
         assert!(
