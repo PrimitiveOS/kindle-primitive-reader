@@ -780,7 +780,7 @@ enum Action {
     BookMapChapter(usize),
     OpenFixedLink(crate::fixed::PdfLink),
     OpenLinkAddress(String),
-    OpenLocalDocument(std::path::PathBuf),
+    OpenLocalDocument(link_taps::LocalTarget),
     ToggleLinkPreference(link_taps::LinkPreference),
     SetMenuActivation(reading_bars::ActivationOption),
     Chapter(chapter_navigation::Direction),

@@ -76,7 +76,7 @@ pub(super) enum ReflowLink {
     Internal(Destination),
     Address(String),
     /// A readable file on the device, offered for reading (KOReader's `openFileFromLink`).
-    LocalDocument(PathBuf),
+    LocalDocument(LocalTarget),
 }
 
 impl ReflowLink {
@@ -97,15 +97,23 @@ impl ReflowLink {
     }
 }
 
-/// A link to an existing document file: a `file:` URL, an absolute path, or a path relative to
-/// the book's folder. The query and fragment are ignored. Only book formats qualify, so an
-/// ordinary chapter link such as `chapter.xhtml` stays internal even if a file of that name exists.
 /// The folder of the open book, where relative links to other files resolve.
 fn book_folder(reading: &Reading) -> &Path {
     reading.config.book.parent().unwrap_or(Path::new("/"))
 }
 
-fn local_document(href: &str, folder: &Path) -> Option<PathBuf> {
+/// A document file on the device, and the page a `?pos=` query asked for (1-based). Reader
+/// positions are not KOReader xpointers, so only a numeric page is applied, and only to fixed pages.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct LocalTarget {
+    pub(super) path: PathBuf,
+    pub(super) page: Option<usize>,
+}
+
+/// A link to an existing document file: a `file:` URL, an absolute path, or a path relative to
+/// the book's folder. The fragment is ignored. Only book formats qualify, so an ordinary chapter
+/// link such as `chapter.xhtml` stays internal even if a file of that name exists.
+fn local_document(href: &str, folder: &Path) -> Option<LocalTarget> {
     if href.chars().any(char::is_control) || href.len() > 4096 {
         return None;
     }
@@ -125,7 +133,20 @@ fn local_document(href: &str, folder: &Path) -> Option<PathBuf> {
         return None;
     }
     let path = std::fs::canonicalize(target).ok()?;
-    path.is_file().then_some(path)
+    path.is_file().then_some(LocalTarget {
+        path,
+        page: pos_page(href),
+    })
+}
+
+/// The page in a `pos=` query, when it is a number from 1 up.
+fn pos_page(href: &str) -> Option<usize> {
+    let query = href.split_once('?')?.1.split('#').next()?;
+    query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("pos="))
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|page| *page >= 1)
 }
 
 fn is_book_format(path: &Path) -> bool {
@@ -372,7 +393,7 @@ impl Reader {
     pub(super) fn open_reflow_link(&mut self, link: ReflowLink, x: f32, y: f32) -> Change {
         match link {
             ReflowLink::Address(address) => self.show_link_address(address),
-            ReflowLink::LocalDocument(path) => self.show_local_document(path),
+            ReflowLink::LocalDocument(target) => self.show_local_document(target),
             ReflowLink::Internal(target) => {
                 if self.open_note_at(target.clone(), x, y) {
                     return Change::Partial;
@@ -531,9 +552,9 @@ impl Reader {
                 ReflowLink::Address(address) => {
                     Item::new(label, Action::OpenLinkAddress(address.clone())).detail(address)
                 }
-                ReflowLink::LocalDocument(path) => {
-                    let detail = path.display().to_string();
-                    Item::new(label, Action::OpenLocalDocument(path)).detail(detail)
+                ReflowLink::LocalDocument(target) => {
+                    let detail = target.path.display().to_string();
+                    Item::new(label, Action::OpenLocalDocument(target)).detail(detail)
                 }
             })
             .collect()
@@ -669,7 +690,7 @@ mod local_document_tests {
     use crate::app::tests::Fixture;
 
     fn is_local(link: Option<ReflowLink>, expected: &Path) -> bool {
-        matches!(link, Some(ReflowLink::LocalDocument(path)) if path == expected)
+        matches!(link, Some(ReflowLink::LocalDocument(target)) if target.path == expected)
     }
 
     #[test]
@@ -689,6 +710,15 @@ mod local_document_tests {
         assert!(is_local(
             ReflowLink::resolve(chapter, "Harbor%20notes.epub?pos=12#part", &folder),
             &expected
+        ));
+        // The page of a numeric pos query is kept; a non-numeric position is not applied.
+        assert!(matches!(
+            ReflowLink::resolve(chapter, "Harbor%20notes.epub?pos=3", &folder),
+            Some(ReflowLink::LocalDocument(LocalTarget { page: Some(3), .. }))
+        ));
+        assert!(matches!(
+            ReflowLink::resolve(chapter, "Harbor%20notes.epub?pos=/body/p[2]", &folder),
+            Some(ReflowLink::LocalDocument(LocalTarget { page: None, .. }))
         ));
         let url = url::Url::from_file_path(&other).unwrap();
         assert!(is_local(

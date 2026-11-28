@@ -26,7 +26,7 @@ pub(super) struct LinkPopup {
     qr: Option<QrCode>,
     message: Option<&'static str>,
     /// A file on the device that the Read button opens, instead of an address to copy.
-    document: Option<PathBuf>,
+    document: Option<super::link_taps::LocalTarget>,
 }
 
 impl LinkPopup {
@@ -157,16 +157,29 @@ impl Reader {
     }
 
     /// Offer a file on the device for reading. Read opens it; Close keeps the book open.
-    pub(super) fn show_local_document(&mut self, path: PathBuf) -> Change {
+    pub(super) fn show_local_document(&mut self, target: super::link_taps::LocalTarget) -> Change {
         self.link_popup = Some(LinkPopup {
-            address: path.display().to_string(),
+            address: target.path.display().to_string(),
             page: 0,
             pages: Cell::new(1),
             qr: None,
             message: None,
-            document: Some(path),
+            document: Some(target),
         });
         self.sync_auto_turn(Instant::now());
+        Change::Partial
+    }
+
+    /// Read a local document: open it, and on a fixed page go to the page a `?pos=` asked for.
+    pub(super) fn read_local_target(&mut self, target: super::link_taps::LocalTarget) -> Change {
+        if let Err(error) = self.open_path(&target.path) {
+            return self.report(error);
+        }
+        if let (Some(page), Some(_)) = (target.page, self.fixed.as_ref())
+            && let Err(error) = self.activate(Action::FixedPage(page - 1))
+        {
+            return self.report(error);
+        }
         Change::Partial
     }
 
@@ -230,12 +243,9 @@ impl Reader {
             } else if place(CLOSE).contains(x, y) || !place(PANEL).contains(x, y) {
                 self.link_popup = None;
             } else if place(COPY).contains(x, y) {
-                if let Some(path) = popup.document.clone() {
+                if let Some(target) = popup.document.clone() {
                     self.link_popup = None;
-                    return match self.open_path(&path) {
-                        Ok(()) => Change::Partial,
-                        Err(error) => self.report(error),
-                    };
+                    return self.read_local_target(target);
                 }
                 self.clipboard_text = Some(popup.address.clone());
                 self.link_popup = None;
@@ -556,9 +566,16 @@ mod local_document_popup_tests {
         let other = std::fs::canonicalize(other).unwrap();
 
         // Close keeps the current book and drops the offer.
-        app.open_reflow_link(link_taps::ReflowLink::LocalDocument(other.clone()), 0.0, 0.0);
+        app.open_reflow_link(
+            link_taps::ReflowLink::LocalDocument(link_taps::LocalTarget {
+                path: other.clone(),
+                page: None,
+            }),
+            0.0,
+            0.0,
+        );
         assert_eq!(
-            app.link_popup.as_ref().unwrap().document.as_deref(),
+            app.link_popup.as_ref().unwrap().document.as_ref().map(|t| t.path.as_path()),
             Some(other.as_path())
         );
         assert_eq!(tap_centered(&mut app, CLOSE), Change::Partial);
@@ -569,9 +586,41 @@ mod local_document_popup_tests {
         );
 
         // Read opens the file.
-        app.open_reflow_link(link_taps::ReflowLink::LocalDocument(other.clone()), 0.0, 0.0);
+        app.open_reflow_link(
+            link_taps::ReflowLink::LocalDocument(link_taps::LocalTarget {
+                path: other.clone(),
+                page: None,
+            }),
+            0.0,
+            0.0,
+        );
         assert_eq!(tap_centered(&mut app, COPY), Change::Partial);
         assert!(app.link_popup.is_none());
         assert_eq!(app.active.as_ref().unwrap().reading.config.book, other);
+    }
+}
+
+#[cfg(test)]
+mod local_pdf_position_tests {
+    use super::*;
+    use crate::app::tests::Fixture;
+
+    #[test]
+    fn reading_a_local_pdf_link_with_a_page_opens_that_page() {
+        let fixture = Fixture::new();
+        let fonts = vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")];
+        let mut app = Reader::open(&fixture.root, &fixture.state, fonts).unwrap();
+        app.open_path(&fixture.book).unwrap();
+        let pdf = fixture.root.join("Harbor survey.pdf");
+        std::fs::copy(crate::test_fixture("scan-reflow/vector.pdf"), &pdf).unwrap();
+        let pdf = std::fs::canonicalize(pdf).unwrap();
+
+        let target = link_taps::LocalTarget {
+            path: pdf.clone(),
+            page: Some(2),
+        };
+        app.read_local_target(target);
+        assert_eq!(app.fixed.as_ref().unwrap().reading.page(), 1);
+        assert_eq!(app.active.as_ref().map(|_| ()), None, "the PDF replaces the book");
     }
 }
