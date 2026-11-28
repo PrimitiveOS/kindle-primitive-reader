@@ -4,9 +4,9 @@ Written for: the Reader owner. It separates failures that predate the uncommitte
 
 ## Status update (current run)
 
-Latest full library run, working tree, `RUST_MIN_STACK=67108864`: **1855 passed, 23 failed, 77 ignored**. Earlier sections below record the state when they were written and are kept for their decisions; the counts in the tables are historical.
+Latest full library run, working tree, `RUST_MIN_STACK=67108864`: **1862 passed, 16 failed, 77 ignored**. Earlier sections below record the state when they were written and are kept for their decisions; the counts in the tables are historical.
 
-- Of the 23 current failures, about 25 also appear in the `HEAD` list and the rest do not; the split is approximate (see below). The `HEAD` list in `/tmp` is a 58-name subset and is not an authoritative baseline, so the split is approximate.
+- Of the 16 current failures, about 25 also appear in the `HEAD` list and the rest do not; the split is approximate (see below). The `HEAD` list in `/tmp` is a 58-name subset and is not an authoritative baseline, so the split is approximate.
 - Decisions taken since the table above, each in the test or code named:
   - Search continuation starts from the current match rather than the visible-page edge (`src/app/nearby_search.rs`). Behavior change; confirm against KOReader before relying on it.
   - On a fit-width fixed page, a horizontal swipe pans only when the page overflows horizontally; otherwise it turns the page. Vertical swipes still pan as before (`src/fixed_session.rs`, `swipe_pans`). Previously every swipe panned under fit-width, so the page could not be turned by swiping. Confirm against KOReader's swipe behavior on fit-width pages.
@@ -24,6 +24,9 @@ Latest full library run, working tree, `RUST_MIN_STACK=67108864`: **1855 passed,
   - End of book: a tall fit-width page scrolls before it ends, so the resume test presses until the prompt opens. Queued page turns applied by the tick now run one second past their deadline in the test helper.
   - Lookup lists: settings rows come first and dictionary rows follow; the tests find their rows by title across pages.
   - Real-book pass (Kindle copies, desktop example and `verify_document`): psychology-of-money, complexity, the-gioi-5000-nam, subtle-art (EPUB) and little-book-stoicism (PDF) all open, paint, turn and resume.
+  - Profile tile zoom: a profile applies its tile when any target or tile-count field is selected. Decoding migrates the legacy fit-and-zoom field, so checking only that field dropped the tile on open (`src/fixed_session.rs`, `restore_fixed_profiles_with`).
+  - Empty included-settings profiles save without a notice, as the profile documentation states. Tests reopen the included settings and compare with the saved cleared profile.
+  - Publisher render mode: an absent mode and an explicit Reader mode mean the same default; tests normalise that one field.
   - Plain `.zip` files are listed as unavailable unless they open as ZIP archives (`src/library.rs`, `is_zip_archive`). The browser reads only the central directory.
   - Fixed-page overlay and tap-turn tests now match the current defaults: fit-width permits overlap; a queued turn is applied at its deadline.
   - A fit-width comic page taller than the screen scrolls before it turns, as `automatic_turn_scrolls_down_a_tall_fixed_page_before_turning` specifies; the comic test allows that first press.

@@ -3580,7 +3580,13 @@ impl FixedReading {
             }
             let (projected, requested_tile) = profile.project(fields, view);
             view = projected;
-            if fields.contains(&Field::FitAndZoom) {
+            // Decoding migrates the legacy fit-and-zoom field into these granular fields.
+            if fields.iter().any(|field| {
+                matches!(
+                    field,
+                    Field::FitAndZoom | Field::ZoomTargetFit | Field::ZoomColumns | Field::ZoomRows
+                )
+            }) {
                 tile = requested_tile;
             }
         }

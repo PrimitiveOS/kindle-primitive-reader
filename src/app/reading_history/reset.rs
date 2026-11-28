@@ -181,6 +181,17 @@ mod tests {
             crate::app::chapter_navigation::Direction::Next,
         ))
         .unwrap();
+        // Reflow chapter jumps are applied by a worker; wait for it before comparing locations.
+        let stop = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.chapter_navigation_job.is_some() {
+            assert!(std::time::Instant::now() < stop, "chapter jump did not finish");
+            let due = app
+                .chapter_navigation_job
+                .as_ref()
+                .map_or_else(std::time::Instant::now, |job| job.deadline());
+            app.poll_chapter_navigation(due + std::time::Duration::from_secs(1));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         assert_ne!(app.current_history_location(), initial_position);
         app.activate(Action::AddBookmark).unwrap();
         let book = app.open_book_id().unwrap();

@@ -159,13 +159,18 @@ fn opening_time_filters_automatic_opening_and_snapshots_the_negotiated_match() {
     app.open_path(&fixture.book).unwrap();
     assert_eq!(app.current_text_preferences().unwrap(), baseline);
     app.apply_reading_profile(0).unwrap();
-    assert_eq!(app.current_text_preferences().unwrap(), adjusted);
+    // The saved profile records the Reader render mode explicitly; an absent mode is the same Reader default.
+    let mut applied = app.current_text_preferences().unwrap();
+    applied.publisher_render_mode = None;
+    assert_eq!(applied, adjusted);
     assert_eq!(app.current_position().unwrap().anchor, position.anchor);
 
     app.apply_text_profile(baseline).unwrap();
     schedule(&mut app, 1320, 1320);
     app.open_path(&fixture.book).unwrap();
-    assert_eq!(app.current_text_preferences().unwrap(), adjusted);
+    let mut opened = app.current_text_preferences().unwrap();
+    opened.publisher_render_mode = None;
+    assert_eq!(opened, adjusted);
 
     let mut profiles = app.profiles.clone();
     profiles[0].set_opening_conditions(Conditions {

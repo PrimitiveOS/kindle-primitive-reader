@@ -368,9 +368,11 @@ fn saved_font_size_and_content_zoom_keep_legacy_values_and_mask_until_explicit_a
     press_key(&mut app, Key::Go);
     assert!(app.notice.as_deref().unwrap().contains("12 to 255"));
     assert_eq!(app.input(Input::PageBack), Change::Partial);
-    assert_eq!(
-        app.items()[0].detail.as_deref(),
-        Some("65 px (legacy) · Excluded")
+    // The profile list has font rows before the size row, so find the row by its detail.
+    assert!(
+        app.items()
+            .iter()
+            .any(|item| item.detail.as_deref() == Some("65 px (legacy) · Excluded"))
     );
     assert_eq!(app.profiles[0], profile_before);
 
@@ -380,7 +382,7 @@ fn saved_font_size_and_content_zoom_keep_legacy_values_and_mask_until_explicit_a
     app.finish_viewport(drawn, ViewportDecision::Commit);
     press_key(&mut app, Key::Go);
     assert_eq!(app.profiles[0].value(font), Some(44.5));
-    assert_eq!(app.items()[0].detail.as_deref(), Some("44.5 · Excluded"));
+    assert!(app.items().iter().any(|item| item.detail.as_deref() == Some("44.5 · Excluded")));
 
     tap_contents_item(&mut app, zoom.label());
     assert_eq!(app.editor.string(), "167");
@@ -392,7 +394,7 @@ fn saved_font_size_and_content_zoom_keep_legacy_values_and_mask_until_explicit_a
     type_value(&mut app, "125");
     press_key(&mut app, Key::Go);
     assert_eq!(app.profiles[0].value(zoom), Some(125.0));
-    assert_eq!(app.items()[1].detail.as_deref(), Some("125 dpi · Excluded"));
+    assert!(app.items().iter().any(|item| item.detail.as_deref() == Some("125 dpi · Excluded")));
     assert_eq!(app.profiles[0].selection(), [Field::LineSpacing]);
     let mut wanted = profile_before;
     let Profile::Text { preferences, .. } = &mut wanted else {

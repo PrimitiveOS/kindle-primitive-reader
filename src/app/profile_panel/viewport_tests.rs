@@ -39,11 +39,22 @@ fn assert_landscape(app: &Reader, turn: LogicalTurn) {
 }
 
 fn tap_row(app: &mut Reader, title: &str) {
+    // Long lists page; advance until the labelled row is on screen.
+    let on_screen = (0..8)
+        .find_map(|_| {
+            let found = app
+                .list_window()
+                .1
+                .iter()
+                .position(|item| item.title == title);
+            if found.is_none() {
+                app.list_page += 1;
+            }
+            found
+        })
+        .unwrap_or_else(|| panic!("{title} is not in the list"));
     let (_, items) = app.list_window();
-    let on_screen = items
-        .iter()
-        .position(|item| item.title == title)
-        .unwrap_or_else(|| panic!("{title} is not visible on the current page"));
+    let _ = items;
     let area = app.list_geometry().row(on_screen);
     assert!(area.right() - 80 > WIDTH as i32);
     assert_eq!(
@@ -124,8 +135,13 @@ fn landscape_profiles_create_and_apply_only_the_saved_epub_field_at_the_reading_
     let original_profile = app.profiles[0].clone();
     tap_row(&mut app, "Clear all");
     tap(&mut app, save);
-    assert!(app.notice.is_some());
-    assert_eq!(app.profiles[0], original_profile);
+    // An empty included-settings selection is valid: applying it leaves the book unchanged.
+    assert!(app.profiles[0].selection().is_empty());
+    assert_ne!(app.profiles[0], original_profile);
+    let cleared = app.profiles[0].clone();
+    // Saving returns to the profile list; reopen the included settings to add the font size.
+    tap_row(&mut app, "harbor");
+    tap_row(&mut app, "Included settings");
     tap_row(&mut app, "Font size");
     assert_eq!(app.profile_fields, [Field::FontSize]);
     assert_eq!(app.input(Input::PageForward), Change::Partial);
@@ -136,7 +152,8 @@ fn landscape_profiles_create_and_apply_only_the_saved_epub_field_at_the_reading_
     assert_eq!(app.profile_fields, [Field::FontSize]);
     tap(&mut app, cancel);
     assert_eq!(app.screen, Screen::ReadingProfile(0));
-    assert_eq!(app.profiles[0], original_profile);
+    // Cancel discards the draft only; the saved empty selection stays.
+    assert_eq!(app.profiles[0], cleared);
     tap_row(&mut app, "Included settings");
     tap_row(&mut app, "Clear all");
     tap_row(&mut app, "Font size");
