@@ -1494,8 +1494,9 @@ fn in_page_footnote_style_reflows_from_visible_controls_and_preserves_the_passag
     app.activate(Action::ReadingMode(false)).unwrap();
     assert!(has_note_band(&app));
 
+    // Two-page layout composes each leaf with its own note bands.
     app.activate(Action::FacingPages(true)).unwrap();
-    assert!(!has_note_band(&app));
+    assert!(has_note_band(&app));
     app.activate(Action::FacingPages(false)).unwrap();
     assert!(has_note_band(&app));
     let current = app.active.as_ref().unwrap().reading.anchor();

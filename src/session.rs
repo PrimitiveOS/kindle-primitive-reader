@@ -864,12 +864,15 @@ impl BookConfig {
             .get_or_init(|| book.chapter_offsets().unwrap_or_default());
         let facing = self.requested_facing_geometry();
         let single_page_layout = !self.scroll && facing.is_none() && !self.hidden_flows.enabled;
+        // Each facing leaf is composed at leaf width with the same note bands, so the
+        // note styles and in-page bands stay on for two-page layout too.
+        let note_layout = !self.scroll && !self.hidden_flows.enabled;
         let user_styles = self
             .user_styles
-            .for_note_layout(single_page_layout)
+            .for_note_layout(note_layout)
             .for_nonlinear_notes(self.hide_nonlinear);
         let full = Settings {
-            in_page_footnotes: self.settings.in_page_footnotes && single_page_layout,
+            in_page_footnotes: self.settings.in_page_footnotes && note_layout,
             ..self.settings
         };
         let full = if full.publisher_render_mode.is_some() && !single_page_layout {
@@ -2011,7 +2014,7 @@ impl Reading {
         if let Some(pages) = &self.probe.in_page_notes {
             return pages
                 .iter()
-                .take(self.page + 1)
+                .take(self.last_visible_page() + 1)
                 .rev()
                 .find_map(|page| {
                     page.parts
@@ -2037,6 +2040,19 @@ impl Reading {
         }
     }
 
+    /// The body text range of each leaf on screen. Note bands follow the body part, so
+    /// search boundaries use only the first part of each leaf.
+    fn search_columns(&self) -> Vec<Range<f32>> {
+        if self.probe.in_page_notes.is_some() {
+            return frame_columns(&self.config, &self.probe, self.page)
+                .filter_map(|(column, _)| {
+                    self.probe.page_parts(column).next().map(|(range, _)| range)
+                })
+                .collect();
+        }
+        self.visible_columns().map(|(range, _)| range).collect()
+    }
+
     pub(crate) fn visible_columns(&self) -> impl Iterator<Item = (Range<f32>, u32)> + '_ {
         self.visible_parts()
             .into_iter()
@@ -2045,10 +2061,13 @@ impl Reading {
 
     pub(crate) fn visible_parts(&self) -> Vec<VisiblePart> {
         if self.probe.in_page_notes.is_some() {
-            return self
-                .probe
-                .page_parts(self.page)
-                .map(|(range, y)| VisiblePart { range, x: 0, y })
+            // Every leaf on screen keeps its own horizontal origin, as in the ordinary path.
+            return frame_columns(&self.config, &self.probe, self.page)
+                .flat_map(|(column, x)| {
+                    self.probe
+                        .page_parts(column)
+                        .map(move |(range, y)| VisiblePart { range, x, y })
+                })
                 .collect();
         }
         if let Some(top) = self.scroll_top
@@ -2558,16 +2577,11 @@ impl Reading {
         fallback: bool,
     ) -> Option<Anchor> {
         let previous = direction == crate::search::SearchDirection::Previous;
-        let column_count = if self.probe.in_page_notes.is_some() {
-            1
-        } else {
-            usize::MAX
-        };
         let mut raw_failure = false;
         let mut edges = self
-            .visible_columns()
-            .take(column_count)
-            .filter_map(|(range, _)| {
+            .search_columns()
+            .into_iter()
+            .filter_map(|range| {
                 let mut lines = self.probe.lines.iter().filter(|line| {
                     (!line.bytes.is_empty() || line.raw_whitespace.is_some())
                         && line.bottom > range.start
@@ -4085,6 +4099,69 @@ mod tests {
         assert!(rects.iter().all(|rect| rect.x + rect.width <= WIDTH as i32));
         let thumbnail = page_thumbnail(&mut reading.probe, 1).unwrap();
         assert_eq!(thumbnail.light.width, FACING_PAGE_WIDTH * 280 / PAGE_HEIGHT);
+    }
+
+    #[test]
+    fn in_page_notes_compose_on_each_facing_leaf_at_its_own_origin() {
+        let config = BookConfig {
+            viewport: ReadingViewport::PORTRAIT,
+            user_hyphenation: Default::default(),
+            user_styles: Default::default(),
+            chapter_offsets: Default::default(),
+            quote_prefixes: Default::default(),
+            screen_pages: Default::default(),
+            eager_layouts: Default::default(),
+            folder_snapshot: None,
+            engine: Engine::Parley,
+            book: crate::test_fixture("in-page-footnotes.epub"),
+            fonts: vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+            font_roles: Default::default(),
+            settings: Settings {
+                width: WIDTH,
+                height: PAGE_HEIGHT,
+                font_size: 25.0,
+                in_page_footnotes: true,
+                ..Settings::default()
+            },
+            scroll: false,
+            facing_pages: true,
+            hide_nonlinear: false,
+            hidden_flows: Default::default(),
+        };
+        let reading = Reading::restore(config, 1, 0, None).unwrap();
+        assert!(reading.uses_facing_pages());
+        assert!(reading.probe.in_page_notes.is_some());
+        let right = FacingGeometry { width: WIDTH }.right_origin();
+        let parts = reading.visible_parts();
+        // Each leaf keeps its own horizontal origin for its body text.
+        assert!(parts.iter().any(|part| part.x == 0 && part.y == 0));
+        assert!(parts.iter().any(|part| part.x == right && part.y == 0));
+
+        // The right leaf's body text accepts hits at its own origin.
+        let right_hit = (0..PAGE_HEIGHT)
+            .step_by(9)
+            .flat_map(|y| (right..WIDTH).step_by(9).map(move |x| (x, y)))
+            .find(|&(x, y)| reading.word_at(x as f32, y as f32).is_some());
+        assert!(right_hit.is_some(), "the right leaf should accept a word hit");
+
+        // A note band on any leaf accepts hits and highlights inside its own leaf.
+        let band = parts
+            .iter()
+            .find(|part| part.y > 0)
+            .expect("the spread should carry a note band");
+        let top = band.y + reading.probe.settings.top_margin();
+        let (x, y, word) = (band.x..band.x + FACING_PAGE_WIDTH)
+            .step_by(3)
+            .flat_map(|x| (top..PAGE_HEIGHT).step_by(3).map(move |y| (x, y)))
+            .find_map(|(x, y)| reading.word_at(x as f32, y as f32).map(|word| (x, y, word)))
+            .expect("the note band should accept a word hit");
+        assert_eq!(reading.word_at(x as f32, y as f32), Some(word.clone()));
+        let selection = reading.probe.select_range(&word.start, &word.end).unwrap();
+        let rects = reading.highlight_rects(&selection);
+        assert!(!rects.is_empty());
+        assert!(rects.iter().all(|rect| rect.x + rect.width <= WIDTH as i32));
+        assert!(rects.iter().any(|rect| rect.x >= band.x as i32
+            && rect.x < (band.x + FACING_PAGE_WIDTH) as i32));
     }
 
     #[test]
