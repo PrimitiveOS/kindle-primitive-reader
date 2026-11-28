@@ -348,18 +348,15 @@ impl Reader {
         (count, lines.into_iter().map(|line| line.item).collect())
     }
 
-    /// The full-title popup: the title in a centred panel, closed by any tap.
-    fn draw_full_title_popup(&self, canvas: &mut Canvas) {
-        let Some(title) = &self.contents_title else {
-            return;
-        };
+    /// A text popup in a centred panel, closed by any tap: the full title or tweak help.
+    pub(super) fn draw_text_popup(&self, canvas: &mut Canvas, text: &str) {
         let layout = self.navigation_layout();
         let panel = layout.centered(Rect::new(72, 560, 1120, 480));
         canvas.popup(panel);
         let language = self.controls.interface_language;
         canvas.text(
             Rect::new(panel.x + 60, panel.y + 50, panel.w - 120, panel.h - 170),
-            title,
+            text,
             TextStyle::new(40).lines(6).break_long_words(),
         );
         canvas.button(
@@ -556,7 +553,9 @@ impl Reader {
                 CAPTION.center(),
             );
         }
-        self.draw_full_title_popup(canvas);
+        if let Some(title) = &self.contents_title {
+            self.draw_text_popup(canvas, title);
+        }
     }
 
     pub(super) fn contents_input(&mut self, input: Input) -> Change {

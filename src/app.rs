@@ -1311,6 +1311,8 @@ pub struct Reader {
     link_popup: Option<external_link::LinkPopup>,
     /// The full title of a Contents row, shown by a long press (KOReader's TOC hold).
     contents_title: Option<String>,
+    /// Tweak help: the title, description and CSS of a long-pressed style tweak.
+    style_help: Option<String>,
     clipboard_text: Option<String>,
     saved_popup: Option<saved_highlight_popup::SavedPopup>,
     exports: PathBuf,
@@ -1630,6 +1632,7 @@ impl Reader {
             range_edit: None,
             link_popup: None,
             contents_title: None,
+            style_help: None,
             clipboard_text: None,
             saved_popup: None,
             exports: state.parent().unwrap_or(documents).join("exports"),
@@ -10940,6 +10943,9 @@ impl App for Reader {
             self.draw_skim(canvas);
         }
         self.draw_flow_popup(canvas);
+        if let Some(help) = &self.style_help {
+            self.draw_text_popup(canvas, help);
+        }
         self.draw_archive_confirmation(canvas);
         self.draw_metadata_archive_confirmation(canvas);
         self.draw_remove_book_shortcut(canvas);
@@ -11349,6 +11355,16 @@ impl App for Reader {
     }
 
     fn input(&mut self, input: Input) -> Change {
+        if self.style_help.is_some() && matches!(input, Input::Tap(..)) {
+            self.style_help = None;
+            return Change::Partial;
+        }
+        if let Input::LongTap(x, y) = input
+            && self.screen == Screen::StyleTweaks
+            && let Some(change) = self.style_tweak_help(x, y)
+        {
+            return change;
+        }
         if let Some(change) = self.multiswipe_menu_input(input) {
             return change;
         }

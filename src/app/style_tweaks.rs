@@ -115,6 +115,74 @@ fn image_preset(preset: &user_styles::Preset) -> bool {
     matches!(preset.group, "images" | "image-alignment")
 }
 
+/// The one-line description KOReader's tweak help shows, where Reader has one.
+pub(crate) fn preset_description(id: &str) -> Option<&'static str> {
+    let description = match id {
+        "link-black" => "Use black ink for links and anchors",
+        "link-blue" => "Use the Kindle grayscale shade for blue links",
+        "table_no_presentational_hints" => "Use stylesheet rules without layout hints from HTML attributes",
+        "td_vertical_align_none" => "Align body cells to the row’s first text baseline",
+        "no_pseudo_element_before_after" => "Hide generated text before or after the original content",
+        "no_pseudo_element_first_letter" => "Suppress the publisher’s first-letter styling",
+        "no_pseudo_element_first_line" => "Suppress the publisher’s first-line styling",
+        "paragraph_web_browser_style" => "Use block paragraphs with no default first-line indent",
+        "paragraph_whitespace" => "Add one em between consecutive paragraphs",
+        "paragraph_whitespace_half" => "Add half an em between consecutive paragraphs",
+        "paragraph_no_whitespace" => "Remove top and bottom margins from paragraphs",
+        EPUB_FOOTNOTES => "Show marked notes in supported single-page EPUB layouts",
+        CLASSIC_FOOTNOTES => "Use common publisher footnote classes in this EPUB",
+        WIKIPEDIA_FOOTNOTES => "Use reference lists in a saved Wikipedia EPUB",
+        FB2_FOOTNOTES => "Show linked sections from the FictionBook notes body",
+        FB2_ENDNOTES => "Show linked sections from the FictionBook comments body",
+        FB2_REGULAR_NOTE_SIZE => "Use the reading size for FictionBook note bands",
+        EXTEND_NOTES => "Include following blocks up to the next note or end of the group",
+        EXTEND_NOTES_UNTIL_HEADING => "Also stop at a following heading",
+        NOTE_INDENTATION => "Remove the first-line indent from notes",
+        NOTE_JUSTIFICATION => "Justify the lines of the note text",
+        NOTE_BLOCK_SPACING => "Remove margins and padding around note blocks",
+        NOTE_COSMETIC_SPACING => "Remove margins and padding on inline note elements",
+        INLINE_ALL_FOOTNOTE_CONTENT => "Combine simple note paragraphs with their number",
+        NOTE_INLINE_SIZING => "Use inherited note text size, line height and baseline",
+        COMBINE_NONLINEAR_NOTES => "Group original notes for Hide non-linear fragments",
+        "image_full_width" => "Place images on separate lines. Authored height can affect the aspect ratio.",
+        "image_valign_middle" => "Align inline images to the middle of adjoining text",
+        _ => return None,
+    };
+    Some(description)
+}
+
+/// The text of the tweak help for one preset: its title, its description where Reader has one,
+/// and the CSS it applies.
+pub(crate) fn preset_help(preset: user_styles::Preset) -> String {
+    let css = match preset.effect {
+        user_styles::Effect::Css(css) => css.to_owned(),
+        _ => "Applied as layout rules".to_owned(),
+    };
+    let mut text = preset.title.to_owned();
+    if let Some(description) = preset_description(preset.id) {
+        text.push('\n');
+        text.push_str(description);
+    }
+    text.push_str("\n\nCSS: ");
+    text.push_str(&css);
+    text
+}
+
+impl Reader {
+    /// A long press on a tweak row shows its help; other rows keep their behaviour.
+    pub(super) fn style_tweak_help(&mut self, x: f32, y: f32) -> Option<Change> {
+        let geometry = self.list_geometry();
+        let (count, items) = self.list_window();
+        let row = geometry.item_at(self.list_page, count, x, y)?;
+        let Action::Style(Command::Preset(id)) = &items.get(row)?.action else {
+            return None;
+        };
+        let preset = user_styles::preset(id)?;
+        self.style_help = Some(preset_help(preset));
+        Some(Change::Partial)
+    }
+}
+
 fn preset_item(preset: user_styles::Preset, data: &Data, book: &user_styles::BookTweaks) -> Item {
     let source = match book.choices.get(preset.id) {
         Some(true) => "On for this book",
@@ -728,51 +796,8 @@ impl Reader {
                 };
                 let current = b.choices.get(p.id).copied();
                 let global = data.global.contains(p.id);
-                let description = match p.id {
-                    "link-black" => "Use black ink for links and anchors",
-                    "link-blue" => "Use the Kindle grayscale shade for blue links",
-                    "table_no_presentational_hints" => {
-                        "Use stylesheet rules without layout hints from HTML attributes"
-                    }
-                    "td_vertical_align_none" => "Align body cells to the row’s first text baseline",
-                    "no_pseudo_element_before_after" => {
-                        "Hide generated text before or after the original content"
-                    }
-                    "no_pseudo_element_first_letter" => {
-                        "Suppress the publisher’s first-letter styling"
-                    }
-                    "no_pseudo_element_first_line" => "Suppress the publisher’s first-line styling",
-                    "paragraph_web_browser_style" => {
-                        "Use block paragraphs with no default first-line indent"
-                    }
-                    "paragraph_whitespace" => "Add one em between consecutive paragraphs",
-                    "paragraph_whitespace_half" => "Add half an em between consecutive paragraphs",
-                    "paragraph_no_whitespace" => "Remove top and bottom margins from paragraphs",
-                    EPUB_FOOTNOTES => "Show marked notes in supported single-page EPUB layouts",
-                    CLASSIC_FOOTNOTES => "Use common publisher footnote classes in this EPUB",
-                    WIKIPEDIA_FOOTNOTES => "Use reference lists in a saved Wikipedia EPUB",
-                    FB2_FOOTNOTES => "Show linked sections from the FictionBook notes body",
-                    FB2_ENDNOTES => "Show linked sections from the FictionBook comments body",
-                    FB2_REGULAR_NOTE_SIZE => "Use the reading size for FictionBook note bands",
-                    EXTEND_NOTES => {
-                        "Include following blocks up to the next note or end of the group"
-                    }
-                    EXTEND_NOTES_UNTIL_HEADING => "Also stop at a following heading",
-                    NOTE_INDENTATION => "Remove the first-line indent from notes",
-                    NOTE_JUSTIFICATION => "Justify the lines of the note text",
-                    NOTE_BLOCK_SPACING => "Remove margins and padding around note blocks",
-                    NOTE_COSMETIC_SPACING => "Remove margins and padding on inline note elements",
-                    INLINE_ALL_FOOTNOTE_CONTENT => {
-                        "Combine simple note paragraphs with their number"
-                    }
-                    NOTE_INLINE_SIZING => "Use inherited note text size, line height and baseline",
-                    COMBINE_NONLINEAR_NOTES => "Group original notes for Hide non-linear fragments",
-                    "image_full_width" => {
-                        "Place images on separate lines. Authored height can affect the aspect ratio."
-                    }
-                    "image_valign_middle" => "Align inline images to the middle of adjoining text",
-                    _ => "Book choice overrides the live all-books default",
-                };
+                let description = preset_description(p.id)
+                    .unwrap_or("Book choice overrides the live all-books default");
                 let detail = if note_format(p.id).is_some() {
                     language.bottom_typography_text("Apply to eligible books that use the default")
                 } else {

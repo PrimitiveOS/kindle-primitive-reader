@@ -1582,3 +1582,50 @@ fn in_page_footnote_style_defaults_persist_and_book_override_does_not_change_ano
     );
     assert!(!has_note_band(&reopened));
 }
+
+#[test]
+fn tweak_help_shows_the_title_the_description_and_the_css() {
+    let (preset, css) = user_styles::PRESETS
+        .iter()
+        .find_map(|preset| match (preset.effect, preset_description(preset.id)) {
+            (user_styles::Effect::Css(css), Some(_)) => Some((*preset, css)),
+            _ => None,
+        })
+        .expect("a stylesheet preset with a description");
+    let text = preset_help(preset);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], preset.title);
+    assert_eq!(Some(lines[1]), preset_description(preset.id));
+    assert_eq!(lines[2], "");
+    assert_eq!(lines[3], format!("CSS: {css}"));
+}
+
+#[test]
+fn tweak_help_without_a_description_shows_only_the_title_and_css() {
+    let preset = user_styles::preset("h1_page-break-before_always").unwrap();
+    let text = preset_help(preset);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], preset.title);
+    assert_eq!(lines[1], "", "the CSS follows a blank line");
+    assert!(lines[2].starts_with("CSS: "));
+}
+
+#[test]
+fn long_press_on_a_tweak_row_opens_its_help_until_a_tap() {
+    let fixture = crate::app::tests::Fixture::new();
+    let mut app = fixture.app();
+    app.open_path(&fixture.book).unwrap();
+    app.activate(Action::Show(Screen::StyleTweaks)).unwrap();
+    let (_, items) = app.list_window();
+    let row = items
+        .iter()
+        .position(|item| matches!(item.action, Action::Style(Command::Preset(_))))
+        .expect("the tweak screen lists a preset row");
+    let rect = app.list_geometry().row(row);
+    let (x, y) = ((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
+    assert_eq!(app.input(Input::LongTap(x, y)), Change::Partial);
+    let help = app.style_help.clone().expect("the long press opens the help");
+    assert!(help.contains("\n\nCSS: "), "{help}");
+    assert_eq!(app.input(Input::Tap(10.0, 10.0)), Change::Partial);
+    assert_eq!(app.style_help, None);
+}
