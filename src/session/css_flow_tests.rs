@@ -193,3 +193,64 @@ fn saved_custom_flow_markers_remain_resolved_when_publisher_css_omits_their_text
     );
     assert_eq!(reading.anchor(), Some(anchor));
 }
+
+#[test]
+fn a_render_mode_keeps_custom_flows_resolved_and_the_hidden_passage_out_of_the_page() {
+    use crate::library::{
+        ReadingPosition,
+        hidden_flows::{FlowPoint, HiddenFlows},
+    };
+    let book = book();
+    let config = BookConfig {
+        viewport: crate::session::ReadingViewport::PORTRAIT,
+        user_styles: Default::default(),
+        user_hyphenation: Default::default(),
+        engine: Engine::Parley,
+        book: book.0.clone(),
+        fonts: vec![crate::test_fixture("fonts/NotoSans-Regular.ttf")],
+        font_roles: Default::default(),
+        settings: crate::PublisherRenderMode::Web.apply(Settings {
+            width: WIDTH,
+            height: PAGE_HEIGHT,
+            font_size: 30.,
+            publisher_styles: false,
+            ..Default::default()
+        }),
+        scroll: false,
+        facing_pages: false,
+        hide_nonlinear: false,
+        hidden_flows: Default::default(),
+        chapter_offsets: Default::default(),
+        quote_prefixes: Default::default(),
+        screen_pages: Default::default(),
+        eager_layouts: Default::default(),
+        folder_snapshot: None,
+    };
+    let reading = Reading::open(config.clone()).unwrap();
+    let anchor = reading.probe.matches("HIDDEN SAVED PASSAGE")[0].clone();
+    let mut ranges = HiddenFlows::default();
+    ranges.enabled = true;
+    ranges
+        .insert(FlowPoint {
+            position: ReadingPosition {
+                chapter: 0,
+                page: 0,
+                anchor: Some(anchor.clone()),
+            },
+            hidden: true,
+        })
+        .unwrap();
+    let config = BookConfig {
+        hidden_flows: std::rc::Rc::new(ranges),
+        ..config
+    };
+    let reading = Reading::restore(config, 0, 0, Some(&anchor)).unwrap();
+    assert_eq!(
+        reading.probe.settings.publisher_render_mode,
+        Some(crate::PublisherRenderMode::Web)
+    );
+    assert!(reading.custom_flows.unresolved.is_empty());
+    // Without the mode this state is the same: the passage's flow boundary is on page 0.
+    assert_eq!(reading.probe.page_for(&anchor), Some(0));
+    assert_eq!(reading.probe.flow_boundary_page(&anchor), Some(0));
+}

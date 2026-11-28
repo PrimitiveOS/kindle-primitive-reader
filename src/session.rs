@@ -870,16 +870,11 @@ impl BookConfig {
             .user_styles
             .for_note_layout(note_layout)
             .for_nonlinear_notes(self.hide_nonlinear);
+        // KOReader's render-mode flags are document-wide, so the mode applies in every view,
+        // including custom hidden flows, scrolling and two-page spreads.
         let full = Settings {
             in_page_footnotes: self.settings.in_page_footnotes && note_layout,
             ..self.settings
-        };
-        // KOReader applies its render-mode flags in scroll view too (the scroll full height changes
-        // with the mode), so only hidden flows fall back to Reader's layout.
-        let full = if full.publisher_render_mode.is_some() && self.hidden_flows.enabled {
-            crate::PublisherRenderMode::Reader.apply(full)
-        } else {
-            full
         };
         let settings = if let Some(geometry) = facing {
             let width = geometry.leaf_width();

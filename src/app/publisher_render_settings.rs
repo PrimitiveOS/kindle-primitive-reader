@@ -12,8 +12,6 @@ impl Reader {
             || reading.probe.pages_right_to_left()
         {
             Some("Requires a horizontal left-to-right EPUB")
-        } else if reading.config.hidden_flows.enabled {
-            Some("Requires one-page reading")
         } else {
             None
         }
