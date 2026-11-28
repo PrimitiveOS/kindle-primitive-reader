@@ -73,7 +73,7 @@ still say 18; treat the code as authoritative and correct the docs (plan 0.6).
 | N-8 | Alternative-ToC restore and its chapter lengths for unsupported layouts | `readertoc.lua`, `readerpagemap.lua` | `docs/contents-list-settings.md`; `docs/reflow-book-map-marks.md` Reason: Book Map options (themes, grid and flat views, markers) are presentation. | low | deferred to UI pass |
 | N-9 | Two-column odd/even first-page rule (`odd_or_even_first_page`) and two-page `_gotoPage` rules | `readerview.lua`, `readerpaging.lua` | not compared | low | verify |
 | N-10 | Page-position memory per page (`page_positions`) | `readerpaging.lua` | no clear counterpart | low | verify |
-| N-11 | Margin editors: paired L/R spinner, hold steps of 5 logical units, dual top/bottom editor | `creoptions.lua` editors | `docs/reflow-page-margins.md`; `src/app/numeric_editor.rs` Reason: The paired L/R spinner and hold steps are numeric-editor UI. | low | deferred to UI pass |
+| N-11 | Margin editors: paired L/R spinner, hold steps of 5 logical units, dual top/bottom editor | `creoptions.lua` editors | Done. Paired left and right steppers with one-pixel taps and five-pixel holds, the nine stock preset stops, the linked or independent top and bottom editor, and the exact-value editor (`docs/reflow-page-margins.md`; 39 margin tests pass, `cargo test -- margin`). Long-hold repeat timing still needs a device comparison. | low | closed |
 
 ## Phase 1.4 open items (from the Phase 0 pass)
 
