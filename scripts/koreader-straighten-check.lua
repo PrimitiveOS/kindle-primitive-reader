@@ -27,7 +27,7 @@ local function residual_skew(bb, step, limit)
     local cx, cy = width / 2, height / 2
     local best_angle, best_score = 0, -1
     local bins = math.ceil(math.sqrt(width * width + height * height) / step) + 2
-    for tenth = -limit * 10, limit * 10, 2 do
+    for tenth = -limit * 10, limit * 10, 1 do
         local angle = math.rad(tenth / 10)
         local cos, sin = math.cos(angle), math.sin(angle)
         local counts = {}
@@ -78,7 +78,7 @@ for _, limit in ipairs(limits) do
     local path = string.format("%s/straighten-%d.png", out_dir, limit)
     bb:writePNG(path)
     print(string.format('{"check":"auto-straighten","limit_degrees":%d,"residual_degrees":%.2f,"output":"%s"}',
-        limit, residual_skew(bb, 4, 15), path))
+        limit, residual_skew(bb, 2, 15), path))
     bb:free()
     kc:free()
 end
