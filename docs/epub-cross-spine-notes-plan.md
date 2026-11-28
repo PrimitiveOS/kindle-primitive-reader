@@ -73,6 +73,12 @@ Record the result in `docs/koreader-gap-register.md` under S-15.
   shares with the FictionBook 3 band. Changing it changes that layout too,
   so it needs a deliberate spacing decision with measurements for both
   formats.
+- Measured on the saved frames (`image` crate, 1264 px wide): Reader's band
+  text lines are 33 px high with a 45 px pitch; KOReader's band lines are
+  42 px high, the same as its body text. At full size, Reader's band does not
+  fit above its bottom margin and is dropped, so Reader keeps the Legacy
+  (80%) scale. The two engines use different bottom margins in these frames,
+  so the fit question needs a margin-matched comparison before any change.
 - The note text looks smaller than KOReader's band text. The default EPUB
   note size is Legacy (root scale 0.8, `user_styles.rs` `FootnoteSize::scale`),
   which is also KOReader's default. The visual difference needs a pixel
